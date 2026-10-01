@@ -31,17 +31,6 @@ if (app.Environment.IsDevelopment())
 
 app.MapHealthEndpoints();
 
-try
-{
-    // Start-up runs the database migrations (DatabaseMigrator) before the server listens.
-    await app.RunAsync();
-    return 0;
-}
-catch (Exception ex)
-{
-    // No half-started API: log and exit non-zero so compose / the IDE show the failure.
-    app.Logger.LogCritical(ex, "API start-up or run failed; exiting");
-    return 1;
-}
-
-public partial class Program;
+// Hosted services start before the server listens: DatabaseMigrator applies the migrations first.
+// A start-up failure is logged and propagates out of Run, so the process exits non-zero.
+app.Run();
