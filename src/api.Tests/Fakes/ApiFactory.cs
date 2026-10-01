@@ -31,6 +31,7 @@ public sealed class ApiFactory(PostgresFixture postgres) : WebApplicationFactory
         builder.UseSetting("OLLAMA_BASE_URL", EnvOllamaBaseUrl);
         builder.UseSetting("GOOGLE_CLIENT_ID", "");
         builder.UseSetting("GOOGLE_CLIENT_SECRET", "");
+        builder.UseSetting("GMAIL_FAKE", "");
         builder.ConfigureServices(services => services.AddTransient<IStartupFilter, TestEndpointStartupFilter>());
     }
 

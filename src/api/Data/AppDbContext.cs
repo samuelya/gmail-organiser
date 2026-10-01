@@ -1,3 +1,4 @@
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,6 +18,7 @@ namespace GmailOrganiser.Data;
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<SettingsRow> Settings => Set<SettingsRow>();
+    public DbSet<OAuthTokenRow> OAuthTokens => Set<OAuthTokenRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -28,6 +30,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(r => r.Id);
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.Document).HasColumnType("jsonb").IsRequired();
+        });
+
+        modelBuilder.Entity<OAuthTokenRow>(e =>
+        {
+            e.ToTable("oauth_tokens", t => t.HasCheckConstraint("ck_oauth_tokens_singleton", $"id = {OAuthTokenRow.SingletonId}"));
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Id).ValueGeneratedNever();
+            e.Property(r => r.AccountEmail).IsRequired();
+            e.Property(r => r.RefreshTokenProtected).IsRequired();
+            e.Property(r => r.Scopes).IsRequired();
         });
     }
 
