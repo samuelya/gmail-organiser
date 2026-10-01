@@ -5,6 +5,7 @@ using GmailOrganiser.Gmail.Auth;
 using GmailOrganiser.Health;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Settings;
+using GmailOrganiser.Setup;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,6 +18,7 @@ builder.Services.AddHealthEndpoints();
 builder.Services.AddSettings(builder.Configuration);
 builder.Services.AddGmail();
 builder.Services.AddLlm();
+builder.Services.AddSetup();
 
 var app = builder.Build();
 
@@ -41,6 +43,7 @@ app.MapHealthEndpoints();
 app.MapSettingsEndpoints();
 app.MapLlmEndpoints();
 app.MapGmailAuthEndpoints();
+app.MapSetupEndpoints();
 
 // Hosted services start before the server listens: DatabaseMigrator applies the migrations first.
 // A start-up failure is logged and propagates out of Run, so the process exits non-zero.

@@ -44,7 +44,13 @@ public static class GmailExtensions
 
         // OAuth connect flow (Gmail/Auth).
         services.AddAppOptions();
-        services.AddOptions<GoogleOAuthOptions>().BindConfiguration(GoogleOAuthOptions.SectionName);
+        services.AddOptions<GoogleOAuthOptions>()
+            .BindConfiguration(GoogleOAuthOptions.SectionName)
+            .Validate(o => o.StateLifetime > TimeSpan.Zero, $"{GoogleOAuthOptions.SectionName}:StateLifetime must be a positive time span, e.g. 00:10:00.")
+            .Validate(
+                o => o.RevokeTimeout > TimeSpan.Zero && o.RevokeTimeout <= GoogleOAuthOptions.MaxRevokeTimeout,
+                $"{GoogleOAuthOptions.SectionName}:RevokeTimeout must be a positive time span of at most {GoogleOAuthOptions.MaxRevokeTimeout}, e.g. 00:00:10.")
+            .ValidateOnStart();
         services.AddHttpClient<GoogleOAuthClient>(GoogleOAuthClient.HttpClientName);
         services.AddSingleton<FakeGoogleOAuthClient>();
         services.AddScoped<IGoogleOAuthClient>(sp => UseFake(sp)
