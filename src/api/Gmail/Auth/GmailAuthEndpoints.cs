@@ -1,6 +1,8 @@
 using GmailOrganiser.Common;
 using GmailOrganiser.Settings;
+using GmailOrganiser.Gmail.Fake;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Gmail.Auth;
@@ -45,9 +47,9 @@ public static class GmailAuthEndpoints
         {
             // No Google: go straight to the callback, which still checks the state cookie.
             var fakeFlow = stateCookie.Issue(context);
-            return TypedResults.Redirect(Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(
+            return TypedResults.Redirect(QueryHelpers.AddQueryString(
                 redirectUri,
-                new Dictionary<string, string?> { ["code"] = Fake.FakeGoogleOAuthClient.FakeCode, ["state"] = fakeFlow.State }));
+                new Dictionary<string, string?> { ["code"] = FakeGoogleOAuthClient.FakeCode, ["state"] = fakeFlow.State }));
         }
 
         var client = await googleClient.GetAsync(ct);
