@@ -1,0 +1,18 @@
+{
+  "/api": {
+    "target": "http://localhost:5181",
+    "secure": false,
+    "changeOrigin": false
+  },
+  "/hubs": {
+    "target": "http://localhost:5181",
+    "secure": false,
+    "changeOrigin": false,
+    "ws": true
+  },
+  "/mcp": {
+    "target": "http://localhost:5181",
+    "secure": false,
+    "changeOrigin": false
+  }
+}

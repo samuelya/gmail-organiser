@@ -1,0 +1,38 @@
+// Global styles. Angular Material owns component styling; Tailwind (src/tailwind.css)
+// is loaded after this file and only provides layout and spacing utilities.
+@use '@angular/material' as mat;
+
+html {
+  height: 100%;
+  // Material 3 theme (azure). Colours are emitted with light-dark(), so the active
+  // scheme follows `color-scheme`: the `dark` / `light` classes on <html> force one,
+  // otherwise the user's system preference applies. The toggle UI comes later.
+  color-scheme: light dark;
+  @include mat.theme(
+    (
+      color: (
+        primary: mat.$azure-palette,
+        tertiary: mat.$blue-palette,
+        theme-type: color-scheme,
+      ),
+      typography: Roboto,
+      density: 0,
+    )
+  );
+
+  &.light {
+    color-scheme: light;
+  }
+
+  &.dark {
+    color-scheme: dark;
+  }
+}
+
+body {
+  background-color: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+  margin: 0;
+  height: 100%;
+}

@@ -1,0 +1,9 @@
+/*
+ * Tailwind for layout and spacing only. Preflight (Tailwind's CSS reset) is left out
+ * so it doesn't restyle Angular Material components; utilities sit in their own
+ * cascade layer, so Material's unlayered styles win any conflict.
+ */
+@layer theme, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@source './app';

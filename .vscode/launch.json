@@ -12,6 +12,21 @@
       "launchSettingsFilePath": "${workspaceFolder}/src/api/Properties/launchSettings.json",
       "stopAtEntry": false,
       "console": "integratedTerminal"
+    },
+    {
+      "name": "Web: ng serve",
+      "type": "chrome",
+      "request": "launch",
+      "preLaunchTask": "npm: start",
+      "url": "http://localhost:4200",
+      "webRoot": "${workspaceFolder}/src/web"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "API + Web",
+      "configurations": [".NET: API", "Web: ng serve"],
+      "stopAll": true
     }
   ]
 }
