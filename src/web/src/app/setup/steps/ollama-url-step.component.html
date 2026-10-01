@@ -1,0 +1,68 @@
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-2" novalidate>
+  @if (loadFailed()) {
+    <p class="m-0 flex items-center gap-2" role="alert" data-testid="load-error">
+      <mat-icon aria-hidden="true">error</mat-icon>
+      The saved settings could not be loaded. Enter the URL and save it.
+    </p>
+  }
+  <mat-form-field>
+    <mat-label>Ollama URL</mat-label>
+    <input
+      matInput
+      type="url"
+      formControlName="url"
+      autocomplete="off"
+      spellcheck="false"
+      data-testid="ollama-url"
+    />
+    @if (url.hasError('required')) {
+      <mat-error>The Ollama URL is required.</mat-error>
+    } @else if (url.hasError('httpUrl')) {
+      <mat-error>Enter an http or https URL.</mat-error>
+    }
+    <mat-hint>Where the API reaches Ollama on the host.</mat-hint>
+  </mat-form-field>
+
+  <div class="flex flex-wrap items-center gap-2">
+    <button
+      mat-stroked-button
+      type="button"
+      (click)="test()"
+      [disabled]="!loaded() || testing()"
+      data-testid="test-url"
+    >
+      Test URL
+    </button>
+    <button mat-flat-button type="submit" [disabled]="!loaded() || saving()" data-testid="save-url">
+      Save
+    </button>
+    @if (testing()) {
+      <mat-spinner diameter="20" aria-label="Testing the URL" />
+    }
+  </div>
+
+  <div aria-live="polite">
+    @if (testFailed()) {
+      <p class="m-0 flex items-center gap-2" data-testid="test-error">
+        <mat-icon aria-hidden="true">error</mat-icon>
+        The URL could not be tested. Try again.
+      </p>
+    }
+    @if (result(); as r) {
+      @if (r.reachable) {
+        <p class="m-0 flex items-center gap-2" data-testid="url-ok">
+          <mat-icon aria-hidden="true">check_circle</mat-icon>
+          Ollama {{ r.version }} is reachable.
+        </p>
+      } @else {
+        <p class="m-0 flex items-center gap-2" data-testid="url-error">
+          <mat-icon aria-hidden="true">error</mat-icon>
+          {{ r.error }}
+        </p>
+        <p class="m-0 mt-1 text-sm" data-testid="url-hint">
+          If the API runs outside Docker use <code>http://localhost:11434</code>.
+        </p>
+      }
+    }
+  </div>
+</form>

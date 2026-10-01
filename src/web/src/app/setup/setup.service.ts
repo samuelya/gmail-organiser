@@ -27,6 +27,17 @@ export interface GoogleClientRequest {
   clientSecret: string;
 }
 
+/**
+ * `UpdateSettingsRequest` for `PUT /api/settings`: a partial update where an omitted (or `null`)
+ * value stays unchanged and an empty model name clears the model.
+ */
+export interface UpdateSettingsRequest {
+  ollamaBaseUrl?: string;
+  chatModel?: string;
+  embeddingModel?: string;
+  setupWizardSeen?: boolean;
+}
+
 /** `GmailConnectionStatusDto` from `GET /api/auth/google/status`. */
 export interface GoogleAuthStatus {
   connected: boolean;
@@ -71,6 +82,10 @@ export class SetupService {
 
   getSettings(): Observable<AppSettings> {
     return this.http.get<AppSettings>('/api/settings');
+  }
+
+  saveSettings(request: UpdateSettingsRequest): Observable<AppSettings> {
+    return this.http.put<AppSettings>('/api/settings', request);
   }
 
   saveGoogleClient(request: GoogleClientRequest): Observable<AppSettings> {

@@ -1,0 +1,127 @@
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-2" novalidate>
+  @if (loading()) {
+    <p class="m-0 flex items-center gap-2" data-testid="models-loading">
+      <mat-spinner diameter="20" aria-hidden="true" />
+      Loading the models from Ollama…
+    </p>
+  } @else if (!reachable()) {
+    <p class="m-0 flex items-center gap-2" data-testid="models-unreachable">
+      <mat-icon aria-hidden="true">error</mat-icon>
+      {{ models()?.error || 'Ollama is not reachable.' }}
+    </p>
+    <p class="m-0 text-sm">Check the Ollama URL, then refresh the list.</p>
+  }
+
+  <div class="flex flex-wrap items-start gap-2">
+    <mat-form-field class="min-w-0 flex-1 basis-72">
+      <mat-label>Chat model</mat-label>
+      <mat-select formControlName="chatModel" data-testid="chat-model">
+        @for (option of chatOptions(); track option.value) {
+          <mat-option [value]="option.value">{{ option.label }}</mat-option>
+        }
+      </mat-select>
+      @if (form.controls.chatModel.hasError('required')) {
+        <mat-error>Select a chat model.</mat-error>
+      }
+      <mat-hint>Suggests labels and clean-up.</mat-hint>
+    </mat-form-field>
+    <ng-container
+      [ngTemplateOutlet]="testControls"
+      [ngTemplateOutletContext]="{
+        kind: 'chat',
+        run: chatTest(),
+        model: form.controls.chatModel.value,
+      }"
+    />
+  </div>
+  @if (noChatModels()) {
+    <ng-container [ngTemplateOutlet]="emptyHint" [ngTemplateOutletContext]="{ kind: 'chat' }" />
+  }
+
+  <div class="mt-2 flex flex-wrap items-start gap-2">
+    <mat-form-field class="min-w-0 flex-1 basis-72">
+      <mat-label>Embedding model (optional)</mat-label>
+      <mat-select formControlName="embeddingModel" data-testid="embedding-model">
+        <mat-option [value]="null">None (memory limited to exact sender)</mat-option>
+        @for (option of embeddingOptions(); track option.value) {
+          <mat-option [value]="option.value">{{ option.label }}</mat-option>
+        }
+      </mat-select>
+      <mat-hint>Finds similar past decisions.</mat-hint>
+    </mat-form-field>
+    <ng-container
+      [ngTemplateOutlet]="testControls"
+      [ngTemplateOutletContext]="{
+        kind: 'embedding',
+        run: embeddingTest(),
+        model: form.controls.embeddingModel.value,
+      }"
+    />
+  </div>
+  @if (noEmbeddingModels()) {
+    <ng-container
+      [ngTemplateOutlet]="emptyHint"
+      [ngTemplateOutletContext]="{ kind: 'embedding' }"
+    />
+  }
+
+  <div class="mt-2 flex flex-wrap gap-2">
+    <button mat-flat-button type="submit" [disabled]="saving()" data-testid="save-models">
+      Save
+    </button>
+    <button
+      mat-button
+      type="button"
+      (click)="refresh()"
+      [disabled]="loading()"
+      data-testid="refresh-models"
+    >
+      Refresh list
+    </button>
+  </div>
+</form>
+
+<ng-template #testControls let-kind="kind" let-run="run" let-model="model">
+  <div class="flex min-h-14 flex-wrap items-center gap-2" aria-live="polite">
+    @if (run.state === 'running') {
+      <mat-spinner diameter="20" [attr.aria-label]="'Testing the ' + kind + ' model'" />
+      <button
+        mat-button
+        type="button"
+        (click)="cancelTest(kind)"
+        [attr.data-testid]="'cancel-test-' + kind"
+      >
+        Cancel
+      </button>
+    } @else {
+      <button
+        mat-stroked-button
+        type="button"
+        (click)="test(kind)"
+        [disabled]="!model"
+        [attr.aria-label]="'Test the ' + kind + ' model'"
+        [attr.data-testid]="'test-' + kind"
+      >
+        Test model
+      </button>
+    }
+    @if (run.state === 'ok') {
+      <span class="flex items-center gap-1" [attr.data-testid]="'test-ok-' + kind">
+        <mat-icon aria-hidden="true">check_circle</mat-icon>
+        Answered in {{ run.seconds }} s
+      </span>
+    } @else if (run.state === 'error') {
+      <span class="flex items-center gap-1" [attr.data-testid]="'test-error-' + kind">
+        <mat-icon aria-hidden="true">error</mat-icon>
+        {{ run.error }}
+      </span>
+    }
+  </div>
+</ng-template>
+
+<ng-template #emptyHint let-kind="kind">
+  <p class="m-0 text-sm" [attr.data-testid]="'empty-hint-' + kind">
+    No models found — run <code>ollama pull &lt;model&gt;</code> on the host. See
+    <code>{{ guide }}</code> in the repository.
+  </p>
+</ng-template>

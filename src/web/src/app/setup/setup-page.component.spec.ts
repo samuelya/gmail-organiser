@@ -7,9 +7,17 @@ import {
   SetupPage,
   STEP_CONNECT_GMAIL,
   STEP_GOOGLE_CLIENT,
+  STEP_MODELS,
   STEP_OLLAMA,
+  STEP_SUMMARY,
 } from './setup-page.component';
-import { GoogleAuthStatus, SetupService } from './setup.service';
+import { LlmService } from '../core/llm.service';
+import {
+  AppSettings,
+  GoogleAuthStatus,
+  SetupService,
+  UpdateSettingsRequest,
+} from './setup.service';
 import { connectErrorMessage, parseConnectResult } from './steps/connect-gmail-step.component';
 
 const EMAIL = 'user@example.com';
@@ -47,22 +55,31 @@ describe('parseConnectResult / connectErrorMessage', () => {
 
 describe('SetupPage', () => {
   let connected: boolean;
+  let wizardSeen: boolean;
   let connectGoogle: ReturnType<typeof vi.fn<() => void>>;
+  let saveSettings: ReturnType<typeof vi.fn<SetupService['saveSettings']>>;
+
+  const settings = (): AppSettings => ({
+    ollamaBaseUrl: 'http://ollama.example.com:11434',
+    chatModel: null,
+    embeddingModel: null,
+    actionLabelName: 'Example-Action',
+    deleteLabelName: 'Example-Delete',
+    setupWizardSeen: wizardSeen,
+    googleClient: { clientId: null, secretSet: false, lockedByEnv: false },
+  });
 
   beforeEach(() => {
     connected = false;
+    wizardSeen = false;
     connectGoogle = vi.fn<() => void>();
+    saveSettings = vi.fn<SetupService['saveSettings']>((request: UpdateSettingsRequest) => {
+      if (request.setupWizardSeen) wizardSeen = true;
+      return of(settings());
+    });
     const setup: Partial<SetupService> = {
-      getSettings: () =>
-        of({
-          ollamaBaseUrl: 'http://localhost:11434',
-          chatModel: null,
-          embeddingModel: null,
-          actionLabelName: 'Example-Action',
-          deleteLabelName: 'Example-Delete',
-          setupWizardSeen: false,
-          googleClient: { clientId: null, secretSet: false, lockedByEnv: false },
-        }),
+      getSettings: () => of(settings()),
+      saveSettings,
       getSetupStatus: () =>
         of({
           googleClientConfigured: true,
@@ -71,7 +88,7 @@ describe('SetupPage', () => {
           ollamaReachable: false,
           chatModelSelected: false,
           embeddingModelSelected: false,
-          wizardSeen: false,
+          wizardSeen,
           complete: false,
         }),
       getGoogleStatus: () => of(status(connected)),
@@ -83,8 +100,25 @@ describe('SetupPage', () => {
     };
     TestBed.configureTestingModule({
       providers: [
-        provideRouter([{ path: 'setup', component: SetupPage }]),
+        provideRouter([
+          { path: 'setup', component: SetupPage },
+          { path: 'dashboard', children: [] },
+        ]),
         { provide: SetupService, useValue: setup },
+        {
+          provide: LlmService,
+          useValue: {
+            getModels: () =>
+              of({
+                reachable: false,
+                version: null,
+                chatModels: [],
+                embeddingModels: [],
+                error: 'Connection refused',
+              }),
+            testModel: vi.fn(),
+          },
+        },
         {
           provide: BreakpointObserver,
           useValue: { observe: () => of({ matches: true, breakpoints: {} }) },
@@ -111,6 +145,58 @@ describe('SetupPage', () => {
     page.skip(STEP_GOOGLE_CLIENT);
     await harness.fixture.whenStable();
     expect(selectedLabel(el)).toContain('Connect Gmail');
+  });
+
+  it('a saved Ollama URL completes step 3 and moves to the models', async () => {
+    const { page, el, harness } = await open('/setup');
+    page.completed[STEP_GOOGLE_CLIENT].set(true);
+    page.completed[STEP_CONNECT_GMAIL].set(true);
+    await harness.fixture.whenStable();
+    page.stepper().selectedIndex = STEP_OLLAMA;
+    await harness.fixture.whenStable();
+    expect(selectedLabel(el)).toContain('Ollama URL');
+    expect(page.ollamaUrl()).toBe('http://ollama.example.com:11434');
+    q(el, 'save-url')!.click();
+    await harness.fixture.whenStable();
+    expect(saveSettings).toHaveBeenCalledWith({ ollamaBaseUrl: 'http://ollama.example.com:11434' });
+    expect(page.completed[STEP_OLLAMA]()).toBe(true);
+    expect(selectedLabel(el)).toContain('Models');
+  });
+
+  it('an already-saved Ollama URL completes step 3 without saving again', async () => {
+    const { page, el, harness } = await open('/setup');
+    page.completed[STEP_GOOGLE_CLIENT].set(true);
+    page.completed[STEP_CONNECT_GMAIL].set(true);
+    await harness.fixture.whenStable();
+    page.stepper().selectedIndex = STEP_OLLAMA;
+    await harness.fixture.whenStable();
+    expect(page.completed[STEP_OLLAMA]()).toBe(true);
+    expect(saveSettings).not.toHaveBeenCalled();
+    // One Next button per step 1-4, in order: the third belongs to the Ollama URL step.
+    const next = el.querySelectorAll<HTMLButtonElement>('button[matStepperNext]')[STEP_OLLAMA];
+    expect(next.disabled).toBe(false);
+  });
+
+  it('the summary links back to a step', async () => {
+    const { page, el, harness } = await open('/setup');
+    [STEP_GOOGLE_CLIENT, STEP_CONNECT_GMAIL, STEP_OLLAMA, STEP_MODELS].forEach((i) =>
+      page.completed[i].set(true),
+    );
+    await harness.fixture.whenStable();
+    page.stepper().selectedIndex = STEP_SUMMARY;
+    await harness.fixture.whenStable();
+    expect(q(el, 'summary')).not.toBeNull();
+    page.goTo(STEP_MODELS);
+    await harness.fixture.whenStable();
+    expect(selectedLabel(el)).toContain('Models');
+  });
+
+  it('Finish marks the wizard as seen and opens the dashboard', async () => {
+    const { page, harness } = await open('/setup');
+    page.finish();
+    await harness.fixture.whenStable();
+    expect(saveSettings).toHaveBeenCalledWith({ setupWizardSeen: true });
+    expect(TestBed.inject(Router).url).toBe('/dashboard');
   });
 
   it('starts at step 1 without callback params', async () => {

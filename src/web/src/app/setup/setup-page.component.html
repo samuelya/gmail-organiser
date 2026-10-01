@@ -6,6 +6,7 @@
       [selectedIndex]="initialIndex"
       [orientation]="wide() ? 'horizontal' : 'vertical'"
       aria-label="Setup steps"
+      (selectionChange)="selectedIndex.set($event.selectedIndex)"
     >
       <mat-step [completed]="completed[0]()">
         <ng-template matStepLabel>Google OAuth client</ng-template>
@@ -47,27 +48,54 @@
 
       <mat-step [completed]="completed[2]()">
         <ng-template matStepLabel>Ollama URL</ng-template>
-        <p class="py-4">Coming soon.</p>
+        <div class="py-4">
+          <app-ollama-url-step (urlChange)="onUrlChange($event)" (saved)="onSaved(2)" />
+        </div>
         <div class="flex flex-wrap gap-2">
           <button mat-button matStepperPrevious type="button">Back</button>
+          <button mat-flat-button matStepperNext type="button" [disabled]="!completed[2]()">
+            Next
+          </button>
           <button mat-button type="button" (click)="skip(2)">Skip for now</button>
         </div>
       </mat-step>
 
       <mat-step [completed]="completed[3]()">
         <ng-template matStepLabel>Models</ng-template>
-        <p class="py-4">Coming soon.</p>
-        <div class="flex flex-wrap gap-2">
-          <button mat-button matStepperPrevious type="button">Back</button>
-          <button mat-button type="button" (click)="skip(3)">Skip for now</button>
-        </div>
+        <ng-template matStepContent>
+          <div class="py-4">
+            <app-models-step [baseUrl]="ollamaUrl()" (saved)="onSaved(3)" />
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button mat-button matStepperPrevious type="button">Back</button>
+            <button mat-flat-button matStepperNext type="button" [disabled]="!completed[3]()">
+              Next
+            </button>
+            <button mat-button type="button" (click)="skip(3)">Skip for now</button>
+          </div>
+        </ng-template>
       </mat-step>
 
       <mat-step [completed]="completed[4]()">
         <ng-template matStepLabel>Summary</ng-template>
-        <p class="py-4">Coming soon.</p>
+        <div class="py-4">
+          <app-summary-step
+            [active]="selectedIndex() === summaryIndex"
+            [steps]="summarySteps"
+            (goTo)="goTo($event)"
+          />
+        </div>
         <div class="flex flex-wrap gap-2">
           <button mat-button matStepperPrevious type="button">Back</button>
+          <button
+            mat-flat-button
+            type="button"
+            (click)="finish()"
+            [disabled]="finishing()"
+            data-testid="finish"
+          >
+            Finish
+          </button>
         </div>
       </mat-step>
     </mat-stepper>

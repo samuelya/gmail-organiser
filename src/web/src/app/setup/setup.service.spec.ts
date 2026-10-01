@@ -28,6 +28,13 @@ describe('SetupService', () => {
     expect(backend.expectOne('/api/settings').request.method).toBe('GET');
   });
 
+  it('puts a partial settings update', () => {
+    service.saveSettings({ embeddingModel: '' }).subscribe();
+    const req = backend.expectOne('/api/settings');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({ embeddingModel: '' });
+  });
+
   it('puts the Google client', () => {
     const body = { clientId: 'abc.apps.googleusercontent.com', clientSecret: 'secret' };
     service.saveGoogleClient(body).subscribe();

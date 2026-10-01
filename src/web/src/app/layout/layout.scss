@@ -47,3 +47,13 @@
     top: 8px;
   }
 }
+
+.setup-banner {
+  background: var(--mat-sys-secondary-container);
+  color: var(--mat-sys-on-secondary-container);
+
+  a {
+    color: inherit;
+    font-weight: 500;
+  }
+}
