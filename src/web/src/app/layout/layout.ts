@@ -16,7 +16,7 @@ import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { map } from 'rxjs';
+import { distinctUntilChanged, map, tap } from 'rxjs';
 import { readLocal, writeLocal } from '../core/local-store';
 import { ThemeChoice, ThemeService } from '../core/theme.service';
 import { NAV_ITEMS } from './nav-items';
@@ -56,16 +56,21 @@ export class Layout {
   private readonly breakpoints = inject(BreakpointObserver);
   private readonly main = viewChild.required<ElementRef<HTMLElement>>('main');
 
+  /** Persisted collapse state for the docked (side) nav. */
+  private readonly collapsed = signal(readLocal(NAV_COLLAPSED_KEY) === 'true');
+  /** Overlay nav state on narrow screens; starts closed and resets on every breakpoint change. */
+  private readonly overlayOpen = signal(false);
+
   protected readonly isWide = toSignal(
-    this.breakpoints.observe(WIDE_QUERY).pipe(map((s) => s.matches)),
+    this.breakpoints.observe(WIDE_QUERY).pipe(
+      map((s) => s.matches),
+      distinctUntilChanged(),
+      tap(() => this.overlayOpen.set(false)),
+    ),
     {
       initialValue: this.breakpoints.isMatched(WIDE_QUERY),
     },
   );
-  /** Persisted collapse state for the docked (side) nav. */
-  private readonly collapsed = signal(readLocal(NAV_COLLAPSED_KEY) === 'true');
-  /** Overlay nav state on narrow screens; always starts closed. */
-  private readonly overlayOpen = signal(false);
 
   protected readonly navOpen = computed(() =>
     this.isWide() ? !this.collapsed() : this.overlayOpen(),
@@ -75,17 +80,27 @@ export class Layout {
 
   protected toggleNav(): void {
     if (this.isWide()) {
-      const collapsed = !this.collapsed();
-      this.collapsed.set(collapsed);
-      writeLocal(NAV_COLLAPSED_KEY, String(collapsed));
+      this.setCollapsed(!this.collapsed());
     } else {
       this.overlayOpen.update((open) => !open);
     }
   }
 
-  /** Keeps state in sync when the overlay closes via backdrop click or Escape. */
+  /**
+   * Keeps state in sync when the drawer closes itself: backdrop click or Escape on the overlay,
+   * Escape on the docked nav (MatDrawer handles Escape in `side` mode too).
+   */
   protected onOpenedChange(open: boolean): void {
-    if (!this.isWide()) this.overlayOpen.set(open);
+    if (this.isWide()) {
+      if (this.collapsed() === open) this.setCollapsed(!open);
+    } else {
+      this.overlayOpen.set(open);
+    }
+  }
+
+  private setCollapsed(collapsed: boolean): void {
+    this.collapsed.set(collapsed);
+    writeLocal(NAV_COLLAPSED_KEY, String(collapsed));
   }
 
   protected onNavigate(): void {
