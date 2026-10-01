@@ -28,7 +28,7 @@ public static class GmailExtensions
             })
             .ValidateOnStart();
 
-        services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<FakeTokenStore>();
         services.AddScoped<GoogleGmailClient>();
         services.AddScoped<TokenStore>();

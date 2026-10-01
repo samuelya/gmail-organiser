@@ -12,22 +12,26 @@ public sealed record FakeMessage(
 /// <summary>
 /// In-memory Gmail mailbox seeded with synthetic <c>example.com</c> data. Used by <c>GMAIL_FAKE=true</c>
 /// (the whole app runs without Google) and by tests. Thread-safe; register as a singleton.
+/// Like <see cref="GoogleGmailClient"/>, it throws <see cref="GmailNotConnectedException"/> when the
+/// <see cref="FakeTokenStore"/> holds no token (e.g. after disconnect).
 /// </summary>
 public sealed class FakeGmailClient : IGmailClient
 {
     public const string AccountEmail = "user@example.com";
 
     private readonly Lock gate = new();
+    private readonly FakeTokenStore tokens;
     private readonly List<FakeMessage> messages;
     private readonly long historyId = 1000;
 
-    public FakeGmailClient(TimeProvider time)
-        : this(Seed(time.GetUtcNow()))
+    public FakeGmailClient(FakeTokenStore tokens, TimeProvider time)
+        : this(tokens, Seed(time.GetUtcNow()))
     {
     }
 
-    public FakeGmailClient(IEnumerable<FakeMessage> messages)
+    public FakeGmailClient(FakeTokenStore tokens, IEnumerable<FakeMessage> messages)
     {
+        this.tokens = tokens;
         this.messages = [.. messages];
     }
 
@@ -42,12 +46,14 @@ public sealed class FakeGmailClient : IGmailClient
         }
     }
 
-    public Task<GmailProfile> GetProfileAsync(CancellationToken ct)
+    public async Task<GmailProfile> GetProfileAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        var token = await tokens.GetAsync(ct).ConfigureAwait(false)
+            ?? throw new GmailNotConnectedException("The fake Gmail account is not connected.");
         lock (gate)
         {
-            return Task.FromResult(new GmailProfile(AccountEmail, messages.Count, historyId.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            return new GmailProfile(token.AccountEmail, messages.Count, historyId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
     }
 

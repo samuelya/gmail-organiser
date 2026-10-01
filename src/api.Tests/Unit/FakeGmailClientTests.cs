@@ -8,9 +8,9 @@ public sealed class FakeGmailClientTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
-    public async Task GetProfileAsync_returns_the_synthetic_profile()
+    public async Task GetProfileAsync_returns_the_synthetic_profile_when_connected()
     {
-        var client = new FakeGmailClient(TimeProvider.System);
+        var client = new FakeGmailClient(new FakeTokenStore(TimeProvider.System), TimeProvider.System);
 
         var profile = await client.GetProfileAsync(Ct);
 
@@ -21,9 +21,30 @@ public sealed class FakeGmailClientTests
     }
 
     [Fact]
+    public async Task GetProfileAsync_throws_not_connected_after_the_token_is_deleted()
+    {
+        var store = new FakeTokenStore(TimeProvider.System);
+        var client = new FakeGmailClient(store, TimeProvider.System);
+        await store.DeleteAsync(Ct);
+
+        await Should.ThrowAsync<GmailNotConnectedException>(() => client.GetProfileAsync(Ct));
+    }
+
+    [Fact]
+    public async Task GetProfileAsync_reports_the_reconnected_account()
+    {
+        var store = new FakeTokenStore(TimeProvider.System);
+        var client = new FakeGmailClient(store, TimeProvider.System);
+        await store.DeleteAsync(Ct);
+        await store.SaveAsync("other@example.com", "fake-token-2", GmailScopes.All, Ct);
+
+        (await client.GetProfileAsync(Ct)).EmailAddress.ShouldBe("other@example.com");
+    }
+
+    [Fact]
     public void Seeded_mailbox_uses_only_example_com_senders()
     {
-        var client = new FakeGmailClient(TimeProvider.System);
+        var client = new FakeGmailClient(new FakeTokenStore(TimeProvider.System), TimeProvider.System);
 
         client.Messages.Select(m => m.From).Distinct().Count().ShouldBeGreaterThan(1);
         client.Messages.ShouldAllBe(m => m.From.Contains("example.com>"));
