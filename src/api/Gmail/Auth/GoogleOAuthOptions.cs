@@ -5,6 +5,9 @@ public sealed class GoogleOAuthOptions
 {
     public const string SectionName = "GoogleOAuth";
 
+    /// <summary>Upper bound for <see cref="RevokeTimeout"/>: disconnect must not wait on Google for longer.</summary>
+    public static readonly TimeSpan MaxRevokeTimeout = TimeSpan.FromMinutes(5);
+
     public string AuthorizationEndpoint { get; set; } = "https://accounts.google.com/o/oauth2/v2/auth";
     public string TokenEndpoint { get; set; } = "https://oauth2.googleapis.com/token";
     public string RevokeEndpoint { get; set; } = "https://oauth2.googleapis.com/revoke";

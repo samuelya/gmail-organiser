@@ -1,0 +1,13 @@
+# Dev override: publishes `db` on 127.0.0.1 so the IDE-run API (appsettings.Development.json) can use it.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
+# Agents and parallel worktrees always pass their own project name, e.g.
+#   docker compose -p gmo-<issue> -f docker-compose.yml -f docker-compose.dev.yml up -d db
+# (and set DB_PORT / WEB_PORT so two stacks don't collide).
+# A non-default DB_PORT only moves the published port: the IDE-run API still uses Port=5432 from
+# appsettings.Development.json (dotnet run does not read .env) and would silently migrate and read
+# another worktree's DB. Export the matching connection string in the API's environment too, e.g.
+#   ConnectionStrings__Default="Host=localhost;Port=$DB_PORT;Database=...;Username=...;Password=..."
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"

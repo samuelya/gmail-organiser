@@ -242,6 +242,21 @@ public sealed class GmailAuthEndpointsTests(ApiFactory factory, PostgresFixture 
         status.MissingScopes.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData("RevokeTimeout", "-00:00:05")]
+    [InlineData("RevokeTimeout", "-00:00:00.001")]
+    [InlineData("RevokeTimeout", "00:00:00")]
+    [InlineData("RevokeTimeout", "01:00:00")]
+    [InlineData("StateLifetime", "00:00:00")]
+    [InlineData("StateLifetime", "-00:10:00")]
+    public void Start_up_fails_for_an_invalid_oauth_time_span(string option, string value)
+    {
+        using var badFactory = new ApiFactory(postgres).WithWebHostBuilder(b => b.UseSetting($"{GoogleOAuthOptions.SectionName}:{option}", value));
+
+        var error = Should.Throw<Microsoft.Extensions.Options.OptionsValidationException>(() => badFactory.CreateClient());
+        error.Message.ShouldContain(option);
+    }
+
     private WebApplicationFactory<Program> WithGoogle() => factory.WithWebHostBuilder(b =>
     {
         b.UseSetting("GOOGLE_CLIENT_ID", ClientId);

@@ -7,7 +7,12 @@
       "launchBrowser": false,
       "applicationUrl": "http://localhost:5181",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "GMAIL_FAKE": "true",
+        "OLLAMA_BASE_URL": "http://localhost:11434",
+        "GOOGLE_CLIENT_ID": "",
+        "GOOGLE_CLIENT_SECRET": "",
+        "APP_BASE_URL": "http://localhost:4200"
       }
     }
   }
