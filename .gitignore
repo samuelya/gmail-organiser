@@ -1,0 +1,46 @@
+# ---------- Secrets & private data ----------
+.env
+.env.local
+.env.*.local
+!.env.example
+*.pfx
+*.pem
+*.key
+appsettings.*.local.json
+secrets.json
+client_secret*.json
+data/
+
+# ---------- Claude Code (local) ----------
+.claude/settings.local.json
+.claude/worktrees/
+.claude/guard.log
+.claude/private-terms.txt
+
+# ---------- Angular / Node ----------
+node_modules/
+dist/
+.angular/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+npm-debug.log*
+.npm/
+
+# ---------- .NET ----------
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+.vs/
+
+# ---------- OS / IDE ----------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Blocks a commit whose added lines contain a private term (the owner's email address, real label
+# or sender names, ...). The list lives in .claude/private-terms.txt in the main checkout: one term
+# per line, case-insensitive, '#' for comments. It is git-ignored, so the terms never reach the
+# public repo. Enabled once per clone with: git config core.hooksPath .githooks
+set -uo pipefail
+root=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+terms="$root/.claude/private-terms.txt"
+[[ -f "$terms" ]] || exit 0
+
+added=$(git diff --cached --no-color -U0 --diff-filter=ACMR | grep -E '^\+' | grep -vE '^\+\+\+ ')
+[[ -n "$added" ]] || exit 0
+
+found=0
+while IFS= read -r term || [[ -n "$term" ]]; do
+  term="${term%%#*}"; term="$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$term")"
+  [[ -n "$term" ]] || continue
+  if grep -qiF -- "$term" <<<"$added"; then
+    files=$(git diff --cached --name-only -G"$(sed 's/[][\.*^$/]/\\&/g' <<<"$term")" -i | tr '\n' ' ')
+    echo "pre-commit: a private term from .claude/private-terms.txt is in the staged changes (${files:-see diff})." >&2
+    found=1
+  fi
+done < "$terms"
+(( found )) && { echo "Remove it (use a placeholder such as user@example.com) and commit again." >&2; exit 1; }
+exit 0
