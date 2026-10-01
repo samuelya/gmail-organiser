@@ -11,7 +11,10 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
+import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
+import { filter } from 'rxjs';
+import { openConfirm } from '../../core/confirm-dialog';
 import { GoogleAuthStatus, SetupService } from '../setup.service';
 
 /** The result the OAuth callback hands back in `/setup?gmail=…&reason=…`. */
@@ -125,7 +128,7 @@ export function parseConnectResult(
         <p class="m-0 flex items-center gap-2" [id]="noClientId" data-testid="no-client">
           <mat-icon aria-hidden="true">info</mat-icon>
           @if (clientChecked()) {
-            Save the Google OAuth client in step 1 before connecting.
+            Save the Google OAuth client {{ clientLocation() }} before connecting.
           } @else {
             Checking the Google OAuth client…
           }
@@ -138,11 +141,16 @@ export function parseConnectResult(
 export class ConnectGmailStep implements OnInit {
   private readonly setup = inject(SetupService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly dialog = inject(MatDialog);
 
   /** Set when the OAuth callback redirected back to the page. */
   readonly result = input<ConnectResult | null>(null);
   /** Set by the host once the Google OAuth client is saved (the wizard's step 1). */
   readonly clientSaved = input(false);
+  /** Where the host page lets the user save the Google OAuth client. */
+  readonly clientLocation = input('in step 1');
+  /** Ask before disconnecting (Settings); the wizard disconnects directly. */
+  readonly confirmDisconnect = input(false);
   /** Emits the connection status after every load. */
   readonly statusChange = output<GoogleAuthStatus>();
 
@@ -184,6 +192,24 @@ export class ConnectGmailStep implements OnInit {
   }
 
   disconnect(): void {
+    if (!this.confirmDisconnect()) {
+      this.doDisconnect();
+      return;
+    }
+    openConfirm(this.dialog, {
+      title: 'Disconnect Gmail?',
+      message:
+        'The organiser’s access to Gmail is revoked until you connect again. Your mail is not changed.',
+      confirm: 'Disconnect',
+    })
+      .pipe(
+        filter((confirmed) => confirmed),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe(() => this.doDisconnect());
+  }
+
+  private doDisconnect(): void {
     this.busy.set(true);
     this.setup
       .disconnectGoogle()
