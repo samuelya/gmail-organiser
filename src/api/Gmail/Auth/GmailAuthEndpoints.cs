@@ -1,6 +1,6 @@
 using GmailOrganiser.Common;
-using GmailOrganiser.Settings;
 using GmailOrganiser.Gmail.Fake;
+using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
