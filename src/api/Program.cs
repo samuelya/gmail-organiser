@@ -1,5 +1,6 @@
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Health;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Settings;
@@ -13,6 +14,7 @@ builder.Services.AddApiSecurity(builder.Configuration);
 builder.Services.AddAppDatabase();
 builder.Services.AddHealthEndpoints();
 builder.Services.AddSettings(builder.Configuration);
+builder.Services.AddGmail();
 builder.Services.AddLlm();
 
 var app = builder.Build();
