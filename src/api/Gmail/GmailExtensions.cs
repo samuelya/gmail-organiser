@@ -1,3 +1,5 @@
+using GmailOrganiser.Common;
+using GmailOrganiser.Gmail.Auth;
 using GmailOrganiser.Gmail.Fake;
 using Microsoft.Extensions.Options;
 
@@ -8,7 +10,7 @@ public static class GmailExtensions
     /// <summary>
     /// Registers <see cref="IGmailClient"/> and <see cref="ITokenStore"/>: the Google implementations, or the in-memory
     /// fakes when <see cref="GmailOptions.UseFake"/> is set. The choice is made at resolution time so hosts can override it.
-    /// Needs <c>AddAppDatabase</c> and <c>AddSettings</c>.
+    /// Also registers the OAuth connect flow. Needs <c>AddAppDatabase</c> and <c>AddSettings</c>.
     /// </summary>
     public static IServiceCollection AddGmail(this IServiceCollection services)
     {
@@ -39,6 +41,17 @@ public static class GmailExtensions
         services.AddScoped<ITokenStore>(sp => UseFake(sp)
             ? sp.GetRequiredService<FakeTokenStore>()
             : sp.GetRequiredService<TokenStore>());
+
+        // OAuth connect flow (Gmail/Auth).
+        services.AddAppOptions();
+        services.AddOptions<GoogleOAuthOptions>().BindConfiguration(GoogleOAuthOptions.SectionName);
+        services.AddHttpClient<GoogleOAuthClient>(GoogleOAuthClient.HttpClientName);
+        services.AddSingleton<FakeGoogleOAuthClient>();
+        services.AddScoped<IGoogleOAuthClient>(sp => UseFake(sp)
+            ? sp.GetRequiredService<FakeGoogleOAuthClient>()
+            : sp.GetRequiredService<GoogleOAuthClient>());
+        services.AddSingleton<OAuthStateCookie>();
+        services.AddScoped<GmailConnector>();
         return services;
     }
 

@@ -51,6 +51,11 @@ public sealed class FakeGmailClient : IGmailClient
         ct.ThrowIfCancellationRequested();
         var token = await tokens.GetAsync(ct).ConfigureAwait(false)
             ?? throw new GmailNotConnectedException("The fake Gmail account is not connected.");
+        if (token.ReauthRequired)
+        {
+            throw new GmailNotConnectedException("The fake Gmail connection needs to be reconnected.");
+        }
+
         lock (gate)
         {
             return new GmailProfile(token.AccountEmail, messages.Count, historyId.ToString(System.Globalization.CultureInfo.InvariantCulture));

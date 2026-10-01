@@ -34,6 +34,16 @@ public sealed class FakeTokenStore(TimeProvider time) : ITokenStore
         return Task.CompletedTask;
     }
 
+    public Task MarkReauthRequiredAsync(CancellationToken ct = default)
+    {
+        lock (gate)
+        {
+            token = token is null ? null : token with { ReauthRequired = true, UpdatedAt = time.GetUtcNow() };
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task DeleteAsync(CancellationToken ct = default)
     {
         lock (gate)

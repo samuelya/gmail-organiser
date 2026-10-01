@@ -32,6 +32,7 @@ public sealed class ApiFactory(PostgresFixture postgres) : WebApplicationFactory
         builder.UseSetting("GOOGLE_CLIENT_ID", "");
         builder.UseSetting("GOOGLE_CLIENT_SECRET", "");
         builder.UseSetting("GMAIL_FAKE", "");
+        builder.UseSetting("APP_BASE_URL", AllowedOrigin);
         builder.ConfigureServices(services => services.AddTransient<IStartupFilter, TestEndpointStartupFilter>());
     }
 
