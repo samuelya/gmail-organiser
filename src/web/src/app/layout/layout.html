@@ -1,0 +1,61 @@
+<a class="skip-link" href="#main-content" (click)="skipToContent($event)">Skip to content</a>
+
+<mat-toolbar class="app-toolbar">
+  <button
+    mat-icon-button
+    type="button"
+    aria-controls="app-nav"
+    [attr.aria-expanded]="navOpen()"
+    [attr.aria-label]="navOpen() ? 'Hide navigation' : 'Show navigation'"
+    (click)="toggleNav()"
+  >
+    <mat-icon>menu</mat-icon>
+  </button>
+  <span class="app-name ml-2 truncate">{{ appName }}</span>
+  <span class="flex-1"></span>
+  <button
+    mat-icon-button
+    type="button"
+    class="theme-toggle"
+    [attr.aria-label]="themeLabel()"
+    [matTooltip]="themeLabel()"
+    (click)="theme.cycle()"
+  >
+    <mat-icon>{{ themeIcon() }}</mat-icon>
+  </button>
+</mat-toolbar>
+
+<mat-sidenav-container class="app-container">
+  <mat-sidenav
+    id="app-nav"
+    class="app-nav"
+    [mode]="isWide() ? 'side' : 'over'"
+    [opened]="navOpen()"
+    (openedChange)="onOpenedChange($event)"
+  >
+    <nav aria-label="Main">
+      <mat-nav-list>
+        @for (item of navItems; track item.path) {
+          <a
+            mat-list-item
+            [routerLink]="item.path"
+            routerLinkActive
+            #rla="routerLinkActive"
+            [activated]="rla.isActive"
+            [attr.aria-current]="rla.isActive ? 'page' : null"
+            (click)="onNavigate()"
+          >
+            <mat-icon matListItemIcon aria-hidden="true">{{ item.icon }}</mat-icon>
+            <span matListItemTitle>{{ item.label }}</span>
+          </a>
+        }
+      </mat-nav-list>
+    </nav>
+  </mat-sidenav>
+
+  <mat-sidenav-content>
+    <main #main id="main-content" tabindex="-1" class="app-main p-4 md:p-6">
+      <router-outlet />
+    </main>
+  </mat-sidenav-content>
+</mat-sidenav-container>

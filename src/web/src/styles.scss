@@ -6,7 +6,7 @@ html {
   height: 100%;
   // Material 3 theme (azure). Colours are emitted with light-dark(), so the active
   // scheme follows `color-scheme`: the `dark` / `light` classes on <html> force one,
-  // otherwise the user's system preference applies. The toggle UI comes later.
+  // otherwise the user's system preference applies. ThemeService sets the class.
   color-scheme: light dark;
   @include mat.theme(
     (
@@ -19,6 +19,7 @@ html {
       density: 0,
     )
   );
+  @include mat.strong-focus-indicators();
 
   &.light {
     color-scheme: light;
@@ -35,4 +36,11 @@ body {
   font: var(--mat-sys-body-medium);
   margin: 0;
   height: 100%;
+}
+
+// Visible keyboard focus for plain elements (Material components draw their own).
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--mat-sys-primary);
+  outline-offset: 2px;
 }

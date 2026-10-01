@@ -1,0 +1,49 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-toolbar {
+  flex: none;
+  position: relative;
+  z-index: 2;
+  border-bottom: 1px solid var(--mat-sys-outline-variant);
+}
+
+.app-name {
+  font: var(--mat-sys-title-large);
+}
+
+.app-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.app-nav {
+  width: 240px;
+  border-right: 1px solid var(--mat-sys-outline-variant);
+}
+
+.app-main {
+  box-sizing: border-box;
+  max-width: 1280px;
+  margin: 0 auto;
+  outline: none;
+}
+
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -100px;
+  z-index: 10;
+  padding: 8px 16px;
+  border-radius: var(--mat-sys-corner-small);
+  background: var(--mat-sys-primary);
+  color: var(--mat-sys-on-primary);
+  font: var(--mat-sys-label-large);
+
+  &:focus {
+    top: 8px;
+  }
+}
