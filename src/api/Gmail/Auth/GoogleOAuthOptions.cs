@@ -11,4 +11,7 @@ public sealed class GoogleOAuthOptions
 
     /// <summary>How long a started connect flow (state + PKCE verifier) stays valid.</summary>
     public TimeSpan StateLifetime { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>How long disconnect waits for Google's best-effort revoke before giving up.</summary>
+    public TimeSpan RevokeTimeout { get; set; } = TimeSpan.FromSeconds(10);
 }

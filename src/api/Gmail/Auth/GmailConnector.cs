@@ -36,6 +36,8 @@ public sealed class GmailConnector(
     GoogleClientService googleClient,
     IOptions<AppOptions> app,
     IOptions<GmailOptions> gmail,
+    IOptions<GoogleOAuthOptions> oauthOptions,
+    TimeProvider time,
     ILogger<GmailConnector> logger)
 {
     public async Task<ConnectOutcome> CompleteAsync(string? code, string? error, string codeVerifier, CancellationToken ct)
@@ -99,23 +101,29 @@ public sealed class GmailConnector(
         return ConnectOutcome.Connected;
     }
 
-    /// <summary>Revokes at Google (best effort, logged on failure), then always deletes the local token.</summary>
+    /// <summary>
+    /// Deletes the local token first, so it is gone even if the request is aborted, then revokes at Google best effort
+    /// with its own timeout. The revoke deliberately ignores the caller's cancellation: the token is already deleted
+    /// locally, and an aborted request should still invalidate it at Google if Google answers in time.
+    /// </summary>
     public async Task DisconnectAsync(CancellationToken ct)
     {
         var token = await tokens.GetAsync(ct);
-        if (token is not null)
+        await tokens.DeleteAsync(CancellationToken.None);
+        logger.LogInformation("Gmail disconnected");
+        if (token is null)
         {
-            try
-            {
-                await oauth.RevokeAsync(token.RefreshToken, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-            {
-                logger.LogWarning("Revoking the Gmail token at Google failed ({ExceptionType}); deleting it locally anyway", ex.GetType().Name);
-            }
+            return;
         }
 
-        await tokens.DeleteAsync(ct);
-        logger.LogInformation("Gmail disconnected");
+        using var revokeTimeout = new CancellationTokenSource(oauthOptions.Value.RevokeTimeout, time);
+        try
+        {
+            await oauth.RevokeAsync(token.RefreshToken, revokeTimeout.Token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Revoking the Gmail token at Google failed ({ExceptionType}); it was deleted locally", ex.GetType().Name);
+        }
     }
 }

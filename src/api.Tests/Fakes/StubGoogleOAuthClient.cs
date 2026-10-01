@@ -11,6 +11,12 @@ public sealed class StubGoogleOAuthClient : IGoogleOAuthClient
     public string AccountEmail { get; set; } = "user@example.com";
     public Exception? RevokeException { get; set; }
 
+    /// <summary>When set, revoke never answers and only ends when its cancellation token fires.</summary>
+    public bool RevokeHangs { get; set; }
+
+    /// <summary>The cancellation token revoke was called with, to check it is not the caller's.</summary>
+    public CancellationToken RevokeToken { get; private set; }
+
     public List<GoogleCodeExchange> Exchanges { get; } = [];
     public List<string> RevokedTokens { get; } = [];
 
@@ -25,6 +31,12 @@ public sealed class StubGoogleOAuthClient : IGoogleOAuthClient
     public Task RevokeAsync(string refreshToken, CancellationToken ct)
     {
         RevokedTokens.Add(refreshToken);
+        RevokeToken = ct;
+        if (RevokeHangs)
+        {
+            return Task.Delay(Timeout.Infinite, ct);
+        }
+
         return RevokeException is null ? Task.CompletedTask : Task.FromException(RevokeException);
     }
 }
