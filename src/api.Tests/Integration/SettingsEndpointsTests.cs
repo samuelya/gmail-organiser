@@ -6,6 +6,7 @@ using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailOrganiser.Tests.Integration;
 
@@ -127,6 +128,55 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
         (await GetAsync(locked)).GoogleClient.ShouldBe(new GoogleClientDto("env-client.apps.googleusercontent.com", SecretSet: true, LockedByEnv: true));
         await using var db = postgres.CreateDbContext();
         (await db.Settings.AnyAsync(Ct)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Concurrent_updates_on_first_insert_lose_nothing()
+    {
+        var firstInside = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // The first update holds its snapshot while the second starts; without a row lock the second
+        // would read the same (empty) snapshot and one change would be lost, or its insert would hit the PK.
+        var first = UpdateInScopeAsync(s =>
+        {
+            firstInside.TrySetResult();
+            Thread.Sleep(TimeSpan.FromMilliseconds(500));
+            return s with { ChatModel = "chat-model-a" };
+        });
+        await firstInside.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var second = UpdateInScopeAsync(s => s with { SetupWizardSeen = true });
+        await Task.WhenAll(first, second);
+
+        var settings = await GetAsync(factory);
+        settings.ChatModel.ShouldBe("chat-model-a");
+        settings.SetupWizardSeen.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Concurrent_puts_all_succeed_and_all_changes_persist()
+    {
+        var responses = await Task.WhenAll(
+            PutAsync(factory, "/api/settings/google-client", new GoogleClientRequest(ClientId, ClientSecret)),
+            PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, true)),
+            PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, "chat-model-a", null, null)),
+            PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, "embed-model-a", null)),
+            PutAsync(factory, "/api/settings", new UpdateSettingsRequest("https://llm.example.com/", null, null, null)));
+
+        responses.ShouldAllBe(r => r.StatusCode == HttpStatusCode.OK);
+        var settings = await GetAsync(factory);
+        settings.GoogleClient.ShouldBe(new GoogleClientDto(ClientId, SecretSet: true, LockedByEnv: false));
+        settings.SetupWizardSeen.ShouldBeTrue();
+        settings.ChatModel.ShouldBe("chat-model-a");
+        settings.EmbeddingModel.ShouldBe("embed-model-a");
+        settings.OllamaBaseUrl.ShouldBe("https://llm.example.com/");
+    }
+
+    private async Task UpdateInScopeAsync(Func<AppSettings, AppSettings> change)
+    {
+        await Task.Yield();
+        await using var scope = factory.Services.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<ISettingsStore>();
+        await store.UpdateAsync(change, Ct);
     }
 
     public static TheoryData<string?, string?, string?> InvalidSettings => new()

@@ -35,8 +35,16 @@ public sealed class SettingsStore(
 
     public async Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> change, CancellationToken ct = default)
     {
-        var row = await db.Settings.SingleOrDefaultAsync(r => r.Id == SettingsRow.SingletonId, ct);
-        var stored = Parse(row?.Document);
+        // Read-modify-write under a row lock: ensure the singleton exists (concurrent first inserts
+        // wait on the PK and then do nothing), then lock it so concurrent updates apply one after another.
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlAsync(
+            $"INSERT INTO settings (id, document) VALUES ({SettingsRow.SingletonId}, '{{}}'::jsonb) ON CONFLICT (id) DO NOTHING",
+            ct);
+        var row = (await db.Settings
+            .FromSql($"SELECT * FROM settings WHERE id = {SettingsRow.SingletonId} FOR UPDATE")
+            .ToListAsync(ct)).Single();
+        var stored = Parse(row.Document);
 
         var before = JsonSerializer.SerializeToNode(Effective(stored), Json)!.AsObject();
         var after = JsonSerializer.SerializeToNode(change(Effective(stored)), Json)!.AsObject();
@@ -48,15 +56,10 @@ public sealed class SettingsStore(
             }
         }
 
-        if (row is null)
-        {
-            row = new SettingsRow();
-            db.Settings.Add(row);
-        }
-
         row.Document = stored.ToJsonString(Json);
         row.UpdatedAt = time.GetUtcNow();
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return Effective(stored);
     }
 
