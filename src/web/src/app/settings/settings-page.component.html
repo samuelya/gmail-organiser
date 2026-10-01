@@ -1,0 +1,33 @@
+<app-page-header title="Settings" />
+<div class="flex flex-col gap-4">
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-google">
+    <mat-card-content data-testid="section-google">
+      <h2 id="settings-google" class="section-title">Google</h2>
+      <p class="section-hint">The OAuth client the organiser signs in with.</p>
+      <app-google-client-step (clientChange)="onClientChange($event)" />
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-gmail">
+    <mat-card-content data-testid="section-gmail">
+      <h2 id="settings-gmail" class="section-title">Gmail connection</h2>
+      <p class="section-hint">The mailbox the organiser reads and labels.</p>
+      <app-connect-gmail-step
+        [clientSaved]="clientSaved()"
+        [confirmDisconnect]="true"
+        clientLocation="in the Google section"
+      />
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-ollama">
+    <mat-card-content data-testid="section-ollama">
+      <h2 id="settings-ollama" class="section-title">Ollama</h2>
+      <p class="section-hint">The local LLM server and the models it runs.</p>
+      <div class="flex flex-col gap-6">
+        <app-ollama-url-step (saved)="ollamaUrl.set($event)" />
+        <app-models-step [baseUrl]="ollamaUrl()" />
+      </div>
+    </mat-card-content>
+  </mat-card>
+</div>
