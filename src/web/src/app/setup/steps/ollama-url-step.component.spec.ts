@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
+import { Observable, of, Subject, throwError } from 'rxjs';
+import { SetupState } from '../setup-state';
 import { LlmModels, LlmService } from '../../core/llm.service';
 import { AppSettings, SetupService } from '../setup.service';
 import { httpUrlValidator, OllamaUrlStep } from './ollama-url-step.component';
@@ -21,15 +22,18 @@ describe('OllamaUrlStep', () => {
   let models: Subject<LlmModels>;
   let getModels: ReturnType<typeof vi.fn>;
   let saveSettings: ReturnType<typeof vi.fn>;
+  let refresh: ReturnType<typeof vi.fn>;
 
-  async function render() {
+  async function render(getSettings: () => Observable<AppSettings> = () => of(settings())) {
     models = new Subject<LlmModels>();
     getModels = vi.fn(() => models);
     saveSettings = vi.fn((r: { ollamaBaseUrl: string }) => of(settings(r.ollamaBaseUrl)));
+    refresh = vi.fn(() => of(null));
     TestBed.configureTestingModule({
       providers: [
-        { provide: SetupService, useValue: { getSettings: () => of(settings()), saveSettings } },
+        { provide: SetupService, useValue: { getSettings, saveSettings } },
         { provide: LlmService, useValue: { getModels } },
+        { provide: SetupState, useValue: { refresh } },
       ],
     });
     const fixture = TestBed.createComponent(OllamaUrlStep);
@@ -85,6 +89,24 @@ describe('OllamaUrlStep', () => {
     await fixture.whenStable();
     expect(saveSettings).toHaveBeenCalledWith({ ollamaBaseUrl: 'http://saved.example.com:11434' });
     expect(saved).toEqual(['http://saved.example.com:11434']);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed settings load shows an error and keeps Test and Save usable', async () => {
+    const { fixture, q } = await render(() => throwError(() => new Error('down')));
+    await fixture.whenStable();
+    expect(q('load-error')).not.toBeNull();
+    expect((q('test-url') as HTMLButtonElement).disabled).toBe(false);
+    expect((q('save-url') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('a failed test request shows a message and re-enables Test URL', async () => {
+    const { fixture, q } = await render();
+    q('test-url')!.click();
+    models.error(new Error('500'));
+    await fixture.whenStable();
+    expect(q('test-error')).not.toBeNull();
+    expect((q('test-url') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('does not save or test an invalid URL', async () => {

@@ -49,7 +49,7 @@
       <mat-step [completed]="completed[2]()">
         <ng-template matStepLabel>Ollama URL</ng-template>
         <div class="py-4">
-          <app-ollama-url-step (urlChange)="ollamaUrl.set($event)" (saved)="onSaved(2)" />
+          <app-ollama-url-step (urlChange)="onUrlChange($event)" (saved)="onSaved(2)" />
         </div>
         <div class="flex flex-wrap gap-2">
           <button mat-button matStepperPrevious type="button">Back</button>

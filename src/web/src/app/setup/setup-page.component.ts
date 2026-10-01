@@ -14,7 +14,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatStepper, MatStepperModule } from '@angular/material/stepper';
 import { ActivatedRoute, Router } from '@angular/router';
-import { map, switchMap } from 'rxjs';
+import { map, switchMap, tap } from 'rxjs';
 import { PageHeader } from '../layout/page-header';
 import { SetupState } from './setup-state';
 import { GoogleAuthStatus, GoogleClientSettings, SetupService } from './setup.service';
@@ -147,6 +147,12 @@ export class SetupPage {
     this.advance();
   }
 
+  /** Step 3 reports the saved URL (on load and after a save): an existing URL completes the step. */
+  onUrlChange(url: string): void {
+    this.ollamaUrl.set(url);
+    if (url) this.completed[STEP_OLLAMA].set(true);
+  }
+
   /** Step 3 or 4 saved: the step is done; move on once rendered. */
   onSaved(index: number): void {
     this.completed[index].set(true);
@@ -164,7 +170,10 @@ export class SetupPage {
     this.finishing.set(true);
     this.setup
       .saveSettings({ setupWizardSeen: true })
-      .pipe(switchMap(() => this.setupState.refresh()))
+      .pipe(
+        tap(() => this.setupState.markWizardSeen()),
+        switchMap(() => this.setupState.refresh()),
+      )
       .subscribe({
         next: () => void this.router.navigate(['/dashboard']),
         error: () => this.finishing.set(false),

@@ -24,6 +24,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Subscription } from 'rxjs';
 import { LlmModels, LlmService } from '../../core/llm.service';
+import { SetupState } from '../setup-state';
 import { SetupService } from '../setup.service';
 
 /** Same rule as the API: an absolute http or https URL. */
@@ -57,6 +58,7 @@ export function httpUrlValidator(control: AbstractControl<string>): ValidationEr
 })
 export class OllamaUrlStep implements OnInit {
   private readonly setup = inject(SetupService);
+  private readonly setupState = inject(SetupState);
   private readonly llm = inject(LlmService);
   private readonly snackBar = inject(MatSnackBar);
   private readonly destroyRef = inject(DestroyRef);
@@ -71,6 +73,10 @@ export class OllamaUrlStep implements OnInit {
   readonly saving = signal(false);
   readonly testing = signal(false);
   readonly result = signal<LlmModels | null>(null);
+  /** The saved settings could not be loaded; the field stays editable. */
+  readonly loadFailed = signal(false);
+  /** The test request itself failed (not an unreachable Ollama, which is a result). */
+  readonly testFailed = signal(false);
 
   readonly form = new FormGroup({
     url: new FormControl('', {
@@ -83,17 +89,26 @@ export class OllamaUrlStep implements OnInit {
   constructor() {
     this.destroyRef.onDestroy(() => this.testSub?.unsubscribe());
     // A test result belongs to the URL it was run for.
-    this.url.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => this.result.set(null));
+    this.url.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
+      this.result.set(null);
+      this.testFailed.set(false);
+    });
   }
 
   ngOnInit(): void {
     this.setup
       .getSettings()
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((settings) => {
-        this.url.reset(settings.ollamaBaseUrl);
-        this.loaded.set(true);
-        this.urlChange.emit(settings.ollamaBaseUrl);
+      .subscribe({
+        next: (settings) => {
+          this.url.reset(settings.ollamaBaseUrl);
+          this.loaded.set(true);
+          this.urlChange.emit(settings.ollamaBaseUrl);
+        },
+        error: () => {
+          this.loadFailed.set(true);
+          this.loaded.set(true);
+        },
       });
   }
 
@@ -104,12 +119,17 @@ export class OllamaUrlStep implements OnInit {
     }
     this.testSub?.unsubscribe();
     this.testing.set(true);
+    this.result.set(null);
+    this.testFailed.set(false);
     this.testSub = this.llm.getModels(this.url.value.trim()).subscribe({
       next: (models) => {
         this.testing.set(false);
         this.result.set(models);
       },
-      error: () => this.testing.set(false),
+      error: () => {
+        this.testing.set(false);
+        this.testFailed.set(true);
+      },
     });
   }
 
@@ -127,6 +147,8 @@ export class OllamaUrlStep implements OnInit {
       .subscribe({
         next: (settings) => {
           this.saving.set(false);
+          this.loadFailed.set(false);
+          this.setupState.refresh().subscribe();
           this.url.reset(settings.ollamaBaseUrl, { emitEvent: false });
           this.snackBar.open('Ollama URL saved', undefined, { duration: 3000 });
           this.urlChange.emit(settings.ollamaBaseUrl);

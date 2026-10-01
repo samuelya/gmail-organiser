@@ -163,6 +163,20 @@ describe('SetupPage', () => {
     expect(selectedLabel(el)).toContain('Models');
   });
 
+  it('an already-saved Ollama URL completes step 3 without saving again', async () => {
+    const { page, el, harness } = await open('/setup');
+    page.completed[STEP_GOOGLE_CLIENT].set(true);
+    page.completed[STEP_CONNECT_GMAIL].set(true);
+    await harness.fixture.whenStable();
+    page.stepper().selectedIndex = STEP_OLLAMA;
+    await harness.fixture.whenStable();
+    expect(page.completed[STEP_OLLAMA]()).toBe(true);
+    expect(saveSettings).not.toHaveBeenCalled();
+    // One Next button per step 1-4, in order: the third belongs to the Ollama URL step.
+    const next = el.querySelectorAll<HTMLButtonElement>('button[matStepperNext]')[STEP_OLLAMA];
+    expect(next.disabled).toBe(false);
+  });
+
   it('the summary links back to a step', async () => {
     const { page, el, harness } = await open('/setup');
     [STEP_GOOGLE_CLIENT, STEP_CONNECT_GMAIL, STEP_OLLAMA, STEP_MODELS].forEach((i) =>

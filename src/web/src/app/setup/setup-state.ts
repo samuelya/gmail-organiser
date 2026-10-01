@@ -13,6 +13,8 @@ export const BANNER_DISMISSED_KEY = 'gmo.setupBannerDismissed';
 export class SetupState {
   private readonly setup = inject(SetupService);
   private inFlight: Observable<SetupStatus | null> | null = null;
+  /** Incremented per refresh; only the newest request may set `status`. */
+  private generation = 0;
 
   /** `null` until loaded, or when the status call failed. */
   readonly status = signal<SetupStatus | null>(null);
@@ -24,20 +26,40 @@ export class SetupState {
     return !!status && !status.complete && status.wizardSeen && !this.dismissed();
   });
 
-  /** The cached status, or one shared request for it. Never errors: a failure yields `null`. */
+  /** The cached status, or the latest pending request for it. Never errors: a failure yields `null`. */
   load(): Observable<SetupStatus | null> {
     if (this.status()) return of(this.status());
-    return this.refresh();
+    return this.inFlight ?? this.refresh();
   }
 
+  /**
+   * Always starts a new request, so the result reflects every change saved before the call. A
+   * response from an older request that arrives later does not overwrite the newer one.
+   */
   refresh(): Observable<SetupStatus | null> {
-    this.inFlight ??= this.setup.getSetupStatus().pipe(
-      tap((status) => this.status.set(status)),
+    const generation = ++this.generation;
+    const request: Observable<SetupStatus | null> = this.setup.getSetupStatus().pipe(
+      tap((status) => {
+        if (generation === this.generation) this.status.set(status);
+      }),
       catchError(() => of(null)),
-      finalize(() => (this.inFlight = null)),
+      finalize(() => {
+        if (this.inFlight === request) this.inFlight = null;
+      }),
       shareReplay({ bufferSize: 1, refCount: false }),
     );
-    return this.inFlight;
+    this.inFlight = request;
+    return request;
+  }
+
+  /**
+   * The wizard-seen flag was saved: update the cached status at once, so the guard does not
+   * redirect even if the following refresh fails. Supersedes any older pending request.
+   */
+  markWizardSeen(): void {
+    this.generation++;
+    const status = this.status();
+    if (status) this.status.set({ ...status, wizardSeen: true });
   }
 
   /** Hides the banner for the rest of the browser session. */

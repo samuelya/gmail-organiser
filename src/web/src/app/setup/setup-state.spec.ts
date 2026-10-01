@@ -78,6 +78,38 @@ describe('SetupState and setupGuard', () => {
     expect(getSetupStatus).toHaveBeenCalledTimes(1);
   });
 
+  it('refresh starts a new request even while an older one is pending; the older result is dropped', async () => {
+    const older = new Subject<SetupStatus>();
+    const newer = new Subject<SetupStatus>();
+    getSetupStatus.mockReturnValueOnce(older).mockReturnValueOnce(newer);
+    const state = TestBed.inject(SetupState);
+    void firstValueFrom(state.refresh());
+    const fresh = firstValueFrom(state.refresh());
+    expect(getSetupStatus).toHaveBeenCalledTimes(2);
+    newer.next(status({ wizardSeen: true }));
+    newer.complete();
+    expect((await fresh)?.wizardSeen).toBe(true);
+    older.next(status({ wizardSeen: false }));
+    older.complete();
+    expect(state.status()?.wizardSeen).toBe(true);
+    expect(await runGuard()).toBe(true);
+  });
+
+  it('markWizardSeen updates the cache, so a stale or failed later status does not redirect', async () => {
+    const stale = new Subject<SetupStatus>();
+    getSetupStatus.mockReturnValueOnce(of(status({}))).mockReturnValueOnce(stale);
+    const state = TestBed.inject(SetupState);
+    await firstValueFrom(state.load());
+    void firstValueFrom(state.refresh()); // e.g. the summary step, started before Finish saved
+    state.markWizardSeen();
+    getSetupStatus.mockReturnValue(throwError(() => new Error('down')));
+    expect(await firstValueFrom(state.refresh())).toBeNull();
+    stale.next(status({ wizardSeen: false }));
+    stale.complete();
+    expect(state.status()?.wizardSeen).toBe(true);
+    expect(await runGuard()).toBe(true);
+  });
+
   it('dismissing hides the banner for the session', async () => {
     getSetupStatus.mockReturnValue(of(status({ wizardSeen: true })));
     const state = TestBed.inject(SetupState);
