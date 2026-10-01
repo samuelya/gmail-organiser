@@ -7,7 +7,7 @@
   } @else if (!reachable()) {
     <p class="m-0 flex items-center gap-2" data-testid="models-unreachable">
       <mat-icon aria-hidden="true">error</mat-icon>
-      Ollama is not reachable{{ models()?.error ? ': ' + models()?.error : '.' }}
+      {{ models()?.error || 'Ollama is not reachable.' }}
     </p>
     <p class="m-0 text-sm">Check the Ollama URL, then refresh the list.</p>
   }

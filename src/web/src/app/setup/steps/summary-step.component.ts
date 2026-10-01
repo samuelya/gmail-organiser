@@ -65,7 +65,7 @@ export function summaryItems(status: SetupStatus, steps: SummarySteps): SummaryI
             }}</mat-icon>
             <span class="flex-1">{{ item.label }}</span>
             <span class="text-sm" [attr.data-testid]="'state-' + $index">
-              {{ item.ok ? 'OK' : item.optional ? 'Optional, not set' : 'Missing' }}
+              {{ item.ok ? 'OK' : item.optional ? 'Optional' : 'Missing' }}
             </span>
             <button
               mat-button
@@ -82,8 +82,8 @@ export function summaryItems(status: SetupStatus, steps: SummarySteps): SummaryI
         @if (s.complete) {
           Setup is complete.
         } @else {
-          Setup is incomplete: connect Gmail and select a chat model to start organising. You can
-          finish now and come back later.
+          Setup is incomplete: {{ todo() }} to start organising. You can finish now and come back
+          later.
         }
       </p>
     } @else if (failed()) {
@@ -107,6 +107,16 @@ export class SummaryStep {
   readonly items = computed(() => {
     const status = this.status();
     return status ? summaryItems(status, this.steps()) : [];
+  });
+
+  /** What still blocks completion: Gmail and a chat model. */
+  readonly todo = computed(() => {
+    const status = this.status();
+    const steps = [
+      status?.gmailConnected ? null : 'connect Gmail',
+      status?.chatModelSelected ? null : 'select a chat model',
+    ].filter((step) => !!step);
+    return steps.join(' and ');
   });
 
   constructor() {

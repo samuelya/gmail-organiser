@@ -19,6 +19,20 @@ const status = (over: Partial<SetupStatus> = {}): SetupStatus => ({
 });
 
 describe('SummaryStep', () => {
+  it('names only what still blocks completion', async () => {
+    const refresh = vi.fn(() => of(status({ gmailConnected: true, chatModelSelected: false })));
+    TestBed.configureTestingModule({ providers: [{ provide: SetupState, useValue: { refresh } }] });
+    const fixture = TestBed.createComponent(SummaryStep);
+    fixture.componentRef.setInput('steps', STEPS);
+    fixture.componentRef.setInput('active', true);
+    await fixture.whenStable();
+    const verdict = (fixture.nativeElement as HTMLElement).querySelector(
+      '[data-testid="summary-verdict"]',
+    )?.textContent;
+    expect(verdict).toContain('select a chat model');
+    expect(verdict).not.toContain('connect Gmail');
+  });
+
   it('maps every status item to ok or missing with its step', () => {
     const items = summaryItems(status(), STEPS);
     expect(items.map((i) => [i.ok, i.step])).toEqual([

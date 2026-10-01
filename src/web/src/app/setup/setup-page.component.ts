@@ -3,6 +3,7 @@ import {
   afterNextRender,
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
   inject,
   Injector,
   signal,
@@ -34,6 +35,9 @@ export const STEP_MODELS = 3;
 export const STEP_SUMMARY = 4;
 
 const WIDE_QUERY = '(min-width: 960px)';
+/** The selected step's header: `aria-selected` when horizontal, `aria-expanded` when vertical. */
+const SELECTED_HEADER =
+  '.mat-step-header[aria-selected="true"], .mat-step-header[aria-expanded="true"]';
 
 /** `/setup`: a linear wizard where every step can be skipped; "Finish" marks the wizard as seen. */
 @Component({
@@ -56,6 +60,7 @@ export class SetupPage {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly injector = inject(Injector);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly setup = inject(SetupService);
   private readonly setupState = inject(SetupState);
   readonly stepper = viewChild.required(MatStepper);
@@ -139,13 +144,13 @@ export class SetupPage {
   skip(index: number): void {
     this.skipped.add(index);
     this.completed[index].set(true);
-    afterNextRender(() => this.stepper().next(), { injector: this.injector });
+    this.advance();
   }
 
   /** Step 3 or 4 saved: the step is done; move on once rendered. */
   onSaved(index: number): void {
     this.completed[index].set(true);
-    afterNextRender(() => this.stepper().next(), { injector: this.injector });
+    this.advance();
   }
 
   /** From the summary: steps before it are always reachable in a linear stepper. */
@@ -164,5 +169,22 @@ export class SetupPage {
         next: () => void this.router.navigate(['/dashboard']),
         error: () => this.finishing.set(false),
       });
+  }
+
+  /**
+   * Moves on once the completion has rendered. Focus goes to the new step's header: the button
+   * that was pressed is now hidden, and focus would otherwise drop to the page body.
+   */
+  private advance(): void {
+    afterNextRender(
+      () => {
+        this.stepper().next();
+        afterNextRender(
+          () => this.host.nativeElement.querySelector<HTMLElement>(SELECTED_HEADER)?.focus(),
+          { injector: this.injector },
+        );
+      },
+      { injector: this.injector },
+    );
   }
 }
