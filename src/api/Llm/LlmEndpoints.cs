@@ -1,0 +1,104 @@
+using GmailOrganiser.Settings;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
+namespace GmailOrganiser.Llm;
+
+public static class LlmEndpoints
+{
+    public static IServiceCollection AddLlm(this IServiceCollection services)
+    {
+        services.AddOptions<LlmOptions>().BindConfiguration(LlmOptions.SectionName);
+        services.AddHttpClient(OllamaHttp.ClientName);
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddScoped<IOllamaCatalog, OllamaCatalog>();
+        services.AddScoped<ILlmClientFactory, LlmClientFactory>();
+        services.AddScoped<LlmModelTester>();
+        return services;
+    }
+
+    /// <summary>Maps <see cref="LlmNotConfiguredException"/> from any endpoint to a 409 ProblemDetails.</summary>
+    public static IApplicationBuilder UseLlmNotConfiguredProblem(this IApplicationBuilder app) =>
+        app.Use(async (context, next) =>
+        {
+            try
+            {
+                await next(context);
+            }
+            catch (LlmNotConfiguredException ex) when (!context.Response.HasStarted)
+            {
+                context.Response.Clear();
+                context.Response.StatusCode = StatusCodes.Status409Conflict;
+                await context.RequestServices.GetRequiredService<IProblemDetailsService>().WriteAsync(new ProblemDetailsContext
+                {
+                    HttpContext = context,
+                    ProblemDetails = { Status = StatusCodes.Status409Conflict, Title = "LLM not configured", Detail = ex.Message },
+                });
+            }
+        });
+
+    public static IEndpointRouteBuilder MapLlmEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        var group = endpoints.MapGroup("/api/llm").WithTags("Llm");
+        group.MapGet("/models", GetModelsAsync);
+        group.MapPost("/test-model", TestModelAsync);
+        return endpoints;
+    }
+
+    private static async Task<Results<Ok<LlmModelsDto>, ValidationProblem>> GetModelsAsync(
+        string? baseUrl, IOllamaCatalog catalog, CancellationToken ct)
+    {
+        if (baseUrl is not null && !SettingsValidation.IsHttpUrl(baseUrl))
+        {
+            return TypedResults.ValidationProblem(BaseUrlError);
+        }
+
+        try
+        {
+            var version = await catalog.PingAsync(baseUrl, ct);
+            var models = await catalog.ListModelsAsync(baseUrl, ct);
+            return TypedResults.Ok(LlmModelsDto.Split(version, models));
+        }
+        catch (OllamaUnreachableException ex)
+        {
+            return TypedResults.Ok(LlmModelsDto.Unreachable(ex.Message));
+        }
+    }
+
+    private static async Task<Results<Ok<TestModelResultDto>, ValidationProblem>> TestModelAsync(
+        TestModelRequest request, ISettingsStore settings, LlmModelTester tester, CancellationToken ct)
+    {
+        var errors = Validate(request);
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        var url = await OllamaCatalog.ResolveBaseUrlAsync(request.BaseUrl, settings, ct);
+        return TypedResults.Ok(await tester.TestAsync(request.Kind!, request.Model!.Trim(), url, ct));
+    }
+
+    private static Dictionary<string, string[]> BaseUrlError => new() { ["baseUrl"] = ["Must be an absolute http or https URL."] };
+
+    private static Dictionary<string, string[]> Validate(TestModelRequest request)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (request.Kind is not (ModelKinds.Chat or ModelKinds.Embedding))
+        {
+            errors["kind"] = [$"Must be '{ModelKinds.Chat}' or '{ModelKinds.Embedding}'."];
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Model) || request.Model.Trim().Length > SettingsValidation.MaxModelNameLength
+            || request.Model.Any(char.IsControl))
+        {
+            errors["model"] = [$"Required; at most {SettingsValidation.MaxModelNameLength} characters, without control characters."];
+        }
+
+        if (request.BaseUrl is not null && !SettingsValidation.IsHttpUrl(request.BaseUrl))
+        {
+            errors["baseUrl"] = BaseUrlError["baseUrl"];
+        }
+
+        return errors;
+    }
+}
