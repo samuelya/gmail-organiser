@@ -1,0 +1,99 @@
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-1" novalidate>
+  @if (locked()) {
+    <p class="m-0 mb-2 flex items-center gap-2" data-testid="locked-note">
+      <mat-icon aria-hidden="true">lock</mat-icon>
+      Set in .env. Change GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET there.
+    </p>
+  }
+
+  @if (editing()) {
+    <mat-form-field>
+      <mat-label>Client ID</mat-label>
+      <input
+        matInput
+        formControlName="clientId"
+        autocomplete="off"
+        spellcheck="false"
+        data-testid="client-id"
+      />
+      @if (form.controls.clientId.hasError('required')) {
+        <mat-error>Client ID is required.</mat-error>
+      } @else if (form.controls.clientId.hasError('googleClientId')) {
+        <mat-error>Client ID must end with {{ suffix }}.</mat-error>
+      } @else if (form.controls.clientId.hasError('server')) {
+        <mat-error>{{ form.controls.clientId.getError('server') }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field>
+      <mat-label>Client secret</mat-label>
+      <input
+        matInput
+        type="password"
+        formControlName="clientSecret"
+        autocomplete="new-password"
+        data-testid="client-secret"
+      />
+      @if (form.controls.clientSecret.hasError('required')) {
+        <mat-error>Client secret is required.</mat-error>
+      } @else if (form.controls.clientSecret.hasError('server')) {
+        <mat-error>{{ form.controls.clientSecret.getError('server') }}</mat-error>
+      }
+    </mat-form-field>
+
+    <div class="flex flex-wrap gap-2">
+      <button mat-flat-button type="submit" [disabled]="saving()" data-testid="save">Save</button>
+      @if (replacing()) {
+        <button mat-button type="button" (click)="cancelReplace()">Cancel</button>
+      }
+    </div>
+  } @else if (client()) {
+    <mat-form-field>
+      <mat-label>Client ID</mat-label>
+      <input matInput readonly [value]="client()?.clientId ?? ''" data-testid="client-id" />
+    </mat-form-field>
+
+    <mat-form-field>
+      <mat-label>Client secret</mat-label>
+      <input
+        matInput
+        readonly
+        [value]="secretSet() ? secretMask : 'Not set'"
+        data-testid="client-secret"
+      />
+      @if (!locked() && secretSet()) {
+        <button
+          mat-button
+          matSuffix
+          type="button"
+          (click)="replace()"
+          data-testid="replace"
+          aria-label="Replace the client ID and secret"
+        >
+          Replace
+        </button>
+      }
+    </mat-form-field>
+  }
+
+  @if (redirectUri(); as uri) {
+    <mat-form-field class="mt-2">
+      <mat-label>Authorised redirect URI</mat-label>
+      <input matInput readonly [value]="uri" data-testid="redirect-uri" />
+      <button
+        mat-icon-button
+        matSuffix
+        type="button"
+        (click)="copyRedirectUri()"
+        aria-label="Copy redirect URI"
+      >
+        <mat-icon>content_copy</mat-icon>
+      </button>
+      <mat-hint>Add this URI to the OAuth client in Google Cloud.</mat-hint>
+    </mat-form-field>
+    <p class="m-0 mt-2 text-sm">
+      Register the redirect URI for both ways of running the app: the dev server (ng serve) and
+      docker compose each have their own port. See <code>{{ guide }}</code> in the repository.
+    </p>
+  }
+</form>
