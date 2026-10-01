@@ -9,7 +9,7 @@
 appsettings.*.local.json
 secrets.json
 client_secret*.json
-data/
+/data/
 
 # ---------- Claude Code (local) ----------
 .claude/settings.local.json
