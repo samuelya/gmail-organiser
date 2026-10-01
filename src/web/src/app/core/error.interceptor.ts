@@ -31,7 +31,9 @@ export function errorMessage(error: HttpErrorResponse): string {
   const detail = problem?.detail?.trim();
   if (title && detail) return `${title}: ${detail}`;
   if (title || detail) return (title || detail) as string;
-  return error.statusText ? `${error.status} ${error.statusText}` : `Request failed (${error.status})`;
+  return error.statusText
+    ? `${error.status} ${error.statusText}`
+    : `Request failed (${error.status})`;
 }
 
 function asProblem(body: unknown): ProblemDetails | null {

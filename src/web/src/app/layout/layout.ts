@@ -1,5 +1,13 @@
 import { BreakpointObserver } from '@angular/cdk/layout';
-import { ChangeDetectionStrategy, Component, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  ElementRef,
+  computed,
+  inject,
+  signal,
+  viewChild,
+} from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
@@ -48,15 +56,20 @@ export class Layout {
   private readonly breakpoints = inject(BreakpointObserver);
   private readonly main = viewChild.required<ElementRef<HTMLElement>>('main');
 
-  protected readonly isWide = toSignal(this.breakpoints.observe(WIDE_QUERY).pipe(map((s) => s.matches)), {
-    initialValue: this.breakpoints.isMatched(WIDE_QUERY),
-  });
+  protected readonly isWide = toSignal(
+    this.breakpoints.observe(WIDE_QUERY).pipe(map((s) => s.matches)),
+    {
+      initialValue: this.breakpoints.isMatched(WIDE_QUERY),
+    },
+  );
   /** Persisted collapse state for the docked (side) nav. */
   private readonly collapsed = signal(readLocal(NAV_COLLAPSED_KEY) === 'true');
   /** Overlay nav state on narrow screens; always starts closed. */
   private readonly overlayOpen = signal(false);
 
-  protected readonly navOpen = computed(() => (this.isWide() ? !this.collapsed() : this.overlayOpen()));
+  protected readonly navOpen = computed(() =>
+    this.isWide() ? !this.collapsed() : this.overlayOpen(),
+  );
   protected readonly themeIcon = computed(() => THEME_ICONS[this.theme.choice()]);
   protected readonly themeLabel = computed(() => `Theme: ${this.theme.choice()} (change)`);
 
