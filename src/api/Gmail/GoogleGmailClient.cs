@@ -33,6 +33,7 @@ public sealed class GoogleGmailClient(ITokenStore tokens, GoogleClientService go
             catch (TokenResponseException ex) when (ex.Error?.Error == "invalid_grant")
             {
                 // Revoked, or expired (a consent screen in Testing mode issues 7-day refresh tokens).
+                await tokens.MarkReauthRequiredAsync(CancellationToken.None);
                 throw new GmailNotConnectedException("The Gmail connection was revoked or has expired; reconnect Gmail.", ex);
             }
         }
@@ -42,6 +43,11 @@ public sealed class GoogleGmailClient(ITokenStore tokens, GoogleClientService go
     {
         var token = await tokens.GetAsync(ct)
             ?? throw new GmailNotConnectedException("Gmail is not connected.");
+        if (token.ReauthRequired)
+        {
+            throw new GmailNotConnectedException("The Gmail connection was revoked or has expired; reconnect Gmail.");
+        }
+
         var client = await googleClient.GetAsync(ct);
         if (string.IsNullOrWhiteSpace(client.ClientId) || string.IsNullOrWhiteSpace(client.ClientSecret))
         {
