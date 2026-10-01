@@ -1,7 +1,8 @@
 name: Images
 
 # Builds the container images (no push). Runs only when a Dockerfile, the
-# nginx config or a compose file changes. Not a required check.
+# nginx config, a compose file or a build input (SDK pin, props, csproj,
+# package*.json, angular.json) changes. Not a required check.
 on:
   pull_request:
     paths:
@@ -9,6 +10,11 @@ on:
       - "src/*/Dockerfile.dockerignore"
       - "src/web/.dockerignore"
       - "src/web/nginx.conf"
+      - "global.json"
+      - "Directory.Build.props"
+      - "src/api/**/*.csproj"
+      - "src/web/package*.json"
+      - "src/web/angular.json"
       - "docker-compose*.yml"
       - ".github/workflows/images.yml"
   push:
@@ -18,6 +24,11 @@ on:
       - "src/*/Dockerfile.dockerignore"
       - "src/web/.dockerignore"
       - "src/web/nginx.conf"
+      - "global.json"
+      - "Directory.Build.props"
+      - "src/api/**/*.csproj"
+      - "src/web/package*.json"
+      - "src/web/angular.json"
       - "docker-compose*.yml"
       - ".github/workflows/images.yml"
 

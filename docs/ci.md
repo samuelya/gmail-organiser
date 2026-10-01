@@ -9,7 +9,7 @@ GitHub Actions, `.github/workflows/`. Every workflow has `permissions: contents:
 | Secret scan | `secret-scan.yml` | every PR, push to `main` | `Secret scan` | gitleaks over the full history |
 | CI | `ci.yml` | every PR, push to `main` | `api` | setup-dotnet from `global.json`, restore (NuGet cache), `dotnet format --verify-no-changes`, `dotnet build -warnaserror`, `dotnet test` (Testcontainers uses the runner's Docker) |
 | CI | `ci.yml` | every PR, push to `main` | `web` | in `src/web`: setup-node from `.nvmrc` (npm cache), `npm ci`, `npm run lint`, `npm test`, `npm run build` |
-| Images | `images.yml` | PR / push to `main` that changes `src/*/Dockerfile*`, `src/web/.dockerignore`, `src/web/nginx.conf`, `docker-compose*.yml` or `images.yml` | `images` | `docker build` of the api and web images, no push |
+| Images | `images.yml` | PR / push to `main` that changes `src/*/Dockerfile*`, `src/web/.dockerignore`, `src/web/nginx.conf`, `global.json`, `Directory.Build.props`, `src/api/**/*.csproj`, `src/web/package*.json`, `src/web/angular.json`, `docker-compose*.yml` or `images.yml` | `images` | `docker build` of the api and web images, no push |
 
 A new push to a PR cancels that PR's previous run.
 
