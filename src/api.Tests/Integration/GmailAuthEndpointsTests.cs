@@ -118,10 +118,15 @@ public sealed class GmailAuthEndpointsTests(ApiFactory factory, PostgresFixture 
         oauth.Exchanges.ShouldBeEmpty();
     }
 
-    [Fact]
-    public async Task Callback_when_the_exchange_fails_redirects_with_exchange_failed()
+    [Theory]
+    [InlineData("google_error")]
+    [InlineData("timeout")]
+    public async Task Callback_when_the_exchange_fails_redirects_with_exchange_failed(string failure)
     {
-        oauth.ExchangeException = new GoogleOAuthException("refused", "invalid_grant");
+        // HttpClient reports a timeout as TaskCanceledException while the request's own token is not cancelled.
+        oauth.ExchangeException = failure == "timeout"
+            ? new TaskCanceledException("timed out", new TimeoutException())
+            : new GoogleOAuthException("refused", "invalid_grant");
         await using var host = WithGoogle();
         using var client = CreateClient(host);
 
@@ -184,10 +189,14 @@ public sealed class GmailAuthEndpointsTests(ApiFactory factory, PostgresFixture 
         (await GetStatusAsync(client)).Connected.ShouldBeTrue();
     }
 
-    [Fact]
-    public async Task Disconnect_deletes_the_token_even_if_revoke_throws()
+    [Theory]
+    [InlineData("network")]
+    [InlineData("timeout")]
+    public async Task Disconnect_deletes_the_token_even_if_revoke_throws(string failure)
     {
-        oauth.RevokeException = new HttpRequestException("network down");
+        oauth.RevokeException = failure == "timeout"
+            ? new TaskCanceledException("timed out", new TimeoutException())
+            : new HttpRequestException("network down");
         await using var host = WithGoogle();
         using var client = CreateClient(host);
         await CallbackAsync(client, await StartAsync(client));

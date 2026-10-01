@@ -87,7 +87,7 @@ public sealed class GmailConnector(
 
             accountEmail = await oauth.GetAccountEmailAsync(result.AccessToken, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             logger.LogWarning("Google code exchange failed: {ExceptionType} {GoogleError}",
                 ex.GetType().Name, (ex as GoogleOAuthException)?.Error);
@@ -109,7 +109,7 @@ public sealed class GmailConnector(
             {
                 await oauth.RevokeAsync(token.RefreshToken, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
                 logger.LogWarning("Revoking the Gmail token at Google failed ({ExceptionType}); deleting it locally anyway", ex.GetType().Name);
             }
