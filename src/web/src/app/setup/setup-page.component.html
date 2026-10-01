@@ -1,0 +1,75 @@
+<app-page-header title="Setup" />
+<mat-card appearance="outlined">
+  <mat-card-content>
+    <mat-stepper
+      [linear]="true"
+      [selectedIndex]="initialIndex"
+      [orientation]="wide() ? 'horizontal' : 'vertical'"
+      aria-label="Setup steps"
+    >
+      <mat-step [completed]="completed[0]()">
+        <ng-template matStepLabel>Google OAuth client</ng-template>
+        <div class="py-4">
+          <app-google-client-step (clientChange)="onClientChange($event)" />
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button mat-flat-button matStepperNext type="button" [disabled]="!completed[0]()">
+            Next
+          </button>
+          <button mat-button type="button" (click)="skip(0)">Skip for now</button>
+        </div>
+      </mat-step>
+
+      <mat-step [completed]="completed[1]()">
+        <ng-template matStepLabel>
+          <span class="flex flex-col">
+            <span>Connect Gmail</span>
+            @if (accountEmail(); as email) {
+              <span class="text-sm" data-testid="step-connected-as">Connected as {{ email }}</span>
+            }
+          </span>
+        </ng-template>
+        <div class="py-4">
+          <app-connect-gmail-step
+            [result]="connectResult"
+            [clientSaved]="clientSaved()"
+            (statusChange)="onStatusChange($event)"
+          />
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button mat-button matStepperPrevious type="button">Back</button>
+          <button mat-flat-button matStepperNext type="button" [disabled]="!completed[1]()">
+            Next
+          </button>
+          <button mat-button type="button" (click)="skip(1)">Skip for now</button>
+        </div>
+      </mat-step>
+
+      <mat-step [completed]="completed[2]()">
+        <ng-template matStepLabel>Ollama URL</ng-template>
+        <p class="py-4">Coming soon.</p>
+        <div class="flex flex-wrap gap-2">
+          <button mat-button matStepperPrevious type="button">Back</button>
+          <button mat-button type="button" (click)="skip(2)">Skip for now</button>
+        </div>
+      </mat-step>
+
+      <mat-step [completed]="completed[3]()">
+        <ng-template matStepLabel>Models</ng-template>
+        <p class="py-4">Coming soon.</p>
+        <div class="flex flex-wrap gap-2">
+          <button mat-button matStepperPrevious type="button">Back</button>
+          <button mat-button type="button" (click)="skip(3)">Skip for now</button>
+        </div>
+      </mat-step>
+
+      <mat-step [completed]="completed[4]()">
+        <ng-template matStepLabel>Summary</ng-template>
+        <p class="py-4">Coming soon.</p>
+        <div class="flex flex-wrap gap-2">
+          <button mat-button matStepperPrevious type="button">Back</button>
+        </div>
+      </mat-step>
+    </mat-stepper>
+  </mat-card-content>
+</mat-card>
