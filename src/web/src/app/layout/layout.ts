@@ -15,10 +15,11 @@ import { MatListModule } from '@angular/material/list';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { distinctUntilChanged, map, tap } from 'rxjs';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { distinctUntilChanged, filter, map, startWith, tap } from 'rxjs';
 import { readLocal, writeLocal } from '../core/local-store';
 import { ThemeChoice, ThemeService } from '../core/theme.service';
+import { SetupState } from '../setup/setup-state';
 import { NAV_ITEMS } from './nav-items';
 
 export const WIDE_QUERY = '(min-width: 1024px)';
@@ -52,6 +53,8 @@ export class Layout {
   protected readonly appName = 'Gmail Organiser';
   protected readonly navItems = NAV_ITEMS;
   protected readonly theme = inject(ThemeService);
+  protected readonly setupState = inject(SetupState);
+  private readonly router = inject(Router);
 
   private readonly breakpoints = inject(BreakpointObserver);
   private readonly main = viewChild.required<ElementRef<HTMLElement>>('main');
@@ -71,6 +74,25 @@ export class Layout {
       initialValue: this.breakpoints.isMatched(WIDE_QUERY),
     },
   );
+
+  private readonly url = toSignal(
+    this.router.events.pipe(
+      filter((e) => e instanceof NavigationEnd),
+      map(() => this.router.url),
+      startWith(this.router.url),
+    ),
+    { initialValue: this.router.url },
+  );
+
+  /** "Setup incomplete" banner, except on the wizard itself. */
+  protected readonly showSetupBanner = computed(
+    () => this.setupState.showBanner() && !this.url().startsWith('/setup'),
+  );
+
+  constructor() {
+    // The guard loads the status on guarded pages; this covers landing on /settings directly.
+    this.setupState.load().subscribe();
+  }
 
   protected readonly navOpen = computed(() =>
     this.isWide() ? !this.collapsed() : this.overlayOpen(),

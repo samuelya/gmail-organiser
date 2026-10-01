@@ -55,6 +55,25 @@
 
   <mat-sidenav-content>
     <main #main id="main-content" tabindex="-1" class="app-main p-4 md:p-6">
+      @if (showSetupBanner()) {
+        <div
+          class="setup-banner mb-4 flex flex-wrap items-center gap-2 rounded-lg px-4 py-2"
+          role="status"
+          data-testid="setup-banner"
+        >
+          <mat-icon aria-hidden="true">info</mat-icon>
+          <span class="flex-1">Setup incomplete — <a routerLink="/setup">finish setup</a></span>
+          <button
+            mat-icon-button
+            type="button"
+            aria-label="Dismiss the setup banner"
+            (click)="setupState.dismissBanner()"
+            data-testid="setup-banner-dismiss"
+          >
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+      }
       <router-outlet />
     </main>
   </mat-sidenav-content>

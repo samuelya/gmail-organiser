@@ -13,23 +13,29 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatStepper, MatStepperModule } from '@angular/material/stepper';
 import { ActivatedRoute, Router } from '@angular/router';
-import { map } from 'rxjs';
+import { map, switchMap } from 'rxjs';
 import { PageHeader } from '../layout/page-header';
-import { GoogleAuthStatus, GoogleClientSettings } from './setup.service';
+import { SetupState } from './setup-state';
+import { GoogleAuthStatus, GoogleClientSettings, SetupService } from './setup.service';
 import {
   ConnectGmailStep,
   ConnectResult,
   parseConnectResult,
 } from './steps/connect-gmail-step.component';
 import { GoogleClientStep } from './steps/google-client-step.component';
+import { ModelsStep } from './steps/models-step.component';
+import { OllamaUrlStep } from './steps/ollama-url-step.component';
+import { SummarySteps, SummaryStep } from './steps/summary-step.component';
 
 export const STEP_GOOGLE_CLIENT = 0;
 export const STEP_CONNECT_GMAIL = 1;
 export const STEP_OLLAMA = 2;
+export const STEP_MODELS = 3;
+export const STEP_SUMMARY = 4;
 
 const WIDE_QUERY = '(min-width: 960px)';
 
-/** `/setup`: a linear wizard where every step can be skipped. Steps 3–5 arrive with the Ollama setup. */
+/** `/setup`: a linear wizard where every step can be skipped; "Finish" marks the wizard as seen. */
 @Component({
   selector: 'app-setup-page',
   imports: [
@@ -39,6 +45,9 @@ const WIDE_QUERY = '(min-width: 960px)';
     PageHeader,
     GoogleClientStep,
     ConnectGmailStep,
+    OllamaUrlStep,
+    ModelsStep,
+    SummaryStep,
   ],
   templateUrl: './setup-page.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -47,6 +56,8 @@ export class SetupPage {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly injector = inject(Injector);
+  private readonly setup = inject(SetupService);
+  private readonly setupState = inject(SetupState);
   private readonly stepper = viewChild.required(MatStepper);
 
   readonly wide = toSignal(
@@ -65,6 +76,17 @@ export class SetupPage {
   readonly accountEmail = signal<string | null>(null);
   /** Step 1 reports a saved client ID and secret; step 2 enables Connect from it. */
   readonly clientSaved = signal(false);
+  /** The saved Ollama URL from step 3; step 4 lists and tests against it. */
+  readonly ollamaUrl = signal<string | null>(null);
+  readonly selectedIndex = signal(0);
+  readonly finishing = signal(false);
+  readonly summaryIndex = STEP_SUMMARY;
+  readonly summarySteps: SummarySteps = {
+    googleClient: STEP_GOOGLE_CLIENT,
+    gmail: STEP_CONNECT_GMAIL,
+    ollama: STEP_OLLAMA,
+    models: STEP_MODELS,
+  };
   private readonly skipped = new Set<number>();
   private statusSeen = false;
 
@@ -77,6 +99,7 @@ export class SetupPage {
         : this.connectResult?.kind === 'error'
           ? STEP_CONNECT_GMAIL
           : STEP_GOOGLE_CLIENT;
+    this.selectedIndex.set(this.initialIndex);
     if (this.connectResult?.kind === 'connected') {
       // The user got past step 1 to connect; step 2 completes only once the status confirms it.
       this.completed[STEP_GOOGLE_CLIENT].set(true);
@@ -117,5 +140,29 @@ export class SetupPage {
     this.skipped.add(index);
     this.completed[index].set(true);
     afterNextRender(() => this.stepper().next(), { injector: this.injector });
+  }
+
+  /** Step 3 or 4 saved: the step is done; move on once rendered. */
+  onSaved(index: number): void {
+    this.completed[index].set(true);
+    afterNextRender(() => this.stepper().next(), { injector: this.injector });
+  }
+
+  /** From the summary: steps before it are always reachable in a linear stepper. */
+  goTo(index: number): void {
+    this.stepper().selectedIndex = index;
+  }
+
+  /** Marks the wizard as seen (the guard stops redirecting) and opens the dashboard. */
+  finish(): void {
+    if (this.finishing()) return;
+    this.finishing.set(true);
+    this.setup
+      .saveSettings({ setupWizardSeen: true })
+      .pipe(switchMap(() => this.setupState.refresh()))
+      .subscribe({
+        next: () => void this.router.navigate(['/dashboard']),
+        error: () => this.finishing.set(false),
+      });
   }
 }
