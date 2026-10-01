@@ -46,7 +46,8 @@ public sealed class LlmClientFactory(
 
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) => Create(baseUrl, model);
 
-    // OllamaApiClient implements both IChatClient and IEmbeddingGenerator; it does not dispose a passed-in HttpClient.
+    // OllamaApiClient implements both IChatClient and IEmbeddingGenerator; its HttpClient comes from IHttpClientFactory,
+    // so disposing the client never disposes a pooled handler.
     private OllamaApiClient Create(Uri baseUrl, string model) =>
         new(OllamaHttp.Create(httpClients, baseUrl, options.Value.ModelTimeout), model);
 }

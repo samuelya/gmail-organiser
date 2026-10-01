@@ -1,6 +1,6 @@
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace GmailOrganiser.Llm;
 
