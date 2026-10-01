@@ -1,3 +1,4 @@
+using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Data;
@@ -15,9 +16,19 @@ namespace GmailOrganiser.Data;
 /// </remarks>
 public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
+    public DbSet<SettingsRow> Settings => Set<SettingsRow>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
+
+        modelBuilder.Entity<SettingsRow>(e =>
+        {
+            e.ToTable("settings", t => t.HasCheckConstraint("ck_settings_singleton", $"id = {SettingsRow.SingletonId}"));
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Id).ValueGeneratedNever();
+            e.Property(r => r.Document).HasColumnType("jsonb").IsRequired();
+        });
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>
