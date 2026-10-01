@@ -36,6 +36,11 @@ describe('SetupService', () => {
     expect(req.request.body).toEqual(body);
   });
 
+  it('gets the setup status', () => {
+    service.getSetupStatus().subscribe();
+    expect(backend.expectOne('/api/setup/status').request.method).toBe('GET');
+  });
+
   it('gets the Google auth status', () => {
     service.getGoogleStatus().subscribe();
     expect(backend.expectOne('/api/auth/google/status').request.method).toBe('GET');

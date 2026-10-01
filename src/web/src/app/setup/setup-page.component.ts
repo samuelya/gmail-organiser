@@ -63,6 +63,10 @@ export class SetupPage {
   /** Per step: done or skipped. Steps 1 and 2 also complete from the loaded state. */
   readonly completed = [false, false, false, false, false].map((done) => signal(done));
   readonly accountEmail = signal<string | null>(null);
+  /** Step 1 reports a saved client ID and secret; step 2 enables Connect from it. */
+  readonly clientSaved = signal(false);
+  private readonly skipped = new Set<number>();
+  private statusSeen = false;
 
   constructor() {
     const params = this.route.snapshot.queryParamMap;
@@ -74,9 +78,8 @@ export class SetupPage {
           ? STEP_CONNECT_GMAIL
           : STEP_GOOGLE_CLIENT;
     if (this.connectResult?.kind === 'connected') {
-      // Connecting needed the client, so both earlier steps are complete.
+      // The user got past step 1 to connect; step 2 completes only once the status confirms it.
       this.completed[STEP_GOOGLE_CLIENT].set(true);
-      this.completed[STEP_CONNECT_GMAIL].set(true);
     }
     if (this.connectResult) {
       void this.router.navigate([], {
@@ -88,16 +91,30 @@ export class SetupPage {
   }
 
   onClientChange(client: GoogleClientSettings): void {
-    if (client.clientId && client.secretSet) this.completed[STEP_GOOGLE_CLIENT].set(true);
+    const saved = !!client.clientId && client.secretSet;
+    this.clientSaved.set(saved);
+    if (saved) this.completed[STEP_GOOGLE_CLIENT].set(true);
   }
 
+  /** Step 2 is done while Gmail is connected (or the user skipped it); a disconnect clears it. */
   onStatusChange(status: GoogleAuthStatus): void {
     this.accountEmail.set(status.connected ? status.accountEmail : null);
-    if (status.connected) this.completed[STEP_CONNECT_GMAIL].set(true);
+    this.completed[STEP_CONNECT_GMAIL].set(
+      status.connected || this.skipped.has(STEP_CONNECT_GMAIL),
+    );
+    const firstStatus = !this.statusSeen;
+    this.statusSeen = true;
+    if (firstStatus && !status.connected && this.connectResult?.kind === 'connected') {
+      // The callback said connected but the status disagrees: go back to step 2.
+      afterNextRender(() => (this.stepper().selectedIndex = STEP_CONNECT_GMAIL), {
+        injector: this.injector,
+      });
+    }
   }
 
   /** "Skip for now" (and "Next" on placeholder steps): completes the step, then moves on once rendered. */
   skip(index: number): void {
+    this.skipped.add(index);
     this.completed[index].set(true);
     afterNextRender(() => this.stepper().next(), { injector: this.injector });
   }

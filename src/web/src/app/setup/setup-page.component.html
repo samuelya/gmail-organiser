@@ -32,6 +32,7 @@
         <div class="py-4">
           <app-connect-gmail-step
             [result]="connectResult"
+            [clientSaved]="clientSaved()"
             (statusChange)="onStatusChange($event)"
           />
         </div>

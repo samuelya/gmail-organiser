@@ -63,7 +63,22 @@ describe('SetupPage', () => {
           setupWizardSeen: false,
           googleClient: { clientId: null, secretSet: false, lockedByEnv: false },
         }),
+      getSetupStatus: () =>
+        of({
+          googleClientConfigured: true,
+          gmailConnected: connected,
+          gmailReauthRequired: false,
+          ollamaReachable: false,
+          chatModelSelected: false,
+          embeddingModelSelected: false,
+          wizardSeen: false,
+          complete: false,
+        }),
       getGoogleStatus: () => of(status(connected)),
+      disconnectGoogle: () => {
+        connected = false;
+        return of(undefined);
+      },
       connectGoogle,
     };
     TestBed.configureTestingModule({
@@ -112,6 +127,41 @@ describe('SetupPage', () => {
     expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(true);
     expect(q(el, 'step-connected-as')!.textContent).toContain(`Connected as ${EMAIL}`);
     expect(TestBed.inject(Router).url).toBe('/setup');
+  });
+
+  it('?gmail=connected but the status says not connected: step 2 stays open and is selected', async () => {
+    const { page, el } = await open('/setup?gmail=connected');
+    expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(false);
+    expect(selectedLabel(el)).toContain('Connect Gmail');
+  });
+
+  it('disconnect clears step 2 completion and the account', async () => {
+    connected = true;
+    const { page, el, harness } = await open('/setup?gmail=connected');
+    page.onStatusChange(status(true));
+    expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(true);
+    page.onStatusChange(status(false));
+    await harness.fixture.whenStable();
+    expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(false);
+    expect(q(el, 'step-connected-as')).toBeNull();
+  });
+
+  it('a skipped step 2 stays completed when not connected', async () => {
+    const { page, harness } = await open('/setup');
+    page.skip(STEP_GOOGLE_CLIENT);
+    await harness.fixture.whenStable();
+    page.skip(STEP_CONNECT_GMAIL);
+    page.onStatusChange(status(false));
+    expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(true);
+  });
+
+  it('step 1 reports the saved client: completes it and passes it to step 2', async () => {
+    const { page } = await open('/setup');
+    page.onClientChange({ clientId: 'id.example.com', secretSet: true, lockedByEnv: false });
+    expect(page.clientSaved()).toBe(true);
+    expect(page.completed[STEP_GOOGLE_CLIENT]()).toBe(true);
+    page.onClientChange({ clientId: null, secretSet: false, lockedByEnv: false });
+    expect(page.clientSaved()).toBe(false);
   });
 
   for (const reason of ['missing_scopes', 'access_denied', 'state_mismatch', 'exchange_failed']) {

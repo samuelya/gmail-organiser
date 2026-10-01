@@ -52,7 +52,15 @@ export function parseConnectResult(
           <mat-icon aria-hidden="true" class="shrink-0">error</mat-icon>
           <div class="flex flex-col items-start gap-2">
             <p class="m-0">{{ message }}</p>
-            <button mat-flat-button type="button" (click)="connect()" data-testid="retry">
+            <button
+              mat-flat-button
+              type="button"
+              (click)="connect()"
+              [disabled]="!clientConfigured()"
+              [disabledInteractive]="true"
+              [attr.aria-describedby]="clientConfigured() ? null : noClientId"
+              data-testid="retry"
+            >
               Retry
             </button>
           </div>
@@ -66,7 +74,17 @@ export function parseConnectResult(
             Connected as {{ s.accountEmail }}
           </p>
           <div class="flex flex-wrap gap-2">
-            <button mat-stroked-button type="button" (click)="connect()">Reconnect</button>
+            <button
+              mat-stroked-button
+              type="button"
+              (click)="connect()"
+              [disabled]="!clientConfigured()"
+              [disabledInteractive]="true"
+              [attr.aria-describedby]="clientConfigured() ? null : noClientId"
+              data-testid="reconnect"
+            >
+              Reconnect
+            </button>
             <button
               mat-button
               type="button"
@@ -83,18 +101,35 @@ export function parseConnectResult(
               Gmail access for {{ s.accountEmail }} has expired or was revoked. Connect again.
             </p>
           } @else {
-            <p class="m-0">
-              Opens Google's consent screen. Save the Google OAuth client in step 1 first.
-            </p>
+            <p class="m-0">Opens Google's consent screen.</p>
           }
           @if (!error()) {
             <div>
-              <button mat-flat-button type="button" (click)="connect()" data-testid="connect">
+              <button
+                mat-flat-button
+                type="button"
+                (click)="connect()"
+                [disabled]="!clientConfigured()"
+                [disabledInteractive]="true"
+                [attr.aria-describedby]="clientConfigured() ? null : noClientId"
+                data-testid="connect"
+              >
                 Connect Gmail
               </button>
             </div>
           }
         }
+      }
+
+      @if (!clientConfigured()) {
+        <p class="m-0 flex items-center gap-2" [id]="noClientId" data-testid="no-client">
+          <mat-icon aria-hidden="true">info</mat-icon>
+          @if (clientChecked()) {
+            Save the Google OAuth client in step 1 before connecting.
+          } @else {
+            Checking the Google OAuth client…
+          }
+        </p>
       }
     </div>
   `,
@@ -106,12 +141,23 @@ export class ConnectGmailStep implements OnInit {
 
   /** Set when the OAuth callback redirected back to the page. */
   readonly result = input<ConnectResult | null>(null);
+  /** Set by the host once the Google OAuth client is saved (the wizard's step 1). */
+  readonly clientSaved = input(false);
   /** Emits the connection status after every load. */
   readonly statusChange = output<GoogleAuthStatus>();
 
   readonly status = signal<GoogleAuthStatus | null>(null);
   readonly busy = signal(false);
   private readonly dismissedError = signal(false);
+  /** `googleClientConfigured` from the setup status: also true with the fake Gmail, which needs no client. */
+  private readonly clientConfiguredByApi = signal<boolean | null>(null);
+
+  readonly noClientId = 'connect-gmail-no-client';
+  /** Without a client the start endpoint answers 409 JSON instead of redirecting, so Connect waits for one. */
+  readonly clientConfigured = computed(
+    () => this.clientSaved() || this.clientConfiguredByApi() === true,
+  );
+  readonly clientChecked = computed(() => this.clientConfiguredByApi() !== null);
 
   readonly error = computed(() => {
     const result = this.result();
@@ -123,9 +169,17 @@ export class ConnectGmailStep implements OnInit {
   // Loads in ngOnInit (not the constructor) so the outputs have listeners when the first value arrives.
   ngOnInit(): void {
     this.load();
+    this.setup
+      .getSetupStatus()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (s) => this.clientConfiguredByApi.set(s.googleClientConfigured),
+        error: () => this.clientConfiguredByApi.set(false),
+      });
   }
 
   connect(): void {
+    if (!this.clientConfigured()) return;
     this.setup.connectGoogle();
   }
 

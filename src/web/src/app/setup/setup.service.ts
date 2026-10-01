@@ -39,6 +39,19 @@ export interface GoogleAuthStatus {
   redirectUri: string;
 }
 
+/** `SetupStatusDto` from `GET /api/setup/status`. */
+export interface SetupStatus {
+  /** True when a client ID and secret are saved, or always with the fake Gmail. */
+  googleClientConfigured: boolean;
+  gmailConnected: boolean;
+  gmailReauthRequired: boolean;
+  ollamaReachable: boolean;
+  chatModelSelected: boolean;
+  embeddingModelSelected: boolean;
+  wizardSeen: boolean;
+  complete: boolean;
+}
+
 export const GOOGLE_CONNECT_URL = '/api/auth/google/start';
 
 /** Full-page navigation (the OAuth start endpoint redirects to Google, so it can't be an XHR call). */
@@ -62,6 +75,10 @@ export class SetupService {
 
   saveGoogleClient(request: GoogleClientRequest): Observable<AppSettings> {
     return this.http.put<AppSettings>('/api/settings/google-client', request);
+  }
+
+  getSetupStatus(): Observable<SetupStatus> {
+    return this.http.get<SetupStatus>('/api/setup/status');
   }
 
   getGoogleStatus(): Observable<GoogleAuthStatus> {
