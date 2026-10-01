@@ -1,0 +1,3 @@
+# EF Core migrations are tool-generated: keep them as generated, never reformat or edit applied ones.
+[*.cs]
+generated_code = true
