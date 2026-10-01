@@ -25,6 +25,9 @@ cp .env.example .env            # optional: edit ports, Google client ID/secret,
 docker compose up -d --build
 ```
 
+If you change `WEB_PORT`, set `APP_BASE_URL` to the same port too (e.g. `http://localhost:5280`): the Google
+redirect URI is built from `APP_BASE_URL`, and a mismatch makes Google reject sign-in with `redirect_uri_mismatch`.
+
 Open <http://localhost:5180> (or your `WEB_PORT`) and run the setup wizard: enter your Google OAuth client, connect
 Gmail, point the app at Ollama and choose your models.
 

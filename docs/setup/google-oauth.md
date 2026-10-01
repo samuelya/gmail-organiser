@@ -50,9 +50,11 @@ doesn't match exactly, look for the closest equivalent.
    | Development from the IDE (`ng serve` on 4200) | `http://localhost:4200/api/auth/google/callback` |
    | Docker compose (`WEB_PORT`, default 5180) | `http://localhost:5180/api/auth/google/callback` |
 
-   If you set a different `WEB_PORT` in `.env`, use that port instead of 5180. The app builds the redirect URI as
-   `{APP_BASE_URL}/api/auth/google/callback`, so it must match character for character (`localhost`, not
-   `127.0.0.1`; `http`, no trailing slash).
+   If you set a different `WEB_PORT` in `.env`, also set `APP_BASE_URL` to the same port (for example
+   `WEB_PORT=5280` and `APP_BASE_URL=http://localhost:5280`) and register that port instead of 5180. The app builds
+   the redirect URI as `{APP_BASE_URL}/api/auth/google/callback`, not from `WEB_PORT`; if the two disagree, Google
+   returns `redirect_uri_mismatch`. The URI must match character for character (`localhost`, not `127.0.0.1`;
+   `http`, no trailing slash).
 4. No *Authorised JavaScript origins* are needed.
 5. Click **Create** and copy the **Client ID** and **Client secret**.
 
@@ -69,7 +71,9 @@ Pick one:
   GOOGLE_CLIENT_SECRET=your-client-secret
   ```
 
-  Then restart the stack: `docker compose up -d`. A secret set in `.env` wins and locks the matching field in the UI.
+  Then restart the stack: `docker compose up -d`. Setting **either** value in `.env` locks
+  **both** Google client fields in the UI, and both are then read from `.env` only. So set both in `.env`, or
+  neither (and use the wizard); setting only the ID leaves the secret missing and Connect fails.
 
 From the IDE, `dotnet run` does not read `.env`: use the wizard, or set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
 in your local run configuration's environment (never in the committed `launchSettings.json`). Note that the
