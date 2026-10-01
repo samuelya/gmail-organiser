@@ -17,7 +17,21 @@ public sealed record LlmModelsDto(
     string? Version,
     IReadOnlyList<OllamaModelDto> ChatModels,
     IReadOnlyList<OllamaModelDto> EmbeddingModels,
-    string? Error);
+    string? Error)
+{
+    /// <summary>Chat = <c>completion</c> capability, embedding = <c>embedding</c>; no known capabilities = both.</summary>
+    public static LlmModelsDto Split(string? version, IReadOnlyList<OllamaModelDto> models) => new(
+        true,
+        version,
+        [.. models.Where(m => Has(m, OllamaCapabilities.Completion))],
+        [.. models.Where(m => Has(m, OllamaCapabilities.Embedding))],
+        null);
+
+    public static LlmModelsDto Unreachable(string error) => new(false, null, [], [], error);
+
+    private static bool Has(OllamaModelDto model, string capability) =>
+        model.Capabilities.Count == 0 || model.Capabilities.Contains(capability, StringComparer.OrdinalIgnoreCase);
+}
 
 /// <summary><see cref="Kind"/> is <c>chat</c> or <c>embedding</c>; <see cref="BaseUrl"/> overrides the saved URL.</summary>
 public sealed record TestModelRequest(string? Kind, string? Model, string? BaseUrl);

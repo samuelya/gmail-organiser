@@ -57,16 +57,11 @@ public static class LlmEndpoints
         {
             var version = await catalog.PingAsync(baseUrl, ct);
             var models = await catalog.ListModelsAsync(baseUrl, ct);
-            return TypedResults.Ok(new LlmModelsDto(
-                true,
-                version,
-                models.Where(m => Has(m, OllamaCapabilities.Completion)).ToList(),
-                models.Where(m => Has(m, OllamaCapabilities.Embedding)).ToList(),
-                null));
+            return TypedResults.Ok(LlmModelsDto.Split(version, models));
         }
         catch (OllamaUnreachableException ex)
         {
-            return TypedResults.Ok(new LlmModelsDto(false, null, [], [], ex.Message));
+            return TypedResults.Ok(LlmModelsDto.Unreachable(ex.Message));
         }
     }
 
@@ -82,10 +77,6 @@ public static class LlmEndpoints
         var url = await OllamaCatalog.ResolveBaseUrlAsync(request.BaseUrl, settings, ct);
         return TypedResults.Ok(await tester.TestAsync(request.Kind!, request.Model!.Trim(), url, ct));
     }
-
-    /// <summary>Without known capabilities a model may be either kind, so it is offered in both lists.</summary>
-    private static bool Has(OllamaModelDto model, string capability) =>
-        model.Capabilities.Count == 0 || model.Capabilities.Contains(capability, StringComparer.OrdinalIgnoreCase);
 
     private static Dictionary<string, string[]> BaseUrlError => new() { ["baseUrl"] = ["Must be an absolute http or https URL."] };
 
