@@ -13,6 +13,13 @@ public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<Sec
 
     private static readonly PathString ApiPrefix = new("/api");
 
+    // Normalised once; start-up validation guarantees every configured value normalises.
+    private readonly HashSet<string> _allowedOrigins = new(
+        options.Value.AllowedOrigins
+            .Select(v => SecurityOptions.TryNormaliseOrigin(v, out var origin) ? origin : null)
+            .OfType<string>(),
+        StringComparer.OrdinalIgnoreCase);
+
     public async Task InvokeAsync(HttpContext context, IProblemDetailsService problemDetails)
     {
         var request = context.Request;
@@ -22,7 +29,7 @@ public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<Sec
             return;
         }
 
-        var failure = Check(request, options.Value.AllowedOrigins);
+        var failure = Check(request, _allowedOrigins);
         if (failure is null)
         {
             await next(context);
@@ -30,7 +37,9 @@ public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<Sec
         }
 
         context.Response.StatusCode = StatusCodes.Status403Forbidden;
-        await problemDetails.WriteAsync(new ProblemDetailsContext
+        // TryWriteAsync: when no writer accepts the request (e.g. Accept: text/plain) the 403
+        // status set above is sent with an empty body instead of throwing into a 500.
+        await problemDetails.TryWriteAsync(new ProblemDetailsContext
         {
             HttpContext = context,
             ProblemDetails =
@@ -46,7 +55,7 @@ public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<Sec
         HttpMethods.IsPost(method) || HttpMethods.IsPut(method) || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
 
     /// <returns>A reason when the request must be rejected, otherwise <c>null</c>.</returns>
-    internal static string? Check(HttpRequest request, IReadOnlyCollection<string> allowedOrigins)
+    internal static string? Check(HttpRequest request, IReadOnlySet<string> allowedOrigins)
     {
         if (string.IsNullOrWhiteSpace(request.Headers[RequestedWithHeader].ToString()))
         {
@@ -59,18 +68,11 @@ public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<Sec
             return null;
         }
 
-        if (origins.Count > 1 || !IsAllowedOrigin(origins.ToString(), allowedOrigins))
+        if (origins.Count > 1 || !allowedOrigins.Contains(origins.ToString().Trim()))
         {
             return "The request origin is not allowed.";
         }
 
         return null;
-    }
-
-    private static bool IsAllowedOrigin(string origin, IReadOnlyCollection<string> allowedOrigins)
-    {
-        var normalised = origin.Trim().TrimEnd('/');
-        return allowedOrigins.Any(allowed =>
-            string.Equals(allowed.Trim().TrimEnd('/'), normalised, StringComparison.OrdinalIgnoreCase));
     }
 }

@@ -6,14 +6,13 @@ public static class SecurityExtensions
     {
         services.AddOptions<SecurityOptions>()
             .Bind(configuration.GetSection(SecurityOptions.SectionName))
-            .Validate(o => o.AllowedOrigins.All(IsAbsoluteHttpOrigin), "Security:AllowedOrigins must contain absolute http(s) origins.")
+            .Validate(
+                o => o.AllowedOrigins.All(v => SecurityOptions.TryNormaliseOrigin(v, out _)),
+                "Security:AllowedOrigins must contain http(s) origins of the form scheme://host[:port], without a path, query or user info.")
             .ValidateOnStart();
         return services;
     }
 
     public static IApplicationBuilder UseApiRequestGuard(this IApplicationBuilder app) =>
         app.UseMiddleware<ApiRequestGuardMiddleware>();
-
-    private static bool IsAbsoluteHttpOrigin(string value) =>
-        Uri.TryCreate(value, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 }

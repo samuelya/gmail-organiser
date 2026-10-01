@@ -12,7 +12,7 @@ public static class LoggingExtensions
         builder.Logging.ClearProviders();
         builder.Logging.AddJsonConsole(options =>
         {
-            options.IncludeScopes = false;
+            options.IncludeScopes = true;
             options.UseUtcTimestamp = true;
         });
         return builder;

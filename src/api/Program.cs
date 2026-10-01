@@ -12,7 +12,13 @@ builder.Services.AddHealthEndpoints();
 var app = builder.Build();
 
 // Host filtering (AllowedHosts) is applied by the default WebApplication pipeline.
-app.UseExceptionHandler();
+// Development keeps the developer exception page (added by WebApplication); everywhere else
+// unhandled exceptions become a ProblemDetails 500 without a stack trace.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler();
+}
+
 app.UseStatusCodePages();
 app.UseApiRequestGuard();
 
