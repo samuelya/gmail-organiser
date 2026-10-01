@@ -27,7 +27,11 @@
     </mat-form-field>
     <ng-container
       [ngTemplateOutlet]="testControls"
-      [ngTemplateOutletContext]="{ kind: 'chat', test: chatTest(), model: form.controls.chatModel.value }"
+      [ngTemplateOutletContext]="{
+        kind: 'chat',
+        run: chatTest(),
+        model: form.controls.chatModel.value,
+      }"
     />
   </div>
   @if (noChatModels()) {
@@ -49,7 +53,7 @@
       [ngTemplateOutlet]="testControls"
       [ngTemplateOutletContext]="{
         kind: 'embedding',
-        test: embeddingTest(),
+        run: embeddingTest(),
         model: form.controls.embeddingModel.value,
       }"
     />
@@ -77,9 +81,9 @@
   </div>
 </form>
 
-<ng-template #testControls let-kind="kind" let-test="test" let-model="model">
+<ng-template #testControls let-kind="kind" let-run="run" let-model="model">
   <div class="flex min-h-14 flex-wrap items-center gap-2" aria-live="polite">
-    @if (test.state === 'running') {
+    @if (run.state === 'running') {
       <mat-spinner diameter="20" [attr.aria-label]="'Testing the ' + kind + ' model'" />
       <button
         mat-button
@@ -101,15 +105,15 @@
         Test model
       </button>
     }
-    @if (test.state === 'ok') {
+    @if (run.state === 'ok') {
       <span class="flex items-center gap-1" [attr.data-testid]="'test-ok-' + kind">
         <mat-icon aria-hidden="true">check_circle</mat-icon>
-        Answered in {{ test.seconds }} s
+        Answered in {{ run.seconds }} s
       </span>
-    } @else if (test.state === 'error') {
+    } @else if (run.state === 'error') {
       <span class="flex items-center gap-1" [attr.data-testid]="'test-error-' + kind">
         <mat-icon aria-hidden="true">error</mat-icon>
-        {{ test.error }}
+        {{ run.error }}
       </span>
     }
   </div>

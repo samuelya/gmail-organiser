@@ -11,6 +11,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
   FormControl,
+  FormGroup,
   ReactiveFormsModule,
   ValidationErrors,
   Validators,
@@ -71,17 +72,18 @@ export class OllamaUrlStep implements OnInit {
   readonly testing = signal(false);
   readonly result = signal<LlmModels | null>(null);
 
-  readonly url = new FormControl('', {
-    nonNullable: true,
-    validators: [Validators.required, httpUrlValidator],
+  readonly form = new FormGroup({
+    url: new FormControl('', {
+      nonNullable: true,
+      validators: [Validators.required, httpUrlValidator],
+    }),
   });
+  readonly url = this.form.controls.url;
 
   constructor() {
     this.destroyRef.onDestroy(() => this.testSub?.unsubscribe());
     // A test result belongs to the URL it was run for.
-    this.url.valueChanges
-      .pipe(takeUntilDestroyed())
-      .subscribe(() => this.result.set(null));
+    this.url.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => this.result.set(null));
   }
 
   ngOnInit(): void {

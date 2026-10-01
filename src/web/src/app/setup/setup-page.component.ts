@@ -58,7 +58,7 @@ export class SetupPage {
   private readonly injector = inject(Injector);
   private readonly setup = inject(SetupService);
   private readonly setupState = inject(SetupState);
-  private readonly stepper = viewChild.required(MatStepper);
+  readonly stepper = viewChild.required(MatStepper);
 
   readonly wide = toSignal(
     inject(BreakpointObserver)

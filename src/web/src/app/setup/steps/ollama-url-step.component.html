@@ -1,10 +1,10 @@
-<form (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-2" novalidate>
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-2" novalidate>
   <mat-form-field>
     <mat-label>Ollama URL</mat-label>
     <input
       matInput
       type="url"
-      [formControl]="url"
+      formControlName="url"
       autocomplete="off"
       spellcheck="false"
       data-testid="ollama-url"
@@ -27,12 +27,7 @@
     >
       Test URL
     </button>
-    <button
-      mat-flat-button
-      type="submit"
-      [disabled]="!loaded() || saving()"
-      data-testid="save-url"
-    >
+    <button mat-flat-button type="submit" [disabled]="!loaded() || saving()" data-testid="save-url">
       Save
     </button>
     @if (testing()) {

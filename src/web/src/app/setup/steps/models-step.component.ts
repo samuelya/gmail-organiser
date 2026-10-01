@@ -19,13 +19,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { catchError, of, Subscription, switchMap, tap } from 'rxjs';
-import {
-  LlmModels,
-  LlmService,
-  ModelKind,
-  modelLabel,
-  OllamaModel,
-} from '../../core/llm.service';
+import { LlmModels, LlmService, ModelKind, modelLabel, OllamaModel } from '../../core/llm.service';
 import { SetupState } from '../setup-state';
 import { AppSettings, SetupService } from '../setup.service';
 
