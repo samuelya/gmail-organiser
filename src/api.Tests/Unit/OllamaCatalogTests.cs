@@ -82,6 +82,39 @@ public sealed class OllamaCatalogTests
     }
 
     [Fact]
+    public async Task Ping_keeps_a_pre_release_version_string()
+    {
+        var stub = new StubOllamaHandler().Json("/api/version", new { version = "0.12.0-rc1" });
+
+        var version = await Catalog(stub).PingAsync(ct: Ct);
+
+        version.ShouldBe("0.12.0-rc1");
+    }
+
+    [Fact]
+    public async Task Ping_without_a_version_field_returns_an_empty_version()
+    {
+        var stub = new StubOllamaHandler().Json("/api/version", new { other = "x" });
+
+        var version = await Catalog(stub).PingAsync(ct: Ct);
+
+        version.ShouldBe("");
+    }
+
+    [Fact]
+    public async Task Ping_with_a_non_json_answer_is_a_readable_error()
+    {
+        var stub = new StubOllamaHandler().Route("/api/version", (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html></html>", System.Text.Encoding.UTF8, "text/html"),
+        }));
+
+        var ex = await Should.ThrowAsync<OllamaUnreachableException>(() => Catalog(stub).PingAsync(ct: Ct));
+
+        ex.Message.ShouldContain("not like an Ollama server");
+    }
+
+    [Fact]
     public async Task Connection_refused_is_a_readable_error_with_the_localhost_hint()
     {
         var stub = new StubOllamaHandler

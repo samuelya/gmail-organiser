@@ -61,6 +61,20 @@ public sealed class LlmEndpointsTests(ApiFactory factory, PostgresFixture postgr
     }
 
     [Fact]
+    public async Task Pre_release_version_still_lists_the_models()
+    {
+        var stub = StubOllamaHandler.WithModels(("test-chat:1b", ["completion"]))
+            .Json("/api/version", new { version = "0.12.0-rc1" });
+        await using var host = Host(stub);
+
+        var models = await host.CreateClient().GetFromJsonAsync<LlmModelsDto>("/api/llm/models", Ct);
+
+        models!.Reachable.ShouldBeTrue();
+        models.Version.ShouldBe("0.12.0-rc1");
+        models.ChatModels.Select(m => m.Name).ShouldBe(["test-chat:1b"]);
+    }
+
+    [Fact]
     public async Task Unreachable_server_is_200_with_reachable_false()
     {
         var stub = new StubOllamaHandler

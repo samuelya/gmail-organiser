@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GmailOrganiser.Settings;
 using Microsoft.Extensions.Options;
 using OllamaSharp;
@@ -11,7 +12,7 @@ public interface IOllamaCatalog
     /// <exception cref="OllamaUnreachableException">The server could not be reached or is not Ollama.</exception>
     Task<IReadOnlyList<OllamaModelDto>> ListModelsAsync(string? baseUrl = null, CancellationToken ct = default);
 
-    /// <summary><c>/api/version</c>; returns the server version.</summary>
+    /// <summary><c>/api/version</c>; returns the raw version string, or "" when the answer has none (the version is informational).</summary>
     /// <exception cref="OllamaUnreachableException">The server could not be reached or is not Ollama.</exception>
     Task<string> PingAsync(string? baseUrl = null, CancellationToken ct = default);
 }
@@ -46,9 +47,23 @@ public sealed class OllamaCatalog(
     public async Task<string> PingAsync(string? baseUrl = null, CancellationToken ct = default)
     {
         var url = await ResolveAsync(baseUrl, ct);
-        using var client = CreateClient(url);
-        var version = await Call(url, () => client.GetVersionAsync(ct), ct);
-        return version?.ToString() ?? "";
+        using var http = OllamaHttp.Create(httpClients, url, options.Value.CatalogTimeout);
+        return await Call(url, () => ReadVersionAsync(http, ct), ct);
+    }
+
+    // Read the raw string: OllamaSharp parses it as System.Version, which throws on pre-release builds (e.g. "0.12.0-rc1").
+    // A non-2xx or non-JSON answer still means "not Ollama"; a JSON answer without a string version is just an unknown version.
+    private static async Task<string> ReadVersionAsync(HttpClient http, CancellationToken ct)
+    {
+        using var response = await http.GetAsync("api/version", ct);
+        response.EnsureSuccessStatusCode();
+        await using var body = await response.Content.ReadAsStreamAsync(ct);
+        using var json = await JsonDocument.ParseAsync(body, cancellationToken: ct);
+        return json.RootElement.ValueKind == JsonValueKind.Object
+            && json.RootElement.TryGetProperty("version", out var version)
+            && version.ValueKind == JsonValueKind.String
+                ? version.GetString() ?? ""
+                : "";
     }
 
     /// <summary>The explicit URL (already validated) or the saved one.</summary>
