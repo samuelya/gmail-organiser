@@ -1,22 +1,17 @@
 <app-page-header title="Settings" />
 <div class="flex flex-col gap-4">
   <mat-card appearance="outlined" role="region" aria-labelledby="settings-google">
-    <mat-card-header>
-      <mat-card-title><h2 id="settings-google" class="section-title">Google</h2></mat-card-title>
-      <mat-card-subtitle>The OAuth client the organiser signs in with.</mat-card-subtitle>
-    </mat-card-header>
-    <mat-card-content class="pt-4" data-testid="section-google">
+    <mat-card-content data-testid="section-google">
+      <h2 id="settings-google" class="section-title">Google</h2>
+      <p class="section-hint">The OAuth client the organiser signs in with.</p>
       <app-google-client-step (clientChange)="onClientChange($event)" />
     </mat-card-content>
   </mat-card>
 
   <mat-card appearance="outlined" role="region" aria-labelledby="settings-gmail">
-    <mat-card-header>
-      <mat-card-title>
-        <h2 id="settings-gmail" class="section-title">Gmail connection</h2>
-      </mat-card-title>
-    </mat-card-header>
-    <mat-card-content class="pt-4" data-testid="section-gmail">
+    <mat-card-content data-testid="section-gmail">
+      <h2 id="settings-gmail" class="section-title">Gmail connection</h2>
+      <p class="section-hint">The mailbox the organiser reads and labels.</p>
       <app-connect-gmail-step
         [clientSaved]="clientSaved()"
         [confirmDisconnect]="true"
@@ -26,13 +21,13 @@
   </mat-card>
 
   <mat-card appearance="outlined" role="region" aria-labelledby="settings-ollama">
-    <mat-card-header>
-      <mat-card-title><h2 id="settings-ollama" class="section-title">Ollama</h2></mat-card-title>
-      <mat-card-subtitle>The local LLM server and the models it runs.</mat-card-subtitle>
-    </mat-card-header>
-    <mat-card-content class="flex flex-col gap-6 pt-4" data-testid="section-ollama">
-      <app-ollama-url-step (saved)="ollamaUrl.set($event)" />
-      <app-models-step [baseUrl]="ollamaUrl()" />
+    <mat-card-content data-testid="section-ollama">
+      <h2 id="settings-ollama" class="section-title">Ollama</h2>
+      <p class="section-hint">The local LLM server and the models it runs.</p>
+      <div class="flex flex-col gap-6">
+        <app-ollama-url-step (saved)="ollamaUrl.set($event)" />
+        <app-models-step [baseUrl]="ollamaUrl()" />
+      </div>
     </mat-card-content>
   </mat-card>
 </div>

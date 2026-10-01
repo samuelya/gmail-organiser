@@ -27,6 +27,11 @@ import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
       font: var(--mat-sys-title-medium);
       margin: 0;
     }
+    .section-hint {
+      font: var(--mat-sys-body-medium);
+      color: var(--mat-sys-on-surface-variant);
+      margin: 0.25rem 0 1rem;
+    }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
