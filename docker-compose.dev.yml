@@ -1,0 +1,9 @@
+# Dev override: publishes `db` on 127.0.0.1 so the IDE-run API (appsettings.Development.json) can use it.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db
+# Agents and parallel worktrees always pass their own project name, e.g.
+#   docker compose -p gmo-<issue> -f docker-compose.yml -f docker-compose.dev.yml up -d db
+# (and set DB_PORT / WEB_PORT so two stacks don't collide).
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
