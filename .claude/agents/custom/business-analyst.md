@@ -45,7 +45,7 @@ Agent: backend-coder | frontend-coder · Size: S | M
 Implementation notes are what make round 1 cheap: a decision left out is a question or a failed round later.
 
 ## Labels
-`type:feature|chore|setup|bug|epic`, `area:api|web|gmail|llm|mcp|ci|apps-script`, `agent:backend|frontend`, `needs-owner`, `found-after-merge`, `escalated:fable`, `ba:proposal`. Size, Milestone and Priority are Project fields.
+`type:feature|chore|setup|bug|epic`, `area:api|web|gmail|llm|mcp|ci|apps-script`, `agent:backend|frontend`, `needs-owner`, `found-after-merge`, `escalated:fable`, `ba:proposal`. Project "Gmail Organiser" fields: Status (`Backlog|Ready|In progress|In review|Done`), Size (`S|M`), Priority (`P1|P2|P3`), Phase (`M1 Foundation` … `M7 All Mail & release`, matching DESIGN.md §11).
 
 ## Guardrails
 - Search before creating (`gh issue list --state all --search "<words> in:title"`); refine instead of duplicating.
