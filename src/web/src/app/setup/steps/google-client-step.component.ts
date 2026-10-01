@@ -7,6 +7,7 @@ import {
   DestroyRef,
   inject,
   output,
+  OnInit,
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -44,11 +45,17 @@ export function googleClientIdValidator(control: AbstractControl<string>): Valid
  */
 @Component({
   selector: 'app-google-client-step',
-  imports: [ReactiveFormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule],
+  imports: [
+    ReactiveFormsModule,
+    MatButtonModule,
+    MatFormFieldModule,
+    MatIconModule,
+    MatInputModule,
+  ],
   templateUrl: './google-client-step.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class GoogleClientStep {
+export class GoogleClientStep implements OnInit {
   private readonly setup = inject(SetupService);
   private readonly snackBar = inject(MatSnackBar);
   private readonly clipboard = inject(Clipboard);
@@ -82,7 +89,8 @@ export class GoogleClientStep {
     clientSecret: new FormControl('', { nonNullable: true, validators: [Validators.required] }),
   });
 
-  constructor() {
+  // Loads in ngOnInit (not the constructor) so the outputs have listeners when the first value arrives.
+  ngOnInit(): void {
     this.setup
       .getSettings()
       .pipe(takeUntilDestroyed(this.destroyRef))

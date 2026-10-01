@@ -6,6 +6,7 @@ import {
   inject,
   input,
   output,
+  OnInit,
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -20,8 +21,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   missing_scopes:
     'Allow all requested permissions. Google did not grant every permission the organiser needs; try again and leave every box ticked.',
   access_denied: 'Access was denied on the Google consent screen. Try again and choose Allow.',
-  state_mismatch:
-    'The sign-in expired or was started in another tab. Try again from this page.',
+  state_mismatch: 'The sign-in expired or was started in another tab. Try again from this page.',
   exchange_failed:
     'Google did not accept the sign-in. Check the client ID, secret and redirect URI, then try again.',
 };
@@ -32,7 +32,10 @@ export function connectErrorMessage(reason: string): string {
 }
 
 /** Parses the callback query params; `null` when the page wasn't opened by the OAuth callback. */
-export function parseConnectResult(gmail: string | null, reason: string | null): ConnectResult | null {
+export function parseConnectResult(
+  gmail: string | null,
+  reason: string | null,
+): ConnectResult | null {
   if (gmail === 'connected') return { kind: 'connected' };
   if (gmail === 'error') return { kind: 'error', reason: reason ?? '' };
   return null;
@@ -97,7 +100,7 @@ export function parseConnectResult(gmail: string | null, reason: string | null):
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class ConnectGmailStep {
+export class ConnectGmailStep implements OnInit {
   private readonly setup = inject(SetupService);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -117,7 +120,8 @@ export class ConnectGmailStep {
       : null;
   });
 
-  constructor() {
+  // Loads in ngOnInit (not the constructor) so the outputs have listeners when the first value arrives.
+  ngOnInit(): void {
     this.load();
   }
 
