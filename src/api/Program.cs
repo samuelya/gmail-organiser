@@ -1,4 +1,5 @@
 using GmailOrganiser.Common;
+using GmailOrganiser.Data;
 using GmailOrganiser.Health;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -7,6 +8,7 @@ builder.AddJsonConsoleLogging();
 builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 builder.Services.AddApiSecurity(builder.Configuration);
+builder.Services.AddAppDatabase();
 builder.Services.AddHealthEndpoints();
 
 var app = builder.Build();
@@ -29,6 +31,6 @@ if (app.Environment.IsDevelopment())
 
 app.MapHealthEndpoints();
 
+// Hosted services start before the server listens: DatabaseMigrator applies the migrations first.
+// A start-up failure is logged and propagates out of Run, so the process exits non-zero.
 app.Run();
-
-public partial class Program;

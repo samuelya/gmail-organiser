@@ -1,3 +1,4 @@
+using GmailOrganiser.Data;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
@@ -7,7 +8,8 @@ public static class HealthEndpoints
 {
     public static IServiceCollection AddHealthEndpoints(this IServiceCollection services)
     {
-        services.AddHealthChecks();
+        // Unhealthy maps to 503 (default HealthCheckOptions.ResultStatusCodes).
+        services.AddHealthChecks().AddDbContextCheck<AppDbContext>("database");
         return services;
     }
 

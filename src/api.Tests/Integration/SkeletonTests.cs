@@ -7,7 +7,8 @@ using Microsoft.AspNetCore.Hosting;
 
 namespace GmailOrganiser.Tests.Integration;
 
-public sealed class SkeletonTests(ApiFactory factory) : IClassFixture<ApiFactory>
+[Collection(PostgresCollection.Name)]
+public sealed class SkeletonTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -68,7 +69,7 @@ public sealed class SkeletonTests(ApiFactory factory) : IClassFixture<ApiFactory
     [InlineData("ftp://localhost")]
     public void Start_up_fails_for_an_origin_a_browser_can_never_send(string origin)
     {
-        using var badFactory = new ApiFactory().WithWebHostBuilder(b => b.UseSetting("Security:AllowedOrigins:0", origin));
+        using var badFactory = new ApiFactory(postgres).WithWebHostBuilder(b => b.UseSetting("Security:AllowedOrigins:0", origin));
 
         Should.Throw<Microsoft.Extensions.Options.OptionsValidationException>(() => badFactory.CreateClient());
     }

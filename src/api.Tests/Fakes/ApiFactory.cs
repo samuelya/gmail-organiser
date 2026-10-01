@@ -1,3 +1,4 @@
+using GmailOrganiser.Tests.Integration;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -8,9 +9,10 @@ namespace GmailOrganiser.Tests.Fakes;
 
 /// <summary>
 /// Test host with a synthetic allowed origin and a test-only endpoint at
-/// <see cref="TestEndpointPath"/> that is appended after the app pipeline.
+/// <see cref="TestEndpointPath"/> that is appended after the app pipeline, backed by the
+/// collection's <see cref="PostgresFixture"/> database.
 /// </summary>
-public sealed class ApiFactory : WebApplicationFactory<Program>
+public sealed class ApiFactory(PostgresFixture postgres) : WebApplicationFactory<Program>
 {
     public const string AllowedOrigin = "http://app.example.com";
     public const string TestEndpointPath = "/api/test-only/echo";
@@ -19,6 +21,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("Security:AllowedOrigins:0", AllowedOrigin);
+        builder.UseSetting("ConnectionStrings:Default", postgres.ConnectionString);
         builder.ConfigureServices(services => services.AddTransient<IStartupFilter, TestEndpointStartupFilter>());
     }
 
