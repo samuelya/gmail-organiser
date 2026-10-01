@@ -1,4 +1,4 @@
-# Gmail Mail Organiser — Design Plan (Draft v0.1)
+# Gmail Organiser — Design Plan (Draft v0.1)
 
 > Status: **for review**. Nothing is built yet. Comments/changes welcome on any section.
 
@@ -29,7 +29,7 @@ Will be published as a **public GitHub project**: no personal data, no hardcoded
 | Frontend | Angular 22 + Angular Material + Tailwind CSS, original code (admin-style layout inspired by common dashboard templates; no third-party template code) |
 | Database | PostgreSQL 17 + `pgvector` (relational data + similarity memory) |
 | LLM | Ollama, **running on the host** (not in Docker) so Apple Silicon GPU/MLX models work. URL + chat model + embedding model selectable in Settings |
-| Hosting | `docker compose`: `web`, `api`, `db`. Ports bound to `127.0.0.1` only |
+| Hosting | `docker compose`: `web`, `api`, `db`. Only `web` is published, on `127.0.0.1:${WEB_PORT}` (default 5180); `api` and `db` stay on the compose network. A dev override publishes `db` on `127.0.0.1` for the IDE-run API |
 | App login | None (localhost only). "Sign in with Google" only connects Gmail |
 | Accounts | One Gmail account per install |
 | Label style | Nested hierarchy, e.g. `Bills/Water`, `Property/Example-Street/Investment` |
@@ -83,7 +83,7 @@ Will be published as a **public GitHub project**: no personal data, no hardcoded
 
 ## 5. Gmail access
 
-- User creates their **own** Google Cloud project + OAuth client (type *Web application*, redirect `http://localhost:<port>/api/auth/google/callback`). Client ID/secret entered in the Setup page (or `.env`) — never committed.
+- User creates their **own** Google Cloud project + OAuth client (type *Web application*, redirect URI `{APP_BASE_URL}/api/auth/google/callback`; register both `http://localhost:4200/api/auth/google/callback` for the IDE run and `http://localhost:${WEB_PORT}/api/auth/google/callback` for compose). Client ID/secret entered in the Setup page (or `.env`) — never committed.
 - Scopes: `gmail.modify` (read, label, archive, trash), `gmail.settings.basic` (filters), `gmail.labels`.
 - Refresh token stored **encrypted** in DB (ASP.NET Data Protection; keys in a Docker volume).
 
@@ -154,7 +154,7 @@ The local LLM handles everything by default. For any item the user can either **
 | Mode | How | One-click? |
 |---|---|---|
 | **Claude Code (headless)** — primary | The `api` container includes the Claude Code CLI. The user runs `claude setup-token` once on their machine and puts the token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN` (never committed, never shown in the UI). On "Send to Claude", the API runs `claude -p` with an MCP config pointing at its own `/mcp` endpoint, only the review MCP tools allowed (`--allowedTools`), JSON output, and a timeout. | Yes |
-| **Claude Desktop** — manual fallback | Claude Desktop connects to the same `/mcp` endpoint; portal copies a ready prompt (*"Review the pending items in my mail organiser"*) for the user to paste. | No |
+| **Claude Desktop** — manual fallback | Claude Desktop connects to the same `/mcp` endpoint; portal copies a ready prompt (*"Review the pending items in Gmail Organiser"*) for the user to paste. | No |
 
 The token is only used by the Claude Code CLI, never by the portal's own code to call Anthropic directly. Each installation uses its owner's own token; the repo ships no credentials. Reviews are queued and run one at a time to stay within subscription rate limits; a failure (expired token, limit reached) marks the item "Claude unavailable" and the local suggestion is unaffected.
 
@@ -231,12 +231,15 @@ Light/dark theme, collapsible side nav, responsive.
 
 ## 10. Repository layout
 ```
-/src/api            .NET 10 Web API (+ /tests)
+/src/api            .NET 10 Web API
+/src/api.Tests      xUnit tests (unit + Testcontainers integration)
 /src/web            Angular 22 app
 /scripts/apps-script
 /docs               DESIGN.md, setup guides
 docker-compose.yml, .env.example, README.md, LICENSE
 ```
+
+Names: compose project `gmail-organiser`, C# root namespace `GmailOrganiser`, Angular project `gmail-organiser`. Default `WEB_PORT=5180`.
 
 ## 11. Delivery milestones
 1. **M1 Foundation** – compose stack, DB migrations, Setup wizard, Gmail OAuth, Ollama model picker.
@@ -248,4 +251,4 @@ docker-compose.yml, .env.example, README.md, LICENSE
 7. **M7 All Mail + labelled phase**, docs polish, public release.
 
 ## 12. Open questions for review
-1. Is project name "Gmail Mail Organiser" final for the repo?
+1. ~~Is the project name final for the repo?~~ **Resolved:** "Gmail Organiser", repo `gmail-organiser`.
