@@ -1,0 +1,43 @@
+name: Images
+
+# Builds the container images (no push). Runs only when a Dockerfile, the
+# nginx config or a compose file changes. Not a required check.
+on:
+  pull_request:
+    paths:
+      - "src/*/Dockerfile"
+      - "src/*/Dockerfile.dockerignore"
+      - "src/web/.dockerignore"
+      - "src/web/nginx.conf"
+      - "docker-compose*.yml"
+      - ".github/workflows/images.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/*/Dockerfile"
+      - "src/*/Dockerfile.dockerignore"
+      - "src/web/.dockerignore"
+      - "src/web/nginx.conf"
+      - "docker-compose*.yml"
+      - ".github/workflows/images.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  images:
+    name: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build api image
+        run: docker build -f src/api/Dockerfile -t gmail-organiser-api:ci .
+
+      - name: Build web image
+        run: docker build -f src/web/Dockerfile -t gmail-organiser-web:ci src/web

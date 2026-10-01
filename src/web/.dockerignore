@@ -1,6 +1,5 @@
-node_modules
-dist
-.angular
-coverage
-Dockerfile
-.dockerignore
+node_modules/
+dist/
+.angular/
+coverage/
+**/.env
