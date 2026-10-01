@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.DataProtection.Repositories;
-using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Settings;
 
@@ -83,7 +83,11 @@ public static class SettingsEndpoints
     }
 }
 
-/// <summary>Where the Data Protection key ring lives, bound from <c>DataProtection</c>. Relative paths resolve against the content root.</summary>
+/// <summary>
+/// Where the Data Protection key ring lives, bound from <c>DataProtection</c>. Relative paths resolve against the
+/// content root; Development points at the git-ignored repository-root <c>data/dp-keys</c> (not <c>src/api/data</c>,
+/// which is <c>src/api/Data</c> on case-insensitive file systems). The image uses <c>/keys</c> (the <c>dp-keys</c> volume).
+/// </summary>
 public sealed class DataProtectionKeyOptions
 {
     public const string SectionName = "DataProtection";

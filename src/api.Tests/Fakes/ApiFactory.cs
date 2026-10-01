@@ -16,12 +16,21 @@ public sealed class ApiFactory(PostgresFixture postgres) : WebApplicationFactory
 {
     public const string AllowedOrigin = "http://app.example.com";
     public const string TestEndpointPath = "/api/test-only/echo";
+    public const string EnvOllamaBaseUrl = "http://ollama.example.com:11434";
+
+    /// <summary>Throwaway Data Protection key ring for this host.</summary>
+    public string KeysPath { get; } = Path.Combine(Path.GetTempPath(), "gmo-tests", Guid.NewGuid().ToString("N"));
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
         builder.UseSetting("Security:AllowedOrigins:0", AllowedOrigin);
         builder.UseSetting("ConnectionStrings:Default", postgres.ConnectionString);
+        builder.UseSetting("DataProtection:KeysPath", KeysPath);
+        // Pin the .env values so the developer's or runner's environment never leaks into tests.
+        builder.UseSetting("OLLAMA_BASE_URL", EnvOllamaBaseUrl);
+        builder.UseSetting("GOOGLE_CLIENT_ID", "");
+        builder.UseSetting("GOOGLE_CLIENT_SECRET", "");
         builder.ConfigureServices(services => services.AddTransient<IStartupFilter, TestEndpointStartupFilter>());
     }
 
