@@ -10,10 +10,17 @@ public enum MessageCategory
     Forums,
 }
 
+/// <summary>
+/// A message's analysis status. Transition order:
+/// <c>NotAnalysed → Analysed → Approved → Applied</c>, with <c>Analysed → Rejected</c> as a terminal branch;
+/// re-analyse resets to <c>NotAnalysed</c>. Mirrors <c>SuggestionRow.Status</c>, which is authoritative.
+/// </summary>
 public enum AnalysisStatus
 {
     NotAnalysed,
     Analysed,
+    Approved,
+    Rejected,
     Applied,
 }
 

@@ -1,0 +1,40 @@
+using GmailOrganiser.Data;
+using Microsoft.EntityFrameworkCore;
+
+namespace GmailOrganiser.Review;
+
+public enum ActionKind
+{
+    Apply,
+    Undo,
+    ApplyRest,
+    AutoArchive,
+}
+
+/// <summary>One History entry (<c>action_batches</c>): the header of a set of <see cref="ActionLogRow"/>s undone together.</summary>
+public sealed class ActionBatchRow
+{
+    public Guid Id { get; set; }
+    public ActionKind Kind { get; set; }
+    public string Description { get; set; } = "";
+    public int MessageCount { get; set; }
+
+    /// <summary>For an <see cref="ActionKind.Undo"/> batch, the batch it reverted.</summary>
+    public Guid? UndoOf { get; set; }
+    public DateTimeOffset? UndoneAt { get; set; }
+    public Guid? JobId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+
+    internal static void Configure(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ActionBatchRow>(e =>
+        {
+            e.ToTable("action_batches");
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Id).ValueGeneratedNever();
+            e.Property(r => r.Kind).IsRequired().HasConversion(new SnakeCaseEnumConverter<ActionKind>());
+            e.Property(r => r.Description).IsRequired();
+            e.HasIndex(r => r.CreatedAt);
+        });
+    }
+}
