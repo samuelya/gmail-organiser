@@ -119,6 +119,12 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
             gmail.Inner.SetLabels(Id(i), ["STARRED"]);
         }
 
+        await using (var seed = postgres.CreateDbContext())
+        {
+            await seed.FetchState.ExecuteUpdateAsync(
+                f => f.SetProperty(r => r.InboxTotal, 3L).SetProperty(r => r.AllMailTotal, 5L), Ct);
+        }
+
         var job = await EnqueueAsync(IncrementalFetchJob.JobType);
 
         await RunNextAsync();
@@ -130,6 +136,8 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
         var state = await db.FetchState.SingleAsync(Ct);
         state.MailboxPhase.ShouldBe(MailboxPhase.NotStarted);
         state.PageToken.ShouldBeNull();
+        state.InboxTotal.ShouldBeNull();
+        state.AllMailTotal.ShouldBeNull();
         (await db.Jobs.SingleAsync(j => j.Type == MailboxFetchJob.JobType && j.Status == JobStatus.Queued, Ct)).Queue.ShouldBe(JobQueues.Fetch);
         gmail.MetadataCalls.ShouldBeEmpty();
     }
