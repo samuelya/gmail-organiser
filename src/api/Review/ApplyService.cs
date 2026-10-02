@@ -7,11 +7,15 @@ namespace GmailOrganiser.Review;
 /// <summary>Starts an apply: records the History batch and queues its <see cref="ApplyActionsJob"/>. No Gmail calls.</summary>
 public sealed class ApplyService(AppDbContext db, IJobService jobs, TimeProvider time)
 {
-    /// <summary>The queued batch, or null when no matching suggestion is approved.</summary>
+    /// <summary>
+    /// The queued batch, or null when no matching suggestion is approved with a label Gmail accepts. Suggestions whose
+    /// label Gmail would refuse are not counted; the job reports them as skipped.
+    /// </summary>
     public async Task<ActionBatchDto?> StartAsync(string? senderAddress, Guid[]? suggestionIds, CancellationToken ct)
     {
         var now = time.GetUtcNow();
-        var count = await ApplyActionsJob.Eligible(db, now, senderAddress, suggestionIds).CountAsync(ct);
+        var topics = await ApplyActionsJob.Eligible(db, now, senderAddress, suggestionIds).Select(s => s.TopicLabel).ToListAsync(ct);
+        var count = topics.Count(LabelResolver.IsValid);
         if (count == 0)
         {
             return null;

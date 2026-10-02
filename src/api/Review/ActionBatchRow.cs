@@ -23,6 +23,9 @@ public sealed class ActionBatchRow
     public Guid? UndoOf { get; set; }
     public DateTimeOffset? UndoneAt { get; set; }
     public Guid? JobId { get; set; }
+
+    /// <summary>Gmail label ids this batch created, recorded right after each create, so undo can tell them apart.</summary>
+    public string[] CreatedLabelIds { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
 
     internal static void Configure(ModelBuilder modelBuilder)
@@ -34,6 +37,7 @@ public sealed class ActionBatchRow
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.Kind).IsRequired().HasConversion(new SnakeCaseEnumConverter<ActionKind>());
             e.Property(r => r.Description).IsRequired();
+            e.Property(r => r.CreatedLabelIds).IsRequired().HasDefaultValueSql("'{}'");
             e.HasIndex(r => r.CreatedAt);
         });
     }

@@ -18,12 +18,14 @@ public sealed class LabelResolver(LabelCatalog catalog, IGmailClient gmail)
     /// <summary>
     /// The label id of every path (keys compared case-insensitively). Missing labels are created parent-first
     /// (<c>A</c>, then <c>A/B</c>) under the existing parent's spelling; the catalog is invalidated after a create.
+    /// <paramref name="created"/> runs after each create, before the next.
     /// </summary>
     /// <exception cref="ArgumentException">A path is not <see cref="IsValid"/>.</exception>
     /// <exception cref="InvalidOperationException">Creating the labels would pass <see cref="MaxLabels"/>.</exception>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
-    public async Task<IReadOnlyDictionary<string, string>> EnsureAsync(IEnumerable<string> paths, CancellationToken ct)
+    public async Task<IReadOnlyDictionary<string, string>> EnsureAsync(
+        IEnumerable<string> paths, Func<GmailLabel, CancellationToken, Task>? created, CancellationToken ct)
     {
         var wanted = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (wanted.FirstOrDefault(p => !IsValid(p)) is { } invalid)
@@ -33,7 +35,7 @@ public sealed class LabelResolver(LabelCatalog catalog, IGmailClient gmail)
 
         var labels = new List<GmailLabel>(await catalog.GetAsync(ct));
         var resolved = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var created = false;
+        var any = false;
         try
         {
             foreach (var path in wanted)
@@ -52,7 +54,11 @@ public sealed class LabelResolver(LabelCatalog catalog, IGmailClient gmail)
 
                         label = await gmail.CreateLabelAsync(name, ct);
                         labels.Add(label);
-                        created = true;
+                        any = true;
+                        if (created is not null)
+                        {
+                            await created(label, ct);
+                        }
                     }
                 }
 
@@ -61,7 +67,7 @@ public sealed class LabelResolver(LabelCatalog catalog, IGmailClient gmail)
         }
         finally
         {
-            if (created)
+            if (any)
             {
                 catalog.Invalidate();
             }

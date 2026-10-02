@@ -1,4 +1,3 @@
-using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
 
 namespace GmailOrganiser.Review;
@@ -15,8 +14,8 @@ public static class ReviewExtensions
         services.AddScoped<LabelResolver>();
         services.AddScoped<ApplyService>();
 
-        // The apply job mutates Gmail: refused while the local data belongs to another account.
-        services.AddKeyedScoped<IJobRunGuard, FetchAccountJobGuard>(ApplyActionsJob.JobType);
+        // Its account guard comes with FetchJobTypes.ReadsGmail; a cancel is refused while a chunk is pending.
+        services.AddKeyedScoped<IJobCancelHook, ApplyActionsJob>(ApplyActionsJob.JobType);
         services.AddKeyedScoped<IJobHandler, ApplyActionsJob>(ApplyActionsJob.JobType);
         return services;
     }

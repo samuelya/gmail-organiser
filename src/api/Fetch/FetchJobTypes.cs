@@ -12,8 +12,9 @@ public static class FetchJobTypes
     public const string Incremental = "incremental_fetch";
 
     /// <summary>
-    /// The job types that read Gmail into the local data: each gets <see cref="FetchAccountJobGuard"/> and calls
-    /// <see cref="LocalAccountClaim"/>, and a connect to another account is refused while one is active.
+    /// The job types tied to the local data's account: each gets <see cref="FetchAccountJobGuard"/>, and a connect to
+    /// another account is refused while one is active. The fetches also call <see cref="LocalAccountClaim"/>; the apply
+    /// job (<see cref="Review.ReviewJobTypes.Apply"/>) writes Gmail from the local data.
     /// </summary>
-    public static readonly string[] ReadsGmail = [Mailbox, Sender, Incremental];
+    public static readonly string[] ReadsGmail = [Mailbox, Sender, Incremental, Review.ReviewJobTypes.Apply];
 }

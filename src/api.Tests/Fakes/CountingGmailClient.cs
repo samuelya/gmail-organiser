@@ -101,8 +101,8 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
     public ConcurrentQueue<IReadOnlyList<string>> BatchModifyCalls { get; } = new();
 
-    /// <summary>Runs before the n-th (1-based) batch modify reaches the fake, for example to throw a rate limit.</summary>
-    public Func<int, Task>? BeforeBatchModify { get; set; }
+    /// <summary>Runs before the n-th (1-based) batch modify, with its ids, reaches the fake, for example to throw a rate limit.</summary>
+    public Func<int, IReadOnlyList<string>, Task>? BeforeBatchModify { get; set; }
 
     public async Task BatchModifyAsync(
         IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct)
@@ -110,7 +110,7 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         BatchModifyCalls.Enqueue([.. ids]);
         if (BeforeBatchModify is { } before)
         {
-            await before(BatchModifyCalls.Count);
+            await before(BatchModifyCalls.Count, ids);
         }
 
         await inner.BatchModifyAsync(ids, addLabelIds, removeLabelIds, ct);

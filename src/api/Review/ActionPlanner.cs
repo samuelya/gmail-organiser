@@ -26,7 +26,7 @@ public static class ActionPlanner
     public static ActionPlan Plan(
         SuggestionRow suggestion, MessageRow message, IReadOnlyDictionary<string, string> labelIds, AppSettings settings, bool senderAllowlisted)
     {
-        var protectedReason = ProtectionReason(message, senderAllowlisted);
+        var protectedReason = MessageProtection.Reason(message, senderAllowlisted);
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
         if (suggestion.NeedsAction)
         {
@@ -56,12 +56,4 @@ public static class ActionPlanner
             [.. remove.Where(id => current.Contains(id) && !Untouched.Contains(id))],
             note);
     }
-
-    /// <summary>Why <paramref name="message"/> is protected (<see cref="MessageProtection"/>), or null.</summary>
-    public static string? ProtectionReason(MessageRow message, bool senderAllowlisted) =>
-        senderAllowlisted ? "allowlisted sender"
-        : message.HasAttachment ? "attachment"
-        : message.LabelIds.Contains(MessageProtection.StarredLabel, StringComparer.Ordinal) ? "starred"
-        : message.LabelIds.Contains(MessageProtection.ImportantLabel, StringComparer.Ordinal) ? "important"
-        : null;
 }
