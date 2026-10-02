@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis.Attachments;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.DataProtection.Repositories;
@@ -72,9 +73,26 @@ public static class SettingsEndpoints
             AnalysisPromptTemplate = request.AnalysisPromptTemplate is null
                 ? s.AnalysisPromptTemplate
                 : SettingsValidation.NormalisePromptTemplate(request.AnalysisPromptTemplate),
+            Attachments = request.Attachments is { } attachments ? Apply(s.Attachments, attachments) : s.Attachments,
         }, ct);
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings)));
     }
+
+    /// <summary>Applies a validated request; listed types change, the others keep their saved value.</summary>
+    private static AttachmentSettings Apply(AttachmentSettings s, UpdateAttachmentSettingsRequest request) => s with
+    {
+        Enabled = request.Enabled ?? s.Enabled,
+        Types = request.Types is null
+            ? s.Types
+            : AttachmentSettings.WithDefaults(request.Types
+                .Select(t => AttachmentTypeJsonConverter.TryParse(t.Type, out var type) ? new AttachmentTypeSetting(type.Value, t.Enabled!.Value) : null)
+                .OfType<AttachmentTypeSetting>()
+                .Concat(s.Types)),
+        MaxBytes = request.MaxBytes ?? s.MaxBytes,
+        MaxImageBytes = request.MaxImageBytes ?? s.MaxImageBytes,
+        MaxChars = request.MaxChars ?? s.MaxChars,
+        MaxPerMessage = request.MaxPerMessage ?? s.MaxPerMessage,
+    };
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem, ProblemHttpResult>> SetGoogleClientAsync(
         GoogleClientRequest request, ISettingsStore store, GoogleClientService google, CancellationToken ct)

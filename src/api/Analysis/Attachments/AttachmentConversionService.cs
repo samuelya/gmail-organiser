@@ -48,7 +48,7 @@ public sealed class AttachmentConversionService(
             SkipReason? reason =
                 !enabledTypes.Contains(type) ? SkipReason.Disabled
                 : converter is null ? SkipReason.Unsupported
-                : attachment.Size > limits.MaxBytes ? SkipReason.TooLarge
+                : attachment.Size > limits.MaxBytesFor(type) ? SkipReason.TooLarge
                 : downloads >= limits.MaxPerMessage ? SkipReason.TooMany
                 : null;
             if (reason is null)
@@ -88,7 +88,7 @@ public sealed class AttachmentConversionService(
                 return (null, SkipReason.Failed);
             }
 
-            if (content.Length > limits.MaxBytes)
+            if (content.Length > limits.MaxBytesFor(type))
             {
                 logger.LogWarning("An attachment of unknown or understated size was larger than the limit; skipped");
                 return (null, SkipReason.TooLarge);

@@ -68,29 +68,39 @@ public sealed class SettingsStore(
         var defaults = AppSettings.Defaults(env.Value);
         var merged = JsonSerializer.SerializeToNode(defaults, Json)!.AsObject();
 
-        // Apply saved values one by one, so a single unreadable value falls back to its default.
+        Overlay(merged, merged, stored, "");
+        var settings = TryDeserialize(merged) ?? defaults;
+        var envClientId = env.Value.GoogleClientId;
+        return string.IsNullOrWhiteSpace(envClientId) ? settings : settings with { GoogleClientId = envClientId.Trim() };
+    }
+
+    /// <summary>
+    /// Applies saved values one by one onto <paramref name="target"/> (a node of <paramref name="root"/>), recursing into
+    /// nested blocks, so a single unreadable value falls back to its default and a block missing a value keeps the default.
+    /// </summary>
+    private void Overlay(JsonObject root, JsonObject target, JsonObject stored, string path)
+    {
         foreach (var (name, value) in stored)
         {
-            if (!merged.ContainsKey(name) || (value is null && merged[name] is not null))
+            if (!target.ContainsKey(name) || (value is null && target[name] is not null))
             {
                 continue; // unknown property, or null for a setting that must have a value
             }
 
-            var candidate = merged.DeepClone().AsObject();
-            candidate[name] = value?.DeepClone();
-            if (TryDeserialize(candidate) is not null)
+            if (value is JsonObject block && target[name] is JsonObject defaults)
             {
-                merged = candidate;
+                Overlay(root, defaults, block, $"{path}{name}.");
+                continue;
             }
-            else
+
+            var previous = target[name]?.DeepClone();
+            target[name] = value?.DeepClone();
+            if (TryDeserialize(root) is null)
             {
-                logger.LogWarning("Saved setting {Setting} is unreadable; using its default", name);
+                target[name] = previous;
+                logger.LogWarning("Saved setting {Setting} is unreadable; using its default", path + name);
             }
         }
-
-        var settings = TryDeserialize(merged) ?? defaults;
-        var envClientId = env.Value.GoogleClientId;
-        return string.IsNullOrWhiteSpace(envClientId) ? settings : settings with { GoogleClientId = envClientId.Trim() };
     }
 
     private static AppSettings? TryDeserialize(JsonObject node)

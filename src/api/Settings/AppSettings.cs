@@ -52,6 +52,9 @@ public sealed record AppSettings
     /// <summary>User override of the analysis prompt; <c>null</c> means the built-in template.</summary>
     public string? AnalysisPromptTemplate { get; init; }
 
+    /// <summary>Attachment types and limits for the analysis (#68); see <see cref="AttachmentSettings"/>.</summary>
+    public AttachmentSettings Attachments { get; init; } = new();
+
     public const int DefaultAnalysisDefaultCount = 20;
     public const int DefaultAnalysisBodyMaxChars = 4000;
     public const AnalysisGroupingMode DefaultAnalysisGroupingMode = AnalysisGroupingMode.Auto;
