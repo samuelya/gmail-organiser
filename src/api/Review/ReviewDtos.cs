@@ -94,3 +94,21 @@ public sealed record ActionBatchDto(
         b.CreatedAt,
         b.Kind != ActionKind.Undo && b.UndoneAt is null && b.MessageCount > 0);
 }
+
+/// <summary>The sender's most approved outcome; the outcome fields are null when nothing is approved yet.</summary>
+/// <param name="Approvals">Approved or applied suggestions the user decided (pattern suggestions excluded).</param>
+/// <param name="Agreement">Share of <paramref name="Approvals"/> with this outcome, 0–1.</param>
+/// <param name="Remaining">Messages without a suggestion, not deleted in Gmail.</param>
+public sealed record SenderPatternDto(
+    string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, int Approvals, double Agreement, int Remaining);
+
+/// <summary>Each value overrides the pattern's; without a pattern the topic label is required and the flags default to false.</summary>
+public sealed record ApplyRestRequest(string? TopicLabel = null, bool? NeedsAction = null, bool? ToBeDeleted = null);
+
+/// <summary>The criteria of the Gmail filter that matches the sender; the input of filter creation (M6).</summary>
+/// <param name="ListId">The List-Id all the sender's messages share, if any.</param>
+public sealed record FilterCandidateDto(string From, string? ListId);
+
+/// <param name="ProtectedAdjusted">Created without to-be-deleted because the message is protected.</param>
+/// <param name="Batch">The queued apply batch; null when nothing remained.</param>
+public sealed record ApplyRestResponse(int Created, int ProtectedAdjusted, ActionBatchDto? Batch, FilterCandidateDto FilterCandidate);
