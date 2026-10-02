@@ -3,7 +3,8 @@ namespace GmailOrganiser.Gmail.Fake;
 /// <summary>
 /// A deterministic synthetic mailbox: 60 messages from 8 <c>example.com</c> senders over the last months. Newer mail is
 /// in the Inbox, older mail is archived; list senders carry <c>List-Id</c>/<c>List-Unsubscribe</c>, and the billing,
-/// travel and statement senders attach generated PDFs.
+/// travel and statement senders attach generated PDFs. Every third message has an html-only body, the next a text-only
+/// one, the next both.
 /// </summary>
 public static class FakeMailboxSeed
 {
@@ -56,7 +57,9 @@ public static class FakeMailboxSeed
                 Snippet: $"Synthetic message {number} for testing.",
                 SizeEstimate: 1500 + (i * 397 % 6000),
                 HistoryId: (HistoryId - i).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                Attachments: attachments));
+                Attachments: attachments,
+                BodyText: i % 3 == 0 ? null : $"Hello,\n\nSynthetic body {number} from {sender.Subject.ToLowerInvariant()}. Grüße, Ünïcode ✓\n",
+                BodyHtml: i % 3 == 1 ? null : $"<html><body><p>Synthetic body {number}: <b>{sender.Subject}</b>. Grüße ✓</p></body></html>"));
         }
 
         return messages;

@@ -5,6 +5,8 @@ public sealed record FakeAttachment(string AttachmentId, string Filename, string
 
 /// <summary>A message in the fake mailbox (synthetic data only).</summary>
 /// <param name="From">The raw <c>From</c> header.</param>
+/// <param name="BodyText">The raw <c>text/plain</c> part, if any.</param>
+/// <param name="BodyHtml">The raw <c>text/html</c> part, if any.</param>
 /// <param name="SizeEstimate">Size of the message without attachments; Gmail's estimate adds the attachments.</param>
 public sealed record FakeMessage(
     string Id,
@@ -19,7 +21,9 @@ public sealed record FakeMessage(
     string? Snippet = null,
     int SizeEstimate = 2048,
     string HistoryId = "1",
-    IReadOnlyList<FakeAttachment>? Attachments = null)
+    IReadOnlyList<FakeAttachment>? Attachments = null,
+    string? BodyText = null,
+    string? BodyHtml = null)
 {
     public IReadOnlyList<FakeAttachment> Attachments { get; init; } = Attachments ?? [];
 

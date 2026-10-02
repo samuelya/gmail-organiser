@@ -64,6 +64,16 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
     public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct) => inner.GetLabelMessagesTotalAsync(labelId, ct);
 
+    public Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct) => inner.GetMessageBodyAsync(id, ct);
+
+    public Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(CancellationToken ct) => inner.ListLabelsAsync(ct);
+
+    public Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct) => inner.CreateLabelAsync(name, ct);
+
+    public Task BatchModifyAsync(
+        IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct) =>
+        inner.BatchModifyAsync(ids, addLabelIds, removeLabelIds, ct);
+
     public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {
         MetadataCalls.Enqueue([.. ids]);

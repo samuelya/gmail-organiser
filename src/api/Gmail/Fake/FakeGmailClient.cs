@@ -23,6 +23,7 @@ public sealed class FakeGmailClient : IGmailClient
     private readonly GmailRetryPolicy retry;
     private readonly List<FakeMessage> messages;
     private readonly FakeHistory history = new(FakeMailboxSeed.HistoryId);
+    private readonly FakeLabelStore labels = new();
     private long historyId = FakeMailboxSeed.HistoryId;
     private int historyPageSize = 100;
     private HttpStatusCode failureStatus;
@@ -146,19 +147,29 @@ public sealed class FakeGmailClient : IGmailClient
         ArgumentNullException.ThrowIfNull(labelIds);
         lock (gate)
         {
-            var index = IndexOf(id);
-            var old = messages[index].LabelIds;
-            var added = labelIds.Except(old, StringComparer.Ordinal).ToList();
-            var removed = old.Except(labelIds, StringComparer.Ordinal).ToList();
-            var historyIdText = NextHistoryId();
-            messages[index] = messages[index] with { LabelIds = [.. labelIds], HistoryId = historyIdText };
-            history.Append(new HistoryRecord(
-                historyIdText,
-                [],
-                [],
-                added.Count > 0 ? [new LabelChange(id, added)] : [],
-                removed.Count > 0 ? [new LabelChange(id, removed)] : []));
+            ReplaceLabels(IndexOf(id), labelIds, recordUnchanged: true);
         }
+    }
+
+    private void ReplaceLabels(int index, IReadOnlyList<string> labelIds, bool recordUnchanged)
+    {
+        var id = messages[index].Id;
+        var old = messages[index].LabelIds;
+        var added = labelIds.Except(old, StringComparer.Ordinal).ToList();
+        var removed = old.Except(labelIds, StringComparer.Ordinal).ToList();
+        if (!recordUnchanged && added.Count == 0 && removed.Count == 0)
+        {
+            return;
+        }
+
+        var historyIdText = NextHistoryId();
+        messages[index] = messages[index] with { LabelIds = [.. labelIds], HistoryId = historyIdText };
+        history.Append(new HistoryRecord(
+            historyIdText,
+            [],
+            [],
+            added.Count > 0 ? [new LabelChange(id, added)] : [],
+            removed.Count > 0 ? [new LabelChange(id, removed)] : []));
     }
 
     public async Task<GmailProfile> GetProfileAsync(CancellationToken ct)
@@ -179,26 +190,18 @@ public sealed class FakeGmailClient : IGmailClient
         var offset = DecodePageToken(query.PageToken);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
-        return await retry.ExecuteAsync(async _ =>
+        return await RetryAsync(() =>
         {
-            if (TakeFailure() is { } failure)
-            {
-                await ThrowFailureAsync(failure).ConfigureAwait(false);
-            }
-
-            lock (gate)
-            {
-                var hits = messages
-                    .Where(m => includeSpamTrash || !m.LabelIds.Any(IsSpamOrTrash))
-                    .Where(m => query.LabelIds is null || query.LabelIds.All(l => m.LabelIds.Contains(l, StringComparer.OrdinalIgnoreCase)))
-                    .Where(matches)
-                    .OrderByDescending(m => m.Date)
-                    .ThenBy(m => m.Id, StringComparer.Ordinal)
-                    .ToList();
-                var page = hits.Skip(offset).Take(query.MaxResults).Select(m => new MessageRef(m.Id, m.ThreadId)).ToList();
-                var next = offset + page.Count < hits.Count ? EncodePageToken(offset + page.Count) : null;
-                return new MessageIdPage(page, next, hits.Count);
-            }
+            var hits = messages
+                .Where(m => includeSpamTrash || !m.LabelIds.Any(IsSpamOrTrash))
+                .Where(m => query.LabelIds is null || query.LabelIds.All(l => m.LabelIds.Contains(l, StringComparer.OrdinalIgnoreCase)))
+                .Where(matches)
+                .OrderByDescending(m => m.Date)
+                .ThenBy(m => m.Id, StringComparer.Ordinal)
+                .ToList();
+            var page = hits.Skip(offset).Take(query.MaxResults).Select(m => new MessageRef(m.Id, m.ThreadId)).ToList();
+            var next = offset + page.Count < hits.Count ? EncodePageToken(offset + page.Count) : null;
+            return new MessageIdPage(page, next, hits.Count);
         }, ct).ConfigureAwait(false);
     }
 
@@ -247,18 +250,10 @@ public sealed class FakeGmailClient : IGmailClient
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
         var pageSize = HistoryPageSize;
 
-        return await retry.ExecuteAsync(async _ =>
+        return await RetryAsync(() =>
         {
-            if (TakeFailure() is { } failure)
-            {
-                await ThrowFailureAsync(failure).ConfigureAwait(false);
-            }
-
-            lock (gate)
-            {
-                var (records, next) = history.Page(startHistoryId, pageToken, pageSize);
-                return new HistoryPage(records, next, historyId.ToString(CultureInfo.InvariantCulture));
-            }
+            var (records, next) = history.Page(startHistoryId, pageToken, pageSize);
+            return new HistoryPage(records, next, historyId.ToString(CultureInfo.InvariantCulture));
         }, ct).ConfigureAwait(false);
     }
 
@@ -271,6 +266,76 @@ public sealed class FakeGmailClient : IGmailClient
             return messages.Count(m => m.LabelIds.Contains(labelId, StringComparer.OrdinalIgnoreCase));
         }
     }
+
+    public async Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        return await RetryAsync<GmailMessageBody?>(() =>
+            messages.Find(m => m.Id == id) is { } m ? new GmailMessageBody(m.BodyText, m.BodyHtml) : null, ct).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(CancellationToken ct)
+    {
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        return await RetryAsync(() => labels.All, ct).ConfigureAwait(false);
+    }
+
+    public async Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct)
+    {
+        GmailLimits.EnsureValidLabelName(name);
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        return await RetryAsync(() => labels.Create(name), ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Updates each known message's labels and records the deltas; unknown ids are skipped, unknown labels are a 400.</summary>
+    public async Task BatchModifyAsync(
+        IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct)
+    {
+        GmailLimits.EnsureValidBatchModify(ids, addLabelIds, removeLabelIds);
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        await RetryAsync(() =>
+        {
+            if (addLabelIds.Concat(removeLabelIds).FirstOrDefault(l => !labels.Exists(l)) is not null)
+            {
+                throw GmailRetryPolicy.CreateApiException(HttpStatusCode.BadRequest, "invalidArgument");
+            }
+
+            foreach (var id in ids.Distinct(StringComparer.Ordinal))
+            {
+                var index = messages.FindIndex(m => m.Id == id);
+                if (index >= 0)
+                {
+                    var current = messages[index].LabelIds;
+                    IReadOnlyList<string> next = [.. current.Except(removeLabelIds, StringComparer.Ordinal)
+                        .Concat(addLabelIds.Except(current, StringComparer.Ordinal)).Distinct(StringComparer.Ordinal)];
+                    ReplaceLabels(index, next, recordUnchanged: false);
+                }
+            }
+
+            return true;
+        }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Runs <paramref name="read"/> under the lock, after any injected failure, with the shared retry policy.</summary>
+    private Task<T> RetryAsync<T>(Func<T> read, CancellationToken ct) =>
+        retry.ExecuteAsync(async _ =>
+        {
+            if (TakeFailure() is { } failure)
+            {
+                await ThrowFailureAsync(failure).ConfigureAwait(false);
+            }
+
+            lock (gate)
+            {
+                return read();
+            }
+        }, ct);
 
     /// <summary>The seeded synthetic mailbox; see <see cref="FakeMailboxSeed"/>.</summary>
     public static IReadOnlyList<FakeMessage> Seed(DateTimeOffset now) => FakeMailboxSeed.Create(now);

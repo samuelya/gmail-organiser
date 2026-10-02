@@ -12,11 +12,17 @@ public sealed class GmailQuotaLimiter(IOptions<GmailOptions> options, TimeProvid
     /// <summary>Cost of <c>messages.list</c> and <c>messages.get</c> in Gmail quota units.</summary>
     public const int MessageCallUnits = 5;
 
-    /// <summary>Cost of <c>labels.get</c> in Gmail quota units.</summary>
+    /// <summary>Cost of <c>labels.get</c> and <c>labels.list</c> in Gmail quota units.</summary>
     public const int LabelCallUnits = 1;
 
     /// <summary>Cost of <c>history.list</c> in Gmail quota units.</summary>
     public const int HistoryCallUnits = 2;
+
+    /// <summary>Cost of <c>labels.create</c> in Gmail quota units.</summary>
+    public const int LabelCreateUnits = 5;
+
+    /// <summary>Cost of <c>messages.batchModify</c> in Gmail quota units; the most expensive call the app makes.</summary>
+    public const int BatchModifyUnits = 50;
 
     private static readonly TimeSpan Window = TimeSpan.FromSeconds(1);
 
@@ -46,13 +52,13 @@ public sealed class GmailQuotaLimiter(IOptions<GmailOptions> options, TimeProvid
 
     /// <summary>
     /// Spends <paramref name="units"/> if they fit now; otherwise says how long until they might. A batch spends its
-    /// whole cost in one call, right before it is sent; options validation keeps a full batch within the budget, so
-    /// a larger request is a bug and throws rather than waiting forever.
+    /// whole cost in one call, right before it is sent. A call costing more than the budget (a <c>batchModify</c> under
+    /// a low budget) is clamped to the budget, so it waits for an empty window and then takes the whole second.
     /// </summary>
     public bool TryAcquire(int units, out TimeSpan retryAfter)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(units, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(units, Budget);
+        units = Math.Min(units, Budget);
         lock (sync)
         {
             var now = time.GetUtcNow();
