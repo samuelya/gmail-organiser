@@ -48,19 +48,75 @@ public sealed class SettingsStore(
 
         var before = JsonSerializer.SerializeToNode(Effective(stored), Json)!.AsObject();
         var after = JsonSerializer.SerializeToNode(change(Effective(stored)), Json)!.AsObject();
-        foreach (var (name, value) in after)
-        {
-            if (!JsonNode.DeepEquals(value, before[name]))
-            {
-                stored[name] = value?.DeepClone();
-            }
-        }
+        StoreChanges(stored, before, after);
 
         row.Document = stored.ToJsonString(Json);
         row.UpdatedAt = time.GetUtcNow();
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return Effective(stored);
+    }
+
+    /// <summary>
+    /// The write side of <see cref="Overlay"/>: stores only the leaf values that changed, recursing into nested blocks,
+    /// so values the user never changed keep following the defaults. Lists of <c>{"type": …}</c> entries are stored per type.
+    /// </summary>
+    private static void StoreChanges(JsonObject stored, JsonObject before, JsonObject after)
+    {
+        foreach (var (name, value) in after)
+        {
+            var previous = before[name];
+            if (JsonNode.DeepEquals(value, previous))
+            {
+                continue;
+            }
+
+            if (value is JsonObject block && previous is JsonObject previousBlock)
+            {
+                if (stored[name] is not JsonObject storedBlock)
+                {
+                    stored[name] = storedBlock = [];
+                }
+
+                StoreChanges(storedBlock, previousBlock, block);
+            }
+            else if (value is JsonArray list && previous is JsonArray previousList && TypeKeys(list) is { } keys
+                && TypeKeys(previousList) is { } previousKeys)
+            {
+                if (stored[name] is not JsonArray entries)
+                {
+                    stored[name] = entries = [];
+                }
+
+                foreach (var (type, entry) in keys.Where(k => !JsonNode.DeepEquals(k.Value, previousKeys.GetValueOrDefault(k.Key))))
+                {
+                    // The reader takes the first entry per type, so the new entry replaces any saved one.
+                    entries.RemoveAll(e => e is JsonObject o && o["type"] is JsonValue t
+                        && t.GetValueKind() == JsonValueKind.String && t.GetValue<string>() == type);
+                    entries.Add(entry.DeepClone());
+                }
+            }
+            else
+            {
+                stored[name] = value?.DeepClone();
+            }
+        }
+    }
+
+    /// <summary>The entries of a list keyed by a string <c>type</c>, or <c>null</c> if it isn't such a list.</summary>
+    private static Dictionary<string, JsonNode>? TypeKeys(JsonArray list)
+    {
+        var keys = new Dictionary<string, JsonNode>();
+        foreach (var entry in list)
+        {
+            if (entry is not JsonObject o || o["type"] is not JsonValue type || type.GetValueKind() != JsonValueKind.String
+                || !keys.TryAdd(type.GetValue<string>(), o))
+            {
+                return null;
+            }
+        }
+
+        return keys;
     }
 
     private AppSettings Effective(JsonObject stored)

@@ -59,6 +59,25 @@ public sealed class AttachmentSettingsEndpointsTests(ApiFactory factory, Postgre
             [new(AttachmentType.Image, false), new(AttachmentType.Other, true)]));
     }
 
+    [Fact]
+    public async Task Updates_store_only_the_changed_values_so_the_rest_follow_the_defaults()
+    {
+        await PutJsonAsync("""{"attachments":{"enabled":false}}""");
+        await PutJsonAsync("""{"attachments":{"types":[{"type":"pdf","enabled":false}]}}""");
+        await PutJsonAsync("""{"attachments":{"types":[{"type":"image","enabled":false}]}}""");
+        await PutJsonAsync("""{"attachments":{"types":[{"type":"pdf","enabled":false}]}}""");
+
+        await using var db = postgres.CreateDbContext();
+        var document = JsonNode.Parse((await db.Settings.SingleAsync(Ct)).Document)!.AsObject();
+        JsonNode.DeepEquals(document, JsonNode.Parse("""
+            {"attachments":{"enabled":false,"types":[{"type":"pdf","enabled":false},{"type":"image","enabled":false}]}}
+            """)).ShouldBeTrue(document.ToJsonString());
+        var attachments = (await GetAsync()).Attachments;
+        attachments.MaxChars.ShouldBe(AttachmentSettings.DefaultMaxChars);
+        attachments.Types.ShouldBe(AttachmentSettings.WithDefaults(
+            [new(AttachmentType.Pdf, false), new(AttachmentType.Image, false)]));
+    }
+
     [Theory]
     [InlineData("""{"maxBytes":65535}""", "attachments.maxBytes")]
     [InlineData("""{"maxImageBytes":26214401}""", "attachments.maxImageBytes")]
