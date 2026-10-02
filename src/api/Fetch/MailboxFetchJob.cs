@@ -25,6 +25,7 @@ public sealed record MailboxFetchCursor(
 public sealed partial class MailboxFetchJob(
     IGmailClient gmail,
     MessageFetchPipeline pipeline,
+    LocalAccountClaim accountClaim,
     ISettingsStore settings,
     AppDbContext db,
     TimeProvider time,
@@ -74,11 +75,11 @@ public sealed partial class MailboxFetchJob(
     private async Task<MailboxFetchCursor> StartAsync(CancellationToken ct)
     {
         var profile = await gmail.GetProfileAsync(ct);
+        await accountClaim.ClaimAsync(profile.EmailAddress, ct);
         var excluded = await gmail.GetLabelMessagesTotalAsync(SpamLabelId, ct) + await gmail.GetLabelMessagesTotalAsync(TrashLabelId, ct);
         var now = time.GetUtcNow();
         await db.FetchRunMessages.ExecuteDeleteAsync(ct);
         await db.FetchState.ExecuteUpdateAsync(set => set
-            .SetProperty(f => f.AccountEmail, profile.EmailAddress)
             .SetProperty(f => f.MessagesTotal, profile.MessagesTotal)
             .SetProperty(f => f.MailboxPhase, MailboxPhase.Inbox)
             .SetProperty(f => f.PageToken, (string?)null)

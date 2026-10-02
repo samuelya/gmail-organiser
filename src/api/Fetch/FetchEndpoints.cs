@@ -12,14 +12,14 @@ public static class FetchEndpoints
     public static IEndpointRouteBuilder MapFetchEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/fetch").WithTags("Fetch");
-        group.MapPost("/mailbox/start", StartMailboxAsync);
+        group.MapPost("/mailbox/start", StartMailboxAsync).RequireAccountMatch();
         group.MapGet("/status", GetStatusAsync);
         return endpoints;
     }
 
     /// <summary>
     /// 202 with a new job; 200 with the active one, or with the latest failed or paused one after resuming it from its
-    /// cursor; 409 when Gmail is not connected or the mailbox is already fetched (that is the incremental fetch's job).
+    /// cursor; 409 when the local data belongs to another account (<see cref="AccountGuardEndpointExtensions.RequireAccountMatch"/>), Gmail is not connected or the mailbox is already fetched (that is the incremental fetch's job).
     /// </summary>
     private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartMailboxAsync(
         ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
@@ -58,7 +58,7 @@ public static class FetchEndpoints
         return created ? TypedResults.Accepted($"/api/jobs/{job.Id}", response) : TypedResults.Ok(response);
     }
 
-    private static async Task<Ok<FetchStatusDto>> GetStatusAsync(AppDbContext db, CancellationToken ct)
+    private static async Task<Ok<FetchStatusDto>> GetStatusAsync(AppDbContext db, ITokenStore tokens, CancellationToken ct)
     {
         var counts = await db.FetchState.AsNoTracking()
             .Where(s => s.Id == FetchStateRow.SingletonId)
@@ -71,6 +71,7 @@ public static class FetchEndpoints
             .SingleAsync(ct);
         var state = counts.State;
         var latest = await LatestMailboxJobAsync(db, ct);
+        var check = AccountGuard.Compare(state.AccountEmail, (await tokens.GetAsync(ct))?.AccountEmail);
 
         return TypedResults.Ok(new FetchStatusDto(
             state.AccountEmail,
@@ -84,7 +85,9 @@ public static class FetchEndpoints
             state.StartedAt,
             state.CompletedAt,
             latest is not null && JobRow.Active.Contains(latest.Status) ? latest.ToDto() : null,
-            latest is { Status: JobStatus.Failed } ? latest.ToDto() : null));
+            latest is { Status: JobStatus.Failed } ? latest.ToDto() : null,
+            check.IsMismatch,
+            check.LocalAccountMasked));
     }
 
     /// <summary>The active mailbox fetch job (at most one, by the unique index), else the most recent one.</summary>

@@ -42,6 +42,7 @@ public sealed class SetupEndpointsTests(ApiFactory factory, PostgresFixture post
             ["embeddingModelSelected"] = false,
             ["wizardSeen"] = false,
             ["complete"] = false,
+            ["accountMismatch"] = false,
         });
     }
 

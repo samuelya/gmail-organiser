@@ -1,3 +1,4 @@
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Settings;
@@ -5,7 +6,10 @@ using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Setup;
 
-/// <summary>What the setup wizard and the "setup incomplete" banner need. <see cref="Complete"/> = Gmail connected and a chat model selected.</summary>
+/// <summary>
+/// What the setup wizard and the "setup incomplete" banner need. <see cref="Complete"/> = Gmail connected and a chat model selected.
+/// <see cref="AccountMismatch"/>: the local data belongs to another Gmail account, so fetching is blocked.
+/// </summary>
 public sealed record SetupStatusDto(
     bool GoogleClientConfigured,
     bool GmailConnected,
@@ -14,12 +18,14 @@ public sealed record SetupStatusDto(
     bool ChatModelSelected,
     bool EmbeddingModelSelected,
     bool WizardSeen,
-    bool Complete);
+    bool Complete,
+    bool AccountMismatch);
 
 /// <summary>Composes the setup status from the settings, the token store and an Ollama ping; stores nothing.</summary>
 public sealed class SetupStatusService(
     ISettingsStore settings,
     ITokenStore tokens,
+    IAccountGuard accountGuard,
     IOllamaCatalog ollama,
     GoogleClientService googleClient,
     IOptions<GmailOptions> gmail,
@@ -33,6 +39,7 @@ public sealed class SetupStatusService(
     {
         var current = await settings.GetAsync(ct);
         var token = await tokens.GetAsync(ct);
+        var accountMismatch = (await accountGuard.CheckAsync(token, ct)).IsMismatch;
         var ollamaReachable = await PingOllamaAsync(ct);
 
         // With the fake Gmail no Google client is needed to connect, so the wizard step counts as done.
@@ -51,7 +58,8 @@ public sealed class SetupStatusService(
             ChatModelSelected: chatModelSelected,
             EmbeddingModelSelected: !string.IsNullOrWhiteSpace(current.EmbeddingModel),
             WizardSeen: current.SetupWizardSeen,
-            Complete: gmailConnected && chatModelSelected);
+            Complete: gmailConnected && chatModelSelected,
+            AccountMismatch: accountMismatch);
     }
 
     // Any failure (unreachable, not Ollama, invalid saved URL, timeout) is "not reachable"; only the caller's abort propagates.

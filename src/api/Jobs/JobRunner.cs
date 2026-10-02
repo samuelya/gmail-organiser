@@ -182,15 +182,24 @@ public sealed partial class JobRunner(
             return;
         }
 
-        var context = new JobContext(job.Id, job.Cursor, db, time, notifier);
+        // The guard runs before the handler and at every checkpoint, so a job queued or paused before the condition
+        // changed is refused too; a guard's own failure is recorded like the handler's.
+        var context = new JobContext(job.Id, job.Cursor, db, time, notifier, services.GetKeyedService<IJobRunGuard>(job.Type));
         try
         {
+            await context.EnsureAllowedAsync(ct);
             LogStarting(logger);
             await handler.RunAsync(context, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             LogInterrupted(logger);
+            return;
+        }
+        catch (JobRefusedException ex)
+        {
+            LogRefused(logger);
+            await FinishAsync(db, notifier, jobId, JobStatus.Failed, ex.Message);
             return;
         }
         catch (Exception ex)
@@ -253,6 +262,9 @@ public sealed partial class JobRunner(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job starting")]
     private static partial void LogStarting(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Job refused by its run guard")]
+    private static partial void LogRefused(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job ended as {Status}")]
     private static partial void LogFinished(ILogger logger, string status);

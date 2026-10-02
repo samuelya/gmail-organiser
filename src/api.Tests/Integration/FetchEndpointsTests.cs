@@ -48,7 +48,7 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
 
         var status = await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct);
 
-        status.ShouldBe(new FetchStatusDto(null, "not_started", 0, 0, null, 0, 0, null, null, null, null, null));
+        status.ShouldBe(new FetchStatusDto(null, "not_started", 0, 0, null, 0, 0, null, null, null, null, null, false, null));
     }
 
     [Fact]

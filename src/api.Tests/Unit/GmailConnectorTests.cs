@@ -16,6 +16,7 @@ public sealed class GmailConnectorTests
 
     private readonly StubGoogleOAuthClient oauth = new() { RevokeHangs = true };
     private readonly FakeTokenStore tokens = new(TimeProvider.System);
+    private readonly StubAccountGuard accountGuard = new();
 
     [Fact]
     public async Task Disconnect_deletes_the_token_when_the_request_is_aborted_while_revoke_hangs()
@@ -43,16 +44,31 @@ public sealed class GmailConnectorTests
         (await tokens.GetAsync(TestContext.Current.CancellationToken)).ShouldBeNull();
     }
 
-    private GmailConnector CreateConnector() => new(
+    [Fact]
+    public async Task Connect_keeps_the_current_account_when_the_guard_refuses_a_switch_during_a_fetch()
+    {
+        await tokens.SaveAsync("user@example.com", "synthetic-refresh-token", GmailScopes.All, TestContext.Current.CancellationToken);
+        oauth.AccountEmail = "other@example.com";
+        accountGuard.RefusesConnect = true;
+
+        var outcome = await CreateConnector(useFake: true).CompleteAsync("synthetic-code", null, "synthetic-verifier", TestContext.Current.CancellationToken);
+
+        outcome.ShouldBe(ConnectOutcome.FetchActive);
+        outcome.ToReason().ShouldBe("fetch_active");
+        (await tokens.GetAsync(TestContext.Current.CancellationToken)).ShouldNotBeNull().AccountEmail.ShouldBe("user@example.com");
+    }
+
+    private GmailConnector CreateConnector(bool useFake = false) => new(
         oauth,
         tokens,
+        accountGuard,
         new GoogleClientService(
             new InMemorySettingsStore(),
             new EphemeralDataProtectionProvider(),
             Options.Create(new SettingsEnvOptions()),
             NullLogger<GoogleClientService>.Instance),
         Options.Create(new AppOptions()),
-        Options.Create(new GmailOptions()),
+        Options.Create(new GmailOptions { UseFake = useFake }),
         Options.Create(new GoogleOAuthOptions { RevokeTimeout = RevokeTimeout }),
         TimeProvider.System,
         NullLogger<GmailConnector>.Instance);
