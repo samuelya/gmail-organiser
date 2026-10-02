@@ -4,8 +4,7 @@ const routes: Routes = [
   {
     path: '',
     title: 'History',
-    loadComponent: () => import('../layout/placeholder-page').then((m) => m.PlaceholderPage),
-    data: { heading: 'History', milestone: 'M3' },
+    loadComponent: () => import('./history-page.component').then((m) => m.HistoryPage),
   },
 ];
 
