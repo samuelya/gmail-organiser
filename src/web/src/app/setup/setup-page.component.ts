@@ -93,17 +93,12 @@ export class SetupPage {
     models: STEP_MODELS,
   };
   private readonly skipped = new Set<number>();
-  private statusSeen = false;
 
   constructor() {
     const params = this.route.snapshot.queryParamMap;
     this.connectResult = parseConnectResult(params.get('gmail'), params.get('reason'));
-    this.initialIndex =
-      this.connectResult?.kind === 'connected'
-        ? STEP_OLLAMA
-        : this.connectResult?.kind === 'error'
-          ? STEP_CONNECT_GMAIL
-          : STEP_GOOGLE_CLIENT;
+    // Back from the callback (connected or not) the wizard stays on step 2 so the user sees the result.
+    this.initialIndex = this.connectResult ? STEP_CONNECT_GMAIL : STEP_GOOGLE_CLIENT;
     this.selectedIndex.set(this.initialIndex);
     if (this.connectResult?.kind === 'connected') {
       // The user got past step 1 to connect; step 2 completes only once the status confirms it.
@@ -130,14 +125,6 @@ export class SetupPage {
     this.completed[STEP_CONNECT_GMAIL].set(
       status.connected || this.skipped.has(STEP_CONNECT_GMAIL),
     );
-    const firstStatus = !this.statusSeen;
-    this.statusSeen = true;
-    if (firstStatus && !status.connected && this.connectResult?.kind === 'connected') {
-      // The callback said connected but the status disagrees: go back to step 2.
-      afterNextRender(() => (this.stepper().selectedIndex = STEP_CONNECT_GMAIL), {
-        injector: this.injector,
-      });
-    }
   }
 
   /** "Skip for now" (and "Next" on placeholder steps): completes the step, then moves on once rendered. */

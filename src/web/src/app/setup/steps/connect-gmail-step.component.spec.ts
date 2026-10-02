@@ -90,6 +90,31 @@ describe('ConnectGmailStep', () => {
     expect(q(el, 'connect')).not.toBeNull();
   });
 
+  it('connected callback result: confirms the connection until a disconnect', async () => {
+    const { fixture, el } = await render(
+      status({ connected: true, reason: null, accountEmail: EMAIL }),
+    );
+    fixture.componentRef.setInput('result', { kind: 'connected' });
+    await fixture.whenStable();
+    const success = q(el, 'connect-success')!;
+    expect(success.textContent).toContain(`Gmail connected as ${EMAIL}.`);
+    expect(success.getAttribute('role')).toBe('status');
+    expect(q(el, 'connect-error')).toBeNull();
+
+    q(el, 'disconnect')!.click();
+    await fixture.whenStable();
+    expect(q(el, 'connect-success')).toBeNull();
+    expect(q(el, 'connect')).not.toBeNull();
+  });
+
+  it('connected callback result but not connected: no confirmation, Connect shown', async () => {
+    const { fixture, el } = await render(status({}));
+    fixture.componentRef.setInput('result', { kind: 'connected' });
+    await fixture.whenStable();
+    expect(q(el, 'connect-success')).toBeNull();
+    expect(q(el, 'connect')).not.toBeNull();
+  });
+
   it('no client configured: Connect is disabled with an explanation and does not navigate', async () => {
     const { el } = await render(status({}), { configured: false });
     const button = q(el, 'connect')!;

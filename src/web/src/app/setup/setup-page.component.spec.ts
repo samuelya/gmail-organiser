@@ -205,12 +205,18 @@ describe('SetupPage', () => {
     expect(page.initialIndex).toBe(STEP_GOOGLE_CLIENT);
   });
 
-  it('?gmail=connected shows the account and moves on to step 3', async () => {
+  it('?gmail=connected stays on step 2 with a confirmation and an enabled Next', async () => {
     connected = true;
     const { page, el } = await open('/setup?gmail=connected');
-    expect(page.initialIndex).toBe(STEP_OLLAMA);
-    expect(selectedLabel(el)).toContain('Ollama URL');
+    expect(page.initialIndex).toBe(STEP_CONNECT_GMAIL);
+    expect(selectedLabel(el)).toContain('Connect Gmail');
+    expect(page.completed[STEP_GOOGLE_CLIENT]()).toBe(true);
     expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(true);
+    expect(q(el, 'connect-success')!.textContent).toContain(`Gmail connected as ${EMAIL}.`);
+    const next = el.querySelectorAll<HTMLButtonElement>('button[matStepperNext]')[
+      STEP_CONNECT_GMAIL
+    ];
+    expect(next.disabled).toBe(false);
     expect(q(el, 'step-connected-as')!.textContent).toContain(`Connected as ${EMAIL}`);
     expect(TestBed.inject(Router).url).toBe('/setup');
   });
@@ -219,6 +225,8 @@ describe('SetupPage', () => {
     const { page, el } = await open('/setup?gmail=connected');
     expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(false);
     expect(selectedLabel(el)).toContain('Connect Gmail');
+    expect(q(el, 'connect-success')).toBeNull();
+    expect(q(el, 'connect')).not.toBeNull();
   });
 
   it('disconnect clears step 2 completion and the account', async () => {
