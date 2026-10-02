@@ -13,7 +13,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261002184020_M3_DecisionScope")]
+    [Migration("20261002190647_M3_DecisionScope")]
     partial class M3_DecisionScope
     {
         /// <inheritdoc />
@@ -665,6 +665,13 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.PrimitiveCollection<string[]>("CreatedLabelIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("created_label_ids")
+                        .HasDefaultValueSql("'{}'");
 
                     b.Property<string>("Description")
                         .IsRequired()
