@@ -15,6 +15,7 @@ import {
   AnalysisRunDto,
   GroupingPreviewDto,
   parseAnalyseParams,
+  queueOrder,
   savingsText,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
@@ -110,6 +111,15 @@ describe('analysis models', () => {
       count: null,
     });
     expect(parseAnalyseParams(convertToParamMap({ count: '2.5' })).count).toBeNull();
+  });
+
+  it('the queue lists the running run first, then queued runs oldest first', () => {
+    const runs = [
+      run({ id: 'q-new', status: 'queued', createdAt: '2026-01-01T00:03:00Z' }),
+      run({ id: 'q-old', status: 'queued', createdAt: '2026-01-01T00:02:00Z' }),
+      run({ id: 'running', status: 'running', createdAt: '2026-01-01T00:01:00Z' }),
+    ];
+    expect(queueOrder(runs).map((r) => r.id)).toEqual(['running', 'q-old', 'q-new']);
   });
 });
 
@@ -222,6 +232,39 @@ describe('AnalysePage', () => {
     expect(api.start).toHaveBeenCalledWith({ scope: 'inbox', count: 20 });
     expect(all('active-run')).toHaveLength(1);
     expect(q('run-status')!.textContent).toContain('Queued');
+  });
+
+  it('the preview refreshes after Start and when an active run finishes', async () => {
+    const { harness, q } = await render();
+    await wait(PREVIEW_DEBOUNCE_MS + 50);
+    expect(api.preview).toHaveBeenCalledTimes(1);
+
+    active = [run({ id: 'run-new', status: 'queued' })];
+    q('start')!.click();
+    await wait(PREVIEW_DEBOUNCE_MS + 50);
+    await harness.fixture.whenStable();
+    expect(api.preview).toHaveBeenCalledTimes(2);
+
+    active = [];
+    jobs.held.set([job('completed')]);
+    await harness.fixture.whenStable();
+    await wait(PREVIEW_DEBOUNCE_MS + 50);
+    expect(api.preview).toHaveBeenCalledTimes(3);
+    expect(api.preview).toHaveBeenLastCalledWith({ scope: 'inbox', count: 20 });
+  });
+
+  it('a new run joins the end of the queue', async () => {
+    const { harness, component } = await render();
+    active = [run({ id: 'run-1', status: 'running' })];
+    component.loadRuns();
+    await harness.fixture.whenStable();
+    active = [
+      run({ id: 'run-new', status: 'queued', createdAt: '2026-01-02T00:00:00Z' }),
+      ...active,
+    ];
+    component.start();
+    await harness.fixture.whenStable();
+    expect(component.active().map((r) => r.id)).toEqual(['run-1', 'run-new']);
   });
 
   it('a 409 on Start links to Settings', async () => {

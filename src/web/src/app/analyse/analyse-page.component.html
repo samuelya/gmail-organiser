@@ -114,6 +114,11 @@
           <button mat-button type="button" (click)="loadRuns()">Retry</button>
         </p>
       }
+      @if (queueTruncated()) {
+        <p class="mb-3 mt-0" data-testid="queue-truncated">
+          More runs are queued than this page lists; the oldest are not shown.
+        </p>
+      }
       <app-run-list
         [active]="active()"
         [finished]="finished()"

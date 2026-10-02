@@ -83,8 +83,8 @@ export const ANALYSIS_RUN_JOB = 'analysis_run';
 export const COUNT_PRESETS: readonly number[] = [10, 20, 50];
 /** Finished runs shown on the page. */
 export const FINISHED_RUNS_SHOWN = 20;
-/** Active runs requested; more than this can't be queued in practice. */
-export const ACTIVE_RUNS_LIMIT = 50;
+/** Active runs requested: the API's maximum. It lists newest first, so a full answer may miss the oldest. */
+export const ACTIVE_RUNS_LIMIT = 200;
 export const MAX_SENDER_LENGTH = 320;
 
 const SCOPES: readonly AnalysisScope[] = ['inbox', 'all', 'sender'];
@@ -134,6 +134,14 @@ export function parseAnalyseParams(params: ParamMap): {
 
 export function isScope(value: unknown): value is AnalysisScope {
   return SCOPES.includes(value as AnalysisScope);
+}
+
+/** Queue order, as runs execute: running runs on top, then queued ones, each oldest first. */
+export function queueOrder(runs: readonly AnalysisRunDto[]): AnalysisRunDto[] {
+  const rank = (r: AnalysisRunDto) => (r.status === 'running' ? 0 : 1);
+  return [...runs].sort(
+    (a, b) => rank(a) - rank(b) || Date.parse(a.createdAt) - Date.parse(b.createdAt),
+  );
 }
 
 /** What the run list shows for an active run: the live job wins over the run's own status. */

@@ -27,6 +27,7 @@ import {
   filter,
   forkJoin,
   map,
+  merge,
   of,
   startWith,
   Subject,
@@ -50,6 +51,7 @@ import {
   GroupingPreviewDto,
   MAX_SENDER_LENGTH,
   parseAnalyseParams,
+  queueOrder,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
 import { GroupingPreview } from './grouping-preview.component';
@@ -125,6 +127,8 @@ export class AnalysePage {
   private readonly destroyRef = inject(DestroyRef);
   private readonly jobs = inject(JobsService);
   private readonly reloadRuns = new Subject<void>();
+  /** Asks for a fresh preview of the same selection: a started or finished run changes what is left. */
+  private readonly refreshPreview = new Subject<void>();
   /** The deep link set the count: the settings default must not overwrite it. */
   private countFromLink = false;
 
@@ -162,6 +166,8 @@ export class AnalysePage {
   readonly active = signal<AnalysisRunDto[]>([]);
   readonly finished = signal<AnalysisRunDto[]>([]);
   readonly runsFailed = signal(false);
+  /** The API returned as many active runs as asked for: the oldest may be missing. */
+  readonly queueTruncated = signal(false);
   readonly starting = signal(false);
   /** The last start answered 409: no chat model is selected. */
   readonly noChatModel = signal(false);
@@ -194,11 +200,15 @@ export class AnalysePage {
         }
       });
 
-    this.form.valueChanges
-      .pipe(
+    merge(
+      this.form.valueChanges.pipe(
         startWith(null),
         map(() => selectionOf(this.form.getRawValue())),
         distinctUntilChanged((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+      ),
+      this.refreshPreview.pipe(map(() => this.selection())),
+    )
+      .pipe(
         tap(() => this.previewLoading.set(true)),
         debounceTime(PREVIEW_DEBOUNCE_MS),
         switchMap((selection) =>
@@ -243,10 +253,13 @@ export class AnalysePage {
       .subscribe((runs) => {
         this.runsFailed.set(!runs);
         if (!runs) return;
-        this.active.set(runs.active);
-        this.finished.set(runs.finished);
-        // A cancel is done once its run has left the queue.
         const ids = new Set(runs.active.map((r) => r.id));
+        const ended = this.active().some((r) => !ids.has(r.id));
+        this.active.set(queueOrder(runs.active));
+        this.queueTruncated.set(runs.active.length >= ACTIVE_RUNS_LIMIT);
+        this.finished.set(runs.finished);
+        if (ended) this.refreshPreview.next();
+        // A cancel is done once its run has left the queue.
         this.cancelling.update((c) => new Set([...c].filter((id) => ids.has(id))));
       });
     effect(() => {
@@ -270,7 +283,8 @@ export class AnalysePage {
         next: (run) => {
           this.starting.set(false);
           this.noChatModel.set(false);
-          this.active.update((runs) => [run, ...runs.filter((r) => r.id !== run.id)]);
+          this.active.update((runs) => [...runs.filter((r) => r.id !== run.id), run]);
+          this.refreshPreview.next();
           this.loadRuns();
         },
         // The error interceptor shows the message; a 409 also links to Settings.
