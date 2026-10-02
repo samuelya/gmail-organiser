@@ -1,0 +1,139 @@
+<app-page-header title="Review">
+  <button
+    actions
+    mat-stroked-button
+    type="button"
+    [disabled]="busy()"
+    (click)="bulkApprove()"
+    data-testid="bulk-approve"
+  >
+    Bulk approve…
+  </button>
+</app-page-header>
+
+@if (applyJobId()) {
+  <mat-card appearance="outlined" class="mb-4" data-testid="apply-progress">
+    <mat-card-content class="flex flex-wrap items-center gap-3">
+      <span class="min-w-0 flex-1" role="status" data-testid="apply-message">
+        {{ applyJob()?.progress?.message || 'Applying approved suggestions…' }}
+      </span>
+      <mat-progress-bar
+        class="basis-full"
+        [mode]="applyPercent() === null ? 'indeterminate' : 'determinate'"
+        [value]="applyPercent() ?? 0"
+        aria-label="Apply progress"
+      />
+      <button mat-stroked-button type="button" (click)="cancelApply()" data-testid="apply-cancel">
+        Cancel
+      </button>
+    </mat-card-content>
+  </mat-card>
+}
+
+<div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
+  <mat-card appearance="outlined">
+    <mat-card-content>
+      <app-review-sender-list
+        [result]="senders()"
+        [status]="status()"
+        [selected]="selected()"
+        [pageSize]="senderPageSize"
+        [loading]="sendersLoading()"
+        [failed]="sendersFailed()"
+        (statusChange)="onStatus($event)"
+        (searchChange)="onSearch($event)"
+        (pageChange)="onSenderPage($event)"
+        (selectSender)="selectSender($event)"
+      />
+    </mat-card-content>
+  </mat-card>
+
+  <section class="flex min-w-0 flex-col gap-3" aria-label="Selected sender" data-testid="detail">
+    @if (detailLoading()) {
+      <mat-progress-bar mode="indeterminate" aria-label="Loading the sender's groups" />
+    }
+    @if (detail(); as d) {
+      <mat-card appearance="outlined">
+        <mat-card-content class="flex flex-col gap-3">
+          <div>
+            <h2 class="sender-title m-0" data-testid="detail-title">
+              {{ d.sender.displayName || d.sender.address }}
+            </h2>
+            <div class="muted text-sm">
+              {{ d.sender.address }} · {{ d.sender.pending }} pending ·
+              {{ d.sender.approved }} approved · {{ d.sender.rejected }} rejected ·
+              {{ d.sender.applied }} applied
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Sender actions">
+            <button
+              mat-flat-button
+              type="button"
+              [disabled]="busy() || approvedCount() === 0 || !!applyJobId()"
+              (click)="applyApproved()"
+              data-testid="apply-approved"
+            >
+              Apply approved ({{ approvedCount() }})
+            </button>
+            @if (restPattern(); as p) {
+              <button
+                mat-stroked-button
+                type="button"
+                [disabled]="busy() || !!applyJobId()"
+                (click)="applyRest()"
+                data-testid="apply-rest"
+              >
+                Apply to rest of sender (remaining {{ p.remaining }})
+              </button>
+            }
+            <button
+              mat-stroked-button
+              type="button"
+              [disabled]="busy() || selection().size === 0 || selection().size > maxAnalyse"
+              [matTooltip]="
+                selection().size > maxAnalyse ? 'At most ' + maxAnalyse + ' at a time' : ''
+              "
+              (click)="analyseIndividually()"
+              data-testid="analyse-individually"
+            >
+              Analyse individually ({{ selection().size }})
+            </button>
+          </div>
+        </mat-card-content>
+      </mat-card>
+
+      @for (g of d.groups; track g.groupKey ?? g.members[0]?.id) {
+        <app-group-card
+          [group]="g"
+          [labels]="flagLabels()"
+          [selected]="selection()"
+          [skipped]="skipped()"
+          [busy]="busy()"
+          (approveAll)="approveGroup(g)"
+          (rejectAll)="rejectGroup(g)"
+          (editGroup)="editGroup(g)"
+          (approveMember)="approveMember($event)"
+          (rejectMember)="rejectMember($event)"
+          (editMember)="editMember($event)"
+          (toggleMember)="toggleMember($event)"
+        />
+      } @empty {
+        <p class="muted m-0" data-testid="detail-empty">
+          No {{ status() }} suggestions for this sender.
+        </p>
+      }
+      @if (d.totalGroups > d.pageSize) {
+        <mat-paginator
+          [length]="d.totalGroups"
+          [pageIndex]="d.page - 1"
+          [pageSize]="d.pageSize"
+          hidePageSize
+          (page)="onGroupPage($event)"
+          aria-label="Group pages"
+        />
+      }
+    } @else if (!detailLoading()) {
+      <p class="muted m-0" data-testid="detail-none">Select a sender to review its suggestions.</p>
+    }
+  </section>
+</div>
