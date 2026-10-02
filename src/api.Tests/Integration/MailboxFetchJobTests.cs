@@ -241,7 +241,11 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         (await db.Messages.ToDictionaryAsync(m => m.Id, m => m.FetchedAt, Ct)).ShouldBe(fetchedAt, ignoreOrder: true);
         (await db.Messages.ToDictionaryAsync(m => m.Id, m => m.UpdatedAt, Ct)).ShouldBe(updatedAt, ignoreOrder: true);
         (await db.Senders.SingleAsync(s => s.Address == "sender0@example.com", Ct)).TotalCount.ShouldBe(MessageCount / SenderCount);
-        (await db.Senders.AllAsync(s => s.AnalysedCount == 7, Ct)).ShouldBeTrue();
+        // The fetch recomputes analysed_count from the messages, so a stale value never survives it.
+        var analysedBySender = await db.Messages.Where(m => m.AnalysisStatus != AnalysisStatus.NotAnalysed)
+            .GroupBy(m => m.FromAddress).ToDictionaryAsync(g => g.Key, g => g.Count(), Ct);
+        (await db.Senders.ToDictionaryAsync(s => s.Address, s => s.AnalysedCount, Ct))
+            .ShouldAllBe(p => p.Value == analysedBySender.GetValueOrDefault(p.Key));
     }
 
     [Fact]

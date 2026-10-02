@@ -210,6 +210,10 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
 
     public ScriptedChatClient Chat { get; } = new();
     public JobRunner Runner { get; private set; } = null!;
+    public CountingGmailClient Gmail { get; private set; } = null!;
+
+    /// <summary>Runs on every published job change, before it is recorded.</summary>
+    public Func<JobDto, Task>? OnPublish { get; set; }
 
     public async ValueTask InitializeAsync()
     {
@@ -248,12 +252,14 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
         {
             services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), Seed()));
-            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<FakeGmailClient>());
+            services.AddSingleton(sp => new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>()));
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
             services.AddScoped<ILlmClientFactory>(_ => new ScriptedLlmFactory(Chat));
-            services.AddSingleton<IJobProgressPublisher>(new RecordingPublisher(published));
+            services.AddSingleton<IJobProgressPublisher>(new RecordingPublisher(this));
             services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)));
         }));
         Runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
+        Gmail = host.Services.GetRequiredService<CountingGmailClient>();
         await SetChatModelAsync(ChatModel);
     }
 
@@ -298,6 +304,16 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
     public List<JobProgress> Progress(Guid jobId) =>
         [.. published.Where(j => j.Id == jobId && j.Progress is not null).Select(j => j.Progress!)];
 
+    public static async Task DecideAsync(
+        Data.AppDbContext db, string messageId, SuggestionStatus status, Action<SuggestionRow>? change = null)
+    {
+        var suggestion = await db.Suggestions.SingleAsync(s => s.MessageId == messageId, Ct);
+        var message = await db.Messages.SingleAsync(m => m.Id == messageId, Ct);
+        change?.Invoke(suggestion);
+        suggestion.SetStatus(status, message, DateTimeOffset.UtcNow);
+        await db.SaveChangesAsync(Ct);
+    }
+
     public static string LabelFor(string id) => id[0] switch
     {
         'a' => "Shopping",
@@ -336,12 +352,16 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         new(id, $"t-{id}", from, subject, Newest.AddHours(-hoursAgo), ["INBOX", "CATEGORY_UPDATES"],
             BodyText: $"Synthetic body of {id}. {BodyMarker}");
 
-    private sealed class RecordingPublisher(ConcurrentQueue<JobDto> published) : IJobProgressPublisher
+    private sealed class RecordingPublisher(AnalysisRunHarness harness) : IJobProgressPublisher
     {
-        public Task JobChangedAsync(JobDto job, CancellationToken ct)
+        public async Task JobChangedAsync(JobDto job, CancellationToken ct)
         {
-            published.Enqueue(job);
-            return Task.CompletedTask;
+            if (harness.OnPublish is { } onPublish)
+            {
+                await onPublish(job);
+            }
+
+            harness.published.Enqueue(job);
         }
     }
 }

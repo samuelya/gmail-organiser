@@ -25,13 +25,15 @@ public sealed class AnalysisRunCursorTests
     [Fact]
     public void Checkpointed_cursor_round_trips_its_id_lists()
     {
-        var cursor = new AnalysisRunCursor(Guid.CreateVersion7(), 4, "from:shop@example.com|offer #|updates", ["m1", "m2"], ["m3"]);
+        var cursor = new AnalysisRunCursor(
+            Guid.CreateVersion7(), 4, "from:shop@example.com|offer #|updates", ["m1", "m2"], ["m3"], ["m1", "m2", "m3", "m4"]);
 
         var read = JsonSerializer.Deserialize<AnalysisRunCursor>(JsonSerializer.Serialize(cursor, Json), Json)!;
 
         (read.RunId, read.GroupsDone, read.LastGroupKey).ShouldBe((cursor.RunId, 4, cursor.LastGroupKey));
         read.FailedIds.ShouldBe(["m1", "m2"]);
         read.IndividualIds.ShouldBe(["m3"]);
+        read.CandidateIds.ShouldBe(["m1", "m2", "m3", "m4"]);
     }
 
     [Theory]

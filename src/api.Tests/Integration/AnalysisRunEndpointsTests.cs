@@ -93,8 +93,8 @@ public sealed class AnalysisRunEndpointsTests(ApiFactory factory, PostgresFixtur
         await h.RunNextAsync();
         await using (var db = postgres.CreateDbContext())
         {
-            await DecideAsync(db, "a00", SuggestionStatus.Approved);
-            await DecideAsync(db, "a01", SuggestionStatus.Rejected);
+            await AnalysisRunHarness.DecideAsync(db, "a00", SuggestionStatus.Approved);
+            await AnalysisRunHarness.DecideAsync(db, "a01", SuggestionStatus.Rejected);
         }
 
         var bySender = await h.PostAsync("/api/analysis/re-analyse", new ReanalyseRequest(null, AnalysisRunHarness.Shop));
@@ -125,24 +125,14 @@ public sealed class AnalysisRunEndpointsTests(ApiFactory factory, PostgresFixtur
         await h.RunNextAsync();
         await using (var db = postgres.CreateDbContext())
         {
-            await DecideAsync(db, "a00", SuggestionStatus.Approved);
-            await DecideAsync(db, "b00", SuggestionStatus.Applied, s => s.ToBeDeleted = true);
-            await DecideAsync(db, "c00", SuggestionStatus.Applied, s => s.NeedsAction = true);
-            await DecideAsync(db, "c01", SuggestionStatus.Rejected);
+            await AnalysisRunHarness.DecideAsync(db, "a00", SuggestionStatus.Approved);
+            await AnalysisRunHarness.DecideAsync(db, "b00", SuggestionStatus.Applied, s => s.ToBeDeleted = true);
+            await AnalysisRunHarness.DecideAsync(db, "c00", SuggestionStatus.Applied, s => s.NeedsAction = true);
+            await AnalysisRunHarness.DecideAsync(db, "c01", SuggestionStatus.Rejected);
         }
 
         var summary = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
 
         summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0)));
-    }
-
-    private static async Task DecideAsync(
-        Data.AppDbContext db, string messageId, SuggestionStatus status, Action<SuggestionRow>? change = null)
-    {
-        var suggestion = await db.Suggestions.SingleAsync(s => s.MessageId == messageId, Ct);
-        var message = await db.Messages.SingleAsync(m => m.Id == messageId, Ct);
-        change?.Invoke(suggestion);
-        suggestion.SetStatus(status, message, DateTimeOffset.UtcNow);
-        await db.SaveChangesAsync(Ct);
     }
 }

@@ -64,7 +64,18 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
     public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct) => inner.GetLabelMessagesTotalAsync(labelId, ct);
 
-    public Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct) => inner.GetMessageBodyAsync(id, ct);
+    /// <summary>Runs before each body fetch, for example to hold it and measure how many run at once.</summary>
+    public Func<string, CancellationToken, Task>? BeforeBody { get; set; }
+
+    public async Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct)
+    {
+        if (BeforeBody is { } before)
+        {
+            await before(id, ct);
+        }
+
+        return await inner.GetMessageBodyAsync(id, ct);
+    }
 
     public Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(CancellationToken ct) => inner.ListLabelsAsync(ct);
 
