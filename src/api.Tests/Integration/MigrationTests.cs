@@ -1,5 +1,7 @@
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Npgsql;
 
 namespace GmailOrganiser.Tests.Integration;
@@ -33,6 +35,25 @@ public sealed class MigrationTests(PostgresFixture postgres)
 
         (await db.Database.GetAppliedMigrationsAsync(Ct)).ShouldBe(before);
         before.ShouldNotBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("inbox", null, null)]
+    [InlineData("all_mail", 7L, null)]
+    [InlineData("completed", 7L, 11L)]
+    public async Task Totals_backfill_runs_on_a_database_already_at_fetch_totals(string phase, long? inboxTotal, long? allMailTotal)
+    {
+        var connectionString = await CreateEmptyDatabaseAsync();
+        await using var db = CreateDbContext(connectionString);
+        await db.GetService<IMigrator>().MigrateAsync("M2_FetchTotals", cancellationToken: Ct);
+        await db.Database.ExecuteSqlAsync(
+            $"UPDATE fetch_state SET mailbox_phase = {phase}, inbox_fetched = 7, all_mail_fetched = 11", Ct);
+
+        await db.Database.MigrateAsync(Ct);
+
+        var state = await db.FetchState.AsNoTracking().SingleAsync(Ct);
+        state.InboxTotal.ShouldBe(inboxTotal);
+        state.AllMailTotal.ShouldBe(allMailTotal);
     }
 
     [Fact]

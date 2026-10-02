@@ -31,10 +31,13 @@ public sealed class FetchStateRow
     /// <summary>The mailbox total from the last Gmail profile call.</summary>
     public long? MessagesTotal { get; set; }
 
-    /// <summary>The Inbox label's message total when the current run started; null before the run's first checkpoint.</summary>
+    /// <summary>
+    /// The Inbox total the run's progress reports: the label total at the start, at least the fetched count while the phase
+    /// runs, the fetched count once it is done. Null before a run has started.
+    /// </summary>
     public long? InboxTotal { get; set; }
 
-    /// <summary>The run's All Mail total (mailbox total minus Spam and Trash); null before the run's first checkpoint.</summary>
+    /// <summary>The All Mail total (mailbox total minus Spam and Trash), on the same rule as <see cref="InboxTotal"/>.</summary>
     public long? AllMailTotal { get; set; }
 
     public string? LastHistoryId { get; set; }

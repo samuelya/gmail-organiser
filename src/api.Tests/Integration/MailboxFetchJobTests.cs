@@ -150,6 +150,50 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
             .ShouldAllBe(p => p.Total == MessageCount && p.Done <= p.Total);
     }
 
+    [Theory]
+    [InlineData(60)]
+    [InlineData(-60)]
+    public async Task Totals_follow_a_mailbox_that_changes_during_the_run(int inboxChange)
+    {
+        await WithAsync<ISettingsStore, AppSettings>(s => s.UpdateAsync(x => x with { FetchChunkSize = 300 }, Ct));
+        var job = await EnqueueAsync();
+        gmail.AfterMetadata = call =>
+        {
+            // Oldest mail sorts last, so the change lands on pages not yet listed: arrivals, or Inbox mail archived.
+            if (call == 1 && inboxChange > 0)
+            {
+                foreach (var i in Enumerable.Range(0, inboxChange))
+                {
+                    gmail.Inner.AddMessage(new FakeMessage(
+                        $"n{i:D5}", $"n{i:D5}", "late@example.com", "Synthetic late", Newest.AddYears(-1).AddMinutes(-i), ["INBOX"]));
+                }
+            }
+            else if (call == 1)
+            {
+                foreach (var id in InboxIds().Order(StringComparer.Ordinal).TakeLast(-inboxChange))
+                {
+                    gmail.Inner.SetLabels(id, ["CATEGORY_UPDATES"]);
+                }
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        var progress = published.Select(j => j.Progress).OfType<JobProgress>()
+            .Where(p => p.Message is "Fetching Inbox" or "Fetching All Mail").ToList();
+        progress.ShouldAllBe(p => p.Done <= p.Total);
+        progress.Last(p => p.Message == "Fetching Inbox").Total.ShouldBe(InboxCount + inboxChange);
+        progress.Last().Total.ShouldBe(MessageCount + Math.Max(0, inboxChange));
+        await using var db = postgres.CreateDbContext();
+        var state = await db.FetchState.AsNoTracking().SingleAsync(Ct);
+        state.InboxFetched.ShouldBe(InboxCount + inboxChange);
+        state.InboxTotal.ShouldBe(state.InboxFetched);
+        state.AllMailTotal.ShouldBe(state.AllMailFetched);
+    }
+
     [Fact]
     public async Task Resuming_a_cursor_saved_without_the_inbox_total_reads_it_again()
     {

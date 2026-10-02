@@ -9,8 +9,8 @@ namespace GmailOrganiser.Fetch;
 
 /// <param name="StartHistoryId">The profile's history ID taken before the first list call; #60 replays from it.</param>
 /// <param name="AllMailTotal">The profile's message total minus Spam and Trash, which the listing excludes.</param>
-/// <param name="InboxTotal">The Inbox label's message total (<c>labels.get</c>); 0 in a cursor saved before it existed,
-/// which a resumed run reads again.</param>
+/// <param name="InboxTotal">The Inbox label's message total (<c>labels.get</c>); null in a cursor saved before it existed,
+/// which a run resumed in the Inbox phase reads again.</param>
 /// <param name="Resync">Mail was stored when the run started, so the run records every listed id and then reconciles
 /// the stored rows it did not list (a resync after expired history, or a restarted fetch).</param>
 /// <param name="ReconcileAfter">The last stored id reconciled; the reconcile phase resumes after it.</param>
@@ -25,7 +25,7 @@ public sealed record MailboxFetchCursor(
     bool Resync = false,
     string? ReconcileAfter = null,
     int Reconciled = 0,
-    long InboxTotal = 0);
+    long? InboxTotal = null);
 
 /// <summary>
 /// The full mailbox fetch (DESIGN §6.1): Inbox first, then All Mail, in chunks of <see cref="AppSettings.FetchChunkSize"/>,
@@ -55,12 +55,12 @@ public sealed class MailboxFetchJob(
         if (cursor is null)
         {
             cursor = await StartAsync(ct);
-            if (await ctx.CheckpointAsync(cursor, new JobProgress(0, null, "Starting"), ct) != JobSignal.Continue)
+            if (await ctx.CheckpointAsync(cursor, new JobProgress(0, cursor.InboxTotal, "Starting"), ct) != JobSignal.Continue)
             {
                 return;
             }
         }
-        else if (cursor.InboxTotal == 0)
+        else if (cursor.InboxTotal is null && cursor.Phase == MailboxPhase.Inbox)
         {
             cursor = cursor with { InboxTotal = await gmail.GetLabelMessagesTotalAsync(InboxLabelId, ct) };
         }
@@ -93,9 +93,12 @@ public sealed class MailboxFetchJob(
         var resync = await db.Messages.AnyAsync(ct);
         var profile = await gmail.GetProfileAsync(ct);
         await accountClaim.ClaimAsync(profile.EmailAddress, ct);
-        var inboxTotal = await gmail.GetLabelMessagesTotalAsync(InboxLabelId, ct);
-        var excluded = await gmail.GetLabelMessagesTotalAsync(SpamLabelId, ct) + await gmail.GetLabelMessagesTotalAsync(TrashLabelId, ct);
-        var allMailTotal = Math.Max(0, profile.MessagesTotal - excluded);
+        var labelTotals = await Task.WhenAll(
+            gmail.GetLabelMessagesTotalAsync(InboxLabelId, ct),
+            gmail.GetLabelMessagesTotalAsync(SpamLabelId, ct),
+            gmail.GetLabelMessagesTotalAsync(TrashLabelId, ct));
+        var inboxTotal = labelTotals[0];
+        var allMailTotal = Math.Max(0, profile.MessagesTotal - labelTotals[1] - labelTotals[2]);
         var now = time.GetUtcNow();
         await db.FetchRunMessages.ExecuteDeleteAsync(ct);
         await db.FetchState.ExecuteUpdateAsync(set => set
@@ -127,14 +130,11 @@ public sealed class MailboxFetchJob(
             cursor = inbox ? cursor with { InboxFetched = 0 } : cursor with { AllMailFetched = 0 };
         }
 
-        var done = chunk.NextPageToken is null;
-        JobProgress progress;
         if (inbox)
         {
             var stored = await pipeline.UpsertByIdsAsync(chunk.Ids, ct);
             await MarkStoredInRunAsync(chunk.Ids, ct);
             cursor = cursor with { PageToken = chunk.NextPageToken, InboxFetched = cursor.InboxFetched + stored };
-            progress = new JobProgress(cursor.InboxFetched, Total(cursor.InboxFetched, cursor.InboxTotal, done), "Fetching Inbox");
         }
         else
         {
@@ -147,15 +147,17 @@ public sealed class MailboxFetchJob(
 
             var processed = chunk.Ids.Count - toFetch.Count + stored;
             cursor = cursor with { PageToken = chunk.NextPageToken, AllMailFetched = cursor.AllMailFetched + processed };
-            progress = new JobProgress(cursor.AllMailFetched, Total(cursor.AllMailFetched, cursor.AllMailTotal, done), "Fetching All Mail");
         }
 
-        if (done)
+        if (chunk.NextPageToken is null)
         {
             var next = inbox ? MailboxPhase.AllMail : cursor.Resync ? MailboxPhase.Reconcile : MailboxPhase.Completed;
             cursor = cursor with { Phase = next };
         }
 
+        var progress = inbox
+            ? new JobProgress(cursor.InboxFetched, InboxTotalOf(cursor), "Fetching Inbox")
+            : new JobProgress(cursor.AllMailFetched, AllMailTotalOf(cursor), "Fetching All Mail");
         return (cursor, progress);
     }
 
@@ -192,8 +194,18 @@ public sealed class MailboxFetchJob(
         return (cursor, new JobProgress(cursor.Reconciled, done ? cursor.Reconciled : null, "Reconciling stored mail"));
     }
 
-    /// <summary>Mail arriving during the run can push the count past the start total; the bar never overflows.</summary>
-    private static long Total(int fetched, long total, bool done) => done ? fetched : Math.Max(total, fetched);
+    /// <summary>
+    /// The phase totals that progress and <c>fetch_state</c> both report: a finished phase reports what it fetched, a running
+    /// one at least that (mail arriving during the run can push the count past the start total; the bar never overflows).
+    /// </summary>
+    private static long InboxTotalOf(MailboxFetchCursor cursor) =>
+        cursor.Phase == MailboxPhase.Inbox ? Math.Max(cursor.InboxTotal ?? 0, cursor.InboxFetched) : cursor.InboxFetched;
+
+    /// <inheritdoc cref="InboxTotalOf"/>
+    private static long AllMailTotalOf(MailboxFetchCursor cursor) =>
+        cursor.Phase is MailboxPhase.Inbox or MailboxPhase.AllMail
+            ? Math.Max(cursor.AllMailTotal, cursor.AllMailFetched)
+            : cursor.AllMailFetched;
 
     private async Task<int> ChunkSizeAsync(CancellationToken ct) => Math.Clamp(
         (await settings.GetAsync(ct)).FetchChunkSize, SettingsValidation.MinFetchChunkSize, SettingsValidation.MaxFetchChunkSize);
@@ -222,8 +234,8 @@ public sealed class MailboxFetchJob(
                 .SetProperty(f => f.PageToken, cursor.PageToken)
                 .SetProperty(f => f.InboxFetched, cursor.InboxFetched)
                 .SetProperty(f => f.AllMailFetched, cursor.AllMailFetched)
-                .SetProperty(f => f.InboxTotal, cursor.InboxTotal)
-                .SetProperty(f => f.AllMailTotal, cursor.AllMailTotal)
+                .SetProperty(f => f.InboxTotal, InboxTotalOf(cursor))
+                .SetProperty(f => f.AllMailTotal, AllMailTotalOf(cursor))
                 .SetProperty(f => f.UpdatedAt, now);
             if (completed)
             {
