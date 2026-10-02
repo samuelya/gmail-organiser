@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
@@ -52,6 +53,7 @@ app.MapSetupEndpoints();
 app.MapJobsEndpoints();
 app.MapFetchEndpoints();
 app.MapSendersEndpoints();
+app.MapAnalysisPromptEndpoints();
 app.MapHub<JobsHub>(JobsHub.Path);
 
 // Hosted services start before the server listens: DatabaseMigrator applies the migrations first.
