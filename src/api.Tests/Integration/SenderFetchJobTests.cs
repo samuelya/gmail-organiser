@@ -42,6 +42,7 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
             await db.Messages.ExecuteDeleteAsync();
             await db.Senders.ExecuteDeleteAsync();
             await db.Settings.ExecuteDeleteAsync();
+            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.AccountEmail, (string?)null));
         }
 
         host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
@@ -81,6 +82,7 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         (await db.Messages.Select(m => m.FromAddress).Distinct().ToListAsync(Ct)).ShouldBe([Alice]);
         (await db.Messages.CountAsync(Ct)).ShouldBe(AliceCount);
         (await db.Senders.SingleAsync(Ct)).TotalCount.ShouldBe(AliceCount);
+        (await db.FetchState.SingleAsync(Ct)).AccountEmail.ShouldBe(FakeGmailClient.AccountEmail);
 
         // The first checkpoint carries the first page's estimate as the total.
         var progress = published.Where(j => j.Id == jobId && j.Progress is not null).Select(j => j.Progress!).Distinct().ToList();

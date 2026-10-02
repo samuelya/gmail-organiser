@@ -33,7 +33,9 @@ public sealed record SenderFetchCursor(
 /// the page token is checkpointed after every chunk.
 /// </summary>
 public sealed partial class SenderFetchJob(
+    IGmailClient gmail,
     MessageFetchPipeline pipeline,
+    LocalAccountClaim accountClaim,
     ISettingsStore settings,
     ILogger<SenderFetchJob> logger) : IJobHandler
 {
@@ -49,6 +51,9 @@ public sealed partial class SenderFetchJob(
             ?? throw new InvalidOperationException("A sender fetch job needs a cursor with its target.");
         var chunkSize = Math.Clamp(
             (await settings.GetAsync(ct)).FetchChunkSize, SettingsValidation.MinFetchChunkSize, SettingsValidation.MaxFetchChunkSize);
+
+        // On every run, resumes included: the claim is idempotent and must precede the first upsert.
+        await accountClaim.ClaimAsync((await gmail.GetProfileAsync(ct)).EmailAddress, ct);
 
         while (true)
         {
