@@ -4,6 +4,8 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter } from '@angular/router';
 import { of, Subject, throwError } from 'rxjs';
 import { isActiveJob, JobDto, JobsConnectionState, JobStatus } from '../core/jobs.models';
+import { AnalysisSummaryDto } from '../analyse/analysis.models';
+import { AnalysisService } from '../analyse/analysis.service';
 import { JobsService } from '../core/jobs.service';
 import { DashboardPage, STATUS_REFRESH_MS } from './dashboard-page.component';
 import { FetchStatusDto, fetchJobsKey, fetchView, humanise } from './fetch.models';
@@ -41,6 +43,19 @@ const status = (over: Partial<FetchStatusDto> = {}): FetchStatusDto => ({
   localAccount: null,
   ...over,
 });
+
+const analysisSummary: AnalysisSummaryDto = {
+  notAnalysed: 0,
+  analysed: 0,
+  approved: 0,
+  rejected: 0,
+  applied: 0,
+  actionCount: 0,
+  toBeDeletedCount: 0,
+  totalLlmCalls: 0,
+  totalMessagesCovered: 0,
+  savedPercent: 0,
+};
 
 /** Signals and calls the page reads from `JobsService`, driven by the test. */
 class FakeJobs {
@@ -133,6 +148,7 @@ describe('DashboardPage', () => {
         provideRouter([]),
         { provide: JobsService, useValue: jobs },
         { provide: FetchService, useValue: fetch },
+        { provide: AnalysisService, useValue: { summary: () => of(analysisSummary) } },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });

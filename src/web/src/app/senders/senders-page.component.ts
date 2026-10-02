@@ -49,6 +49,7 @@ import { isActiveJob, JobDto, JobStatus, newerJob } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
+import { SettingsService } from '../settings/settings.service';
 import { SenderProgress } from './sender-progress.component';
 import {
   analysedPercent,
@@ -121,12 +122,21 @@ export class SendersPage {
   private readonly snackBar = inject(MatSnackBar);
   private readonly destroyRef = inject(DestroyRef);
   private readonly jobs = inject(JobsService);
+  private readonly settings = inject(SettingsService);
   private readonly requests = new Subject<SenderQuery>();
   /** Drops a pending debounced search: the URL changed or the box was cleared. */
   private readonly searchReset = new Subject<void>();
 
   readonly columns = ['sender', 'domain', 'total', 'analysed', 'lastSeen', 'actions'];
   readonly pageSizes = PAGE_SIZES;
+  /** "Analyse" links carry the default count; without settings the Analyse page picks it. */
+  readonly analyseCount = toSignal(
+    this.settings.getSettings().pipe(
+      map((s) => s.analysisDefaultCount),
+      catchError(() => of(null)),
+    ),
+    { initialValue: null },
+  );
   /** The URL is the source of truth for search, page, size and sort. */
   readonly query = toSignal(this.route.queryParamMap.pipe(map(parseSenderQuery)), {
     initialValue: DEFAULT_SENDER_QUERY,

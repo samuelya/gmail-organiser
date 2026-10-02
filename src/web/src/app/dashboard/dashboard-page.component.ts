@@ -19,6 +19,7 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { auditTime, catchError, filter, map, Observable, of, Subject, switchMap } from 'rxjs';
+import { AnalysisSummaryCard } from '../analyse/analysis-summary-card.component';
 import { openConfirm } from '../core/confirm-dialog';
 import { CountOfPipe } from '../core/count-of.pipe';
 import { JobDto, JobStatus, progressPercent } from '../core/jobs.models';
@@ -41,6 +42,7 @@ export const STATUS_REFRESH_MS = 5000;
 @Component({
   selector: 'app-dashboard-page',
   imports: [
+    AnalysisSummaryCard,
     CountOfPipe,
     DatePipe,
     DecimalPipe,
