@@ -9,6 +9,10 @@ export interface FetchStatusDto {
   mailboxPhase: MailboxPhase;
   inboxFetched: number;
   allMailFetched: number;
+  /** Messages Gmail reports in the Inbox; `null` until known. */
+  inboxTotal?: number | null;
+  /** Messages Gmail reports in All Mail; `null` until known. */
+  allMailTotal?: number | null;
   messagesTotal: number | null;
   messagesStored: number;
   sendersCount: number;

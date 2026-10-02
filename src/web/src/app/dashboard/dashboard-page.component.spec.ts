@@ -171,12 +171,33 @@ describe('DashboardPage', () => {
       job('running', { version: 2, progress: { done: 60, total: 120, message: null } }),
     ]);
     await fixture.whenStable();
-    expect(q('fetch-progress-text')!.textContent).toMatch(/60\s*\/ 120/);
+    expect(q('fetch-progress-text')!.textContent).toContain('60 of 120 · 50%');
     expect(q('resume')).toBeNull();
 
     q('pause')!.click();
     await fixture.whenStable();
     expect(jobs.pause).toHaveBeenCalledWith('job-1');
+  });
+
+  it('Inbox and All mail show fetched of total with a percentage', async () => {
+    const { q } = await render(
+      status({ inboxFetched: 3200, inboxTotal: 12450, allMailFetched: 7, allMailTotal: 7 }),
+    );
+    expect(q('inbox-fetched')!.textContent!.trim()).toBe('3,200 of 12,450 · 25%');
+    expect(q('all-mail-fetched')!.textContent!.trim()).toBe('7 of 7 · 100%');
+  });
+
+  it('null or missing totals show the count only', async () => {
+    const { q } = await render(status({ inboxFetched: 3200, inboxTotal: null }));
+    expect(q('inbox-fetched')!.textContent!.trim()).toBe('3,200');
+    expect(q('all-mail-fetched')!.textContent!.trim()).toBe('0');
+  });
+
+  it('the Running jobs row uses the same done of total formatter', async () => {
+    const { fixture, q } = await render(status());
+    jobs.held.set([job('running', { progress: { done: 999, total: 1000, message: null } })]);
+    await fixture.whenStable();
+    expect(q('job-progress-text')!.textContent!.trim()).toBe('999 of 1,000 · 99%');
   });
 
   it('progress is indeterminate while the total is unknown', async () => {
@@ -366,6 +387,8 @@ describe('DashboardPage', () => {
     await fixture.whenStable();
     expect(q('fetch-progress-text')!.textContent).toContain('Pausing…');
     expect(q('job-status')!.textContent).toContain('Pausing…');
+    expect(q('fetch-pending-hint')!.textContent).toContain('Finishing the current batch…');
+    expect(q('job-pending-hint')!.textContent).toContain('Finishing the current batch…');
     expect((q('pause') as HTMLButtonElement).disabled).toBe(true);
     expect((q('job-pause') as HTMLButtonElement).disabled).toBe(true);
     expect((q('cancel') as HTMLButtonElement).disabled).toBe(false);
@@ -374,6 +397,7 @@ describe('DashboardPage', () => {
     await fixture.whenStable();
     expect(q('fetch-progress-text')!.textContent).toContain('paused');
     expect(el.textContent).not.toContain('Pausing…');
+    expect(el.textContent).not.toContain('Finishing the current batch');
   });
 
   it('shows Cancelling… after a confirmed cancel', async () => {
