@@ -6,6 +6,7 @@ import {
   OnInit,
   signal,
 } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
@@ -26,6 +27,9 @@ import { ConnectGmailStep } from '../setup/steps/connect-gmail-step.component';
 import { GoogleClientStep } from '../setup/steps/google-client-step.component';
 import { ModelsStep } from '../setup/steps/models-step.component';
 import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
+import { AnalysisSettingsSection } from './analysis-settings.component';
+import { AnalysisSettings, AnalysisSettingsUpdate, PromptTemplateDto } from './settings.models';
+import { SettingsService } from './settings.service';
 
 /** Same bounds as the API's `fetchChunkSize` validation; `step` only sets the arrow-key increment. */
 export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
@@ -47,6 +51,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     ConnectGmailStep,
     OllamaUrlStep,
     ModelsStep,
+    AnalysisSettingsSection,
   ],
   templateUrl: './settings-page.component.html',
   styles: `
@@ -64,6 +69,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
 })
 export class SettingsPage implements OnInit {
   private readonly setup = inject(SetupService);
+  private readonly settingsApi = inject(SettingsService);
   private readonly snackBar = inject(MatSnackBar);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -87,22 +93,67 @@ export class SettingsPage implements OnInit {
   /** `null` until the Ollama URL is saved here: the models section lists against the saved URL. */
   readonly ollamaUrl = signal<string | null>(null);
 
+  readonly analysis = signal<AnalysisSettings | null>(null);
+  /** The saved embedding model; the analysis cluster distance needs one. */
+  readonly embeddingModel = signal<string | null>(null);
+  readonly analysisSaving = signal(false);
+  readonly analysisErrors = signal<Record<string, string[]> | null>(null);
+  readonly defaultPrompt = signal<PromptTemplateDto | null>(null);
+
   ngOnInit(): void {
-    this.setup
+    this.settingsApi
       .getSettings()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (settings) => {
           this.fetchChunkSize.reset(settings.fetchChunkSize);
           this.fetchLoaded.set(true);
+          this.embeddingModel.set(settings.embeddingModel);
+          this.analysis.set(settings);
         },
         // The error interceptor shows why; the field stays disabled without a saved value.
         error: () => undefined,
       });
+    this.loadDefaultPrompt();
   }
 
   onClientChange(client: GoogleClientSettings): void {
     this.clientSaved.set(!!client.clientId && client.secretSet);
+  }
+
+  saveAnalysis(changes: AnalysisSettingsUpdate): void {
+    if (this.analysisSaving()) return;
+    if (Object.keys(changes).length === 0) {
+      this.snackBar.open('No analysis changes to save', undefined, { duration: 3000 });
+      return;
+    }
+    this.analysisSaving.set(true);
+    this.analysisErrors.set(null);
+    this.settingsApi
+      .saveAnalysis(changes)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (settings) => {
+          this.analysisSaving.set(false);
+          this.embeddingModel.set(settings.embeddingModel);
+          this.analysis.set(settings);
+          this.snackBar.open('Analysis settings saved', undefined, { duration: 3000 });
+        },
+        error: (error: unknown) => {
+          this.analysisSaving.set(false);
+          this.analysisErrors.set(validationErrors(error));
+        },
+      });
+  }
+
+  /** Loads the built-in prompt once; the section previews it while no override is set. */
+  loadDefaultPrompt(): void {
+    if (this.defaultPrompt()) return;
+    this.settingsApi
+      .getDefaultPrompt()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      // The error interceptor shows why; the textarea keeps its text.
+      .subscribe({ next: (prompt) => this.defaultPrompt.set(prompt), error: () => undefined });
   }
 
   saveFetch(): void {
@@ -130,4 +181,10 @@ export class SettingsPage implements OnInit {
 function wholeNumber(control: AbstractControl<number | null>): ValidationErrors | null {
   const value = control.value;
   return value === null || Number.isInteger(value) ? null : { integer: true };
+}
+
+/** ValidationProblem `errors` from a 400, keyed by API field name. */
+function validationErrors(error: unknown): Record<string, string[]> | null {
+  if (!(error instanceof HttpErrorResponse) || error.status !== 400) return null;
+  return (error.error as { errors?: Record<string, string[]> } | null)?.errors ?? null;
 }
