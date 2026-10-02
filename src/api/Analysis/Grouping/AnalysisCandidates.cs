@@ -11,7 +11,8 @@ public static class AnalysisCandidates
 
     /// <summary>
     /// Not-analysed, not-deleted messages in <paramref name="scope"/>; <see cref="AnalysisScope.Messages"/> takes the
-    /// explicit ids in any status except <see cref="AnalysisStatus.Applied"/> (re-analyse). Read-only, untracked.
+    /// explicit ids that are not analysed, analysed (pending) or rejected (re-analysed, replacing the suggestion), and
+    /// skips approved and applied ones. Read-only, untracked.
     /// </summary>
     public static async Task<IReadOnlyList<MessageRow>> QueryAsync(
         AppDbContext db,
@@ -39,6 +40,19 @@ public static class AnalysisCandidates
             .ToListAsync(ct);
     }
 
+    /// <summary>Explicit ids the messages scope does not analyse; a short inbox simply has fewer candidates.</summary>
+    public static int Skipped(AnalysisScope scope, int count, int candidates) =>
+        scope == AnalysisScope.Messages ? count - candidates : 0;
+
+    /// <summary>
+    /// Whether a run of <paramref name="scope"/> still analyses a frozen candidate: the query's status and deletion
+    /// conditions (not the inbox label: a candidate archived since the run started is still analysed).
+    /// </summary>
+    public static bool IsEligible(AnalysisScope scope, MessageRow m) =>
+        !m.DeletedInGmail && (scope == AnalysisScope.Messages
+            ? m.AnalysisStatus is AnalysisStatus.NotAnalysed or AnalysisStatus.Analysed or AnalysisStatus.Rejected
+            : m.AnalysisStatus == AnalysisStatus.NotAnalysed);
+
     private static IQueryable<MessageRow> NotAnalysed(IQueryable<MessageRow> query) =>
         query.Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed);
 
@@ -62,6 +76,9 @@ public static class AnalysisCandidates
         }
 
         var ids = messageIds.Distinct(StringComparer.Ordinal).ToArray();
-        return query.Where(m => ids.Contains(m.Id) && m.AnalysisStatus != AnalysisStatus.Applied);
+        return query.Where(m => ids.Contains(m.Id)
+            && (m.AnalysisStatus == AnalysisStatus.NotAnalysed
+                || m.AnalysisStatus == AnalysisStatus.Analysed
+                || m.AnalysisStatus == AnalysisStatus.Rejected));
     }
 }

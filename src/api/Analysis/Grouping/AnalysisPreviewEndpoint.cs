@@ -32,33 +32,8 @@ public static partial class AnalysisPreviewEndpoint
         AnalysisPreviewRequest request, AppDbContext db, ISettingsStore settingsStore, AnalysisGrouper grouper, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
-        var scope = ParseScope(request.Scope, errors);
         var settings = await settingsStore.GetAsync(ct);
-        // The messages scope covers exactly its ids; a count would silently drop some.
-        var count = scope == AnalysisScope.Messages && request.MessageIds is { Length: > 0 } ids
-            ? ids.Length
-            : request.Count ?? settings.AnalysisDefaultCount;
-        if (scope != AnalysisScope.Messages
-            && count is < SettingsValidation.MinAnalysisDefaultCount or > SettingsValidation.MaxAnalysisDefaultCount)
-        {
-            errors["count"] = [$"Must be between {SettingsValidation.MinAnalysisDefaultCount} and {SettingsValidation.MaxAnalysisDefaultCount}."];
-        }
-
-        if (scope == AnalysisScope.Sender
-            && (string.IsNullOrWhiteSpace(request.SenderAddress) || request.SenderAddress.Length > MaxSenderAddressLength))
-        {
-            errors["senderAddress"] = [$"Required for the sender scope, at most {MaxSenderAddressLength} characters."];
-        }
-
-        if (scope == AnalysisScope.Messages
-            && (request.MessageIds is not { Length: > 0 and <= AnalysisCandidates.MaxMessageIds }
-                || !request.MessageIds.All(id => id is { Length: <= MaxMessageIdLength } && MessageId().IsMatch(id))))
-        {
-            errors["messageIds"] = [
-                $"Required for the messages scope: 1 to {AnalysisCandidates.MaxMessageIds} ids of letters, digits, '-' or '_', "
-                + $"at most {MaxMessageIdLength} characters each."];
-        }
-
+        var (scope, count) = ValidateSelection(request.Scope, request.SenderAddress, request.MessageIds, request.Count, settings, errors);
         if (errors.Count > 0 || scope is not { } s)
         {
             return TypedResults.ValidationProblem(errors);
@@ -75,6 +50,7 @@ public static partial class AnalysisPreviewEndpoint
 
         return TypedResults.Ok(new GroupingPreviewDto(
             Messages: candidates.Count,
+            Skipped: AnalysisCandidates.Skipped(s, count, candidates.Count),
             Groups: groups.Count,
             EstimatedLlmCalls: groups.Count,
             EstimatedDerived: groups.Where(g => !g.Individual).Sum(g => g.Members.Count - g.RepresentativeIds.Count),
@@ -86,6 +62,45 @@ public static partial class AnalysisPreviewEndpoint
                 .Select(g => new GroupPreviewDto(g.Key, g.SenderAddress, g.Display, g.Members.Count, g.RepresentativeIds.Count))
                 .ToList()));
     }
+
+    /// <summary>
+    /// Validates a run's selection (shared by the preview and the run start) into <paramref name="errors"/>. The messages
+    /// scope covers exactly its ids, so its count is the number of ids; a count would silently drop some.
+    /// </summary>
+    public static (AnalysisScope? Scope, int Count) ValidateSelection(
+        string? scopeValue, string? senderAddress, string[]? messageIds, int? requestedCount, AppSettings settings,
+        Dictionary<string, string[]> errors)
+    {
+        var scope = ParseScope(scopeValue, errors);
+        var count = scope == AnalysisScope.Messages && messageIds is { Length: > 0 } ids
+            ? ids.Distinct(StringComparer.Ordinal).Count()
+            : requestedCount ?? settings.AnalysisDefaultCount;
+        if (scope != AnalysisScope.Messages
+            && count is < SettingsValidation.MinAnalysisDefaultCount or > SettingsValidation.MaxAnalysisDefaultCount)
+        {
+            errors["count"] = [$"Must be between {SettingsValidation.MinAnalysisDefaultCount} and {SettingsValidation.MaxAnalysisDefaultCount}."];
+        }
+
+        if (scope == AnalysisScope.Sender
+            && (string.IsNullOrWhiteSpace(senderAddress) || senderAddress.Length > MaxSenderAddressLength))
+        {
+            errors["senderAddress"] = [$"Required for the sender scope, at most {MaxSenderAddressLength} characters."];
+        }
+
+        if (scope == AnalysisScope.Messages && !AreValidMessageIds(messageIds))
+        {
+            errors["messageIds"] = [
+                $"Required for the messages scope: 1 to {AnalysisCandidates.MaxMessageIds} ids of letters, digits, '-' or '_', "
+                + $"at most {MaxMessageIdLength} characters each."];
+        }
+
+        return (scope, count);
+    }
+
+    /// <summary>1 to <see cref="AnalysisCandidates.MaxMessageIds"/> Gmail-shaped ids.</summary>
+    public static bool AreValidMessageIds(string[]? messageIds) =>
+        messageIds is { Length: > 0 and <= AnalysisCandidates.MaxMessageIds }
+        && messageIds.All(id => id is { Length: <= MaxMessageIdLength } && MessageId().IsMatch(id));
 
     private static AnalysisScope? ParseScope(string? value, Dictionary<string, string[]> errors)
     {
