@@ -67,3 +67,30 @@ public sealed record BulkApproveRequest(double? Threshold, bool IncludeDerived =
 public sealed record BulkApproveResponse(int Approved, int SkippedProtected, IReadOnlyList<Guid> SkippedIds);
 
 public sealed record AnalyseIndividuallyRequest(Guid[]? SuggestionIds);
+
+/// <param name="SenderAddress">Only this sender's approved suggestions.</param>
+/// <param name="SuggestionIds">Only these suggestions (those still approved); null for every approved one.</param>
+public sealed record ApplyRequest(string? SenderAddress = null, Guid[]? SuggestionIds = null);
+
+public sealed record ActionBatchDto(
+    Guid Id,
+    string Kind,
+    string Description,
+    int MessageCount,
+    Guid? UndoOf,
+    DateTimeOffset? UndoneAt,
+    Guid? JobId,
+    DateTimeOffset CreatedAt,
+    bool CanUndo)
+{
+    public static ActionBatchDto From(ActionBatchRow b) => new(
+        b.Id,
+        Data.SnakeCaseEnumConverter<ActionKind>.ToDb(b.Kind),
+        b.Description,
+        b.MessageCount,
+        b.UndoOf,
+        b.UndoneAt,
+        b.JobId,
+        b.CreatedAt,
+        b.Kind != ActionKind.Undo && b.UndoneAt is null && b.MessageCount > 0);
+}

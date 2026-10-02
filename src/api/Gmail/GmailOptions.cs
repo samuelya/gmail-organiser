@@ -28,4 +28,7 @@ public sealed class GmailOptions
 
     /// <summary>Attempts (including the first) for a rate-limited request before giving up.</summary>
     public int MaxRetryAttempts { get; set; } = 8;
+
+    /// <summary>Message ids per <c>batchModify</c> call, 1 to <see cref="GmailLimits.BatchModifyMaxIds"/>; tests lower it.</summary>
+    public int BatchModifyMaxIds { get; set; } = GmailLimits.BatchModifyMaxIds;
 }
