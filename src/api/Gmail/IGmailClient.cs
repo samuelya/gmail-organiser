@@ -48,6 +48,22 @@ public interface IGmailClient
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct);
 
+    /// <summary>
+    /// The attachments of <paramref name="messageId"/> (<c>messages.get</c>, parts with a filename and an attachment id,
+    /// nested multiparts included), in MIME order. Empty when Gmail no longer knows the message.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<IReadOnlyList<GmailAttachment>> GetAttachmentsAsync(string messageId, CancellationToken ct);
+
+    /// <summary>
+    /// The decoded bytes of one attachment (<c>messages.attachments.get</c>); null when Gmail no longer knows the message
+    /// or attachment. Never store or log the result.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<byte[]?> GetAttachmentContentAsync(string messageId, string attachmentId, CancellationToken ct);
+
     /// <summary>Every system and user label of the mailbox.</summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -127,6 +143,10 @@ public static class GmailLimits
         }
     }
 }
+
+/// <summary>An attachment part of a message; the filename can be personal, so log it at Debug only.</summary>
+/// <param name="Size">The decoded size in bytes, as Gmail reports it on the part.</param>
+public sealed record GmailAttachment(string AttachmentId, string Filename, string MimeType, int Size);
 
 /// <summary>A message's raw text parts; html-to-text conversion happens later.</summary>
 public sealed record GmailMessageBody(string? Text, string? Html);

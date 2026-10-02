@@ -20,7 +20,7 @@ namespace GmailOrganiser.Gmail;
 /// <see cref="IGmailClient"/> over <c>Google.Apis.Gmail.v1</c>. Credentials come from the stored refresh token and
 /// the Google client in settings; the SDK refreshes access tokens in memory and never persists them.
 /// </summary>
-public sealed class GoogleGmailClient(
+public sealed partial class GoogleGmailClient(
     ITokenStore tokens,
     GoogleClientService googleClient,
     GmailRetryPolicy retry,

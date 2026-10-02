@@ -13,7 +13,7 @@ namespace GmailOrganiser.Gmail.Fake;
 /// <see cref="FakeTokenStore"/> holds no token (e.g. after disconnect), and it retries injected rate limits
 /// (<see cref="FailNext"/>) with the same <see cref="GmailRetryPolicy"/>.
 /// </summary>
-public sealed class FakeGmailClient : IGmailClient
+public sealed partial class FakeGmailClient : IGmailClient
 {
     public const string AccountEmail = "user@example.com";
     private const string PageTokenPrefix = "fake-page:";
