@@ -15,13 +15,11 @@ public enum SenderFetchKind
 }
 
 /// <param name="Target">The lower-cased address or domain; <c>SenderQuery</c> matches active jobs on <c>cursor->>'target'</c>.</param>
-/// <param name="Total">Gmail's result size estimate from the first page, kept so a resumed job reports the same total.</param>
 public sealed record SenderFetchCursor(
     string Target,
     [property: JsonConverter(typeof(JsonStringEnumConverter<SenderFetchKind>))] SenderFetchKind Kind,
     string? PageToken,
-    int Fetched,
-    long? Total = null)
+    int Fetched)
 {
     /// <summary>Gmail search for the target: <c>from:&lt;address&gt;</c> or <c>from:@&lt;domain&gt;</c>.</summary>
     [JsonIgnore]
@@ -31,7 +29,9 @@ public sealed record SenderFetchCursor(
 /// <summary>
 /// Fetches every message from one sender address or domain via a Gmail <c>from:</c> search (DESIGN §6.1), regardless of
 /// how far the mailbox fetch has got. Chunks, upserts and sender stats come from <see cref="MessageFetchPipeline"/>;
-/// the page token is checkpointed after every chunk.
+/// the page token is checkpointed after every chunk. Gmail has no exact count for a search, and its per-page
+/// <c>resultSizeEstimate</c> is a guess, so a running job reports an unknown total; completion reports total = fetched.
+/// A cursor saved by an older version with a <c>total</c> field still resumes: the unknown property is ignored.
 /// </summary>
 public sealed class SenderFetchJob(
     IGmailClient gmail,
@@ -61,8 +61,8 @@ public sealed class SenderFetchJob(
             var chunk = await pipeline.ListChunkAsync(query, chunkSize, ct);
             if (chunk.Restarted)
             {
-                // The pipeline listed from the first page again; the counter and total start over with it.
-                cursor = cursor with { Fetched = 0, Total = null };
+                // The pipeline listed from the first page again; the counter starts over with it.
+                cursor = cursor with { Fetched = 0 };
             }
 
             var stored = await pipeline.UpsertByIdsAsync(chunk.Ids, ct);
@@ -70,7 +70,6 @@ public sealed class SenderFetchJob(
             {
                 PageToken = chunk.NextPageToken,
                 Fetched = cursor.Fetched + stored,
-                Total = cursor.Total ?? chunk.ResultSizeEstimate,
             };
 
             if (chunk.NextPageToken is null)
@@ -79,7 +78,7 @@ public sealed class SenderFetchJob(
                 return;
             }
 
-            if (await ctx.CheckpointAsync(cursor, new JobProgress(cursor.Fetched, cursor.Total, ProgressMessage), ct) != JobSignal.Continue)
+            if (await ctx.CheckpointAsync(cursor, new JobProgress(cursor.Fetched, null, ProgressMessage), ct) != JobSignal.Continue)
             {
                 return;
             }

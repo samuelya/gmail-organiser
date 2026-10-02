@@ -93,9 +93,9 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         (await db.Senders.SingleAsync(Ct)).TotalCount.ShouldBe(AliceCount);
         (await db.FetchState.SingleAsync(Ct)).AccountEmail.ShouldBe(FakeGmailClient.AccountEmail);
 
-        // The first checkpoint carries the first page's estimate as the total.
-        var progress = published.Where(j => j.Id == jobId && j.Progress is not null).Select(j => j.Progress!).Distinct().ToList();
-        progress.ShouldContain(new JobProgress(ChunkSize, AliceCount, "Fetching sender"));
+        // Running checkpoints report an unknown total; completion reports total = fetched.
+        var progress = Progress(jobId);
+        progress.ShouldContain(new JobProgress(ChunkSize, null, "Fetching sender"));
         progress[^1].ShouldBe(new JobProgress(AliceCount, AliceCount, "Fetching sender"));
     }
 
@@ -128,15 +128,15 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
-    public async Task Total_is_the_first_pages_estimate_even_when_a_chunk_spans_two_pages()
+    public async Task A_page_estimate_below_the_real_count_never_reports_done_above_total()
     {
         await using (var scope = host.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { FetchChunkSize = 1000 }, Ct);
         }
 
-        // Gmail's estimate drifts between pages; the cursor must keep page one's.
-        gmail.MapPage = (call, page) => page with { ResultSizeEstimate = 1000 + call };
+        // Gmail's estimate is a guess well under the real 600 hits, and drifts between pages.
+        gmail.MapPage = (call, page) => page with { ResultSizeEstimate = 100 + call };
         var jobId = await StartAsync("@d4.example.com");
 
         await RunNextAsync(jobId);
@@ -146,9 +146,43 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         var job = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == jobId, Ct);
         job.Status.ShouldBe(JobStatus.Completed);
         var cursor = JsonDocument.Parse(job.Cursor.ShouldNotBeNull()).RootElement;
-        cursor.GetProperty("total").GetInt64().ShouldBe(1001);
+        cursor.TryGetProperty("total", out _).ShouldBeFalse();
         cursor.GetProperty("fetched").GetInt32().ShouldBe(DaveCount);
         cursor.TryGetProperty("query", out _).ShouldBeFalse();
+
+        var progress = Progress(jobId);
+        progress.ShouldAllBe(p => p.Total == null || p.Done <= p.Total);
+        progress[..^1].ShouldAllBe(p => p.Total == null);
+        progress[^1].ShouldBe(new JobProgress(DaveCount, DaveCount, "Fetching sender"));
+    }
+
+    [Fact]
+    public async Task A_cursor_saved_with_a_total_resumes_and_reports_an_unknown_total_while_running()
+    {
+        var jobId = await StartAsync(Alice);
+
+        // Cursor written by the previous version: a stale estimate the done count has already passed.
+        var token = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("fake-page:100"));
+        var checkpoint = $$"""{"target":"{{Alice}}","kind":"address","pageToken":"{{token}}","fetched":100,"total":90}""";
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Jobs.Where(j => j.Id == jobId).ExecuteUpdateAsync(s => s.SetProperty(j => j.Cursor, checkpoint), Ct);
+        }
+
+        await RunNextAsync(jobId);
+
+        await using var check = postgres.CreateDbContext();
+        var job = await check.Jobs.AsNoTracking().SingleAsync(j => j.Id == jobId, Ct);
+        job.Status.ShouldBe(JobStatus.Completed);
+        var cursor = JsonDocument.Parse(job.Cursor.ShouldNotBeNull()).RootElement;
+        cursor.GetProperty("fetched").GetInt32().ShouldBe(AliceCount);
+        cursor.TryGetProperty("total", out _).ShouldBeFalse();
+        (await check.Messages.CountAsync(Ct)).ShouldBe(AliceCount - 100);
+
+        var progress = Progress(jobId);
+        progress.ShouldContain(new JobProgress(100 + ChunkSize, null, "Fetching sender"));
+        progress[..^1].ShouldAllBe(p => p.Total == null);
+        progress[^1].ShouldBe(new JobProgress(AliceCount, AliceCount, "Fetching sender"));
     }
 
     [Fact]
@@ -287,6 +321,10 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
         return (await response.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
     }
+
+    /// <summary>The distinct progress values published for the job after it started running, in order.</summary>
+    private List<JobProgress> Progress(Guid jobId) =>
+        published.Where(j => j.Id == jobId && j.Progress is not null).Select(j => j.Progress!).Distinct().ToList();
 
     private async Task RunNextAsync(Guid expected)
     {
