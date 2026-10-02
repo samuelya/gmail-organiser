@@ -1,0 +1,119 @@
+@let flags = flagLabels();
+<h2 mat-dialog-title>{{ data.group ? 'Edit group' : 'Edit suggestion' }}</h2>
+<mat-dialog-content>
+  <form [formGroup]="form" class="flex flex-col gap-3" (ngSubmit)="save()">
+    <p class="m-0 text-sm" data-testid="edit-current">
+      <span class="muted">Current:</span> {{ data.current.topicLabel }}
+      @if (data.current.needsAction) {
+        · {{ flags.action }}
+      }
+      @if (data.current.toBeDeleted) {
+        · {{ flags.delete }}
+      }
+      @if (data.group) {
+        <br /><span class="muted"
+          >{{ data.group.display }} · {{ total }}
+          {{ total === 1 ? 'suggestion' : 'suggestions' }} to change</span
+        >
+      }
+    </p>
+    @if (data.group?.truncated) {
+      <p class="muted m-0 text-sm" data-testid="edit-truncated">
+        Only the members listed on the card are changed.
+      </p>
+    }
+
+    <mat-form-field class="w-full">
+      <mat-label>Label path</mat-label>
+      <input matInput formControlName="topicLabel" data-testid="edit-label" />
+      @if (pathError(); as e) {
+        <mat-error data-testid="edit-label-error">{{ e }}</mat-error>
+      } @else if (placement(); as p) {
+        <mat-hint data-testid="edit-placement">
+          @if (p.exists) {
+            Existing label
+          } @else if (p.parent) {
+            New: {{ p.created.join('/') }} under {{ p.parent }}
+          } @else {
+            New top-level label
+          }
+        </mat-hint>
+      } @else {
+        <mat-hint>Pick an existing label below or type a new path; '/' nests it.</mat-hint>
+      }
+    </mat-form-field>
+
+    <div>
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-sm font-medium" id="edit-labels-heading">Existing labels</span>
+        <button
+          mat-button
+          type="button"
+          (click)="refreshLabels()"
+          data-testid="edit-refresh-labels"
+        >
+          Refresh labels
+        </button>
+      </div>
+      @if (labels(); as list) {
+        <app-label-tree-picker
+          [labels]="list"
+          [selected]="path().trim()"
+          (pick)="pickLabel($event)"
+        />
+      } @else if (labelsFailed()) {
+        <p class="muted m-0 text-sm" data-testid="edit-labels-failed">
+          Labels could not be loaded; type the path instead.
+        </p>
+      } @else {
+        <mat-progress-bar mode="indeterminate" aria-label="Loading labels" />
+      }
+    </div>
+
+    <mat-slide-toggle formControlName="needsAction" data-testid="edit-needs-action">{{
+      flags.action
+    }}</mat-slide-toggle>
+    <span
+      class="self-start"
+      [matTooltip]="allProtected() ? 'Protected: never marked for deletion' : ''"
+      data-testid="edit-delete-wrapper"
+    >
+      <mat-slide-toggle formControlName="toBeDeleted" data-testid="edit-to-be-deleted">{{
+        flags.delete
+      }}</mat-slide-toggle>
+    </span>
+    @if (data.group && protectedCount > 0 && !allProtected()) {
+      <p class="muted m-0 text-sm" data-testid="edit-protected-note">
+        {{ protectedCount }} protected {{ protectedCount === 1 ? 'member keeps' : 'members keep' }}
+        {{ flags.delete }} off.
+      </p>
+    }
+
+    @if (saving() && showProgress) {
+      <div>
+        <mat-progress-bar
+          mode="determinate"
+          [value]="(done() / total) * 100"
+          aria-label="Saving"
+          data-testid="edit-progress"
+        />
+        <p class="muted m-0 mt-1 text-sm">{{ done() }} of {{ total }} saved</p>
+      </div>
+    }
+    @if (error(); as e) {
+      <p class="error m-0 text-sm" role="alert" data-testid="edit-error">{{ e }}</p>
+    }
+  </form>
+</mat-dialog-content>
+<mat-dialog-actions align="end">
+  <button mat-button type="button" (click)="cancel()" data-testid="edit-cancel">Cancel</button>
+  <button
+    mat-flat-button
+    type="button"
+    [disabled]="saving() || total === 0"
+    (click)="save()"
+    data-testid="edit-save"
+  >
+    Save
+  </button>
+</mat-dialog-actions>

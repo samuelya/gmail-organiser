@@ -1,6 +1,5 @@
-import { inject, InjectionToken } from '@angular/core';
-import { MatSnackBar } from '@angular/material/snack-bar';
-import { Observable, of } from 'rxjs';
+import { InjectionToken } from '@angular/core';
+import { Observable } from 'rxjs';
 
 /** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. */
 export type ReviewStatus = 'pending' | 'approved' | 'rejected';
@@ -217,23 +216,25 @@ export function skippedMessage(count: number): string {
   return `${count} ${count === 1 ? 'member was' : 'members were'} skipped: another outcome than the card's, or a protected message marked for deletion. Review ${count === 1 ? 'it' : 'them'} one by one.`;
 }
 
-/**
- * Opens the edit dialog for a group or a member and emits `true` once something was saved. #120
- * implements it; until then the stub says it is coming.
- */
+/** Opens the edit dialog for a group or a member and emits `true` once something was saved. */
 export interface ReviewEditDialog {
   editGroup(senderAddress: string, group: ReviewGroupDto): Observable<boolean>;
   editMember(suggestion: SuggestionDto): Observable<boolean>;
 }
 
-export const REVIEW_EDIT_DIALOG = new InjectionToken<ReviewEditDialog>('REVIEW_EDIT_DIALOG', {
-  providedIn: 'root',
-  factory: () => {
-    const snackBar = inject(MatSnackBar);
-    const comingSoon = () => {
-      snackBar.open('Editing a suggestion is coming soon.', 'Dismiss', { duration: 4000 });
-      return of(false);
-    };
-    return { editGroup: comingSoon, editMember: comingSoon };
-  },
-});
+/** Provided by the review route (`MatReviewEditDialog`). */
+export const REVIEW_EDIT_DIALOG = new InjectionToken<ReviewEditDialog>('REVIEW_EDIT_DIALOG');
+
+/** The members an edit changes: every listed one not yet applied. */
+export function editableMembers(members: readonly SuggestionDto[]): SuggestionDto[] {
+  return members.filter((m) => m.status !== 'applied');
+}
+
+/** `PUT /api/review/suggestions/{id}` for one member; a protected message is never marked for deletion. */
+export function editRequest(member: SuggestionDto, outcome: ReviewOutcome): ReviewOutcome {
+  return {
+    topicLabel: outcome.topicLabel.trim(),
+    needsAction: outcome.needsAction,
+    toBeDeleted: outcome.toBeDeleted && !member.protected,
+  };
+}
