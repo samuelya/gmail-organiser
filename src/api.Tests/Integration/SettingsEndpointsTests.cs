@@ -136,7 +136,7 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
     {
         { "analysisDefaultCount", "1" }, { "analysisDefaultCount", "1000" },
         { "analysisBodyMaxChars", "500" }, { "analysisBodyMaxChars", "50000" },
-        { "analysisRepresentativesPerGroup", "1" }, { "analysisRepresentativesPerGroup", "10" },
+        { "analysisRepresentativesPerGroup", "2" }, { "analysisRepresentativesPerGroup", "10" },
         { "analysisMinGroupSize", "2" }, { "analysisMinGroupSize", "50" },
         { "analysisDerivedConfidencePenalty", "0" }, { "analysisDerivedConfidencePenalty", "0.5" },
         { "analysisClusterDistance", "0.02" }, { "analysisClusterDistance", "0.6" },
@@ -159,7 +159,7 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
     {
         { "analysisDefaultCount", "0" }, { "analysisDefaultCount", "1001" },
         { "analysisBodyMaxChars", "499" }, { "analysisBodyMaxChars", "50001" },
-        { "analysisRepresentativesPerGroup", "0" }, { "analysisRepresentativesPerGroup", "11" },
+        { "analysisRepresentativesPerGroup", "1" }, { "analysisRepresentativesPerGroup", "11" },
         { "analysisMinGroupSize", "1" }, { "analysisMinGroupSize", "51" },
         { "analysisDerivedConfidencePenalty", "-0.01" }, { "analysisDerivedConfidencePenalty", "0.51" },
         { "analysisClusterDistance", "0.019" }, { "analysisClusterDistance", "0.61" },

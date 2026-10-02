@@ -1,6 +1,6 @@
+using System.Text.RegularExpressions;
 using GmailOrganiser.Data;
 using GmailOrganiser.Settings;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 
