@@ -24,6 +24,7 @@ public sealed record SenderFetchCursor(
     long? Total = null)
 {
     /// <summary>Gmail search for the target: <c>from:&lt;address&gt;</c> or <c>from:@&lt;domain&gt;</c>.</summary>
+    [JsonIgnore]
     public string Query => Kind == SenderFetchKind.Address ? $"from:{Target}" : $"from:@{Target}";
 }
 
@@ -32,12 +33,11 @@ public sealed record SenderFetchCursor(
 /// how far the mailbox fetch has got. Chunks, upserts and sender stats come from <see cref="MessageFetchPipeline"/>;
 /// the page token is checkpointed after every chunk.
 /// </summary>
-public sealed partial class SenderFetchJob(
+public sealed class SenderFetchJob(
     IGmailClient gmail,
     MessageFetchPipeline pipeline,
     LocalAccountClaim accountClaim,
-    ISettingsStore settings,
-    ILogger<SenderFetchJob> logger) : IJobHandler
+    ISettingsStore settings) : IJobHandler
 {
     public const string JobType = FetchJobTypes.Sender;
     public const string Queue = JobQueues.Fetch;
@@ -58,17 +58,11 @@ public sealed partial class SenderFetchJob(
         while (true)
         {
             var query = new MessageListQuery(cursor.Query, null, cursor.PageToken, MessageListQuery.MaxPageSize);
-            ListedChunk chunk;
-            try
+            var chunk = await pipeline.ListChunkAsync(query, chunkSize, ct);
+            if (chunk.Restarted)
             {
-                chunk = await pipeline.ListChunkAsync(query, chunkSize, ct);
-            }
-            catch (GmailInvalidPageTokenException ex) when (cursor.PageToken is not null)
-            {
-                // The upsert makes re-reading the listing safe; only the counter starts over.
-                LogPageTokenRejected(logger, ex);
-                cursor = cursor with { PageToken = null, Fetched = 0 };
-                chunk = await pipeline.ListChunkAsync(query with { PageToken = null }, chunkSize, ct);
+                // The pipeline listed from the first page again; the counter and total start over with it.
+                cursor = cursor with { Fetched = 0, Total = null };
             }
 
             var stored = await pipeline.UpsertByIdsAsync(chunk.Ids, ct);
@@ -91,7 +85,4 @@ public sealed partial class SenderFetchJob(
             }
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail rejected the stored page token; restarting the sender fetch from its first page")]
-    private static partial void LogPageTokenRejected(ILogger logger, Exception ex);
 }

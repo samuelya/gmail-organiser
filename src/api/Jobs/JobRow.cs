@@ -27,6 +27,12 @@ public sealed class JobRow
     public Guid Id { get; set; }
     public string Type { get; set; } = "";
     public string Queue { get; set; } = "";
+
+    /// <summary>
+    /// Narrows <see cref="ActiveTypeIndex"/> to one active job per type and key (a sender fetch uses its target);
+    /// null for job types that allow only one active job.
+    /// </summary>
+    public string? DedupKey { get; set; }
     public JobStatus Status { get; set; }
     public string? Cursor { get; set; }
     public string? Progress { get; set; }
@@ -50,8 +56,11 @@ public sealed class JobRow
 
     internal static readonly JsonSerializerOptions Json = JsonSerializerOptions.Web;
 
-    /// <summary>Unique partial index: at most one queued, running or paused job per type.</summary>
-    internal const string ActiveTypeIndex = "ux_jobs_type_active";
+    /// <summary>
+    /// Unique partial index: at most one queued, running or paused job per type and <see cref="DedupKey"/>. Nulls are
+    /// not distinct, so a type without a key keeps one active job.
+    /// </summary>
+    internal const string ActiveTypeIndex = "ux_jobs_type_dedup_key_active";
 
     public JobDto ToDto() => new(
         Id, Type, Queue, FormatStatus(Status),
@@ -76,8 +85,9 @@ public sealed class JobRow
             e.Property(r => r.CancelRequested).HasDefaultValue(false);
             e.Property(r => r.Version).HasDefaultValue(0L);
             e.HasIndex(r => new { r.Queue, r.Status, r.CreatedAt });
-            e.HasIndex(r => r.Type)
+            e.HasIndex(r => new { r.Type, r.DedupKey })
                 .IsUnique()
+                .AreNullsDistinct(false)
                 .HasDatabaseName(ActiveTypeIndex)
                 .HasFilter("status IN ('queued', 'running', 'paused')");
         });

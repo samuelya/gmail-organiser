@@ -1,4 +1,3 @@
-using System.Text.Json;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
@@ -58,8 +57,9 @@ public static class FetchEndpoints
     }
 
     /// <summary>
-    /// 202 with a new job; 200 with the active job for the same target; 400 for an invalid target; 409 when Gmail is
-    /// not connected or a sender fetch for another target is still active (at most one active job per type).
+    /// 202 with a new job; 200 with the active job for the same target, or with the latest failed or paused one after
+    /// resuming it from its cursor; 400 for an invalid target; 409 when Gmail is not connected. Jobs for different
+    /// targets coexist (the dedup key is the target) and run one at a time on the fetch queue.
     /// </summary>
     private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartSenderAsync(
         SenderFetchRequest request, ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
@@ -77,22 +77,22 @@ public static class FetchEndpoints
             return GmailNotConnected("Connect Gmail in Setup before fetching a sender.");
         }
 
-        var (job, created) = await jobs.EnqueueAsync(SenderFetchJob.JobType, SenderFetchJob.Queue, cursor, ct);
-        var response = new StartFetchResponse(job.Id);
-        if (created)
+        // A new job would start from page one and discard the failed or paused job's checkpoint.
+        var latest = await db.Jobs.AsNoTracking()
+            .Where(j => j.Type == SenderFetchJob.JobType && j.DedupKey == cursor.Target)
+            .OrderByDescending(j => JobRow.Active.Contains(j.Status))
+            .ThenByDescending(j => j.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (latest is { Status: JobStatus.Failed or JobStatus.Paused }
+            && await jobs.ResumeAsync(latest.Id, ct) == JobActionResult.Ok)
         {
-            return TypedResults.Accepted($"/api/jobs/{job.Id}", response);
+            return TypedResults.Ok(new StartFetchResponse(latest.Id));
         }
 
-        var target = await db.Jobs.Where(j => j.Id == job.Id).Select(j => j.Cursor).SingleOrDefaultAsync(ct) is { } json
-            ? JsonSerializer.Deserialize<SenderFetchCursor>(json, JobRow.Json)?.Target
-            : null;
-        return target == cursor.Target
-            ? TypedResults.Ok(response)
-            : TypedResults.Problem(
-                statusCode: StatusCodes.Status409Conflict,
-                title: "Sender fetch already running",
-                detail: "Another sender fetch is queued, running or paused; wait for it or cancel it first.");
+        // A concurrent start that loses the insert gets the winner's job back with Created false.
+        var (job, created) = await jobs.EnqueueAsync(SenderFetchJob.JobType, SenderFetchJob.Queue, cursor, ct, dedupKey: cursor.Target);
+        var response = new StartFetchResponse(job.Id);
+        return created ? TypedResults.Accepted($"/api/jobs/{job.Id}", response) : TypedResults.Ok(response);
     }
 
     private static async Task<Ok<FetchStatusDto>> GetStatusAsync(AppDbContext db, ITokenStore tokens, CancellationToken ct)
