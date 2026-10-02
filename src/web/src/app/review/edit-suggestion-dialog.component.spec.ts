@@ -227,4 +227,69 @@ describe('EditSuggestionDialog', () => {
     expect(await closed).toBe(false);
     expect(api.edit).not.toHaveBeenCalled();
   });
+  it('reports each failing member, saves the rest, and retries only the unsaved ones', async () => {
+    let failB = true;
+    const { api, dialog } = setup((id) =>
+      id === 'b' && failB
+        ? throwError(
+            () => new HttpErrorResponse({ status: 409, error: { title: 'Already applied.' } }),
+          )
+        : of(suggestion(id)),
+    );
+    const members = [suggestion('a'), suggestion('b'), suggestion('c')];
+    const closed = firstValueFrom(dialog.editGroup('news@example.com', group(members)));
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => c[0])).toEqual(['a', 'b', 'c']);
+    expect(q('edit-error')!.textContent).toContain('1 of 3 could not be saved. 2 of 3 were saved.');
+    expect(all('edit-failure').map((f) => f.textContent)).toEqual([
+      expect.stringContaining('Subject b'),
+    ]);
+    failB = false;
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => c[0])).toEqual(['a', 'b', 'c', 'b']);
+    expect(await closed).toBe(true);
+  });
+
+  it('returns true when closed after a partial save', async () => {
+    const { dialog } = setup((id) =>
+      id === 'b'
+        ? throwError(() => new HttpErrorResponse({ status: 409, error: { title: 'Conflict' } }))
+        : of(suggestion(id)),
+    );
+    const closed = firstValueFrom(
+      dialog.editGroup('news@example.com', group([suggestion('a'), suggestion('b')])),
+    );
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    q<HTMLButtonElement>('edit-cancel')!.click();
+    expect(await closed).toBe(true);
+  });
+
+  it('cannot be closed while a save is running', async () => {
+    const pending = new Subject<SuggestionDto>();
+    const { dialog } = setup(() => pending);
+    let result: boolean | undefined;
+    const closed = firstValueFrom(dialog.editMember(suggestion('a')));
+    void closed.then((r) => (result = r));
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(q<HTMLButtonElement>('edit-cancel')!.disabled).toBe(true);
+    document
+      .querySelector('mat-dialog-container')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    document.querySelector<HTMLElement>('.cdk-overlay-backdrop')?.click();
+    settle();
+    await Promise.resolve();
+    expect(document.querySelector('mat-dialog-container')).not.toBeNull();
+    expect(result).toBeUndefined();
+    pending.next(suggestion('a'));
+    pending.complete();
+    settle();
+    expect(await closed).toBe(true);
+  });
 });

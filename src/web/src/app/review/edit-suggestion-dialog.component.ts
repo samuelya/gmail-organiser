@@ -48,6 +48,13 @@ export interface EditSuggestionDialogData {
   group: { display: string; truncated: boolean } | null;
 }
 
+/** A member whose save failed, with the server's reason. */
+export interface EditFailure {
+  id: string;
+  name: string;
+  message: string;
+}
+
 /** Groups larger than this show a progress bar while saving. */
 export const EDIT_PROGRESS_THRESHOLD = 20;
 
@@ -119,6 +126,9 @@ export class EditSuggestionDialog {
   readonly done = signal(0);
   readonly showProgress = this.total > EDIT_PROGRESS_THRESHOLD;
   readonly error = signal<string | null>(null);
+  readonly failures = signal<EditFailure[]>([]);
+  /** Members already saved; a retry skips them. */
+  private readonly saved = new Set<string>();
 
   constructor() {
     if (this.allProtected()) this.form.controls.toBeDeleted.disable();
@@ -143,7 +153,10 @@ export class EditSuggestionDialog {
     this.loadLabels(this.labelsApi.refresh());
   }
 
-  /** `PUT` per member in order; stops at the first error and stays open with it. */
+  /**
+   * `PUT` per unsaved member in order. A member that fails is reported and the rest still save;
+   * the dialog closes when all are saved and otherwise stays open so Save retries the failed ones.
+   */
   save(): void {
     if (this.saving()) return;
     if (this.form.invalid) {
@@ -151,35 +164,70 @@ export class EditSuggestionDialog {
       return;
     }
     const outcome = this.form.getRawValue();
-    this.saving.set(true);
+    const failures: EditFailure[] = [];
+    let labelError: string | null = null;
+    this.setSaving(true);
     this.error.set(null);
-    from(this.data.members)
+    this.failures.set([]);
+    from(this.data.members.filter((m) => !this.saved.has(m.id)))
       .pipe(
-        concatMap((m) => this.review.edit(m.id, editRequest(m, outcome))),
+        concatMap((m) =>
+          this.review.edit(m.id, editRequest(m, outcome)).pipe(
+            map(() => ({ member: m, err: null as unknown })),
+            catchError((err: unknown) => of({ member: m, err })),
+          ),
+        ),
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
-        next: () => this.done.update((d) => d + 1),
-        complete: () => this.ref.close(true),
-        error: (err: unknown) => this.failed(err),
+        next: ({ member, err }) => {
+          if (err === null) {
+            this.saved.add(member.id);
+            this.done.set(this.saved.size);
+            return;
+          }
+          const fieldError =
+            err instanceof HttpErrorResponse ? fieldErrors(err)['topicLabel']?.[0] : undefined;
+          labelError ??= fieldError ?? null;
+          failures.push({
+            id: member.id,
+            name: member.subject || '(no subject)',
+            message:
+              fieldError ??
+              (err instanceof HttpErrorResponse ? errorMessage(err) : 'Saving failed.'),
+          });
+        },
+        complete: () =>
+          failures.length ? this.failed(failures, labelError) : this.ref.close(true),
       });
   }
 
   cancel(): void {
+    if (this.saving()) return;
     this.ref.close(this.done() > 0);
   }
 
-  private failed(err: unknown): void {
-    this.saving.set(false);
-    const fields = err instanceof HttpErrorResponse ? fieldErrors(err) : {};
-    const labelError = fields['topicLabel']?.[0];
+  private setSaving(saving: boolean): void {
+    this.saving.set(saving);
+    // Escape and the backdrop would drop the remaining saves.
+    this.ref.disableClose = saving;
+  }
+
+  private failed(failures: EditFailure[], labelError: string | null): void {
+    this.setSaving(false);
     if (labelError) {
       this.form.controls.topicLabel.setErrors({ server: labelError });
       this.form.controls.topicLabel.markAsTouched();
     }
+    // A single edit rejected for its label only needs the inline field error.
+    if (this.total === 1 && labelError) return;
+    this.failures.set(this.total > 1 ? failures : []);
     const saved = this.done() ? ` ${this.done()} of ${this.total} were saved.` : '';
-    const message = err instanceof HttpErrorResponse ? errorMessage(err) : 'Saving failed.';
-    this.error.set(labelError && !saved ? null : `${message}${saved}`);
+    this.error.set(
+      this.total > 1
+        ? `${failures.length} of ${this.total} could not be saved.${saved}`
+        : failures[0].message,
+    );
   }
 
   private loadLabels(source: Observable<LabelDto[]>): void {

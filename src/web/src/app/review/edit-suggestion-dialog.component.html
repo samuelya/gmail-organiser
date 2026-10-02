@@ -101,12 +101,29 @@
       </div>
     }
     @if (error(); as e) {
-      <p class="error m-0 text-sm" role="alert" data-testid="edit-error">{{ e }}</p>
+      <div role="alert" data-testid="edit-error">
+        <p class="error m-0 text-sm">{{ e }}</p>
+        @if (failures().length) {
+          <ul class="error m-0 mt-1 pl-5 text-sm">
+            @for (f of failures(); track f.id) {
+              <li data-testid="edit-failure">{{ f.name }}: {{ f.message }}</li>
+            }
+          </ul>
+        }
+      </div>
     }
   </form>
 </mat-dialog-content>
 <mat-dialog-actions align="end">
-  <button mat-button type="button" (click)="cancel()" data-testid="edit-cancel">Cancel</button>
+  <button
+    mat-button
+    type="button"
+    [disabled]="saving()"
+    (click)="cancel()"
+    data-testid="edit-cancel"
+  >
+    Cancel
+  </button>
   <button
     mat-flat-button
     type="button"
