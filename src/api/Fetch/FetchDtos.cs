@@ -4,6 +4,9 @@ namespace GmailOrganiser.Fetch;
 
 public sealed record StartFetchResponse(Guid JobId);
 
+/// <param name="Target">A sender address (<c>local@domain</c>) or a bare domain.</param>
+public sealed record SenderFetchRequest(string? Target);
+
 /// <param name="MailboxPhase"><c>not_started</c>, <c>inbox</c>, <c>all_mail</c> or <c>completed</c>.</param>
 /// <param name="MessagesStored">Stored messages, excluding those deleted in Gmail.</param>
 /// <param name="ActiveJob">The queued, running or paused mailbox fetch job, if any.</param>
