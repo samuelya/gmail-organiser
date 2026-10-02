@@ -162,7 +162,7 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
         await ReadAsync(snapshots);
 
         // No handler is registered for this type, so the run goes straight to FinishAsync(failed).
-        jobId = (await WithJobsAsync(s => s.EnqueueAsync("test-unhandled", JobQueues.Fetch, null, Ct))).Id;
+        jobId = (await WithJobsAsync(s => s.EnqueueAsync("test-unhandled", JobQueues.Fetch, null, Ct))).Job.Id;
         var runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
         (await runner.ClaimAsync(Ct)).ShouldBe([jobId]);
         await runner.RunAsync(jobId, Ct);
@@ -269,7 +269,7 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
     }
 
     private Task<JobDto> EnqueueAsync() =>
-        WithJobsAsync(s => s.EnqueueAsync(CountingJobHandler.JobType, JobQueues.Fetch, null, Ct));
+        WithJobsAsync(async s => (await s.EnqueueAsync(CountingJobHandler.JobType, JobQueues.Fetch, null, Ct)).Job);
 
     private async Task<T> WithJobsAsync<T>(Func<IJobService, Task<T>> action)
     {
