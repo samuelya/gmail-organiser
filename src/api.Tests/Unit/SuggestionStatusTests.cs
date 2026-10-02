@@ -39,6 +39,18 @@ public sealed class SuggestionStatusTests
     }
 
     [Fact]
+    public void A_flip_records_the_latest_decision_time()
+    {
+        var message = new MessageRow { Id = "msg-1" };
+        var suggestion = new SuggestionRow { Id = Guid.NewGuid(), MessageId = "msg-1" };
+
+        suggestion.SetStatus(SuggestionStatus.Approved, message, Now);
+        suggestion.SetStatus(SuggestionStatus.Rejected, message, Now.AddMinutes(5));
+
+        suggestion.DecidedAt.ShouldBe(Now.AddMinutes(5));
+    }
+
+    [Fact]
     public void SetStatus_rejects_another_message()
     {
         var suggestion = new SuggestionRow { Id = Guid.NewGuid(), MessageId = "msg-1" };
