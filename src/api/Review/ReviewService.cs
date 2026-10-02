@@ -1,12 +1,16 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Review;
+
+/// <summary>The outcome a group card shows: label, needs-action and to-be-deleted.</summary>
+public sealed record GroupOutcome(string TopicLabel, bool NeedsAction, bool ToBeDeleted);
 
 public enum ReviewResult
 {
@@ -26,11 +30,15 @@ public sealed class ReviewService(
     AppDbContext db,
     DecisionRecorder decisions,
     AnalysisRunService runs,
+    LabelCatalog labels,
     ISettingsStore settingsStore,
     TimeProvider time)
 {
     /// <summary>Rows per transaction for group and bulk decisions.</summary>
     public const int ChunkSize = 1000;
+
+    /// <summary>Most skipped ids a group or bulk response lists.</summary>
+    public const int MaxSkippedIds = 1000;
 
     /// <summary>
     /// <c>Pending → Approved|Rejected</c> and <c>Approved ↔ Rejected</c>; the same status again is a no-op without a
@@ -39,34 +47,77 @@ public sealed class ReviewService(
     public Task<(ReviewResult Result, SuggestionDto? Suggestion)> DecideAsync(Guid id, DecisionOutcome outcome, CancellationToken ct) =>
         ChangeOneAsync(id, s => s.Status != ToStatus(outcome), _ => { }, outcome, ct);
 
-    /// <summary>Changes the outcome, marks the suggestion edited and approves it; allowed in any status but applied.</summary>
-    public Task<(ReviewResult Result, SuggestionDto? Suggestion)> EditAsync(
-        Guid id, string topicLabel, bool needsAction, bool toBeDeleted, CancellationToken ct) =>
-        ChangeOneAsync(id, _ => true, s =>
+    /// <summary>
+    /// Changes the outcome, marks the suggestion edited and approves it; allowed in any status but applied.
+    /// <c>IsNewLabel</c> follows the Gmail label list; without a Gmail connection a changed label counts as new.
+    /// </summary>
+    public async Task<(ReviewResult Result, SuggestionDto? Suggestion)> EditAsync(
+        Guid id, string topicLabel, bool needsAction, bool toBeDeleted, CancellationToken ct)
+    {
+        bool? isNewLabel;
+        try
         {
+            isNewLabel = await labels.FindByNameAsync(topicLabel, ct) is null;
+        }
+        catch (GmailNotConnectedException)
+        {
+            isNewLabel = null;
+        }
+
+        return await ChangeOneAsync(id, _ => true, s =>
+        {
+            s.IsNewLabel = isNewLabel ?? (s.IsNewLabel || !string.Equals(s.TopicLabel, topicLabel, StringComparison.OrdinalIgnoreCase));
             s.TopicLabel = topicLabel;
             s.NeedsAction = needsAction;
             s.ToBeDeleted = toBeDeleted;
             s.Edited = true;
         }, DecisionOutcome.Approved, ct);
+    }
 
-    /// <summary>Approves or rejects every pending member of the sender's group; returns how many changed.</summary>
-    public async Task<int> DecideGroupAsync(string senderAddress, string groupKey, DecisionOutcome outcome, CancellationToken ct)
+    /// <summary>
+    /// Rejects every pending member of the sender's group, or approves those whose outcome is <paramref name="shown"/>
+    /// (the card's). A to-be-deleted suggestion of a protected message is only ever approved on its own.
+    /// </summary>
+    public async Task<GroupDecisionResponse> DecideGroupAsync(
+        string senderAddress, string groupKey, DecisionOutcome outcome, GroupOutcome? shown, CancellationToken ct)
     {
+        if (outcome == DecisionOutcome.Approved)
+        {
+            ArgumentNullException.ThrowIfNull(shown);
+        }
+
+        var allowlisted = await db.Senders.AnyAsync(s => s.Address == senderAddress && s.Allowlisted, ct);
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
+        var skipped = new List<Guid>();
         await foreach (var chunk in ChunksAsync(candidates, ct))
         {
-            changed += await ChangeChunkAsync(chunk, outcome, (_, _) => true, ct);
+            changed += await ChangeChunkAsync(chunk, outcome, (s, m) =>
+            {
+                if (outcome == DecisionOutcome.Rejected
+                    || (s.TopicLabel == shown!.TopicLabel && s.NeedsAction == shown.NeedsAction && s.ToBeDeleted == shown.ToBeDeleted
+                        && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))))
+                {
+                    return true;
+                }
+
+                if (skipped.Count < MaxSkippedIds)
+                {
+                    skipped.Add(s.Id);
+                }
+
+                return false;
+            }, ct);
         }
 
-        return changed;
+        return new GroupDecisionResponse(changed, skipped);
     }
 
     /// <summary>
     /// Approves pending suggestions with <c>confidence ≥ threshold</c>: model answers only unless
-    /// <paramref name="includeDerived"/>; a to-be-deleted suggestion of a protected message stays pending.
+    /// <paramref name="includeDerived"/>; a to-be-deleted suggestion of a protected message stays pending (only an
+    /// individual approve takes it).
     /// </summary>
     public async Task<BulkApproveResponse> BulkApproveAsync(
         double? threshold, bool includeDerived, string? senderAddress, CancellationToken ct)
@@ -84,6 +135,7 @@ public sealed class ReviewService(
 
         var approved = 0;
         var skipped = 0;
+        var skippedIds = new List<Guid>();
         await foreach (var chunk in ChunksAsync(candidates, ct))
         {
             var allowlisted = (await db.Senders.AsNoTracking()
@@ -95,7 +147,11 @@ public sealed class ReviewService(
             {
                 if (s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))
                 {
-                    skipped++;
+                    if (skipped++ < MaxSkippedIds)
+                    {
+                        skippedIds.Add(s.Id);
+                    }
+
                     return false;
                 }
 
@@ -103,7 +159,7 @@ public sealed class ReviewService(
             }, ct);
         }
 
-        return new BulkApproveResponse(approved, skipped);
+        return new BulkApproveResponse(approved, skipped, skippedIds);
     }
 
     /// <summary>

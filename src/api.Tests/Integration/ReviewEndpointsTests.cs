@@ -1,12 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Common;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailOrganiser.Tests.Integration;
 
@@ -109,7 +112,10 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
     {
         await using (var db = postgres.CreateDbContext())
         {
-            await db.Messages.Where(m => m.Id == "c01").ExecuteUpdateAsync(s => s.SetProperty(m => m.ListId, "<billing.example.com>"), Ct);
+            // A list id with '|' in it: the template is not parsed out of the group key.
+            await db.Messages.Where(m => m.Id == "c01").ExecuteUpdateAsync(s => s.SetProperty(m => m.ListId, "<billing|x.example.com>"), Ct);
+            var message = await db.Messages.AsNoTracking().SingleAsync(m => m.Id == "c01", Ct);
+            await db.Suggestions.Where(s => s.MessageId == "c01").ExecuteUpdateAsync(s => s.SetProperty(x => x.GroupKey, GroupKey.For(message)), Ct);
         }
 
         await PostOkAsync($"/api/review/suggestions/{await IdAsync("a02")}/reject");
@@ -123,7 +129,8 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
         shop.SubjectTemplate.ShouldNotBeNullOrWhiteSpace();
         shop.SubjectTemplate.ShouldNotContain("from:");
         shop.SubjectTemplate.ShouldNotContain("|");
-        (rows["c01"].ListId, rows["c01"].Outcome, rows["c01"].Embedding).ShouldBe(("<billing.example.com>", DecisionOutcome.Approved, null));
+        (rows["c01"].ListId, rows["c01"].Outcome, rows["c01"].Embedding).ShouldBe(("<billing|x.example.com>", DecisionOutcome.Approved, null));
+        rows["c01"].SubjectTemplate.ShouldBe(SubjectNormaliser.Template("Invoice 2"));
     }
 
     [Theory]
@@ -144,7 +151,7 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
     public async Task Edit_approves_the_changed_outcome_and_a_group_with_an_edited_member_is_mixed()
     {
         var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.Single();
-        (await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", new GroupDecisionRequest(AnalysisRunHarness.Shop, group.GroupKey)))
+        (await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", Approve(AnalysisRunHarness.Shop, group)))
             .Changed.ShouldBe(10);
 
         var response = await h.PutAsync($"/api/review/suggestions/{await IdAsync("a04")}", new EditSuggestionRequest(" Deals/Weekly ", true, false));
@@ -172,13 +179,13 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
 
         (await PostAsync<GroupDecisionResponse>("/api/review/groups/reject", new GroupDecisionRequest(AnalysisRunHarness.Shop, group.GroupKey)))
             .Changed.ShouldBe(9);
-        (await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", new GroupDecisionRequest(AnalysisRunHarness.Shop, group.GroupKey)))
+        (await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", Approve(AnalysisRunHarness.Shop, group)))
             .Changed.ShouldBe(0);
-        (await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", new GroupDecisionRequest(AnalysisRunHarness.News, group.GroupKey)))
+        (await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", Approve(AnalysisRunHarness.News, group)))
             .Changed.ShouldBe(0);
-        (await h.PostAsync("/api/review/groups/approve", new GroupDecisionRequest(AnalysisRunHarness.Shop, null))).StatusCode
+        (await h.PostAsync("/api/review/groups/approve", Approve(AnalysisRunHarness.Shop, group) with { GroupKey = null })).StatusCode
             .ShouldBe(HttpStatusCode.BadRequest);
-        (await h.PostAsync("/api/review/groups/approve", new GroupDecisionRequest(" ", group.GroupKey))).StatusCode
+        (await h.PostAsync("/api/review/groups/approve", Approve(" ", group))).StatusCode
             .ShouldBe(HttpStatusCode.BadRequest);
 
         await using var db = postgres.CreateDbContext();
@@ -197,17 +204,15 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
             await db.Messages.Where(m => m.Id == "b00").ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "STARRED" }), Ct);
         }
 
-        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", new BulkApproveRequest(0.95))).ShouldBe(new BulkApproveResponse(0, 0));
-        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", new BulkApproveRequest(null, SenderAddress: "SHOP@example.com")))
-            .ShouldBe(new BulkApproveResponse(3, 0));
+        (await BulkAsync(new BulkApproveRequest(0.95))).ShouldBe((0, 0));
+        (await BulkAsync(new BulkApproveRequest(null, SenderAddress: "SHOP@example.com"))).ShouldBe((3, 0));
 
         // Default threshold 0.80: the other model answers, not the derived ones (0.80) and not the protected deletion.
         var llm = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", new BulkApproveRequest(null));
-        llm.ShouldBe(new BulkApproveResponse(5, 1));
+        (llm.Approved, llm.SkippedProtected, llm.SkippedIds.ShouldHaveSingleItem()).ShouldBe((5, 1, protectedId));
 
-        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", new BulkApproveRequest(0.75))).ShouldBe(new BulkApproveResponse(0, 1));
-        var all = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", new BulkApproveRequest(0.75, IncludeDerived: true));
-        all.ShouldBe(new BulkApproveResponse(11, 1));
+        (await BulkAsync(new BulkApproveRequest(0.75))).ShouldBe((0, 1));
+        (await BulkAsync(new BulkApproveRequest(0.75, IncludeDerived: true))).ShouldBe((11, 1));
 
         await using var check = postgres.CreateDbContext();
         (await check.Suggestions.AsNoTracking().SingleAsync(s => s.Id == protectedId, Ct)).Status.ShouldBe(SuggestionStatus.Pending);
@@ -265,6 +270,128 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
         (await db.AnalysisRuns.CountAsync(Ct)).ShouldBe(1);
     }
 
+    [Fact]
+    public async Task Group_approve_takes_only_the_cards_outcome_and_never_a_protected_deletion()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.SenderAddress == AnalysisRunHarness.Shop)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ToBeDeleted, true), Ct);
+            await db.Suggestions.Where(s => s.MessageId == "a01").ExecuteUpdateAsync(s => s.SetProperty(x => x.TopicLabel, "Other"), Ct);
+            await db.Messages.Where(m => m.Id == "a03").ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "STARRED" }), Ct);
+        }
+
+        var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.Single();
+        (group.TopicLabel, group.ToBeDeleted, group.Mixed).ShouldBe(("Shopping", true, true));
+        (await h.PostAsync("/api/review/groups/approve", new GroupDecisionRequest(AnalysisRunHarness.Shop, group.GroupKey))).StatusCode
+            .ShouldBe(HttpStatusCode.BadRequest);
+
+        var result = await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", Approve(AnalysisRunHarness.Shop, group));
+
+        result.Changed.ShouldBe(8);
+        result.Skipped.ShouldBe([await IdAsync("a01"), await IdAsync("a03")], ignoreOrder: true);
+        (await PostOkAsync($"/api/review/suggestions/{await IdAsync("a03")}/approve")).Status.ShouldBe("approved");
+        await using var check = postgres.CreateDbContext();
+        (await check.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a01", Ct)).Status.ShouldBe(SuggestionStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Edit_needs_both_flags_and_recomputes_is_new_label()
+    {
+        var id = await IdAsync("a01");
+        var missing = await h.PutAsync($"/api/review/suggestions/{id}", new { topicLabel = "Shopping" });
+        missing.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var body = await missing.Content.ReadAsStringAsync(Ct);
+        body.ShouldContain("needsAction");
+        body.ShouldContain("toBeDeleted");
+
+        (await EditAsync(id, FakeLabelStore.SeedUserLabelNames[0].ToUpperInvariant())).IsNewLabel.ShouldBeFalse();
+        (await EditAsync(id, "Synthetic/Brand new")).IsNewLabel.ShouldBeTrue();
+
+        // Without Gmail the edit still works; a changed label counts as new.
+        await h.Services.GetRequiredService<FakeTokenStore>().DeleteAsync(Ct);
+        (await EditAsync(id, "Synthetic/Offline")).IsNewLabel.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Sender_detail_pages_its_groups()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "b04" || s.MessageId == "b05")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.GroupKey, (string?)null), Ct);
+        }
+
+        var first = await DetailAsync(AnalysisRunHarness.News, query: "page=1&pageSize=2");
+        (first.TotalGroups, first.Page, first.PageSize).ShouldBe((3, 1, 2));
+        first.Groups.Select(g => g.Size).ShouldBe([4, 1]);
+        first.Groups[0].Members.Count.ShouldBe(4);
+        var second = await DetailAsync(AnalysisRunHarness.News, query: "page=2&pageSize=2");
+        second.Groups.ShouldHaveSingleItem().GroupKey.ShouldBeNull();
+        first.Groups[1].Members.Single().MessageId.ShouldNotBe(second.Groups[0].Members.Single().MessageId);
+
+        (await h.GetAsync($"/api/review/senders/{AnalysisRunHarness.News}?pageSize={ReviewQuery.MaxGroupPageSize + 1}")).StatusCode
+            .ShouldBe(HttpStatusCode.BadRequest);
+        (await h.GetAsync($"/api/review/senders/{AnalysisRunHarness.News}?page=0")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task A_member_approved_while_a_run_stores_it_is_skipped_and_the_run_completes()
+    {
+        var run = await h.StartAsync(new StartAnalysisRunRequest("messages", null, ["a05"], null, "off"));
+        await using var reviewer = postgres.CreateDbContext();
+        await using var tx = await reviewer.Database.BeginTransactionAsync(Ct);
+        Task? commit = null;
+        h.Chat.Respond = async (ids, _, _, _) =>
+        {
+            // The approve is uncommitted while the run checks; it commits once the run waits for the row lock.
+            await reviewer.Database.ExecuteSqlAsync($"UPDATE suggestions SET status = 'approved' WHERE message_id = 'a05'", Ct);
+            commit = CommitWhenBlockedAsync();
+            return AnalysisRunHarness.Agree(ids);
+        };
+
+        await h.RunNextAsync();
+        await commit.ShouldNotBeNull();
+
+        (await h.GetRunAsync(run.Id)).Status.ShouldBe("completed");
+        await using var check = postgres.CreateDbContext();
+        var stored = await check.AnalysisRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id, Ct);
+        (stored.MessagesCovered, stored.MessagesLlm, stored.SkippedMessages).ShouldBe((0, 0, 1));
+        (await check.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a05", Ct)).Status.ShouldBe(SuggestionStatus.Approved);
+
+        async Task CommitWhenBlockedAsync()
+        {
+            await using var probe = postgres.CreateDbContext();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            while (await probe.Database.SqlQuery<int>($"""
+                    SELECT count(*)::int AS "Value" FROM pg_stat_activity
+                    WHERE datname = current_database() AND wait_event_type = 'Lock'
+                    """).SingleAsync(timeout.Token) == 0)
+            {
+                await Task.Delay(20, timeout.Token);
+            }
+
+            await tx.CommitAsync(Ct);
+        }
+    }
+
+    private static GroupDecisionRequest Approve(string sender, ReviewGroupDto group) =>
+        new(sender, group.GroupKey, group.TopicLabel, group.NeedsAction, group.ToBeDeleted);
+
+    private async Task<SuggestionDto> EditAsync(Guid id, string label)
+    {
+        var response = await h.PutAsync($"/api/review/suggestions/{id}", new EditSuggestionRequest(label, false, false));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
+        return (await response.Content.ReadFromJsonAsync<SuggestionDto>(Ct)).ShouldNotBeNull();
+    }
+
+    private async Task<(int Approved, int SkippedProtected)> BulkAsync(BulkApproveRequest request)
+    {
+        var response = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", request);
+        return (response.Approved, response.SkippedProtected);
+    }
+
     private async Task<Guid> IdAsync(string messageId)
     {
         await using var db = postgres.CreateDbContext();
@@ -288,9 +415,9 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
         return (await response.Content.ReadFromJsonAsync<PagedDto<ReviewSenderDto>>(Ct)).ShouldNotBeNull();
     }
 
-    private async Task<ReviewSenderDetailDto> DetailAsync(string address, string? status = null)
+    private async Task<ReviewSenderDetailDto> DetailAsync(string address, string? status = null, string? query = null)
     {
-        var response = await h.GetAsync($"/api/review/senders/{Uri.EscapeDataString(address)}" + (status is null ? "" : $"?status={status}"));
+        var response = await h.GetAsync($"/api/review/senders/{Uri.EscapeDataString(address)}?status={status ?? "pending"}&{query}");
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
         return (await response.Content.ReadFromJsonAsync<ReviewSenderDetailDto>(Ct)).ShouldNotBeNull();
     }

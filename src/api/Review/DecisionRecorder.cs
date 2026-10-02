@@ -21,7 +21,8 @@ public sealed class DecisionRecorder(AppDbContext db, TimeProvider time)
             MessageId = suggestion.MessageId,
             SenderAddress = suggestion.SenderAddress,
             ListId = message.ListId,
-            SubjectTemplate = SubjectTemplate(suggestion.GroupKey) ?? SubjectNormaliser.Template(message.Subject),
+            // The message's own template: the one GroupKey.For put in its group key, without parsing the key.
+            SubjectTemplate = SubjectNormaliser.Template(message.Subject),
             TopicLabel = suggestion.TopicLabel,
             NeedsAction = suggestion.NeedsAction,
             ToBeDeleted = suggestion.ToBeDeleted,
@@ -31,31 +32,5 @@ public sealed class DecisionRecorder(AppDbContext db, TimeProvider time)
             CreatedAt = now,
         });
         return ValueTask.CompletedTask;
-    }
-
-    /// <summary>The subject template of a <see cref="GroupKey"/>: what follows <c>list:id|</c> or <c>from:address|category|</c>.</summary>
-    public static string? SubjectTemplate(string? groupKey)
-    {
-        if (groupKey is null)
-        {
-            return null;
-        }
-
-        var separators = groupKey.StartsWith(GroupKey.ListPrefix, StringComparison.Ordinal) ? 1
-            : groupKey.StartsWith(GroupKey.FromPrefix, StringComparison.Ordinal) ? 2
-            : 0;
-        var start = 0;
-        for (var i = 0; i < separators; i++)
-        {
-            var bar = groupKey.IndexOf('|', start);
-            if (bar < 0)
-            {
-                return null;
-            }
-
-            start = bar + 1;
-        }
-
-        return separators == 0 ? null : groupKey[start..];
     }
 }

@@ -2,6 +2,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Common;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -49,40 +50,60 @@ public static class ReviewEndpoints
             : TypedResults.Ok(await query.ListAsync(s, paging.Search, paging.Page, paging.PageSize, ct));
     }
 
-    /// <summary>The sender's groups in <c>status</c>; 404 when the sender has no suggestions.</summary>
+    /// <summary>One page of the sender's groups in <c>status</c>, largest first; 404 when the sender has no suggestions.</summary>
     private static async Task<Results<Ok<ReviewSenderDetailDto>, NotFound, ValidationProblem>> GetSenderAsync(
-        string address, ReviewQuery query, CancellationToken ct, string? status = null)
+        string address, ReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null)
     {
-        if (ReviewQuery.ParseStatus(status) is not { } s)
+        var errors = new Dictionary<string, string[]>();
+        if (page is < 1 or > SenderQuery.MaxPage)
         {
-            return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["status"] = ["Must be pending, approved or rejected."] });
+            errors["page"] = [$"Must be between 1 and {SenderQuery.MaxPage}."];
         }
 
-        return Normalise(address) is { } a && await query.DetailAsync(a, s, ct) is { } detail
+        if (pageSize is < 1 or > ReviewQuery.MaxGroupPageSize)
+        {
+            errors["pageSize"] = [$"Must be between 1 and {ReviewQuery.MaxGroupPageSize}."];
+        }
+
+        var parsed = ReviewQuery.ParseStatus(status);
+        if (parsed is null)
+        {
+            errors["status"] = ["Must be pending, approved or rejected."];
+        }
+
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        return Normalise(address) is { } a
+            && await query.DetailAsync(a, parsed!.Value, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct) is { } detail
             ? TypedResults.Ok(detail)
             : TypedResults.NotFound();
     }
 
-    /// <summary>Saves the edited outcome and approves it; 400 on an invalid label path, 404, 409 when applied.</summary>
+    /// <summary>Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied.</summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, CancellationToken ct)
     {
-        var label = request.TopicLabel?.Trim();
-        if (label is null || !LabelPath.IsValid(label) || LabelPath.IsReserved(label))
-        {
-            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["topicLabel"] = [$"Up to five '/'-separated parts, at most {LabelPath.MaxLength} characters, not a Gmail system label."],
-            });
-        }
-
-        return await ToResultAsync(review.EditAsync(id, label, request.NeedsAction, request.ToBeDeleted, ct));
+        var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
+        return errors.Count > 0
+            ? TypedResults.ValidationProblem(errors)
+            : await ToResultAsync(review.EditAsync(id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, ct));
     }
 
+    /// <summary>Reject takes every pending member; approve needs the card's outcome and takes the members that have it.</summary>
     private static async Task<Results<Ok<GroupDecisionResponse>, ValidationProblem>> DecideGroupAsync(
         GroupDecisionRequest request, DecisionOutcome outcome, ReviewService review, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
+        GroupOutcome? shown = null;
+        if (outcome == DecisionOutcome.Approved)
+        {
+            errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
+            shown = errors.Count == 0 ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value) : null;
+        }
+
         var sender = Normalise(request.SenderAddress);
         if (sender is null)
         {
@@ -96,7 +117,7 @@ public static class ReviewEndpoints
 
         return errors.Count > 0
             ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(new GroupDecisionResponse(await review.DecideGroupAsync(sender!, request.GroupKey!, outcome, ct)));
+            : TypedResults.Ok(await review.DecideGroupAsync(sender!, request.GroupKey!, outcome, shown, ct));
     }
 
     /// <summary>Approves pending model suggestions at or above the threshold (and derived/memory ones when asked).</summary>
@@ -156,6 +177,29 @@ public static class ReviewEndpoints
                 title: "Already applied",
                 detail: "An applied suggestion can no longer be changed."),
         };
+
+    /// <summary>A valid, non-system label path (trimmed into <paramref name="label"/>) and both flags present.</summary>
+    private static Dictionary<string, string[]> OutcomeErrors(string? topicLabel, bool? needsAction, bool? toBeDeleted, out string? label)
+    {
+        var errors = new Dictionary<string, string[]>();
+        label = topicLabel?.Trim();
+        if (label is null || !LabelPath.IsValid(label) || LabelPath.IsReserved(label))
+        {
+            errors["topicLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters, not a Gmail system label."];
+        }
+
+        if (needsAction is null)
+        {
+            errors["needsAction"] = ["Required."];
+        }
+
+        if (toBeDeleted is null)
+        {
+            errors["toBeDeleted"] = ["Required."];
+        }
+
+        return errors;
+    }
 
     /// <summary>Trimmed lower-case address, or null when blank or too long.</summary>
     private static string? Normalise(string? address) =>

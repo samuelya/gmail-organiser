@@ -3,11 +3,14 @@ namespace GmailOrganiser.Review;
 public sealed record ReviewSenderDto(
     string Address, string? DisplayName, int Pending, int Approved, int Rejected, int Applied, int TotalMessages);
 
-public sealed record ReviewSenderDetailDto(ReviewSenderDto Sender, IReadOnlyList<ReviewGroupDto> Groups);
+/// <param name="Groups">One page of the sender's groups, largest first.</param>
+/// <param name="TotalGroups">All the sender's groups in the requested status.</param>
+public sealed record ReviewSenderDetailDto(
+    ReviewSenderDto Sender, IReadOnlyList<ReviewGroupDto> Groups, int Page, int PageSize, long TotalGroups);
 
 /// <param name="GroupKey">Null for a message analysed on its own.</param>
 /// <param name="Mixed">Members disagree on label, needs-action or to-be-deleted (after edits).</param>
-/// <param name="Truncated">The group has more than <see cref="ReviewQuery.MaxMembers"/> members; the aggregates count them all.</param>
+/// <param name="Truncated">Not every member is listed (<see cref="ReviewQuery.MaxMembers"/>, <see cref="ReviewQuery.MaxResponseMembers"/>); the aggregates count them all.</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -45,17 +48,22 @@ public sealed record SuggestionDto(
 
 public sealed record LabelDto(string Id, string Name, string Type);
 
-public sealed record EditSuggestionRequest(string? TopicLabel, bool NeedsAction, bool ToBeDeleted);
+/// <summary>Every field is required.</summary>
+public sealed record EditSuggestionRequest(string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted);
 
-public sealed record GroupDecisionRequest(string? SenderAddress, string? GroupKey);
+/// <param name="TopicLabel">Approve only: the outcome the card shows; only members with exactly this outcome are approved.</param>
+public sealed record GroupDecisionRequest(
+    string? SenderAddress, string? GroupKey, string? TopicLabel = null, bool? NeedsAction = null, bool? ToBeDeleted = null);
 
-public sealed record GroupDecisionResponse(int Changed);
+/// <param name="Skipped">Pending members left pending (another outcome than the card's, or a protected deletion), at most <see cref="ReviewService.MaxSkippedIds"/>.</param>
+public sealed record GroupDecisionResponse(int Changed, IReadOnlyList<Guid> Skipped);
 
 /// <param name="Threshold">Defaults to the <c>BulkApproveThreshold</c> setting.</param>
 /// <param name="IncludeDerived">Also approve derived and memory suggestions.</param>
 public sealed record BulkApproveRequest(double? Threshold, bool IncludeDerived = false, string? SenderAddress = null);
 
 /// <param name="SkippedProtected">To-be-deleted suggestions left pending because their message is protected.</param>
-public sealed record BulkApproveResponse(int Approved, int SkippedProtected);
+/// <param name="SkippedIds">Their ids, at most <see cref="ReviewService.MaxSkippedIds"/>.</param>
+public sealed record BulkApproveResponse(int Approved, int SkippedProtected, IReadOnlyList<Guid> SkippedIds);
 
 public sealed record AnalyseIndividuallyRequest(Guid[]? SuggestionIds);

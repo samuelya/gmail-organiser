@@ -1,6 +1,6 @@
 using System.Text;
 using System.Text.Json;
-using GmailOrganiser.Review;
+using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Analysis.Prompts;
 
@@ -10,7 +10,7 @@ namespace GmailOrganiser.Analysis.Prompts;
 /// </summary>
 public static class SuggestionOutputParser
 {
-    public const int MaxLabelPathLength = LabelPath.MaxLength;
+    public const int MaxLabelPathLength = GmailLimits.LabelNameMaxLength;
     public const int MaxReasonLength = 300;
     public const int MaxFilterValueLength = 200;
     public const double ConfidenceTolerance = 0.01;

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Review;
 using GmailOrganiser.Tests.Fakes;
@@ -47,6 +48,44 @@ public sealed class LabelsEndpointsTests(ApiFactory factory, PostgresFixture pos
 
         response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
         (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("Gmail not connected");
+    }
+
+    [Fact]
+    public async Task A_load_in_flight_during_an_invalidation_does_not_cache_its_stale_list()
+    {
+        var catalog = h.Services.GetRequiredService<LabelCatalog>();
+        var entered = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        h.Gmail.AfterListLabels = async () =>
+        {
+            h.Gmail.AfterListLabels = null;
+            entered.SetResult();
+            await release.Task;
+        };
+
+        var stale = catalog.GetAsync(Ct);
+        await entered.Task.WaitAsync(Ct);
+        await h.Gmail.Inner.CreateLabelAsync("Synthetic/Raced", Ct);
+        catalog.Invalidate();
+        release.SetResult();
+
+        (await stale).ShouldNotContain(l => l.Name == "Synthetic/Raced");
+        (await ListAsync()).ShouldContain(l => l.Name == "Synthetic/Raced");
+    }
+
+    [Fact]
+    public async Task The_cache_belongs_to_the_connected_account()
+    {
+        await ListAsync();
+        await h.Gmail.Inner.CreateLabelAsync("Synthetic/Other", Ct);
+        var tokens = h.Services.GetRequiredService<FakeTokenStore>();
+
+        await tokens.SaveAsync("someone@example.com", "synthetic-refresh-token", GmailScopes.All, Ct);
+        (await ListAsync()).ShouldContain(l => l.Name == "Synthetic/Other");
+
+        await tokens.DeleteAsync(Ct);
+        (await h.GetAsync("/api/labels")).StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+        await Should.ThrowAsync<GmailNotConnectedException>(() => h.Services.GetRequiredService<LabelCatalog>().GetAsync(Ct));
     }
 
     private async Task<List<LabelDto>> ListAsync()

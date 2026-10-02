@@ -1,16 +1,13 @@
 using System.Text.RegularExpressions;
-using GmailOrganiser.Gmail;
 
-namespace GmailOrganiser.Review;
+namespace GmailOrganiser.Gmail;
 
 /// <summary>The topic label rule shared by the LLM output parser and the review edit.</summary>
 public static partial class LabelPath
 {
-    public const int MaxLength = 225;
-
-    /// <summary>Up to five <c>/</c>-separated segments, none blank or starting with whitespace, at most 225 chars.</summary>
+    /// <summary>Up to five <c>/</c>-separated segments, none blank or starting with whitespace, at most <see cref="GmailLimits.LabelNameMaxLength"/> chars.</summary>
     public static bool IsValid(string path) =>
-        path.Length <= MaxLength && !path.Any(char.IsControl) && Pattern().IsMatch(path);
+        path.Length <= GmailLimits.LabelNameMaxLength && !path.Any(char.IsControl) && Pattern().IsMatch(path);
 
     /// <summary>A Gmail system label name, which a topic label must not be.</summary>
     public static bool IsReserved(string path) => GmailLimits.ReservedLabelNames.Contains(path);

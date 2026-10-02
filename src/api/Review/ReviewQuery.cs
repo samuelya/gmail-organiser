@@ -11,9 +11,14 @@ namespace GmailOrganiser.Review;
 /// <summary>The review sender list and one sender's suggestions grouped by <see cref="SuggestionRow.GroupKey"/>.</summary>
 public sealed class ReviewQuery(AppDbContext db)
 {
+    /// <summary>Most members listed for one group.</summary>
     public const int MaxMembers = 500;
 
-    private const char LikeEscape = '\\';
+    /// <summary>Most members listed in one detail response; every group still lists its newest member.</summary>
+    public const int MaxResponseMembers = 2000;
+
+    public const int DefaultGroupPageSize = 20;
+    public const int MaxGroupPageSize = 50;
 
     /// <summary>Parses <c>pending|approved|rejected</c> (default pending); null when invalid.</summary>
     public static SuggestionStatus? ParseStatus(string? value) => value?.Trim().ToLowerInvariant() switch
@@ -34,12 +39,8 @@ public sealed class ReviewQuery(AppDbContext db)
         var suggestions = db.Suggestions.AsNoTracking();
         if (search is not null)
         {
-            var pattern = $"%{SenderQuery.EscapeLike(search)}%";
-            suggestions = suggestions.Where(s =>
-                EF.Functions.ILike(s.SenderAddress, pattern, LikeEscape.ToString())
-                || db.Senders.Any(x => x.Address == s.SenderAddress
-                    && (EF.Functions.ILike(x.Domain, pattern, LikeEscape.ToString())
-                        || (x.DisplayName != null && EF.Functions.ILike(x.DisplayName, pattern, LikeEscape.ToString())))));
+            var matching = SenderQuery.Filter(db.Senders.AsNoTracking(), search).Select(x => x.Address);
+            suggestions = suggestions.Where(s => matching.Contains(s.SenderAddress));
         }
 
         var counts = suggestions
@@ -69,10 +70,11 @@ public sealed class ReviewQuery(AppDbContext db)
     }
 
     /// <summary>
-    /// The sender's suggestions in <paramref name="status"/>, grouped (a message analysed alone is its own group),
-    /// largest group first; null when the sender has no suggestion at all.
+    /// One page of the sender's suggestions in <paramref name="status"/>, grouped (a message analysed alone is its own
+    /// group), largest group first; null when the sender has no suggestion at all. Groups are counted and paged in SQL;
+    /// members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
     /// </summary>
-    public async Task<ReviewSenderDetailDto?> DetailAsync(string address, SuggestionStatus status, CancellationToken ct)
+    public async Task<ReviewSenderDetailDto?> DetailAsync(string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct)
     {
         var counts = await db.Suggestions.AsNoTracking()
             .Where(s => s.SenderAddress == address)
@@ -92,21 +94,51 @@ public sealed class ReviewQuery(AppDbContext db)
         }
 
         var sender = await db.Senders.AsNoTracking().SingleOrDefaultAsync(s => s.Address == address, ct);
-        var rows = await (
-                from s in db.Suggestions.AsNoTracking()
-                join m in db.Messages.AsNoTracking() on s.MessageId equals m.Id
-                where s.SenderAddress == address && s.Status == status
-                orderby m.InternalDate descending, m.Id
-                select new { Suggestion = s, Message = m })
-            .ToListAsync(ct);
         var allowlisted = sender?.Allowlisted ?? false;
-        var groups = rows
-            .GroupBy(r => r.Suggestion.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + r.Suggestion.MessageId, StringComparer.Ordinal)
-            .Select(g => ToGroup([.. g.Select(r => (r.Suggestion, r.Message))], allowlisted))
-            .OrderByDescending(g => g.Size)
-            .ThenBy(g => g.Display, StringComparer.Ordinal)
-            .ToList();
-        return new ReviewSenderDetailDto(ToDto(counts, sender), groups);
+        var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && s.Status == status);
+        var stats = inStatus
+            .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
+            .Select(g => new GroupStats
+            {
+                Key = g.Key,
+                Size = g.Count(),
+                Llm = g.Count(s => s.Source == SuggestionSource.Llm),
+                Derived = g.Count(s => s.Source == SuggestionSource.Derived),
+                Memory = g.Count(s => s.Source == SuggestionSource.Memory),
+                ConfidenceMin = g.Min(s => s.Confidence),
+                ConfidenceMax = g.Max(s => s.Confidence),
+            });
+        var totalGroups = await stats.LongCountAsync(ct);
+        var pageStats = await stats.OrderByDescending(g => g.Size).ThenBy(g => g.Key)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        var keys = pageStats.ConvertAll(g => g.Key);
+        var outcomes = (await inStatus
+                .Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId))
+                .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
+                .Select(g => new OutcomeCount(
+                    g.Key.Key, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Count(), g.Count(s => s.Source == SuggestionSource.Llm) > 0))
+                .ToListAsync(ct))
+            .ToLookup(o => o.Key, StringComparer.Ordinal);
+
+        var groups = new List<ReviewGroupDto>(pageStats.Count);
+        var budget = MaxResponseMembers;
+        foreach (var g in pageStats)
+        {
+            var take = Math.Clamp(budget, 1, MaxMembers);
+            var key = g.Key;
+            var members = await (
+                    from s in inStatus
+                    join m in db.Messages.AsNoTracking() on s.MessageId equals m.Id
+                    where (s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId) == key
+                    orderby m.InternalDate descending, m.Id
+                    select new { Suggestion = s, Message = m })
+                .Take(take)
+                .ToListAsync(ct);
+            budget -= members.Count;
+            groups.Add(ToGroup(g, outcomes[key], [.. members.Select(r => (r.Suggestion, r.Message))], allowlisted));
+        }
+
+        return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
     }
 
     public static SuggestionDto ToDto(SuggestionRow s, MessageRow m, bool senderAllowlisted) => new(
@@ -128,20 +160,29 @@ public sealed class ReviewQuery(AppDbContext db)
         MessageProtection.IsProtected(m, senderAllowlisted));
 
     /// <summary>
-    /// The group shows its most common outcome, with the reason of a model-analysed member that has it when there is
-    /// one; <c>Mixed</c> when members disagree. Members are newest first.
+    /// The group shows its most common outcome (over all members), with the reason of a listed model-analysed member
+    /// that has it when there is one; <c>Mixed</c> when members disagree. Members are newest first.
     /// </summary>
-    private static ReviewGroupDto ToGroup(IReadOnlyList<(SuggestionRow S, MessageRow M)> members, bool allowlisted)
+    private static ReviewGroupDto ToGroup(
+        GroupStats stats, IEnumerable<OutcomeCount> outcomes, IReadOnlyList<(SuggestionRow S, MessageRow M)> members, bool allowlisted)
     {
-        var shared = members
-            .GroupBy(x => (x.S.TopicLabel, x.S.NeedsAction, x.S.ToBeDeleted))
-            .OrderByDescending(g => g.Count())
-            .ThenByDescending(g => g.Any(x => x.S.Source == SuggestionSource.Llm))
+        var all = outcomes.ToList();
+        var shared = all
+            .OrderByDescending(o => o.Count)
+            .ThenByDescending(o => o.HasLlm)
+            .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
             .First();
-        var representative = shared.FirstOrDefault(x => x.S.Source == SuggestionSource.Llm);
+        bool Matches(SuggestionRow s) =>
+            s.TopicLabel == shared.TopicLabel && s.NeedsAction == shared.NeedsAction && s.ToBeDeleted == shared.ToBeDeleted;
+        var representative = members.FirstOrDefault(x => Matches(x.S) && x.S.Source == SuggestionSource.Llm);
         if (representative.S is null)
         {
-            representative = shared.First();
+            representative = members.FirstOrDefault(x => Matches(x.S));
+        }
+
+        if (representative.S is null)
+        {
+            representative = members[0];
         }
 
         var newest = members[0];
@@ -151,19 +192,19 @@ public sealed class ReviewQuery(AppDbContext db)
         return new ReviewGroupDto(
             key,
             display,
-            members.Count,
-            members.Count(x => x.S.Source == SuggestionSource.Llm),
-            members.Count(x => x.S.Source == SuggestionSource.Derived),
-            members.Count(x => x.S.Source == SuggestionSource.Memory),
-            shared.Key.TopicLabel,
-            shared.Key.NeedsAction,
-            shared.Key.ToBeDeleted,
-            shared.Count() != members.Count,
-            members.Min(x => x.S.Confidence),
-            members.Max(x => x.S.Confidence),
+            stats.Size,
+            stats.Llm,
+            stats.Derived,
+            stats.Memory,
+            shared.TopicLabel,
+            shared.NeedsAction,
+            shared.ToBeDeleted,
+            all.Count > 1,
+            stats.ConfidenceMin,
+            stats.ConfidenceMax,
             representative.S.Reason,
-            [.. members.Take(MaxMembers).Select(x => ToDto(x.S, x.M, allowlisted))],
-            members.Count > MaxMembers);
+            [.. members.Select(x => ToDto(x.S, x.M, allowlisted))],
+            members.Count < stats.Size);
     }
 
     private static ReviewSenderDto ToDto(StatusCounts c, SenderRow? sender) => new(
@@ -178,4 +219,18 @@ public sealed class ReviewQuery(AppDbContext db)
         public int Rejected { get; init; }
         public int Applied { get; init; }
     }
+
+    /// <summary>A class with settable members so EF can sort and page on the projection.</summary>
+    private sealed class GroupStats
+    {
+        public string Key { get; init; } = "";
+        public int Size { get; init; }
+        public int Llm { get; init; }
+        public int Derived { get; init; }
+        public int Memory { get; init; }
+        public double ConfidenceMin { get; init; }
+        public double ConfidenceMax { get; init; }
+    }
+
+    private sealed record OutcomeCount(string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count, bool HasLlm);
 }
