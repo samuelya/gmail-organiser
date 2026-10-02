@@ -1,5 +1,6 @@
 # Build context: src/web
-FROM node:24-alpine AS build
+# Output is static files, so the build stage runs natively on the build machine for every target arch.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
