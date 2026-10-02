@@ -95,6 +95,8 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         state.MessagesTotal.ShouldBe(MessageCount + SpamCount + TrashCount);
         state.InboxFetched.ShouldBe(InboxCount);
         state.AllMailFetched.ShouldBe(MessageCount);
+        state.InboxTotal.ShouldBe(InboxCount);
+        state.AllMailTotal.ShouldBe(MessageCount);
         state.LastHistoryId.ShouldBe(FakeMailboxSeed.HistoryId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         (await gmail.GetProfileAsync(Ct)).HistoryId.ShouldNotBe(state.LastHistoryId);
 
@@ -130,6 +132,47 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         AssertEachMessageFetchedOnce();
         await using var db = postgres.CreateDbContext();
         (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
+    }
+
+    [Fact]
+    public async Task Progress_totals_come_from_the_label_totals_not_the_page_estimate()
+    {
+        await WithAsync<ISettingsStore, AppSettings>(s => s.UpdateAsync(x => x with { FetchChunkSize = 300 }, Ct));
+        gmail.MapPage = (_, page) => page with { ResultSizeEstimate = 201 };
+        await EnqueueAsync();
+
+        await RunNextAsync();
+
+        var inbox = published.Select(j => j.Progress).OfType<JobProgress>().Where(p => p.Message == "Fetching Inbox").ToList();
+        inbox.Count.ShouldBeGreaterThan(1);
+        inbox.ShouldAllBe(p => p.Total == InboxCount && p.Done <= p.Total);
+        published.Select(j => j.Progress).OfType<JobProgress>().Where(p => p.Message == "Fetching All Mail")
+            .ShouldAllBe(p => p.Total == MessageCount && p.Done <= p.Total);
+    }
+
+    [Fact]
+    public async Task Resuming_a_cursor_saved_without_the_inbox_total_reads_it_again()
+    {
+        await WithAsync<ISettingsStore, AppSettings>(s => s.UpdateAsync(x => x with { FetchChunkSize = 300 }, Ct));
+        var job = await EnqueueAsync();
+        gmail.AfterMetadata = call => call == 1 ? WithAsync<IJobService, JobActionResult>(s => s.PauseAsync(job.Id, Ct)) : Task.CompletedTask;
+        await RunNextAsync();
+        (await GetJobAsync(job.Id)).Status.ShouldBe("paused");
+
+        // The cursor and fetch_state as a run started before the Inbox total existed left them.
+        await using var db = postgres.CreateDbContext();
+        await db.Database.ExecuteSqlAsync($"UPDATE jobs SET cursor = cursor - 'inboxTotal' WHERE id = {job.Id}", Ct);
+        await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(f => f.InboxTotal, (long?)null), Ct);
+        published.Clear();
+        gmail.AfterMetadata = null;
+        (await WithAsync<IJobService, JobActionResult>(s => s.ResumeAsync(job.Id, Ct))).ShouldBe(JobActionResult.Ok);
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        var inbox = published.Select(j => j.Progress).OfType<JobProgress>().Where(p => p.Message == "Fetching Inbox").ToList();
+        inbox.ShouldNotBeEmpty();
+        inbox.ShouldAllBe(p => p.Total == InboxCount && p.Done <= p.Total);
+        (await db.FetchState.AsNoTracking().SingleAsync(Ct)).InboxTotal.ShouldBe(InboxCount);
     }
 
     [Fact]
