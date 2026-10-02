@@ -5,6 +5,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Memory;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -42,6 +43,7 @@ public sealed partial class AnalysisRunJob(
     ISettingsStore settingsStore,
     AnalysisGrouper grouper,
     IAnalysisShortCircuit shortCircuit,
+    IDecisionMemory memory,
     SenderStatsUpdater senderStats,
     IOptions<LlmOptions> llmOptions,
     TimeProvider time,
@@ -227,10 +229,11 @@ public sealed partial class AnalysisRunJob(
 
         return await ctx.CheckpointAsync(cursor, Progress(run, cursor), async c =>
         {
-            // A review may have decided a member since the check above: re-check under the row locks and skip it.
+            // A review may have decided a member since the check above: re-check under the row locks and skip it. Locks
+            // are taken in id order, like the review's, so a group approve and this checkpoint cannot deadlock.
             var candidates = rows.Select(r => r.MessageId).ToArray();
             var lateDecided = (await db.Suggestions
-                    .FromSql($"SELECT * FROM suggestions WHERE message_id = ANY({candidates}) FOR UPDATE")
+                    .FromSql($"SELECT * FROM suggestions WHERE message_id = ANY({candidates}) ORDER BY id FOR UPDATE")
                     .AsNoTracking()
                     .ToListAsync(c))
                 .Where(s => s.Status is SuggestionStatus.Approved or SuggestionStatus.Applied)

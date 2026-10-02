@@ -225,6 +225,7 @@ public sealed class ReviewService(
         }
 
         await tx.CommitAsync(ct);
+        await decisions.EmbedRecordedAsync(ct);
         return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlisted));
     }
 
@@ -253,6 +254,7 @@ public sealed class ReviewService(
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await decisions.EmbedRecordedAsync(ct);
         db.ChangeTracker.Clear();
         return changed;
     }

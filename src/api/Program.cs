@@ -7,6 +7,7 @@ using GmailOrganiser.Gmail.Auth;
 using GmailOrganiser.Health;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -27,6 +28,7 @@ builder.Services.AddSetup();
 builder.Services.AddJobs();
 builder.Services.AddFetch();
 builder.Services.AddAnalysis();
+builder.Services.AddMemory();
 builder.Services.AddReview();
 
 var app = builder.Build();
