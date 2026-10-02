@@ -86,10 +86,10 @@ export class ModelsStep implements OnInit {
   });
 
   readonly chatOptions = computed(() =>
-    options(this.models()?.chatModels ?? [], this.settings()?.chatModel),
+    modelOptions(this.models()?.chatModels ?? [], this.settings()?.chatModel),
   );
   readonly embeddingOptions = computed(() =>
-    options(this.models()?.embeddingModels ?? [], this.settings()?.embeddingModel),
+    modelOptions(this.models()?.embeddingModels ?? [], this.settings()?.embeddingModel),
   );
   readonly reachable = computed(() => this.models()?.reachable ?? false);
   readonly noChatModels = computed(() => this.reachable() && !this.models()?.chatModels.length);
@@ -201,7 +201,10 @@ export class ModelsStep implements OnInit {
 }
 
 /** The server's models, plus the saved one when the server no longer lists it. */
-function options(models: OllamaModel[], saved: string | null | undefined): ModelOption[] {
+export function modelOptions(
+  models: OllamaModel[],
+  saved: string | null | undefined,
+): ModelOption[] {
   const list = models.map((m) => ({ value: m.name, label: modelLabel(m) }));
   if (saved && !models.some((m) => m.name === saved)) {
     list.unshift({ value: saved, label: `${saved} (not found on the server)` });

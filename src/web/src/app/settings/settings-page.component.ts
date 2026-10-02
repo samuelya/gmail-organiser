@@ -28,7 +28,14 @@ import { GoogleClientStep } from '../setup/steps/google-client-step.component';
 import { ModelsStep } from '../setup/steps/models-step.component';
 import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
 import { AnalysisSettingsSection } from './analysis-settings.component';
-import { AnalysisSettings, AnalysisSettingsUpdate, PromptTemplateDto } from './settings.models';
+import { AttachmentSettingsSection } from './attachment-settings.component';
+import {
+  AnalysisSettings,
+  AnalysisSettingsUpdate,
+  AttachmentsSettingsDto,
+  AttachmentsUpdate,
+  PromptTemplateDto,
+} from './settings.models';
 import { SettingsService } from './settings.service';
 
 /** Same bounds as the API's `fetchChunkSize` validation; `step` only sets the arrow-key increment. */
@@ -52,6 +59,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     OllamaUrlStep,
     ModelsStep,
     AnalysisSettingsSection,
+    AttachmentSettingsSection,
   ],
   templateUrl: './settings-page.component.html',
   styles: `
@@ -100,6 +108,11 @@ export class SettingsPage implements OnInit {
   readonly analysisErrors = signal<Record<string, string[]> | null>(null);
   readonly defaultPrompt = signal<PromptTemplateDto | null>(null);
 
+  /** `null` until loaded; an older API without the `attachments` block hides the section. */
+  readonly attachments = signal<AttachmentsSettingsDto | null>(null);
+  readonly attachmentsSaving = signal(false);
+  readonly attachmentsErrors = signal<Record<string, string[]> | null>(null);
+
   ngOnInit(): void {
     this.settingsApi
       .getSettings()
@@ -110,6 +123,7 @@ export class SettingsPage implements OnInit {
           this.fetchLoaded.set(true);
           this.embeddingModel.set(settings.embeddingModel);
           this.analysis.set(settings);
+          this.attachments.set(attachmentsOf(settings));
         },
         // The error interceptor shows why; the field stays disabled without a saved value.
         error: () => undefined,
@@ -142,6 +156,30 @@ export class SettingsPage implements OnInit {
         error: (error: unknown) => {
           this.analysisSaving.set(false);
           this.analysisErrors.set(validationErrors(error));
+        },
+      });
+  }
+
+  saveAttachments(changes: AttachmentsUpdate): void {
+    if (this.attachmentsSaving()) return;
+    if (Object.keys(changes).length === 0) {
+      this.snackBar.open('No attachment changes to save', undefined, { duration: 3000 });
+      return;
+    }
+    this.attachmentsSaving.set(true);
+    this.attachmentsErrors.set(null);
+    this.settingsApi
+      .saveAttachments(changes)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (settings) => {
+          this.attachmentsSaving.set(false);
+          this.attachments.set(attachmentsOf(settings));
+          this.snackBar.open('Attachment settings saved', undefined, { duration: 3000 });
+        },
+        error: (error: unknown) => {
+          this.attachmentsSaving.set(false);
+          this.attachmentsErrors.set(validationErrors(error));
         },
       });
   }
@@ -181,6 +219,10 @@ export class SettingsPage implements OnInit {
 function wholeNumber(control: AbstractControl<number | null>): ValidationErrors | null {
   const value = control.value;
   return value === null || Number.isInteger(value) ? null : { integer: true };
+}
+
+function attachmentsOf(settings: AttachmentsSettingsDto): AttachmentsSettingsDto {
+  return { attachments: settings.attachments, visionModel: settings.visionModel };
 }
 
 /** ValidationProblem `errors` from a 400, keyed by API field name. */

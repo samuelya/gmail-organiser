@@ -20,8 +20,8 @@ export interface AnalysisSettings {
   analysisPromptTemplate: string | null;
 }
 
-/** The full `SettingsDto`: the setup fields plus the analysis fields. */
-export type SettingsDto = AppSettings & AnalysisSettings;
+/** The full `SettingsDto`: the setup fields, the analysis fields and the attachment block. */
+export type SettingsDto = AppSettings & AnalysisSettings & AttachmentsSettingsDto;
 
 /**
  * The analysis part of `UpdateSettingsRequest`: only changed fields are sent; an empty prompt
@@ -92,3 +92,102 @@ export const GROUPING_MODES: readonly {
     help: 'Sender + subject, then similar emails by embedding when an embedding model is chosen.',
   },
 ];
+
+/** `AttachmentType` as the API serialises it (snake_case, enum order). */
+export type AttachmentType =
+  | 'pdf'
+  | 'image'
+  | 'spreadsheet'
+  | 'csv'
+  | 'word_document'
+  | 'presentation'
+  | 'plain_text'
+  | 'archive'
+  | 'other';
+
+/** How image attachments are read (#72): local OCR or an Ollama vision model. */
+export type AttachmentImageMode = 'ocr' | 'vision';
+
+/** `AttachmentTypeSetting`. */
+export interface AttachmentTypeSetting {
+  type: AttachmentType;
+  enabled: boolean;
+}
+
+/** `AttachmentSettings` (`attachments` in `GET /api/settings`). */
+export interface AttachmentSettings {
+  enabled: boolean;
+  /** One entry per type in enum order; `archive` is always off. */
+  types: AttachmentTypeSetting[];
+  maxBytes: number;
+  maxImageBytes: number;
+  maxChars: number;
+  maxPerMessage: number;
+  /** Absent on an API without the image-reading choice. */
+  imageMode?: AttachmentImageMode;
+}
+
+/** The attachment fields of `SettingsDto`; both absent on an older API. */
+export interface AttachmentsSettingsDto {
+  attachments?: AttachmentSettings;
+  visionModel?: string | null;
+}
+
+/** `UpdateAttachmentSettingsRequest`: omitted values stay unchanged; `types` changes only the listed types. */
+export type AttachmentSettingsUpdate = Partial<AttachmentSettings>;
+
+/** The attachment part of `UpdateSettingsRequest`; an empty `visionModel` clears it. */
+export interface AttachmentsUpdate {
+  attachments?: AttachmentSettingsUpdate;
+  visionModel?: string;
+}
+
+export const ARCHIVE_TYPE: AttachmentType = 'archive';
+
+/** Label and description per type, in the API's enum order. */
+export const ATTACHMENT_TYPES: Record<AttachmentType, { label: string; description: string }> = {
+  pdf: { label: 'PDF (pdf)', description: 'The text layer; scanned pages are read like images.' },
+  image: {
+    label: 'Images (png, jpg, gif, webp, tiff, heic)',
+    description: 'Text in the picture, read as chosen under "Reading images".',
+  },
+  spreadsheet: { label: 'Spreadsheets (xlsx, xls, ods)', description: 'Sheet names and cells.' },
+  csv: { label: 'CSV (csv)', description: 'Rows as text.' },
+  word_document: { label: 'Documents (docx, doc, odt, rtf)', description: 'The document text.' },
+  presentation: { label: 'Presentations (pptx, ppt, odp)', description: 'Slide text.' },
+  plain_text: { label: 'Plain text (txt, md)', description: 'The file as is.' },
+  archive: { label: 'Archives (zip, 7z, rar, tar, gz)', description: 'Never opened.' },
+  other: { label: 'Other files', description: 'Any type not listed above.' },
+};
+
+export type NumericAttachmentField = 'maxBytes' | 'maxImageBytes' | 'maxChars' | 'maxPerMessage';
+
+export const BYTES_PER_MB = 1024 * 1024;
+
+/**
+ * Same bounds as the API's `SettingsValidation`, in the units the form shows: the byte limits are
+ * in MB (64 KB–25 MB) and converted on load and save.
+ */
+export const ATTACHMENT_LIMITS: Record<NumericAttachmentField, Range> = {
+  maxBytes: { min: 0.0625, max: 25, step: 1, integer: false },
+  maxImageBytes: { min: 0.0625, max: 25, step: 1, integer: false },
+  maxChars: { min: 500, max: 50_000, step: 500, integer: true },
+  maxPerMessage: { min: 1, max: 20, step: 1, integer: true },
+};
+
+export const ATTACHMENT_MB_FIELDS: readonly NumericAttachmentField[] = [
+  'maxBytes',
+  'maxImageBytes',
+];
+
+export const IMAGE_MODES: readonly { value: AttachmentImageMode; label: string; help: string }[] = [
+  { value: 'ocr', label: 'Local OCR (default)', help: 'Reads the text in images on this machine.' },
+  {
+    value: 'vision',
+    label: 'Ollama vision model',
+    help: 'A vision-capable model transcribes and describes each image; slower.',
+  },
+];
+
+/** Ollama's capability name for models that accept images. */
+export const VISION_CAPABILITY = 'vision';

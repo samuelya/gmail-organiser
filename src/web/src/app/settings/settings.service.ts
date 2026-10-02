@@ -2,7 +2,12 @@ import { HttpClient } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
 import { SetupService } from '../setup/setup.service';
-import { AnalysisSettingsUpdate, PromptTemplateDto, SettingsDto } from './settings.models';
+import {
+  AnalysisSettingsUpdate,
+  AttachmentsUpdate,
+  PromptTemplateDto,
+  SettingsDto,
+} from './settings.models';
 
 /**
  * Settings page API. Reads and saves go through {@link SetupService} so every section shares one
@@ -19,6 +24,11 @@ export class SettingsService {
 
   /** A partial update: fields left out stay unchanged. */
   saveAnalysis(changes: AnalysisSettingsUpdate): Observable<SettingsDto> {
+    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** A partial update of the attachment block (and the vision model): fields left out stay unchanged. */
+  saveAttachments(changes: AttachmentsUpdate): Observable<SettingsDto> {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
   }
 

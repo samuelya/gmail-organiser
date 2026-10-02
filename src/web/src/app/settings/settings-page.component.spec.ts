@@ -6,7 +6,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { LlmModels } from '../core/llm.service';
 import { GoogleAuthStatus, SetupStatus } from '../setup/setup.service';
 import { SettingsPage } from './settings-page.component';
-import { SettingsDto } from './settings.models';
+import { AttachmentSettings, SettingsDto } from './settings.models';
 
 const EMAIL = 'user@example.com';
 const URL_SAVED = 'http://ollama.example.com:11434';
@@ -78,6 +78,7 @@ describe('SettingsPage', () => {
   let http: HttpTestingController;
   let connected: boolean;
   let snackOpen: ReturnType<typeof vi.fn>;
+  let loaded: SettingsDto;
 
   /** Answers every pending GET the page makes, until none are left. */
   async function flushLoads(fixture: { whenStable: () => Promise<unknown> }) {
@@ -87,7 +88,7 @@ describe('SettingsPage', () => {
       if (pending.length === 0) return;
       for (const req of pending) {
         const path = req.request.url;
-        if (path === '/api/settings') req.flush(settings());
+        if (path === '/api/settings') req.flush(loaded);
         else if (path === '/api/auth/google/status') req.flush(googleStatus(connected));
         else if (path === '/api/setup/status') req.flush(setupStatus);
         else if (path === '/api/llm/models') req.flush(models);
@@ -97,8 +98,9 @@ describe('SettingsPage', () => {
     }
   }
 
-  async function render(gmailConnected = true) {
+  async function render(gmailConnected = true, dto = settings()) {
     connected = gmailConnected;
+    loaded = dto;
     snackOpen = vi.fn();
     TestBed.configureTestingModule({
       providers: [
@@ -295,6 +297,48 @@ describe('SettingsPage', () => {
         duration: 3000,
       });
       const section = fixture.debugElement.query((d) => d.name === 'app-analysis-settings');
+      expect(section.componentInstance.changes()).toEqual({});
+    });
+  });
+
+  describe('attachments', () => {
+    const attachments: AttachmentSettings = {
+      enabled: true,
+      types: [
+        { type: 'pdf', enabled: true },
+        { type: 'image', enabled: true },
+        { type: 'archive', enabled: false },
+      ],
+      maxBytes: 10 * 1024 * 1024,
+      maxImageBytes: 10 * 1024 * 1024,
+      maxChars: 4000,
+      maxPerMessage: 5,
+    };
+
+    it('is hidden when the API has no attachments block', async () => {
+      const { q } = await render();
+      expect(q('section-attachments')).toBeNull();
+    });
+
+    it('saves only the changed attachment fields and updates from the response', async () => {
+      const { fixture, q } = await render(true, settings({ attachments }));
+      expect(q('section-attachments')).not.toBeNull();
+      q('type-pdf')!.querySelector('button')!.click();
+      q('save-attachments')!.click();
+      await fixture.whenStable();
+
+      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      expect(save.request.body).toEqual({
+        attachments: { types: [{ type: 'pdf', enabled: false }] },
+      });
+      save.flush(
+        settings({ attachments: { ...attachments, types: [{ type: 'pdf', enabled: false }] } }),
+      );
+      await fixture.whenStable();
+      expect(snackOpen).toHaveBeenCalledWith('Attachment settings saved', undefined, {
+        duration: 3000,
+      });
+      const section = fixture.debugElement.query((d) => d.name === 'app-attachment-settings');
       expect(section.componentInstance.changes()).toEqual({});
     });
   });
