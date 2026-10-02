@@ -116,6 +116,10 @@ public sealed class SuggestionOutputParserTests
     [InlineData("A/ B")]
     [InlineData("A/B/C/D/E/F")]
     [InlineData("Tab\\tInside")]
+    [InlineData("TRASH")]
+    [InlineData("spam")]
+    [InlineData("INBOX")]
+    [InlineData("Sent Mail")]
     public void Bad_label_is_an_error(string label)
     {
         var result = SuggestionOutputParser.Parse($"[{Item("m1", label: label)}]", new HashSet<string> { "m1" });
@@ -240,5 +244,56 @@ public sealed class SuggestionOutputParserTests
         result.Filter.ShouldBeNull();
         result.Valid.ShouldHaveSingleItem();
         result.Errors.ShouldHaveSingleItem().ShouldContain("filterCriteria");
+    }
+
+    [Theory]
+    [InlineData("""[{"id":"m1","topicLabel":"A\udc00","isNewLabel":false}]""")]
+    [InlineData("""[{"id":"m1","topicLabel":"A","isNewLabel":false,"needsAction":false,"toBeDeleted":false,"unsubscribeSuggested":false,"confidence":0.5,"reason":"x\ud83d"}]""")]
+    [InlineData("""[{"id":"\ud83d"}]""")]
+    [InlineData("""[{"id":"m1","filterCriteria":{"from":"a\ud800@example.com"}}]""")]
+    [InlineData("""[{"\ud800":1,"id":"m1"}]""")]
+    [InlineData("""{"\ud800":1,"suggestions":[]}""")]
+    [InlineData("""{"suggestions":[],"filterCriteria":{"from":"a\udfff@example.com"}}""")]
+    public void Lone_surrogate_escape_is_an_error_not_an_exception(string raw)
+    {
+        var result = SuggestionOutputParser.Parse(raw, new HashSet<string> { "m1" });
+
+        result.Valid.ShouldBeEmpty();
+        result.Errors.ShouldNotBeEmpty();
+    }
+
+    [Fact]
+    public void Lone_surrogate_in_one_item_keeps_the_others()
+    {
+        var raw = $$"""[{"id":"m1","reason":"x\ud83d"},{{Item("m2")}}]""";
+
+        var result = SuggestionOutputParser.Parse(raw, Ids);
+
+        result.Valid.ShouldHaveSingleItem().Id.ShouldBe("m2");
+    }
+
+    [Fact]
+    public void Reason_is_cut_without_splitting_a_surrogate_pair()
+    {
+        var reason = new string('a', SuggestionOutputParser.MaxReasonLength - 1) + "\ud83d\ude00";
+        var raw = $$"""{"id":"m1","topicLabel":"A","isNewLabel":false,"needsAction":false,"toBeDeleted":false,"unsubscribeSuggested":false,"confidence":0.5,"reason":"{{reason}}"}""";
+
+        var result = SuggestionOutputParser.Parse(raw, new HashSet<string> { "m1" });
+
+        var cut = result.Valid.ShouldHaveSingleItem().Reason;
+        cut.Length.ShouldBe(SuggestionOutputParser.MaxReasonLength - 1);
+        Should.NotThrow(() => new System.Text.UTF8Encoding(false, true).GetBytes(cut));
+    }
+
+    [Theory]
+    [InlineData("Here are the [3] answers: ")]
+    [InlineData("Answers {see below} [for both]: ")]
+    [InlineData("[note] ")]
+    public void Brackets_in_leading_prose_fall_through_to_the_json(string prose)
+    {
+        var result = SuggestionOutputParser.Parse(prose + Both, Ids);
+
+        result.Errors.ShouldBeEmpty();
+        result.Valid.Count.ShouldBe(2);
     }
 }

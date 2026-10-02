@@ -51,7 +51,7 @@ public static class BodyCleaner
         if (string.CompareOrdinal(html, lt, "<!--", 0, 4) == 0)
         {
             var end = html.IndexOf("-->", lt + 4, StringComparison.Ordinal);
-            return end < 0 ? html.Length : end + 3;
+            return end < 0 ? lt + 4 : end + 3;
         }
 
         var next = lt + 1 < html.Length ? html[lt + 1] : '\0';
@@ -73,7 +73,7 @@ public static class BodyCleaner
         var tagEnd = FindTagEnd(html, nameEnd);
         if (tagEnd < 0)
         {
-            return html.Length;
+            return nameEnd;
         }
 
         if (BlockElements.Contains(name))
@@ -111,12 +111,14 @@ public static class BodyCleaner
         }
 
         var closeEnd = FindTagEnd(html, close + 2 + name.Length);
-        return closeEnd < 0 ? html.Length : closeEnd + 1;
+        return closeEnd < 0 ? close + 2 + name.Length : closeEnd + 1;
     }
 
     /// <summary>
-    /// Index of the <c>&gt;</c> closing a tag, skipping attribute values quoted right after <c>=</c>; -1 when
-    /// unterminated. A stray quote elsewhere is just a character.
+    /// Index of the <c>&gt;</c> closing a tag, skipping attribute values quoted right after <c>=</c>; an unterminated
+    /// quote falls back to the first <c>&gt;</c>. -1 when there is none, and the caller then drops only
+    /// <c>&lt;name</c> (an unclosed comment only <c>&lt;!--</c>), so the rest of the document is kept.
+    /// A stray quote elsewhere is just a character.
     /// </summary>
     private static int FindTagEnd(string html, int from)
     {
@@ -141,7 +143,7 @@ public static class BodyCleaner
             afterEquals = quote is null && (c == '=' || (afterEquals && char.IsWhiteSpace(c)));
         }
 
-        return -1;
+        return quote is null ? -1 : html.IndexOf('>', from);
     }
 
     private static bool IsInvisible(char c) => c is '\u200B' or '\u200C' or '\u200D' or '\u2060' or '\uFEFF' or '\u00AD' or '\u034F';

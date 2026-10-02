@@ -51,7 +51,7 @@ public sealed class BodyCleanerTests
     [InlineData("<head><meta charset=\"utf-8\">Kept after an unclosed head", "Kept after an unclosed head")]
     [InlineData("<span class=x title=it's>Don't stop</span> here", "Don't stop here")]
     [InlineData("<p data-x = 'a>b'>Quoted</p>", "Quoted")]
-    [InlineData("Before <p class=\"unterminated", "Before")]
+    [InlineData("Before <p class=\"unterminated", "Before class=\"unterminated")]
     [InlineData("<<<>>></></p><!--", "<<<>>>")]
     [InlineData("", "")]
     public void Malformed_html_never_throws(string html, string expected)
@@ -95,5 +95,15 @@ public sealed class BodyCleanerTests
     public void No_body_gives_empty_text()
     {
         BodyCleaner.Clean(null, null, 4000).ShouldBe(string.Empty);
+    }
+
+    [Theory]
+    [InlineData("<p>Kept</p><a href=\"x>Body text</a>", "Kept\nBody text")]
+    [InlineData("<p>Kept</p><!-- never closed <p>Body text</p>", "Kept\nnever closed\nBody text")]
+    [InlineData("<p>Kept</p><b Body text", "Kept\nBody text")]
+    [InlineData("<p>Kept</p><script>x</script Body text", "Kept\nBody text")]
+    public void Unterminated_markup_keeps_the_rest_of_the_body(string html, string expected)
+    {
+        BodyCleaner.Clean(null, html, 4000).ShouldBe(expected);
     }
 }

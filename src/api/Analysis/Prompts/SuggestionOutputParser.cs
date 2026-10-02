@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Analysis.Prompts;
 
@@ -16,6 +17,8 @@ public static partial class SuggestionOutputParser
     public const double ConfidenceTolerance = 0.01;
 
     private const int MaxIdInError = 64;
+    private const int MaxCandidates = 32;
+    private const string InvalidText = "Item contains a string that is not valid UTF-16 text.";
 
     private static readonly JsonReaderOptions ReaderOptions = new()
     {
@@ -31,17 +34,10 @@ public static partial class SuggestionOutputParser
         var errors = new List<string>();
         FilterCriteriaOutput? filter = null;
 
-        var start = string.IsNullOrEmpty(raw) ? -1 : raw.IndexOfAny(['[', '{']);
-        if (start < 0)
-        {
-            errors.Add("Output contains no JSON array or object.");
-            return Finish(valid, errors, filter, expectedIds, []);
-        }
-
-        var document = ReadFirstValue(raw![start..]);
+        var document = ReadFirstValue(raw ?? string.Empty, out var candidates);
         if (document is null)
         {
-            errors.Add("Output is not valid JSON.");
+            errors.Add(candidates == 0 ? "Output contains no JSON array or object." : "Output is not valid JSON.");
             return Finish(valid, errors, filter, expectedIds, []);
         }
 
@@ -50,43 +46,28 @@ public static partial class SuggestionOutputParser
         using (document)
         {
             var root = document.RootElement;
-            var (items, wrapped) = Items(root);
-            if (wrapped)
+            IEnumerable<JsonElement> items;
+            try
             {
-                filter = ReadFilter(root, errors);
+                (items, var wrapped) = Items(root);
+                filter = wrapped ? ReadFilter(root, errors) : null;
+            }
+            catch (InvalidOperationException)
+            {
+                // A lone surrogate escape (\ud800) in a name or string: System.Text.Json throws on reading it.
+                errors.Add(InvalidText);
+                return Finish(valid, errors, null, expectedIds, []);
             }
 
             foreach (var item in items)
             {
-                if (item.ValueKind != JsonValueKind.Object)
+                try
                 {
-                    errors.Add("Array item is not an object.");
-                    continue;
+                    filter = ReadItem(item, expectedIds, errors, filter, answered, accepted, valid);
                 }
-
-                filter ??= ReadFilter(item, errors);
-                if (!item.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String
-                    || idElement.GetString() is not { Length: > 0 } id)
+                catch (InvalidOperationException)
                 {
-                    errors.Add("Item has no string 'id'.");
-                    continue;
-                }
-
-                if (!expectedIds.Contains(id))
-                {
-                    errors.Add($"Unknown id '{Shorten(id)}'.");
-                    continue;
-                }
-
-                answered.Add(id);
-                if (accepted.Contains(id))
-                {
-                    errors.Add($"Duplicate id '{id}': first valid answer kept.");
-                }
-                else if (ReadSuggestion(id, item, errors) is { } suggestion)
-                {
-                    accepted.Add(id);
-                    valid.Add(suggestion);
+                    errors.Add(InvalidText);
                 }
             }
         }
@@ -94,21 +75,90 @@ public static partial class SuggestionOutputParser
         return Finish(valid, errors, filter, expectedIds, answered);
     }
 
-    /// <summary>
-    /// Reads one JSON value from the start of <paramref name="json"/> and ignores whatever follows it (code fences,
-    /// trailing prose); null when that value is not valid JSON.
-    /// </summary>
-    private static JsonDocument? ReadFirstValue(string json)
+    private static FilterCriteriaOutput? ReadItem(JsonElement item, IReadOnlySet<string> expectedIds, List<string> errors,
+        FilterCriteriaOutput? filter, HashSet<string> answered, HashSet<string> accepted, List<SuggestionOutput> valid)
     {
-        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json), ReaderOptions);
-        try
+        if (item.ValueKind != JsonValueKind.Object)
         {
-            return JsonDocument.ParseValue(ref reader);
+            errors.Add("Array item is not an object.");
+            return filter;
         }
-        catch (JsonException)
+
+        filter ??= ReadFilter(item, errors);
+        if (!item.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String
+            || idElement.GetString() is not { Length: > 0 } id)
         {
-            return null;
+            errors.Add("Item has no string 'id'.");
+            return filter;
         }
+
+        if (!expectedIds.Contains(id))
+        {
+            errors.Add($"Unknown id '{Shorten(id)}'.");
+            return filter;
+        }
+
+        answered.Add(id);
+        if (accepted.Contains(id))
+        {
+            errors.Add($"Duplicate id '{id}': first valid answer kept.");
+        }
+        else if (ReadSuggestion(id, item, errors) is { } suggestion)
+        {
+            accepted.Add(id);
+            valid.Add(suggestion);
+        }
+
+        return filter;
+    }
+
+    /// <summary>
+    /// Reads one JSON value from the first <c>[</c>/<c>{</c> that starts one, ignoring whatever follows it (code
+    /// fences, trailing prose). A candidate that parses but holds no object (<c>[3]</c> in leading prose) is passed
+    /// over for a later one. Null when no candidate is valid JSON.
+    /// </summary>
+    private static JsonDocument? ReadFirstValue(string raw, out int candidates)
+    {
+        var bytes = Encoding.UTF8.GetBytes(raw);
+        JsonDocument? fallback = null;
+        candidates = 0;
+        for (var i = 0; i < bytes.Length && candidates < MaxCandidates; i++)
+        {
+            if (bytes[i] is not ((byte)'[' or (byte)'{'))
+            {
+                continue;
+            }
+
+            candidates++;
+            var reader = new Utf8JsonReader(bytes.AsSpan(i), ReaderOptions);
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.ParseValue(ref reader);
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            var root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Object || root.EnumerateArray().Any(e => e.ValueKind == JsonValueKind.Object))
+            {
+                fallback?.Dispose();
+                return document;
+            }
+
+            if (fallback is null)
+            {
+                fallback = document;
+            }
+            else
+            {
+                document.Dispose();
+            }
+        }
+
+        return fallback;
     }
 
     /// <summary>
@@ -145,6 +195,10 @@ public static partial class SuggestionOutputParser
         {
             errors.Add($"Email '{id}': 'topicLabel' is missing or not a valid label path.");
         }
+        else if (GmailLimits.ReservedLabelNames.Contains(label))
+        {
+            errors.Add($"Email '{id}': 'topicLabel' is a Gmail system label.");
+        }
 
         var isNewLabel = ReadBool(id, item, "isNewLabel", errors);
         var needsAction = ReadBool(id, item, "needsAction", errors);
@@ -160,7 +214,7 @@ public static partial class SuggestionOutputParser
         return errors.Count > count
             ? null
             : new SuggestionOutput(id, label!, isNewLabel, needsAction, toBeDeleted, unsubscribe, confidence,
-                reason!.Length > MaxReasonLength ? reason[..MaxReasonLength] : reason);
+                Cut(reason!, MaxReasonLength));
     }
 
     /// <summary>Up to five <c>/</c>-separated segments, none blank or starting with whitespace, at most 225 chars.</summary>
@@ -236,7 +290,11 @@ public static partial class SuggestionOutputParser
         return new ParsedSuggestions(valid, errors, filter);
     }
 
-    private static string Shorten(string id) => id.Length <= MaxIdInError ? id : id[..MaxIdInError] + "…";
+    private static string Shorten(string id) => id.Length <= MaxIdInError ? id : Cut(id, MaxIdInError) + "…";
+
+    /// <summary>First <paramref name="max"/> chars without splitting a surrogate pair.</summary>
+    private static string Cut(string value, int max) =>
+        value.Length <= max ? value : value[..(char.IsHighSurrogate(value[max - 1]) ? max - 1 : max)];
 
     [GeneratedRegex(@"^[^/\s][^/]{0,99}(/[^/\s][^/]{0,99}){0,4}$")]
     private static partial Regex LabelPathRegex();
