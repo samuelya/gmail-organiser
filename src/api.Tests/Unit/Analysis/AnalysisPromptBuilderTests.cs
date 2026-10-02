@@ -19,7 +19,7 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v1");
+        template.Version.ShouldBe("analysis-v2");
         foreach (var placeholder in new[] { "{{labelTree}}", "{{memory}}", "{{emails}}", "{{attachments}}", "{{actionLabel}}", "{{deleteLabel}}" })
         {
             template.Text.ShouldContain(placeholder);

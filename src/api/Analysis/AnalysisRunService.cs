@@ -249,6 +249,8 @@ public sealed class AnalysisRunService(
         run.MixedGroups,
         run.FailedMessages,
         run.SkippedMessages,
+        run.AttachmentsConverted,
+        run.AttachmentsSkipped,
         run.Model,
         run.PromptVersion,
         run.Error,

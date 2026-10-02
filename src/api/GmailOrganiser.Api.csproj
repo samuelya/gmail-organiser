@@ -19,6 +19,6 @@
     <PackageReference Include="Pgvector.EntityFrameworkCore" Version="0.3.0" />
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Analysis/Prompts/analysis-v1.md" LogicalName="GmailOrganiser.Analysis.Prompts.analysis-v1.md" />
+    <EmbeddedResource Include="Analysis/Prompts/analysis-v2.md" LogicalName="GmailOrganiser.Analysis.Prompts.analysis-v2.md" />
   </ItemGroup>
 </Project>

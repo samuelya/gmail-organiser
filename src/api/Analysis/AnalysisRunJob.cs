@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Data;
@@ -46,6 +47,7 @@ public sealed partial class AnalysisRunJob(
     IAnalysisShortCircuit shortCircuit,
     IDecisionMemory memory,
     SenderStatsUpdater senderStats,
+    AttachmentPromptSection attachments,
     IOptions<LlmOptions> llmOptions,
     TimeProvider time,
     ILogger<AnalysisRunJob> logger) : IJobHandler
@@ -98,7 +100,8 @@ public sealed partial class AnalysisRunJob(
         var work = await PlanAsync(run, cursor, settings, ct);
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
-        var context = new RunContext(run, settings, builder, chat, await UserLabelsAsync(ct), work.Allowlisted);
+        var context = new RunContext(
+            run, settings, builder, chat, await UserLabelsAsync(ct), work.Allowlisted, await attachments.GetPolicyAsync(ct));
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
@@ -235,6 +238,8 @@ public sealed partial class AnalysisRunJob(
         run.LlmCalls += outcome.LlmCalls;
         run.Groups++;
         run.MixedGroups += outcome.Mixed ? 1 : 0;
+        run.AttachmentsConverted += outcome.AttachmentsConverted;
+        run.AttachmentsSkipped += outcome.AttachmentsSkipped;
 
         // A unique violation means another writer committed a suggestion for a member after the re-check: the retry's
         // re-check then skips it as decided meanwhile (or replaces it if undecided); it never fails the run.
@@ -323,7 +328,10 @@ public sealed partial class AnalysisRunJob(
 
     /// <summary>Covered and failed candidates out of the frozen ones (skipped ones have left the cursor).</summary>
     private static JobProgress Progress(AnalysisRunRow run, AnalysisRunCursor cursor) =>
-        new(run.MessagesCovered + run.FailedMessages, cursor.CandidateIds?.Count, $"{run.Groups} groups, {run.LlmCalls} LLM calls");
+        new(run.MessagesCovered + run.FailedMessages, cursor.CandidateIds?.Count, $"{run.Groups} groups, {run.LlmCalls} LLM calls"
+            + (run.AttachmentsConverted + run.AttachmentsSkipped == 0
+                ? ""
+                : $", {run.AttachmentsConverted} attachments converted, {run.AttachmentsSkipped} skipped"));
 
     private static string Shorten(string message) =>
         message.Length <= MaxErrorLength ? message : message[..(MaxErrorLength - 1)] + "…";
@@ -334,7 +342,8 @@ public sealed partial class AnalysisRunJob(
         AnalysisPromptBuilder Builder,
         IChatClient Chat,
         IReadOnlyList<string> LabelTree,
-        IReadOnlySet<string> Allowlisted);
+        IReadOnlySet<string> Allowlisted,
+        AttachmentPolicySnapshot Attachments);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]
     private static partial void LogInvalidOutput(ILogger logger, int count, string errors);

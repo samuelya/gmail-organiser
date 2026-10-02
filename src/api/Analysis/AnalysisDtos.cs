@@ -54,6 +54,8 @@ public sealed record AnalysisRunDto(
     int MixedGroups,
     int FailedMessages,
     int SkippedMessages,
+    int AttachmentsConverted,
+    int AttachmentsSkipped,
     string? Model,
     string? PromptVersion,
     string? Error,
