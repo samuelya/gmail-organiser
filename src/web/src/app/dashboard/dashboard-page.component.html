@@ -1,0 +1,242 @@
+<app-page-header title="Dashboard">
+  @if (reconnecting()) {
+    <mat-chip-set actions aria-live="polite">
+      <mat-chip data-testid="reconnecting" disableRipple>
+        <mat-icon matChipAvatar aria-hidden="true">sync_problem</mat-icon>
+        Live updates reconnecting…
+      </mat-chip>
+    </mat-chip-set>
+  }
+</app-page-header>
+
+<div class="flex flex-col gap-4">
+  @if (status()?.accountMismatch) {
+    <div class="banner flex items-start gap-3 p-4" role="alert" data-testid="mismatch-banner">
+      <mat-icon aria-hidden="true">warning</mat-icon>
+      <p class="m-0">
+        The local data belongs to another Gmail account
+        @if (status()?.localAccount; as local) {
+          (<span data-testid="local-account">{{ local }}</span
+          >)
+        }
+        than the one connected. Fetching is blocked until you reconnect that account in
+        <a routerLink="/settings">Settings</a>.
+      </p>
+    </div>
+  }
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="dashboard-fetch">
+    <mat-card-content class="flex flex-col gap-4" data-testid="fetch-card">
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 id="dashboard-fetch" class="card-title flex-1">Mailbox fetch</h2>
+        @if (view(); as v) {
+          <span class="muted" data-testid="phase">{{ v.phase }}</span>
+        }
+      </div>
+
+      @if (loadFailed()) {
+        <p class="m-0 flex items-center gap-2" role="alert" data-testid="load-error">
+          <mat-icon aria-hidden="true">error</mat-icon>
+          The fetch status could not be {{ status() ? 'refreshed' : 'loaded' }}.
+          <button mat-button type="button" (click)="load()">Retry</button>
+        </p>
+      } @else if (!status()) {
+        <mat-progress-bar mode="indeterminate" aria-label="Loading the fetch status" />
+      }
+
+      @if (status(); as s) {
+        @if (view(); as v) {
+          @if (v.job; as job) {
+            <div class="flex flex-col gap-1" data-testid="fetch-progress">
+              <!-- Indeterminate only while the job moves and its total is unknown. -->
+              <mat-progress-bar
+                [mode]="
+                  fetchPercent() === null && job.status !== 'paused'
+                    ? 'indeterminate'
+                    : 'determinate'
+                "
+                [value]="fetchPercent() ?? 0"
+                [attr.aria-label]="'Fetch progress, ' + jobLabel(job)"
+              />
+              <span class="muted text-sm" data-testid="fetch-progress-text">
+                {{ statusText(job) }}
+                @if (job.progress; as p) {
+                  · {{ p.done | number }}
+                  @if (p.total !== null) {
+                    / {{ p.total | number }}
+                  }
+                  @if (p.message) {
+                    · {{ p.message }}
+                  }
+                }
+              </span>
+            </div>
+          }
+
+          <dl class="m-0 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+            <div>
+              <dt>Inbox</dt>
+              <dd data-testid="inbox-fetched">{{ s.inboxFetched | number }}</dd>
+            </div>
+            <div>
+              <dt>All mail</dt>
+              <dd data-testid="all-mail-fetched">{{ s.allMailFetched | number }}</dd>
+            </div>
+            <div>
+              <dt>Messages stored</dt>
+              <dd data-testid="messages-stored">{{ s.messagesStored | number }}</dd>
+            </div>
+            <div>
+              <dt>Senders</dt>
+              <dd data-testid="senders-count">{{ s.sendersCount | number }}</dd>
+            </div>
+            <div>
+              <dt>Last completed</dt>
+              <dd data-testid="completed-at">
+                {{ s.completedAt ? (s.completedAt | date: 'medium') : '—' }}
+              </dd>
+            </div>
+          </dl>
+
+          @if (v.error; as error) {
+            <p class="warning m-0 flex items-center gap-2" role="status" data-testid="fetch-error">
+              <mat-icon aria-hidden="true">warning</mat-icon>
+              {{ error }}
+            </p>
+          }
+
+          <div class="flex flex-wrap items-center gap-2">
+            @if (v.startLabel; as label) {
+              <button
+                mat-flat-button
+                type="button"
+                (click)="start()"
+                [disabled]="v.startDisabled || busy()"
+                data-testid="start"
+              >
+                {{ label }}
+              </button>
+            }
+            @if (v.job; as job) {
+              @if (v.controls.pause) {
+                <button
+                  mat-stroked-button
+                  type="button"
+                  (click)="pause(job)"
+                  [disabled]="busy() || pendingAction(job) !== null"
+                  data-testid="pause"
+                >
+                  <mat-icon aria-hidden="true">pause</mat-icon>
+                  Pause
+                </button>
+              }
+              @if (v.controls.resume) {
+                <button
+                  mat-stroked-button
+                  type="button"
+                  (click)="resume(job)"
+                  [disabled]="busy()"
+                  data-testid="resume"
+                >
+                  <mat-icon aria-hidden="true">play_arrow</mat-icon>
+                  Resume
+                </button>
+              }
+              @if (v.controls.cancel) {
+                <button
+                  mat-button
+                  type="button"
+                  (click)="cancel(job)"
+                  [disabled]="busy() || pendingAction(job) === 'cancel'"
+                  data-testid="cancel"
+                >
+                  <mat-icon aria-hidden="true">stop</mat-icon>
+                  Cancel
+                </button>
+              }
+            }
+          </div>
+        }
+      }
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="dashboard-jobs">
+    <mat-card-content class="flex flex-col gap-3" data-testid="jobs-card">
+      <h2 id="dashboard-jobs" class="card-title">Running jobs</h2>
+      @for (row of runningJobs(); track row.job.id) {
+        <div class="flex flex-col gap-1" data-testid="job-row">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="min-w-0 flex-1">
+              <span>{{ jobLabel(row.job) }}</span>
+              <span class="muted text-sm" data-testid="job-status">
+                · {{ statusText(row.job) }}</span
+              >
+            </span>
+            @if (row.controls.pause) {
+              <button
+                mat-icon-button
+                type="button"
+                (click)="pause(row.job)"
+                [disabled]="busy() || pendingAction(row.job) !== null"
+                [attr.aria-label]="'Pause ' + jobLabel(row.job)"
+                matTooltip="Pause"
+                data-testid="job-pause"
+              >
+                <mat-icon>pause</mat-icon>
+              </button>
+            }
+            @if (row.controls.resume) {
+              <button
+                mat-icon-button
+                type="button"
+                (click)="resume(row.job)"
+                [disabled]="busy()"
+                [attr.aria-label]="'Resume ' + jobLabel(row.job)"
+                matTooltip="Resume"
+                data-testid="job-resume"
+              >
+                <mat-icon>play_arrow</mat-icon>
+              </button>
+            }
+            @if (row.controls.cancel) {
+              <button
+                mat-icon-button
+                type="button"
+                (click)="cancel(row.job)"
+                [disabled]="busy() || pendingAction(row.job) === 'cancel'"
+                [attr.aria-label]="'Cancel ' + jobLabel(row.job)"
+                matTooltip="Cancel"
+                data-testid="job-cancel"
+              >
+                <mat-icon>stop</mat-icon>
+              </button>
+            }
+          </div>
+          @if (row.percent !== null) {
+            <mat-progress-bar
+              mode="determinate"
+              [value]="row.percent"
+              [attr.aria-label]="jobLabel(row.job) + ' progress'"
+            />
+          } @else if (row.job.status === 'running') {
+            <mat-progress-bar
+              mode="indeterminate"
+              [attr.aria-label]="jobLabel(row.job) + ' progress'"
+            />
+          }
+          @if (row.job.progress; as p) {
+            <span class="muted text-sm">
+              {{ p.done | number }}
+              @if (p.total !== null) {
+                / {{ p.total | number }}
+              }
+            </span>
+          }
+        </div>
+      } @empty {
+        <p class="muted m-0" data-testid="no-jobs">No jobs are running.</p>
+      }
+    </mat-card-content>
+  </mat-card>
+</div>

@@ -15,6 +15,7 @@ function settings(googleClient: GoogleClientSettings): AppSettings {
     actionLabelName: 'Example-Action',
     deleteLabelName: 'Example-Delete',
     setupWizardSeen: false,
+    fetchChunkSize: 500,
     googleClient,
   };
 }

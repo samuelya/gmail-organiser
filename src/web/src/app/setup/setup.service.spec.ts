@@ -28,6 +28,28 @@ describe('SetupService', () => {
     expect(backend.expectOne('/api/settings').request.method).toBe('GET');
   });
 
+  it('shares one settings request and serves the last saved settings', () => {
+    let seen: unknown[] = [];
+    service.getSettings().subscribe((s) => seen.push(s));
+    service.getSettings().subscribe((s) => seen.push(s));
+    backend.expectOne('/api/settings').flush({ fetchChunkSize: 500 });
+    expect(seen).toEqual([{ fetchChunkSize: 500 }, { fetchChunkSize: 500 }]);
+
+    service.saveSettings({ fetchChunkSize: 700 }).subscribe();
+    backend.expectOne('/api/settings').flush({ fetchChunkSize: 700 });
+    seen = [];
+    service.getSettings().subscribe((s) => seen.push(s));
+    backend.expectNone('/api/settings');
+    expect(seen).toEqual([{ fetchChunkSize: 700 }]);
+  });
+
+  it('retries the settings request after a failure', () => {
+    service.getSettings().subscribe({ error: () => undefined });
+    backend.expectOne('/api/settings').flush(null, { status: 500, statusText: 'Error' });
+    service.getSettings().subscribe();
+    backend.expectOne('/api/settings');
+  });
+
   it('puts a partial settings update', () => {
     service.saveSettings({ embeddingModel: '' }).subscribe();
     const req = backend.expectOne('/api/settings');

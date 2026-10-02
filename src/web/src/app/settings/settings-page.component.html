@@ -30,4 +30,50 @@
       </div>
     </mat-card-content>
   </mat-card>
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-fetch">
+    <mat-card-content data-testid="section-fetch">
+      <h2 id="settings-fetch" class="section-title">Fetch</h2>
+      <p class="section-hint">How the mailbox fetch reads Gmail.</p>
+      <form
+        [formGroup]="fetchForm"
+        (ngSubmit)="saveFetch()"
+        class="flex max-w-2xl flex-col gap-2"
+        novalidate
+      >
+        <mat-form-field>
+          <mat-label>Fetch chunk size</mat-label>
+          <input
+            matInput
+            type="number"
+            formControlName="fetchChunkSize"
+            [min]="chunk.min"
+            [max]="chunk.max"
+            [step]="chunk.step"
+            data-testid="fetch-chunk-size"
+          />
+          @if (fetchChunkSize.hasError('required')) {
+            <mat-error>The fetch chunk size is required.</mat-error>
+          } @else if (fetchChunkSize.hasError('min') || fetchChunkSize.hasError('max')) {
+            <mat-error>Enter a number from {{ chunk.min }} to {{ chunk.max }}.</mat-error>
+          } @else if (fetchChunkSize.hasError('integer')) {
+            <mat-error>Enter a whole number.</mat-error>
+          }
+          <mat-hint
+            >Messages fetched per chunk; a paused fetch resumes after the last full chunk.</mat-hint
+          >
+        </mat-form-field>
+        <div>
+          <button
+            mat-flat-button
+            type="submit"
+            [disabled]="!fetchLoaded() || fetchSaving()"
+            data-testid="save-fetch"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </mat-card-content>
+  </mat-card>
 </div>

@@ -18,6 +18,7 @@ const settings = (over: Partial<AppSettings> = {}): AppSettings => ({
   actionLabelName: 'Example-Action',
   deleteLabelName: 'Example-Delete',
   setupWizardSeen: true,
+  fetchChunkSize: 500,
   googleClient: {
     clientId: 'test-id.apps.googleusercontent.com',
     secretSet: true,
@@ -110,7 +111,7 @@ describe('SettingsPage', () => {
   it('renders the Google, Gmail connection and Ollama sections with the wizard steps', async () => {
     const { el, q } = await render();
     const headings = [...el.querySelectorAll('h2')].map((h) => h.textContent?.trim());
-    expect(headings).toEqual(['Google', 'Gmail connection', 'Ollama']);
+    expect(headings).toEqual(['Google', 'Gmail connection', 'Ollama', 'Fetch']);
     expect(q('section-google')!.querySelector('app-google-client-step')).not.toBeNull();
     expect(q('section-gmail')!.querySelector('app-connect-gmail-step')).not.toBeNull();
     expect(q('section-ollama')!.querySelector('app-ollama-url-step')).not.toBeNull();
@@ -170,5 +171,53 @@ describe('SettingsPage', () => {
 
     expect(snackOpen).toHaveBeenCalledWith('Ollama URL saved', undefined, { duration: 3000 });
     expect(modelsStep.form.controls.chatModel.value).toBe('test-chat:2b');
+  });
+
+  describe('fetch chunk size', () => {
+    async function setChunk(
+      fixture: { whenStable: () => Promise<unknown> },
+      input: HTMLInputElement,
+      value: string,
+    ) {
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      input.dispatchEvent(new Event('blur'));
+      await fixture.whenStable();
+    }
+
+    it('loads the saved value', async () => {
+      const { q } = await render();
+      expect((q('fetch-chunk-size') as HTMLInputElement).value).toBe('500');
+    });
+
+    it.each([
+      ['', 'The fetch chunk size is required.'],
+      ['50', 'Enter a number from 100 to 5000.'],
+      ['5100', 'Enter a number from 100 to 5000.'],
+      ['150.5', 'Enter a whole number.'],
+    ])('rejects %j without saving', async (value, message) => {
+      const { fixture, q } = await render();
+      await setChunk(fixture, q('fetch-chunk-size') as HTMLInputElement, value);
+      q('save-fetch')!.click();
+      await fixture.whenStable();
+
+      http.expectNone({ method: 'PUT', url: '/api/settings' });
+      expect(q('section-fetch')!.querySelector('mat-error')?.textContent?.trim()).toBe(message);
+    });
+
+    it('saves only the chunk size', async () => {
+      const { fixture, q } = await render();
+      await setChunk(fixture, q('fetch-chunk-size') as HTMLInputElement, '1250');
+      q('save-fetch')!.click();
+      await fixture.whenStable();
+
+      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      expect(save.request.body).toEqual({ fetchChunkSize: 1250 });
+      save.flush(settings({ fetchChunkSize: 1250 }));
+      await flushLoads(fixture);
+      expect(snackOpen).toHaveBeenCalledWith('Fetch chunk size saved', undefined, {
+        duration: 3000,
+      });
+    });
   });
 });

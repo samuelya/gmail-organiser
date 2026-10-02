@@ -46,7 +46,8 @@ describe('parseConnectResult / connectErrorMessage', () => {
 
   it('has a readable message per reason and a fallback', () => {
     expect(connectErrorMessage('missing_scopes')).toContain('Allow all requested permissions');
-    const reasons = ['access_denied', 'state_mismatch', 'exchange_failed'];
+    expect(connectErrorMessage('fetch_active')).toContain("Can't connect a different account");
+    const reasons = ['access_denied', 'state_mismatch', 'exchange_failed', 'fetch_active'];
     const messages = reasons.map(connectErrorMessage);
     expect(new Set(messages).size).toBe(reasons.length);
     expect(connectErrorMessage('something_new')).toContain('Connecting Gmail failed');
@@ -66,6 +67,7 @@ describe('SetupPage', () => {
     actionLabelName: 'Example-Action',
     deleteLabelName: 'Example-Delete',
     setupWizardSeen: wizardSeen,
+    fetchChunkSize: 500,
     googleClient: { clientId: null, secretSet: false, lockedByEnv: false },
   });
 
@@ -213,9 +215,8 @@ describe('SetupPage', () => {
     expect(page.completed[STEP_GOOGLE_CLIENT]()).toBe(true);
     expect(page.completed[STEP_CONNECT_GMAIL]()).toBe(true);
     expect(q(el, 'connect-success')!.textContent).toContain(`Gmail connected as ${EMAIL}.`);
-    const next = el.querySelectorAll<HTMLButtonElement>('button[matStepperNext]')[
-      STEP_CONNECT_GMAIL
-    ];
+    const next =
+      el.querySelectorAll<HTMLButtonElement>('button[matStepperNext]')[STEP_CONNECT_GMAIL];
     expect(next.disabled).toBe(false);
     expect(q(el, 'step-connected-as')!.textContent).toContain(`Connected as ${EMAIL}`);
     expect(TestBed.inject(Router).url).toBe('/setup');
@@ -258,7 +259,14 @@ describe('SetupPage', () => {
     expect(page.clientSaved()).toBe(false);
   });
 
-  for (const reason of ['missing_scopes', 'access_denied', 'state_mismatch', 'exchange_failed']) {
+  const reasons = [
+    'missing_scopes',
+    'access_denied',
+    'state_mismatch',
+    'exchange_failed',
+    'fetch_active',
+  ];
+  for (const reason of reasons) {
     it(`?gmail=error&reason=${reason} shows its message and a Retry button on step 2`, async () => {
       const { page, el, harness } = await open(`/setup?gmail=error&reason=${reason}`);
       expect(page.initialIndex).toBe(STEP_CONNECT_GMAIL);
