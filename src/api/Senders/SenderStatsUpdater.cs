@@ -1,4 +1,5 @@
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using Microsoft.EntityFrameworkCore;
 
@@ -48,6 +49,28 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
                         .OrderByDescending(m => m.InternalDate)
                         .Select(m => m.FromName)
                         .FirstOrDefault() ?? s.DisplayName)
+                .SetProperty(s => s.UpdatedAt, now), ct);
+    }
+
+    /// <summary>
+    /// Recomputes <c>analysed_count</c> (messages with any suggestion status, ignoring <c>deleted_in_gmail</c>) for
+    /// <paramref name="addresses"/> in one statement; analysis calls it in the transaction that changes the statuses.
+    /// </summary>
+    public async Task UpdateAnalysedCountsAsync(IEnumerable<string> addresses, CancellationToken ct)
+    {
+        var distinct = addresses.Where(a => a.Length > 0).Distinct(StringComparer.Ordinal).ToList();
+        if (distinct.Count == 0)
+        {
+            return;
+        }
+
+        var now = time.GetUtcNow();
+        await db.Senders
+            .Where(s => distinct.Contains(s.Address))
+            .ExecuteUpdateAsync(set => set
+                .SetProperty(
+                    s => s.AnalysedCount,
+                    s => db.Messages.Count(m => m.FromAddress == s.Address && !m.DeletedInGmail && m.AnalysisStatus != AnalysisStatus.NotAnalysed))
                 .SetProperty(s => s.UpdatedAt, now), ct);
     }
 }

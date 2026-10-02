@@ -19,6 +19,7 @@ public enum JobStatus
 public static class JobQueues
 {
     public const string Fetch = "fetch";
+    public const string Analysis = "analysis";
 }
 
 /// <summary>A background job (table <c>jobs</c>). Cursor and progress are handler-defined JSON.</summary>

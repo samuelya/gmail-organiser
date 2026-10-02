@@ -1,0 +1,148 @@
+using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Analysis.Prompts;
+using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
+using GmailOrganiser.Jobs;
+using GmailOrganiser.Settings;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.EntityFrameworkCore;
+
+namespace GmailOrganiser.Analysis;
+
+/// <summary>Analysis runs, re-analyse and the summary; also maps the preview and prompt endpoints.</summary>
+public static class AnalysisEndpoints
+{
+    public const int DefaultListLimit = 50;
+
+    public static IEndpointRouteBuilder MapAnalysisEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapAnalysisPromptEndpoints();
+        endpoints.MapAnalysisPreviewEndpoints();
+
+        var group = endpoints.MapGroup("/api/analysis").WithTags("Analysis");
+        group.MapPost("/runs", StartAsync).RequireAccountMatch();
+        group.MapGet("/runs", ListAsync);
+        group.MapGet("/runs/{id:guid}", GetAsync);
+        group.MapPost("/runs/{id:guid}/cancel", CancelAsync);
+        group.MapPost("/re-analyse", ReanalyseAsync).RequireAccountMatch();
+        group.MapGet("/summary", async (AnalysisRunService runs, CancellationToken ct) => TypedResults.Ok(await runs.SummaryAsync(ct)));
+        return endpoints;
+    }
+
+    /// <summary>202 with the queued run; 400 on an invalid request; 409 when no chat model is selected.</summary>
+    private static async Task<Results<Accepted<AnalysisRunDto>, ValidationProblem>> StartAsync(
+        StartAnalysisRunRequest request, AnalysisRunService runs, ISettingsStore settingsStore, AppDbContext db, CancellationToken ct)
+    {
+        var errors = new Dictionary<string, string[]>();
+        var settings = await settingsStore.GetAsync(ct);
+        var (scope, count) = AnalysisPreviewEndpoint.ValidateSelection(
+            request.Scope, request.SenderAddress, request.MessageIds, request.Count, settings, errors);
+        var groupingMode = ParseGroupingMode(request.GroupingMode, errors);
+        if (scope == AnalysisScope.Sender && !errors.ContainsKey("senderAddress"))
+        {
+            var address = request.SenderAddress!.Trim().ToLowerInvariant();
+            if (!await db.Senders.AnyAsync(s => s.Address == address, ct))
+            {
+                errors["senderAddress"] = ["No such sender; fetch its mail first."];
+            }
+        }
+
+        if (errors.Count > 0 || scope is not { } s)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        var run = await runs.StartAsync(s, request.SenderAddress, request.MessageIds, count, groupingMode, ct);
+        return TypedResults.Accepted($"/api/analysis/runs/{run.Id}", run);
+    }
+
+    /// <summary>Newest first; <c>active</c> filters queued/running (true) or finished (false) runs.</summary>
+    private static async Task<Results<Ok<IReadOnlyList<AnalysisRunDto>>, ValidationProblem>> ListAsync(
+        AnalysisRunService runs, CancellationToken ct, bool? active = null, int limit = DefaultListLimit)
+    {
+        if (limit is < 1 or > AnalysisRunService.MaxListLimit)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["limit"] = [$"Must be between 1 and {AnalysisRunService.MaxListLimit}."],
+            });
+        }
+
+        return TypedResults.Ok(await runs.ListAsync(active, limit, ct));
+    }
+
+    private static async Task<Results<Ok<AnalysisRunDto>, NotFound>> GetAsync(Guid id, AnalysisRunService runs, CancellationToken ct) =>
+        await runs.GetAsync(id, ct) is { } run ? TypedResults.Ok(run) : TypedResults.NotFound();
+
+    /// <summary>200 with the run (a running one stops after its current group); 404; 409 when it has already finished.</summary>
+    private static async Task<Results<Ok<AnalysisRunDto>, NotFound, ProblemHttpResult>> CancelAsync(
+        Guid id, AnalysisRunService runs, CancellationToken ct)
+    {
+        var (result, run) = await runs.CancelAsync(id, ct);
+        return result switch
+        {
+            JobActionResult.Ok => TypedResults.Ok(run!),
+            JobActionResult.NotFound => TypedResults.NotFound(),
+            _ => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, title: "Run finished", detail: "The run has already finished."),
+        };
+    }
+
+    /// <summary>200 with how many messages were reset; 400 unless exactly one selector is given; 409 when every match is approved or applied.</summary>
+    private static async Task<Results<Ok<ReanalyseResponse>, ValidationProblem, ProblemHttpResult>> ReanalyseAsync(
+        ReanalyseRequest request, AnalysisRunService runs, CancellationToken ct)
+    {
+        var hasIds = request.MessageIds is not null;
+        var hasSender = request.SenderAddress is not null;
+        if (hasIds == hasSender)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                [""] = ["Give either messageIds or senderAddress."],
+            });
+        }
+
+        if (hasIds && !AnalysisPreviewEndpoint.AreValidMessageIds(request.MessageIds))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["messageIds"] = [$"1 to {AnalysisCandidates.MaxMessageIds} ids of letters, digits, '-' or '_', at most {AnalysisPreviewEndpoint.MaxMessageIdLength} characters each."],
+            });
+        }
+
+        if (hasSender && (string.IsNullOrWhiteSpace(request.SenderAddress) || request.SenderAddress.Length > AnalysisPreviewEndpoint.MaxSenderAddressLength))
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["senderAddress"] = [$"Required, at most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters."],
+            });
+        }
+
+        var (result, reset) = await runs.ReanalyseAsync(request.MessageIds, request.SenderAddress, ct);
+        return result == ReanalyseResult.OnlyDecided
+            ? TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Already decided",
+                detail: "Every matching suggestion is approved or applied; nothing was reset.")
+            : TypedResults.Ok(new ReanalyseResponse(reset));
+    }
+
+    private static AnalysisGroupingMode? ParseGroupingMode(string? value, Dictionary<string, string[]> errors)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        foreach (var mode in Enum.GetValues<AnalysisGroupingMode>())
+        {
+            if (string.Equals(SnakeCaseEnumConverter<AnalysisGroupingMode>.ToDb(mode), value.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return mode;
+            }
+        }
+
+        errors["groupingMode"] = [$"Must be one of {string.Join(", ", Enum.GetValues<AnalysisGroupingMode>().Select(SnakeCaseEnumConverter<AnalysisGroupingMode>.ToDb))}."];
+        return null;
+    }
+}
