@@ -19,7 +19,9 @@
             <mat-icon aria-hidden="true">close</mat-icon>
           </button>
         }
-        @if (search.hasError('maxlength')) {
+        @if (search.hasError('controlChars')) {
+          <mat-error data-testid="search-error">Remove tabs and line breaks.</mat-error>
+        } @else if (search.hasError('maxlength')) {
           <mat-error
             >At most {{ search.errors?.['maxlength'].requiredLength }} characters.</mat-error
           >
@@ -41,7 +43,9 @@
             spellcheck="false"
             data-testid="target"
           />
-          @if (target.hasError('target')) {
+          @if (target.hasError('required')) {
+            <mat-error data-testid="target-error">Enter an address or a domain.</mat-error>
+          } @else if (target.hasError('target')) {
             <mat-error data-testid="target-error"
               >Enter an address (name&#64;example.com) or a domain (example.com).</mat-error
             >
@@ -51,7 +55,7 @@
           mat-flat-button
           type="submit"
           class="mt-2"
-          [disabled]="isStarting(target.value.trim().toLowerCase())"
+          [disabled]="targetStarting()"
           data-testid="target-submit"
         >
           Fetch
@@ -87,6 +91,7 @@
           <table
             mat-table
             [dataSource]="rows()"
+            [trackBy]="trackRow"
             matSort
             matSortDisableClear
             [matSortActive]="query().sort"
@@ -157,11 +162,12 @@
                 class="whitespace-nowrap"
                 data-testid="cell-actions"
               >
-                @if (row.job; as job) {
+                @if (rowJobs().get(row.sender.address); as job) {
                   <app-sender-progress
                     [job]="job"
                     [label]="row.sender.address"
-                    [cancelling]="cancelling().has(job.id)"
+                    [busy]="isPending(job)"
+                    (resumeFetch)="resume(job)"
                     (cancelFetch)="cancel(job, row.sender.address)"
                   />
                 } @else {

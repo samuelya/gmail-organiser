@@ -16,6 +16,12 @@ export interface SenderDto {
   activeFetchJob: JobDto | null;
 }
 
+/** `POST /api/fetch/sender`: `created` for a new job (202), not when the target's job was active or resumed (200). */
+export interface SenderFetchStarted {
+  jobId: string;
+  created: boolean;
+}
+
 export type SenderSort = 'total' | 'lastSeen' | 'address' | 'analysed';
 
 /** The senders list request; also the page's URL query params. */
@@ -42,6 +48,18 @@ export const DEFAULT_SENDER_QUERY: Readonly<SenderQuery> = {
   dir: 'desc',
 };
 
+/** What the API's `char.IsControl` rejects: C0, DEL and C1. */
+const CONTROL_CHARS = /\p{Cc}/gu;
+
+export function hasControlChars(value: string): boolean {
+  return value.search(CONTROL_CHARS) >= 0;
+}
+
+/** Search text as the API accepts it: control characters (a pasted tab or newline) become spaces. */
+export function cleanSearch(value: string): string {
+  return value.replace(CONTROL_CHARS, ' ').trim().slice(0, MAX_SEARCH_LENGTH).trim();
+}
+
 const SORTS: readonly SenderSort[] = ['total', 'lastSeen', 'address', 'analysed'];
 /** Keeps a hand-edited URL inside the API's page limit, so it never answers 400. */
 const MAX_PAGE = 1_000_000;
@@ -54,7 +72,7 @@ export function parseSenderQuery(params: ParamMap): SenderQuery {
   const sort = params.get('sort') as SenderSort | null;
   const dir = params.get('dir');
   return {
-    search: (params.get('search') ?? '').trim().slice(0, MAX_SEARCH_LENGTH),
+    search: cleanSearch(params.get('search') ?? ''),
     page: Number.isInteger(page) && page >= 1 && page <= MAX_PAGE ? page : d.page,
     pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : d.pageSize,
     sort: sort && SORTS.includes(sort) ? sort : d.sort,
@@ -102,6 +120,11 @@ export function normaliseFetchTarget(input: string | null | undefined): string |
 
 function isHostname(value: string): boolean {
   return value.length <= MAX_DOMAIN && HOSTNAME.test(value);
+}
+
+/** Last page that has rows; at least 1. */
+export function lastPage(total: number, pageSize: number): number {
+  return Math.max(1, Math.ceil(total / pageSize));
 }
 
 /** Analysed share of a sender's mail, 0–100. */

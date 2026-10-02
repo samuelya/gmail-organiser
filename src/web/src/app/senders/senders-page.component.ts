@@ -32,16 +32,30 @@ import { MatSortModule, Sort } from '@angular/material/sort';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { catchError, debounceTime, filter, map, of, Subject, switchMap } from 'rxjs';
+import {
+  catchError,
+  EMPTY,
+  filter,
+  map,
+  merge,
+  Observable,
+  of,
+  Subject,
+  switchMap,
+  timer,
+} from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
-import { isActiveJob, JobDto, newerJob } from '../core/jobs.models';
+import { isActiveJob, JobDto, JobStatus, newerJob } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
 import { SenderProgress } from './sender-progress.component';
 import {
   analysedPercent,
+  cleanSearch,
   DEFAULT_SENDER_QUERY,
+  hasControlChars,
+  lastPage,
   MAX_SEARCH_LENGTH,
   normaliseFetchTarget,
   PAGE_SIZES,
@@ -56,6 +70,12 @@ import {
 import { SendersService } from './senders.service';
 
 export const SEARCH_DEBOUNCE_MS = 300;
+
+/** A resume or cancel sent for a job, until the job leaves `status`. */
+interface PendingAction {
+  action: 'resume' | 'cancel';
+  status: JobStatus;
+}
 
 /** `/senders`: the paged senders list with per-sender progress and "Fetch all from sender". */
 @Component({
@@ -102,6 +122,8 @@ export class SendersPage {
   private readonly destroyRef = inject(DestroyRef);
   private readonly jobs = inject(JobsService);
   private readonly requests = new Subject<SenderQuery>();
+  /** Drops a pending debounced search: the URL changed or the box was cleared. */
+  private readonly searchReset = new Subject<void>();
 
   readonly columns = ['sender', 'domain', 'total', 'analysed', 'lastSeen', 'actions'];
   readonly pageSizes = PAGE_SIZES;
@@ -114,47 +136,40 @@ export class SendersPage {
   readonly loadFailed = signal(false);
   /** Addresses or domains whose fetch request is in flight. */
   readonly starting = signal<ReadonlySet<string>>(new Set());
-  /** Job ids whose cancel request is in flight. */
-  readonly cancelling = signal<ReadonlySet<string>>(new Set());
+  /** Resume or cancel per job id, until the job's status changes. */
+  private readonly pending = signal<ReadonlyMap<string, PendingAction>>(new Map());
 
   readonly search = new FormControl('', {
     nonNullable: true,
-    validators: [Validators.maxLength(MAX_SEARCH_LENGTH)],
+    validators: [Validators.maxLength(MAX_SEARCH_LENGTH), searchValidator],
   });
   readonly targetForm = new FormGroup({
     target: new FormControl('', {
       nonNullable: true,
-      validators: [Validators.required, fetchTargetValidator],
+      validators: [fetchTargetValidator],
     }),
   });
   readonly target = this.targetForm.controls.target;
   /** Resetting through the directive also clears its submitted state, so no error shows after a fetch. */
   private readonly targetFormDirective = viewChild(FormGroupDirective);
-  /** Sender fetch jobs seen active here; only their finishing moves the counts on this page. */
+  /** Active sender fetch jobs seen here; each one that finishes is dropped and moves `finishes`. */
   private readonly watched = signal<ReadonlySet<string>>(new Set());
+  private readonly finishes = signal(0);
 
-  /** Each row with the live state of its active fetch job (`null` once it finished). */
+  /** One stable object per sender; only a new page replaces them, so job ticks don't re-render rows. */
   readonly rows = computed(() =>
-    (this.result()?.items ?? []).map((sender) => {
-      const held = sender.activeFetchJob;
-      const job = held ? newerJob(held, this.jobs.job(held.id)) : null;
-      return {
-        sender,
-        job: job && isActiveJob(job) ? job : null,
-        percent: analysedPercent(sender),
-      };
-    }),
+    (this.result()?.items ?? []).map((sender) => ({ sender, percent: analysedPercent(sender) })),
   );
+  readonly trackRow = (_: number, row: { sender: SenderDto }) => row.sender.address;
 
-  /** Changes when a sender fetch finishes or the hub reconnects: counts and active jobs moved. */
-  private readonly refreshKey = computed(() => {
-    const finished = this.jobs
-      .jobs()
-      .filter((j) => j.type === SENDER_FETCH_JOB && !isActiveJob(j) && this.watched().has(j.id))
-      .map((j) => `${j.id}:${j.status}`)
-      .sort()
-      .join(',');
-    return `${finished}|${this.jobs.reconnects()}`;
+  /** The live state of each row's fetch job, by address; absent once it finished. */
+  readonly rowJobs = computed(() => {
+    const jobs = new Map<string, JobDto>();
+    for (const { sender } of this.rows()) {
+      const job = this.liveJob(sender.activeFetchJob);
+      if (job && isActiveJob(job)) jobs.set(sender.address, job);
+    }
+    return jobs;
   });
 
   constructor() {
@@ -171,33 +186,61 @@ export class SendersPage {
       .subscribe((page) => {
         this.loading.set(false);
         this.loadFailed.set(!page);
-        if (page) this.result.set(page);
+        if (!page) return;
+        const query = this.query();
+        const last = lastPage(page.total, query.pageSize);
+        // A bookmark or back/forward past the end: go to the last page instead of an empty one.
+        if (page.items.length === 0 && query.page > last) {
+          this.navigate({ page: last }, true);
+          return;
+        }
+        this.result.set(page);
       });
+    // A watched job that finished moved the counts on this page: refetch once and stop watching it.
     effect(() => {
-      const ids = [
-        ...(this.result()?.items ?? []).flatMap((s) => s.activeFetchJob?.id ?? []),
+      const active = [
+        ...[...this.rowJobs().values()].map((j) => j.id),
         ...this.jobs.activeJobs().flatMap((j) => (j.type === SENDER_FETCH_JOB ? j.id : [])),
       ];
       const watched = untracked(this.watched);
-      if (ids.some((id) => !watched.has(id))) this.watched.set(new Set([...watched, ...ids]));
+      const next = new Set([...watched, ...active]);
+      let finished = false;
+      for (const id of next) {
+        const job = this.jobs.job(id);
+        if (job && !isActiveJob(job)) finished = next.delete(id);
+      }
+      if (next.size !== watched.size || [...next].some((id) => !watched.has(id))) {
+        this.watched.set(next);
+      }
+      if (finished) untracked(() => this.finishes.update((n) => n + 1));
     });
     effect(() => {
       const query = this.query();
-      this.refreshKey();
+      this.finishes();
+      this.jobs.reconnects();
       untracked(() => this.load(query));
     });
-    // Back/forward or a link changes the search: show it in the box without searching again.
+    // Back/forward or a link changes the URL: show its search in the box and drop any typed one.
     effect(() => {
       const search = this.query().search;
       untracked(() => {
+        this.searchReset.next();
         if (this.search.value.trim() !== search) this.search.setValue(search, { emitEvent: false });
       });
     });
-    this.search.valueChanges
+    // A pending resume or cancel ends when its job changes status (or finishes).
+    effect(() => {
+      const pending = this.pending();
+      if (pending.size === 0) return;
+      const next = new Map([...pending].filter(([id, p]) => this.statusOf(id) === p.status));
+      if (next.size !== pending.size) this.pending.set(next);
+    });
+    // Typing searches after a pause, with the box's value at that moment; a reset drops the wait.
+    merge(this.search.valueChanges.pipe(map(() => true)), this.searchReset.pipe(map(() => false)))
       .pipe(
-        debounceTime(SEARCH_DEBOUNCE_MS),
+        switchMap((typed) => (typed ? timer(SEARCH_DEBOUNCE_MS) : EMPTY)),
         filter(() => this.search.valid),
-        map((value) => value.trim()),
+        map(() => cleanSearch(this.search.value)),
         filter((search) => search !== this.query().search),
         takeUntilDestroyed(this.destroyRef),
       )
@@ -226,6 +269,7 @@ export class SendersPage {
   }
 
   clearSearch(): void {
+    this.searchReset.next();
     this.search.setValue('', { emitEvent: false });
     this.navigate({ search: '', page: 1 });
   }
@@ -243,6 +287,11 @@ export class SendersPage {
     this.startFetch(target, () => this.targetFormDirective()?.resetForm());
   }
 
+  /** Resumes the paused job itself, whichever target (address or domain) it fetches. */
+  resume(job: JobDto): void {
+    this.runPending(job, 'resume', this.jobs.resume(job.id));
+  }
+
   cancel(job: JobDto, label: string): void {
     openConfirm(this.dialog, {
       title: 'Cancel sender fetch?',
@@ -251,17 +300,24 @@ export class SendersPage {
     })
       .pipe(
         filter((confirmed) => confirmed),
-        switchMap(() => {
-          this.cancelling.update((ids) => new Set(ids).add(job.id));
-          return this.jobs.cancel(job.id).pipe(catchError(() => of(null)));
-        }),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe(() => this.cancelling.update((ids) => without(ids, job.id)));
+      .subscribe(() => this.runPending(job, 'cancel', this.jobs.cancel(job.id)));
+  }
+
+  /** A resume or cancel for this job is in flight or waiting for its status to change. */
+  isPending(job: JobDto): boolean {
+    return this.pending().get(job.id)?.status === job.status;
   }
 
   isStarting(target: string): boolean {
     return this.starting().has(target);
+  }
+
+  /** The toolbar's normalised target is being posted. */
+  targetStarting(): boolean {
+    const target = normaliseFetchTarget(this.target.value);
+    return !!target && this.isStarting(target);
   }
 
   lastSeen(iso: string): string {
@@ -275,11 +331,13 @@ export class SendersPage {
       .fetchFromSender(target)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: () => {
+        next: ({ created }) => {
           this.starting.update((targets) => without(targets, target));
           done?.();
           this.snackBar.open(
-            `Fetching all mail from ${target}. It runs after any fetch already in progress.`,
+            created
+              ? `Fetching all mail from ${target}. It runs after any fetch already in progress.`
+              : `The fetch from ${target} is already active; it continues.`,
             'Dismiss',
             { duration: 6000 },
           );
@@ -290,26 +348,63 @@ export class SendersPage {
       });
   }
 
+  private runPending(
+    job: JobDto,
+    action: PendingAction['action'],
+    request: Observable<void>,
+  ): void {
+    if (this.isPending(job)) return;
+    this.pending.update((current) => new Map(current).set(job.id, { action, status: job.status }));
+    request.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      // The error interceptor shows the server's problem detail.
+      error: () => this.pending.update((current) => withoutKey(current, job.id)),
+    });
+  }
+
+  /** The newer of a job as the API listed it and as the hub last sent it. */
+  private liveJob(held: JobDto | null): JobDto | null {
+    return held ? newerJob(held, this.jobs.job(held.id)) : null;
+  }
+
+  private statusOf(id: string): JobStatus | undefined {
+    const held = this.rows().find((r) => r.sender.activeFetchJob?.id === id)?.sender.activeFetchJob;
+    return (this.liveJob(held ?? null) ?? this.jobs.job(id))?.status;
+  }
+
   private load(query: SenderQuery): void {
     this.loading.set(true);
     this.requests.next(query);
   }
 
-  private navigate(patch: Partial<SenderQuery>): void {
+  private navigate(patch: Partial<SenderQuery>, replaceUrl = false): void {
+    this.searchReset.next();
     void this.router.navigate([], {
       relativeTo: this.route,
       queryParams: senderQueryParams({ ...this.query(), ...patch }),
+      replaceUrl,
     });
   }
 }
 
-/** API-side rules for a sender fetch target; empty is left to `required`. */
+/** API-side rules for a sender fetch target; blank (spaces only, too) is `required`. */
 function fetchTargetValidator(control: AbstractControl<string>) {
-  return !control.value.trim() || normaliseFetchTarget(control.value) ? null : { target: true };
+  if (!control.value.trim()) return { required: true };
+  return normaliseFetchTarget(control.value) ? null : { target: true };
+}
+
+/** The API rejects control characters in a search, e.g. a tab pasted from a spreadsheet. */
+function searchValidator(control: AbstractControl<string>) {
+  return hasControlChars(control.value) ? { controlChars: true } : null;
 }
 
 function without<T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> {
   const next = new Set(set);
   next.delete(value);
+  return next;
+}
+
+function withoutKey<K, V>(map: ReadonlyMap<K, V>, key: K): ReadonlyMap<K, V> {
+  const next = new Map(map);
+  next.delete(key);
   return next;
 }

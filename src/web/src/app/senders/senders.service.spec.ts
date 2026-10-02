@@ -4,9 +4,11 @@ import { TestBed } from '@angular/core/testing';
 import { convertToParamMap } from '@angular/router';
 import {
   DEFAULT_SENDER_QUERY,
+  hasControlChars,
   normaliseFetchTarget,
   parseSenderQuery,
   relativeTime,
+  SenderFetchStarted,
   senderQueryParams,
 } from './senders.models';
 import { SendersService } from './senders.service';
@@ -43,13 +45,20 @@ describe('SendersService', () => {
     req.flush({ items: [], page: 1, pageSize: 50, total: 0 });
   });
 
-  it('fetchFromSender posts the target', () => {
-    let id = '';
-    service.fetchFromSender('example.com').subscribe((r) => (id = r.jobId));
+  it('fetchFromSender posts the target and tells a new job (202) from an active one (200)', () => {
+    const results: SenderFetchStarted[] = [];
+    service.fetchFromSender('example.com').subscribe((r) => results.push(r));
     const req = http.expectOne({ method: 'POST', url: '/api/fetch/sender' });
     expect(req.request.body).toEqual({ target: 'example.com' });
     req.flush({ jobId: 'job-1' }, { status: 202, statusText: 'Accepted' });
-    expect(id).toBe('job-1');
+    service.fetchFromSender('example.com').subscribe((r) => results.push(r));
+    http
+      .expectOne('/api/fetch/sender')
+      .flush({ jobId: 'job-1' }, { status: 200, statusText: 'OK' });
+    expect(results).toEqual([
+      { jobId: 'job-1', created: true },
+      { jobId: 'job-1', created: false },
+    ]);
   });
 });
 
@@ -59,6 +68,12 @@ describe('sender query params', () => {
     expect(parseSenderQuery(convertToParamMap({}))).toEqual(DEFAULT_SENDER_QUERY);
     expect(parseSenderQuery(convertToParamMap(bad))).toEqual(DEFAULT_SENDER_QUERY);
     expect(parseSenderQuery(convertToParamMap({ page: '1.5' })).page).toBe(1);
+  });
+
+  it('turn control characters in the search into spaces', () => {
+    expect(parseSenderQuery(convertToParamMap({ search: 'a\tb\n' })).search).toBe('a b');
+    expect(hasControlChars('a\u0085b')).toBe(true);
+    expect(hasControlChars('a b')).toBe(false);
   });
 
   it('round-trip, leaving the defaults out of the URL', () => {

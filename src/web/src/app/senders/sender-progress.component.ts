@@ -6,7 +6,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { JobDto, progressPercent } from '../core/jobs.models';
 
-/** A sender's active fetch job in its row: a small progress indicator and a cancel button. */
+/** A sender's active fetch job in its row: a small progress indicator, resume when paused, and cancel. */
 @Component({
   selector: 'app-sender-progress',
   imports: [
@@ -29,6 +29,17 @@ import { JobDto, progressPercent } from '../core/jobs.models';
         }
         @case ('paused') {
           <span class="muted text-sm" data-testid="sender-paused">Paused</span>
+          <button
+            mat-icon-button
+            type="button"
+            (click)="resumeFetch.emit()"
+            [disabled]="busy()"
+            [matTooltip]="'Resume fetch from ' + label()"
+            [attr.aria-label]="'Resume fetch from ' + label()"
+            data-testid="sender-resume"
+          >
+            <mat-icon aria-hidden="true">play_arrow</mat-icon>
+          </button>
         }
         @default {
           <mat-progress-spinner
@@ -47,7 +58,7 @@ import { JobDto, progressPercent } from '../core/jobs.models';
         mat-icon-button
         type="button"
         (click)="cancelFetch.emit()"
-        [disabled]="cancelling()"
+        [disabled]="busy()"
         [matTooltip]="'Cancel fetch from ' + label()"
         [attr.aria-label]="'Cancel fetch from ' + label()"
         data-testid="sender-cancel"
@@ -67,7 +78,9 @@ export class SenderProgress {
   readonly job = input.required<JobDto>();
   /** The sender, for labels. */
   readonly label = input.required<string>();
-  readonly cancelling = input(false);
+  /** A resume or cancel is waiting for the job's status to change. */
+  readonly busy = input(false);
+  readonly resumeFetch = output<void>();
   readonly cancelFetch = output<void>();
 
   readonly percent = computed(() => progressPercent(this.job().progress));
