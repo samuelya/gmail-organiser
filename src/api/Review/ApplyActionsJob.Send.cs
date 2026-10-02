@@ -80,8 +80,9 @@ public sealed partial class ApplyActionsJob
     /// <summary>
     /// One <c>batchModify</c>. On a 400 or 404 the labels are checked once (a label deleted in Gmail is created again
     /// and the chunk and its log rewritten to the new id), then the chunk is split until the ids Gmail refuses on their
-    /// own are found; those go to <paramref name="refused"/> and the rest are sent. When Gmail refuses every id of a
-    /// chunk of several, the call itself is the problem and the failure is rethrown.
+    /// own are found; those go to <paramref name="refused"/> and the rest are sent. A single id's 404 means the message
+    /// is gone, so it is skipped even when every id gets one. When Gmail answers 400 for every id of a chunk of several,
+    /// the call itself is the problem and the failure is rethrown.
     /// </summary>
     private async Task<ApplyCursor> SendChunkAsync(
         JobContext ctx, ApplyCursor cursor, int total, Dictionary<string, string> refused, SendState sent, CancellationToken ct)
@@ -113,7 +114,7 @@ public sealed partial class ApplyActionsJob
 
         var ids = cursor.Pending!.MessageIds;
         await IsolateAsync(cursor.Pending!, ids, failure, refused, sent, ct);
-        if (ids.Length > 1 && refused.Count == ids.Length)
+        if (ids.Length > 1 && refused.Count == ids.Length && refused.Values.All(r => r == RefusedReason))
         {
             // Not a few bad ids but the call itself: fail the chunk rather than skip every message.
             refused.Clear();

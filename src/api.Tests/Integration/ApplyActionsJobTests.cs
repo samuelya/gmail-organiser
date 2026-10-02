@@ -304,6 +304,50 @@ public sealed class ApplyActionsJobTests(ApiFactory factory, PostgresFixture pos
     }
 
     [Fact]
+    public async Task A_chunk_whose_messages_are_all_gone_is_skipped_and_the_job_completes()
+    {
+        await SeedAsync(("a00", "Example", false, false, SuggestionStatus.Approved), ("a01", "Example", false, false, SuggestionStatus.Approved));
+        h.Gmail.BeforeBatchModify = (_, _) => throw GmailRetryPolicy.CreateApiException(HttpStatusCode.NotFound, "notFound");
+        var batch = await ApplyAsync(new ApplyRequest());
+
+        await h.RunNextAsync();
+
+        await AllGoneAsync(batch);
+    }
+
+    [Fact]
+    public async Task A_resent_chunk_whose_messages_are_all_gone_is_cleared_and_the_job_completes()
+    {
+        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 2;
+        await SeedAsync(("a00", "Example", false, false, SuggestionStatus.Approved), ("a01", "Example", false, false, SuggestionStatus.Approved));
+        using var stop = new CancellationTokenSource();
+        h.Gmail.BeforeBatchModify = (call, _) => call == 1
+            ? Stop(stop)
+            : throw GmailRetryPolicy.CreateApiException(HttpStatusCode.NotFound, "notFound");
+        var batch = await ApplyAsync(new ApplyRequest());
+        await h.RunNextAsync(stop.Token);
+        (await h.Runner.RecoverAsync(Ct)).ShouldBe(1);
+
+        await h.RunNextAsync();
+
+        await AllGoneAsync(batch);
+        JsonSerializer.Deserialize<ApplyCursor>((await JobAsync(batch)).Cursor!, JsonSerializerOptions.Web)!.Pending.ShouldBeNull();
+        (await RefusesConnectAsync()).ShouldBeFalse("the apply finished");
+    }
+
+    /// <summary>a00 and a01 were skipped as gone: marked deleted in Gmail, unlogged, still approved, and the job completed.</summary>
+    private async Task AllGoneAsync(ActionBatchDto batch)
+    {
+        (await JobAsync(batch)).Status.ShouldBe(JobStatus.Completed);
+        h.Progress(batch.JobId!.Value)[^1].Message!.ShouldContain("2 skipped (not found in Gmail)");
+        await using var db = postgres.CreateDbContext();
+        (await db.ActionLog.CountAsync(l => l.BatchId == batch.Id, Ct)).ShouldBe(0);
+        (await db.Messages.CountAsync(m => (m.Id == "a00" || m.Id == "a01") && m.DeletedInGmail, Ct)).ShouldBe(2);
+        (await db.Suggestions.CountAsync(s => s.Status == SuggestionStatus.Approved, Ct)).ShouldBe(2);
+        (await db.ActionBatches.SingleAsync(b => b.Id == batch.Id, Ct)).MessageCount.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task A_message_starred_between_chunks_never_gets_the_delete_label()
     {
         h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 1;
