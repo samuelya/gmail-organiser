@@ -6,6 +6,7 @@ using GmailOrganiser.Gmail.Auth;
 using GmailOrganiser.Health;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Setup;
 
@@ -49,6 +50,8 @@ app.MapLlmEndpoints();
 app.MapGmailAuthEndpoints();
 app.MapSetupEndpoints();
 app.MapJobsEndpoints();
+app.MapFetchEndpoints();
+app.MapSendersEndpoints();
 app.MapHub<JobsHub>(JobsHub.Path);
 
 // Hosted services start before the server listens: DatabaseMigrator applies the migrations first.

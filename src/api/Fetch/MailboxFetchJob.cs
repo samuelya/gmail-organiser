@@ -30,7 +30,7 @@ public sealed partial class MailboxFetchJob(
     TimeProvider time,
     ILogger<MailboxFetchJob> logger) : IJobHandler
 {
-    public const string JobType = "mailbox_fetch";
+    public const string JobType = FetchJobTypes.Mailbox;
     public const string Queue = JobQueues.Fetch;
     public const string InboxLabelId = "INBOX";
     public const string SpamLabelId = "SPAM";

@@ -163,7 +163,7 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
     {
         var running = await EnqueueAsync();
         (await runner.ClaimAsync(Ct)).ShouldBe([running.Id]);
-        await WithJobsAsync(s => s.EnqueueAsync("test-other", JobQueues.Fetch, null, Ct));
+        await WithJobsAsync(async s => (await s.EnqueueAsync("test-other", JobQueues.Fetch, null, Ct)).Job);
 
         (await runner.ClaimAsync(Ct)).ShouldBeEmpty();
     }
@@ -171,7 +171,7 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
     [Fact]
     public async Task Unknown_type_fails_and_the_runner_keeps_going()
     {
-        var unknown = await WithJobsAsync(s => s.EnqueueAsync("test-unknown", JobQueues.Fetch, null, Ct));
+        var unknown = await WithJobsAsync(async s => (await s.EnqueueAsync("test-unknown", JobQueues.Fetch, null, Ct)).Job);
         var known = await EnqueueAsync();
 
         await RunNextAsync();
@@ -248,9 +248,11 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
     [Fact]
     public async Task Concurrent_enqueues_of_one_type_create_one_job()
     {
-        var jobs = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() => EnqueueAsync(), Ct)));
+        var jobs = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(
+            () => WithJobsAsync(s => s.EnqueueAsync(CountingJobHandler.JobType, JobQueues.Fetch, null, Ct)), Ct)));
 
-        jobs.Select(j => j.Id).Distinct().ShouldHaveSingleItem();
+        jobs.Select(j => j.Job.Id).Distinct().ShouldHaveSingleItem();
+        jobs.Count(j => j.Created).ShouldBe(1);
         await using var db = postgres.CreateDbContext();
         (await db.Jobs.CountAsync(Ct)).ShouldBe(1);
     }
@@ -290,7 +292,7 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
     public async Task Startup_recovery_honours_a_cancel_or_pause_requested_before_the_restart()
     {
         var cancelled = await EnqueueAsync();
-        var paused = await WithJobsAsync(s => s.EnqueueAsync("test-other", "test-other-queue", null, Ct));
+        var paused = await WithJobsAsync(async s => (await s.EnqueueAsync("test-other", "test-other-queue", null, Ct)).Job);
         await using (var db = postgres.CreateDbContext())
         {
             await db.Jobs.Where(j => j.Id == cancelled.Id)
@@ -318,7 +320,7 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
             services.ConfigureDbContext<AppDbContext>(o => o.AddInterceptors(failSecondClaim))));
         var failingRunner = ActivatorUtilities.CreateInstance<JobRunner>(failing.Services);
         var a = await EnqueueAsync();
-        var b = await WithJobsAsync(s => s.EnqueueAsync("test-other", "test-other-queue", null, Ct));
+        var b = await WithJobsAsync(async s => (await s.EnqueueAsync("test-other", "test-other-queue", null, Ct)).Job);
 
         var claimed = (await failingRunner.ClaimAsync(Ct)).ShouldHaveSingleItem();
 
@@ -329,7 +331,7 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
     }
 
     private Task<JobDto> EnqueueAsync(CountingCursor? cursor = null) =>
-        WithJobsAsync(s => s.EnqueueAsync(CountingJobHandler.JobType, JobQueues.Fetch, cursor, Ct));
+        WithJobsAsync(async s => (await s.EnqueueAsync(CountingJobHandler.JobType, JobQueues.Fetch, cursor, Ct)).Job);
 
     private async Task<JobDto> GetAsync(Guid id) => (await WithJobsAsync(s => s.GetAsync(id, Ct))).ShouldNotBeNull();
 

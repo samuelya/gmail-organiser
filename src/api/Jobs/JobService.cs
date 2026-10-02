@@ -18,8 +18,11 @@ public interface IJobService
     /// <summary>How many finished jobs <see cref="ListAsync"/> adds after the active ones.</summary>
     const int RecentFinishedCount = 20;
 
-    /// <summary>Queues a job, or returns the existing one of that type that is queued, running or paused.</summary>
-    Task<JobDto> EnqueueAsync(string type, string queue, object? initialCursor = null, CancellationToken ct = default);
+    /// <summary>
+    /// Queues a job, or returns the existing one of that type that is queued, running or paused;
+    /// <c>Created</c> says which, also when a concurrent enqueue won the insert.
+    /// </summary>
+    Task<(JobDto Job, bool Created)> EnqueueAsync(string type, string queue, object? initialCursor = null, CancellationToken ct = default);
 
     Task<JobActionResult> PauseAsync(Guid id, CancellationToken ct);
 
@@ -39,7 +42,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
     // A transition races the runner (claim, finish); retry against the fresh status a few times.
     private const int MaxAttempts = 5;
 
-    public async Task<JobDto> EnqueueAsync(string type, string queue, object? initialCursor = null, CancellationToken ct = default)
+    public async Task<(JobDto Job, bool Created)> EnqueueAsync(string type, string queue, object? initialCursor = null, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentException.ThrowIfNullOrWhiteSpace(queue);
@@ -53,7 +56,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
                 .FirstOrDefaultAsync(ct);
             if (existing is not null)
             {
-                return existing.ToDto();
+                return (existing.ToDto(), false);
             }
 
             var now = time.GetUtcNow();
@@ -82,7 +85,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
             }
 
             await notifier.PublishAsync(db, row.Id, ct);
-            return row.ToDto();
+            return (row.ToDto(), true);
         }
 
         throw new InvalidOperationException($"Could not enqueue a job of type '{type}': the active job kept changing.");

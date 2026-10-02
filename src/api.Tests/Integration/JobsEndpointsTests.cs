@@ -121,7 +121,7 @@ public sealed class JobsEndpointsTests(ApiFactory factory, PostgresFixture postg
     private async Task<JobDto> EnqueueAsync(string type)
     {
         await using var scope = host.Services.CreateAsyncScope();
-        return await scope.ServiceProvider.GetRequiredService<IJobService>().EnqueueAsync(type, JobQueues.Fetch, null, Ct);
+        return (await scope.ServiceProvider.GetRequiredService<IJobService>().EnqueueAsync(type, JobQueues.Fetch, null, Ct)).Job;
     }
 
     private async Task<string> GetStatusAsync(Guid id) =>
