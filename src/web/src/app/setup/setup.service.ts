@@ -18,6 +18,8 @@ export interface AppSettings {
   actionLabelName: string;
   deleteLabelName: string;
   setupWizardSeen: boolean;
+  /** Messages per Gmail page the fetch reads (100–5000). */
+  fetchChunkSize: number;
   googleClient: GoogleClientSettings;
 }
 
@@ -36,6 +38,7 @@ export interface UpdateSettingsRequest {
   chatModel?: string;
   embeddingModel?: string;
   setupWizardSeen?: boolean;
+  fetchChunkSize?: number;
 }
 
 /** `GmailConnectionStatusDto` from `GET /api/auth/google/status`. */

@@ -4,8 +4,7 @@ const routes: Routes = [
   {
     path: '',
     title: 'Dashboard',
-    loadComponent: () => import('../layout/placeholder-page').then((m) => m.PlaceholderPage),
-    data: { heading: 'Dashboard', milestone: 'M2' },
+    loadComponent: () => import('./dashboard-page.component').then((m) => m.DashboardPage),
   },
 ];
 

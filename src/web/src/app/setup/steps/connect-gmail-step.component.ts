@@ -27,6 +27,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   state_mismatch: 'The sign-in expired or was started in another tab. Try again from this page.',
   exchange_failed:
     'Google did not accept the sign-in. Check the client ID, secret and redirect URI, then try again.',
+  fetch_active:
+    "Can't connect a different account while a fetch is running. Cancel the fetch on the Dashboard or wait for it to finish, then try again.",
 };
 
 /** Readable message for a callback `reason`; unknown reasons get a generic message. */
