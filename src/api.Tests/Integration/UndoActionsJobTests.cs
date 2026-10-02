@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
+using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
@@ -175,6 +176,27 @@ public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture post
         rows.Count.ShouldBe(4);
         pending.Count.ShouldBe(2);
         rows.Where(r => pending.Contains(r.MessageId)).ShouldAllBe(r => r.LabelsAdded.SequenceEqual(new[] { "INBOX" }) && !r.LabelsRemoved.Contains("Example"));
+        rows.ShouldAllBe(r => !r.LabelIdsAfter.Contains(example));
+        await StoredLabelsMatchGmailAsync(db, 4);
+    }
+
+    [Fact]
+    public async Task An_undo_after_a_label_was_deleted_in_gmail_drops_it_from_the_stored_labels()
+    {
+        await SeedAsync([.. Enumerable.Range(0, 3).Select(i => ($"a{i:D2}", "Example", false, false))]);
+        var apply = await ApplyAndRunAsync();
+        var example = (await h.Gmail.Inner.ListLabelsAsync(Ct)).Single(l => l.Name == "Example").Id;
+        h.Gmail.Inner.DeleteLabel(example);
+
+        var undo = await UndoAsync(apply.Id);
+        await h.RunNextAsync();
+
+        (await JobAsync(undo)).Status.ShouldBe(JobStatus.Completed);
+        await using var db = postgres.CreateDbContext();
+        var rows = await db.ActionLog.AsNoTracking().Where(l => l.BatchId == undo.Id).ToListAsync(Ct);
+        rows.Count.ShouldBe(3);
+        rows.ShouldAllBe(r => !r.LabelIdsAfter.Contains(example) && r.LabelIdsAfter.Contains("INBOX"));
+        await StoredLabelsMatchGmailAsync(db, 3);
     }
 
     [Fact]
@@ -343,6 +365,14 @@ public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture post
         h.Gmail.Inner.SetLabels(id, labels);
         await using var db = postgres.CreateDbContext();
         await db.Messages.Where(m => m.Id == id).ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, labels), Ct);
+    }
+
+    private async Task StoredLabelsMatchGmailAsync(AppDbContext db, int count)
+    {
+        var ids = Enumerable.Range(0, count).Select(i => $"a{i:D2}").ToArray();
+        var stored = await db.Messages.AsNoTracking().Where(m => ids.Contains(m.Id)).ToListAsync(Ct);
+        stored.Count.ShouldBe(count);
+        stored.ShouldAllBe(m => m.LabelIds.Order().SequenceEqual(Labels(m.Id).Order()));
     }
 
     private IReadOnlyList<string> Labels(string id) => h.Gmail.Inner.Messages.Single(m => m.Id == id).LabelIds;

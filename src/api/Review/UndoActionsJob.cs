@@ -24,7 +24,13 @@ public sealed record UndoCursor(
     Guid[]? Skipped = null);
 
 /// <summary>One <c>batchModify</c> reverting the original log rows <see cref="LogIds"/>; <see cref="Gone"/> chunks skip Gmail.</summary>
-public sealed record UndoChunk(Guid[] LogIds, string[] MessageIds, string[] Add, string[] Remove, bool Gone = false);
+/// <param name="Deleted">Label ids the inverse names but Gmail no longer has: never sent, stripped from the stored labels.</param>
+public sealed record UndoChunk(
+    Guid[] LogIds, string[] MessageIds, string[] Add, string[] Remove, bool Gone = false, string[]? Deleted = null)
+{
+    /// <summary>The labels to take off the stored message: <see cref="Remove"/> and <see cref="Deleted"/>.</summary>
+    public string[] StoredRemove => [.. Remove, .. Deleted ?? []];
+}
 
 /// <summary>
 /// Reverts a History batch (DESIGN §3.6) from its <c>action_log</c>: per chunk of rows not yet undone, with identical
@@ -123,7 +129,7 @@ public sealed partial class UndoActionsJob(
 
     /// <summary>
     /// Chunks of the rows still to undo, in log order. The inverse comes from the stored label ids and keeps only
-    /// labels that still exist; rows whose message is gone form their own chunks, which never reach Gmail.
+    /// labels that still exist (the others go to <see cref="UndoChunk.Deleted"/>); rows whose message is gone form their own chunks, which never reach Gmail.
     /// </summary>
     private async Task<List<UndoChunk>> PlanAsync(UndoCursor cursor, IReadOnlyList<GmailLabel> labels, CancellationToken ct)
     {
@@ -147,8 +153,15 @@ public sealed partial class UndoActionsJob(
             .Select(c => new UndoChunk([.. c.Select(r => r.Id)], [.. c.Select(r => r.MessageId)], [], [], Gone: true));
         var inverse = rows.Where(r => !r.Gone).Select(r => (r.Id, r.MessageId,
             Add: Inverse(r.LabelIdsBefore, r.LabelIdsAfter, existing), Remove: Inverse(r.LabelIdsAfter, r.LabelIdsBefore, existing)));
+        var deleted = rows.Where(r => !r.Gone)
+            .SelectMany(r => r.LabelIdsBefore.Concat(r.LabelIdsAfter))
+            .Where(id => !existing.Contains(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
         var send = LabelChunks.Group(inverse, r => r.Add, r => r.Remove, cap)
-            .Select(c => new UndoChunk([.. c.Items.Select(r => r.Id)], [.. c.Items.Select(r => r.MessageId)], c.Add, c.Remove));
+            .Select(c => new UndoChunk(
+                [.. c.Items.Select(r => r.Id)], [.. c.Items.Select(r => r.MessageId)], c.Add, c.Remove,
+                Deleted: deleted.Length == 0 ? null : LabelChunks.Sorted(deleted)));
         return [.. gone, .. send];
 
         static string[] Inverse(string[] from, string[] minus, HashSet<string> existing) =>
@@ -195,7 +208,7 @@ public sealed partial class UndoActionsJob(
                         LabelsAdded = [.. chunk.Add.Select(id => names.GetValueOrDefault(id, id))],
                         LabelsRemoved = [.. chunk.Remove.Select(id => names.GetValueOrDefault(id, id))],
                         LabelIdsBefore = before,
-                        LabelIdsAfter = chunk.Gone ? before : LabelChunks.After(before, chunk.Add, chunk.Remove),
+                        LabelIdsAfter = chunk.Gone ? before : LabelChunks.After(before, chunk.Add, chunk.StoredRemove),
                         Note = chunk.Gone ? GoneNote : null,
                         CreatedAt = now,
                     });
@@ -217,8 +230,9 @@ public sealed partial class UndoActionsJob(
 
     /// <summary>
     /// Drops from the pending chunk the labels deleted in Gmail since it was prepared, so the resend isn't refused: a
-    /// label to remove is gone already, a label to re-add is skipped with <see cref="LabelDeletedNote"/>. Rewrites the
-    /// chunk and its inverse rows in one transaction; unchanged when every label still exists.
+    /// label to remove is gone already, a label to re-add is skipped with <see cref="LabelDeletedNote"/>; both move to
+    /// <see cref="UndoChunk.Deleted"/>. Rewrites the chunk and its inverse rows in one transaction; unchanged when every
+    /// label still exists.
     /// </summary>
     private async Task<UndoCursor> DropDeletedLabelsAsync(
         JobContext ctx, UndoCursor cursor, IReadOnlyList<GmailLabel> labels, int total, CancellationToken ct)
@@ -233,7 +247,13 @@ public sealed partial class UndoActionsJob(
             return cursor;
         }
 
-        var chunk = pending with { Add = Keep(pending.Add, keepAdd), Remove = Keep(pending.Remove, keepRemove) };
+        var chunk = pending with
+        {
+            Add = Keep(pending.Add, keepAdd),
+            Remove = Keep(pending.Remove, keepRemove),
+            Deleted = LabelChunks.Sorted(pending.Add.Concat(pending.Remove).Where(id => !existing.Contains(id))
+                .Concat(pending.Deleted ?? []).Distinct(StringComparer.Ordinal)),
+        };
         var next = cursor with { Pending = chunk };
         await ctx.CheckpointAsync(next, Progress(cursor, total), async t =>
         {
@@ -245,7 +265,7 @@ public sealed partial class UndoActionsJob(
                 // The display names were written in the chunk's label order, so the same flags apply.
                 row.LabelsAdded = Keep(row.LabelsAdded, keepAdd);
                 row.LabelsRemoved = Keep(row.LabelsRemoved, keepRemove);
-                row.LabelIdsAfter = LabelChunks.After(row.LabelIdsBefore, chunk.Add, chunk.Remove);
+                row.LabelIdsAfter = LabelChunks.After(row.LabelIdsBefore, chunk.Add, chunk.StoredRemove);
                 row.Note ??= addDropped ? LabelDeletedNote : null;
             }
 
@@ -332,7 +352,7 @@ public sealed partial class UndoActionsJob(
         var messages = await db.Messages.Where(m => reverted.Contains(m.Id)).ToDictionaryAsync(m => m.Id, StringComparer.Ordinal, ct);
         foreach (var message in messages.Values)
         {
-            message.LabelIds = LabelChunks.After(message.LabelIds, chunk.Add, chunk.Remove);
+            message.LabelIds = LabelChunks.After(message.LabelIds, chunk.Add, chunk.StoredRemove);
             message.UpdatedAt = now;
         }
 
