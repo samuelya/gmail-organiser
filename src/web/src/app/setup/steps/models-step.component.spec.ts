@@ -31,6 +31,7 @@ const settings = (over: Partial<AppSettings> = {}): AppSettings => ({
   actionLabelName: 'Example-Action',
   deleteLabelName: 'Example-Delete',
   setupWizardSeen: false,
+  fetchChunkSize: 500,
   googleClient: { clientId: null, secretSet: false, lockedByEnv: false },
   ...over,
 });

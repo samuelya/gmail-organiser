@@ -15,6 +15,7 @@ const settings = (ollamaBaseUrl = URL): AppSettings => ({
   actionLabelName: 'Example-Action',
   deleteLabelName: 'Example-Delete',
   setupWizardSeen: false,
+  fetchChunkSize: 500,
   googleClient: { clientId: null, secretSet: false, lockedByEnv: false },
 });
 
