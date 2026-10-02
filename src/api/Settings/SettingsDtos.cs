@@ -7,6 +7,7 @@ public sealed record SettingsDto(
     string ActionLabelName,
     string DeleteLabelName,
     bool SetupWizardSeen,
+    int FetchChunkSize,
     GoogleClientDto GoogleClient)
 {
     public static SettingsDto From(AppSettings s, GoogleClientCredentials google) => new(
@@ -16,6 +17,7 @@ public sealed record SettingsDto(
         s.ActionLabelName,
         s.DeleteLabelName,
         s.SetupWizardSeen,
+        s.FetchChunkSize,
         new GoogleClientDto(google.ClientId, google.ClientSecret is not null, google.LockedByEnv));
 }
 
@@ -27,6 +29,7 @@ public sealed record UpdateSettingsRequest(
     string? OllamaBaseUrl,
     string? ChatModel,
     string? EmbeddingModel,
-    bool? SetupWizardSeen);
+    bool? SetupWizardSeen,
+    int? FetchChunkSize = null);
 
 public sealed record GoogleClientRequest(string? ClientId, string? ClientSecret);

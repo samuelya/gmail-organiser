@@ -142,7 +142,7 @@ public sealed class FakeGmailClientTests
 
     [Fact]
     public async Task ListMessageIdsAsync_rejects_a_foreign_page_token() =>
-        await Should.ThrowAsync<ArgumentException>(() => Client().ListMessageIdsAsync(new MessageListQuery(null, null, "not-a-token", 10), Ct));
+        await Should.ThrowAsync<GmailInvalidPageTokenException>(() => Client().ListMessageIdsAsync(new MessageListQuery(null, null, "not-a-token", 10), Ct));
 
     [Theory]
     [InlineData("from:alice@example.com")]
@@ -193,6 +193,28 @@ public sealed class FakeGmailClientTests
         page.Messages.ShouldNotBeEmpty();
         var byId = client.Messages.ToDictionary(m => m.Id);
         page.Messages.ShouldAllBe(m => byId[m.Id].LabelIds.Contains("INBOX") && byId[m.Id].LabelIds.Contains("CATEGORY_UPDATES"));
+    }
+
+    [Theory]
+    [InlineData(null, null, "a")]
+    [InlineData("SPAM", null, "s")]
+    [InlineData("TRASH", null, "t")]
+    [InlineData(null, "in:spam", "s")]
+    [InlineData(null, "in:trash", "t")]
+    [InlineData(null, "label:TRASH", "t")]
+    public async Task ListMessageIdsAsync_skips_spam_and_trash_unless_the_request_names_them(
+        string? labelId, string? query, string expected)
+    {
+        var client = new FakeGmailClient(new FakeTokenStore(TimeProvider.System),
+        [
+            new FakeMessage("a", "a", "a@example.com", "Synthetic", Now, ["INBOX"]),
+            new FakeMessage("s", "s", "s@example.com", "Synthetic", Now, ["SPAM"]),
+            new FakeMessage("t", "t", "t@example.com", "Synthetic", Now, ["TRASH"]),
+        ]);
+
+        var page = await client.ListMessageIdsAsync(new MessageListQuery(query, labelId is null ? null : [labelId], null, 10), Ct);
+
+        page.Messages.Select(m => m.Id).ShouldBe([expected]);
     }
 
     [Fact]

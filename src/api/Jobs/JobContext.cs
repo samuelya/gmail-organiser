@@ -58,4 +58,30 @@ public sealed class JobContext
         await notifier.PublishAsync(db, JobId, ct);
         return LastSignal;
     }
+
+    /// <summary>
+    /// Persists the final cursor and progress once all work is done. A pause or cancel requested meanwhile is
+    /// ignored: the job ends completed, because it is. <paramref name="finalWrites"/> run in the same transaction, so
+    /// the handler's own completion state is never committed without the final cursor.
+    /// </summary>
+    public async Task CompleteAsync<T>(T cursor, JobProgress progress, Func<CancellationToken, Task> finalWrites, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(finalWrites);
+        var cursorJson = JsonSerializer.Serialize(cursor, JobRow.Json);
+        var progressJson = JsonSerializer.Serialize(progress, JobRow.Json);
+        var now = time.GetUtcNow();
+        await using (var tx = await db.Database.BeginTransactionAsync(ct))
+        {
+            await finalWrites(ct);
+            await db.Database.ExecuteSqlAsync($"""
+                UPDATE jobs SET cursor = {cursorJson}::jsonb, progress = {progressJson}::jsonb, updated_at = {now}
+                WHERE id = {JobId}
+                """, ct);
+            await tx.CommitAsync(ct);
+        }
+
+        this.cursor = cursorJson;
+        LastSignal = JobSignal.Continue;
+        await notifier.PublishAsync(db, JobId, ct);
+    }
 }

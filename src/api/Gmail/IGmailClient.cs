@@ -13,6 +13,7 @@ public interface IGmailClient
     /// <summary>One page of message ids matching <paramref name="query"/> (never Spam or Trash).</summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    /// <exception cref="GmailInvalidPageTokenException">Gmail rejected <see cref="MessageListQuery.PageToken"/>.</exception>
     Task<MessageIdPage> ListMessageIdsAsync(MessageListQuery query, CancellationToken ct);
 
     /// <summary>
@@ -22,6 +23,11 @@ public interface IGmailClient
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct);
+
+    /// <summary>How many messages carry the label <paramref name="labelId"/> (<c>labels.get</c> <c>messagesTotal</c>).</summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct);
 }
 
 /// <param name="HistoryId">Gmail's history ID as a decimal string (it is an unsigned 64-bit number).</param>
@@ -69,3 +75,6 @@ public sealed class GmailNotConnectedException(string message, Exception? inner 
 
 /// <summary>Gmail still rate-limited the request after the last retry; the caller may resume later.</summary>
 public sealed class GmailRateLimitedException(string message, Exception? inner = null) : Exception(message, inner);
+
+/// <summary>Gmail rejected a list page token (expired or malformed); the caller restarts the listing from the first page.</summary>
+public sealed class GmailInvalidPageTokenException(string message, Exception? inner = null) : Exception(message, inner);

@@ -22,7 +22,7 @@ public sealed class FakeGmailClient : IGmailClient
     private readonly FakeTokenStore tokens;
     private readonly GmailRetryPolicy retry;
     private readonly List<FakeMessage> messages;
-    private readonly long historyId = FakeMailboxSeed.HistoryId;
+    private long historyId = FakeMailboxSeed.HistoryId;
     private HttpStatusCode failureStatus;
     private int failuresLeft;
 
@@ -68,6 +68,16 @@ public sealed class FakeGmailClient : IGmailClient
         }
     }
 
+    /// <summary>Simulates mailbox activity: the profile reports a higher history ID from now on.</summary>
+    public void AdvanceHistoryId(long by = 1)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(by);
+        lock (gate)
+        {
+            historyId += by;
+        }
+    }
+
     public async Task<GmailProfile> GetProfileAsync(CancellationToken ct)
     {
         var token = await EnsureConnectedAsync(ct).ConfigureAwait(false);
@@ -82,6 +92,7 @@ public sealed class FakeGmailClient : IGmailClient
         ArgumentNullException.ThrowIfNull(query);
         query.EnsureValid();
         var matches = FakeGmailQuery.Parse(query.Query);
+        var includeSpamTrash = query.LabelIds?.Any(IsSpamOrTrash) == true || FakeGmailQuery.NamesSpamOrTrash(query.Query);
         var offset = DecodePageToken(query.PageToken);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
@@ -95,6 +106,7 @@ public sealed class FakeGmailClient : IGmailClient
             lock (gate)
             {
                 var hits = messages
+                    .Where(m => includeSpamTrash || !m.LabelIds.Any(IsSpamOrTrash))
                     .Where(m => query.LabelIds is null || query.LabelIds.All(l => m.LabelIds.Contains(l, StringComparer.OrdinalIgnoreCase)))
                     .Where(matches)
                     .OrderByDescending(m => m.Date)
@@ -144,6 +156,16 @@ public sealed class FakeGmailClient : IGmailClient
 
         var byId = fetched.ToDictionary(m => m.Id, StringComparer.Ordinal);
         return [.. unique.Where(byId.ContainsKey).Select(id => byId[id])];
+    }
+
+    public async Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(labelId);
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        lock (gate)
+        {
+            return messages.Count(m => m.LabelIds.Contains(labelId, StringComparer.OrdinalIgnoreCase));
+        }
     }
 
     /// <summary>The seeded synthetic mailbox; see <see cref="FakeMailboxSeed"/>.</summary>
@@ -207,6 +229,10 @@ public sealed class FakeGmailClient : IGmailClient
         }
     }
 
+    /// <summary>Like Gmail with <c>includeSpamTrash=false</c>, listings skip Spam and Trash unless they name them.</summary>
+    private static bool IsSpamOrTrash(string labelId) =>
+        labelId.Equals("SPAM", StringComparison.OrdinalIgnoreCase) || labelId.Equals("TRASH", StringComparison.OrdinalIgnoreCase);
+
     private static string? ReasonFor(HttpStatusCode status) => status == HttpStatusCode.Forbidden ? "rateLimitExceeded" : null;
 
     private async Task ThrowFailureAsync(HttpStatusCode status)
@@ -243,6 +269,6 @@ public sealed class FakeGmailClient : IGmailClient
         {
         }
 
-        throw new ArgumentException("Invalid page token.", nameof(token));
+        throw new GmailInvalidPageTokenException("Invalid page token.");
     }
 }

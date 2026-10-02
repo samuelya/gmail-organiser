@@ -12,6 +12,9 @@ public sealed class GmailQuotaLimiter(IOptions<GmailOptions> options, TimeProvid
     /// <summary>Cost of <c>messages.list</c> and <c>messages.get</c> in Gmail quota units.</summary>
     public const int MessageCallUnits = 5;
 
+    /// <summary>Cost of <c>labels.get</c> in Gmail quota units.</summary>
+    public const int LabelCallUnits = 1;
+
     private static readonly TimeSpan Window = TimeSpan.FromSeconds(1);
 
     private readonly SemaphoreSlim gate = new(1, 1);

@@ -37,7 +37,28 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
         settings.ActionLabelName.ShouldBe("Action/ToDo");
         settings.DeleteLabelName.ShouldBe("To-Be-Deleted");
         settings.SetupWizardSeen.ShouldBeFalse();
+        settings.FetchChunkSize.ShouldBe(AppSettings.DefaultFetchChunkSize);
         settings.GoogleClient.ShouldBe(new GoogleClientDto(null, SecretSet: false, LockedByEnv: false));
+    }
+
+    [Fact]
+    public async Task Fetch_chunk_size_is_saved_and_kept_by_other_updates()
+    {
+        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, FetchChunkSize: 2500));
+        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, "chat-model-a", null, null));
+
+        (await GetAsync(factory)).FetchChunkSize.ShouldBe(2500);
+    }
+
+    [Theory]
+    [InlineData(SettingsValidation.MinFetchChunkSize - 1)]
+    [InlineData(SettingsValidation.MaxFetchChunkSize + 1)]
+    [InlineData(0)]
+    public async Task Fetch_chunk_size_out_of_range_gets_400_problem_details(int chunkSize)
+    {
+        var response = await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, chunkSize));
+
+        await ShouldBeValidationProblemAsync(response);
     }
 
     [Fact]
