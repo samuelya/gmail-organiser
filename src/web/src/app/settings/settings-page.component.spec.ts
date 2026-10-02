@@ -192,8 +192,8 @@ describe('SettingsPage', () => {
 
     it.each([
       ['', 'The fetch chunk size is required.'],
-      ['50', 'Enter a number from 100 to 5000.'],
-      ['5100', 'Enter a number from 100 to 5000.'],
+      ['5', 'Enter a number from 10 to 5000.'],
+      ['5100', 'Enter a number from 10 to 5000.'],
       ['150.5', 'Enter a whole number.'],
     ])('rejects %j without saving', async (value, message) => {
       const { fixture, q } = await render();
