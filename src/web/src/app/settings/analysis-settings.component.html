@@ -1,7 +1,7 @@
 <ng-template #numberField let-f>
   @let ctl = control(f.key);
   @let r = range(f.key);
-  <mat-form-field>
+  <mat-form-field subscriptSizing="dynamic">
     <mat-label>{{ f.label }}</mat-label>
     <input
       matInput
@@ -108,7 +108,7 @@
 
   <fieldset class="flex flex-col gap-2">
     <legend class="mb-1">Prompt template</legend>
-    <mat-form-field>
+    <mat-form-field subscriptSizing="dynamic">
       <mat-label>Analysis prompt</mat-label>
       <textarea
         matInput
@@ -143,15 +143,17 @@
       </button>
     </div>
     @if (!prompt.value.trim() && defaultPrompt(); as builtIn) {
-      <p class="help" id="default-prompt-label">
-        Built-in prompt ({{ builtIn.version }}), used while the field is empty:
-      </p>
-      <pre
-        class="prompt preview"
-        tabindex="0"
-        aria-labelledby="default-prompt-label"
-        data-testid="default-prompt-preview"
-        >{{ builtIn.template }}</pre>
+      <details data-testid="default-prompt-details">
+        <summary class="help" id="default-prompt-label">
+          Built-in prompt ({{ builtIn.version }}), used while the field is empty
+        </summary>
+        <pre
+          class="prompt preview"
+          tabindex="0"
+          aria-labelledby="default-prompt-label"
+          data-testid="default-prompt-preview"
+          >{{ builtIn.template }}</pre>
+      </details>
     }
     <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1" aria-label="Prompt placeholders">
       @for (p of placeholders; track p.name) {

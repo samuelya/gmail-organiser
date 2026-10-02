@@ -114,6 +114,7 @@ export class SettingsPage implements OnInit {
         // The error interceptor shows why; the field stays disabled without a saved value.
         error: () => undefined,
       });
+    this.loadDefaultPrompt();
   }
 
   onClientChange(client: GoogleClientSettings): void {
@@ -145,7 +146,9 @@ export class SettingsPage implements OnInit {
       });
   }
 
+  /** Loads the built-in prompt once; the section previews it while no override is set. */
   loadDefaultPrompt(): void {
+    if (this.defaultPrompt()) return;
     this.settingsApi
       .getDefaultPrompt()
       .pipe(takeUntilDestroyed(this.destroyRef))

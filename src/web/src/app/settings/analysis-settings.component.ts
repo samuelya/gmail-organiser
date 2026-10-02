@@ -97,7 +97,7 @@ export class AnalysisSettingsSection {
   readonly saving = input(false);
   /** ValidationProblem `errors` from the last save, keyed by API field name. */
   readonly serverErrors = input<Record<string, string[]> | null>(null);
-  /** The built-in prompt, shown read-only while the field is empty (the page loads it on `resetPrompt`). */
+  /** The built-in prompt, shown read-only while the field is empty (the page loads it on init, or again on `resetPrompt` if that failed). */
   readonly defaultPrompt = input<PromptTemplateDto | null>(null);
 
   readonly changed = output<AnalysisSettingsUpdate>();

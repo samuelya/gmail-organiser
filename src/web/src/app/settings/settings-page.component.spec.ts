@@ -71,6 +71,9 @@ const models: LlmModels = {
   error: null,
 };
 
+const PROMPT = 'Synthetic instructions.\n\n{{emails}}';
+const defaultPrompt = { version: 'test-v1', template: PROMPT };
+
 describe('SettingsPage', () => {
   let http: HttpTestingController;
   let connected: boolean;
@@ -88,6 +91,7 @@ describe('SettingsPage', () => {
         else if (path === '/api/auth/google/status') req.flush(googleStatus(connected));
         else if (path === '/api/setup/status') req.flush(setupStatus);
         else if (path === '/api/llm/models') req.flush(models);
+        else if (path === '/api/analysis/prompt/default') req.flush(defaultPrompt);
         else throw new Error(`unexpected GET ${path}`);
       }
     }
@@ -235,18 +239,24 @@ describe('SettingsPage', () => {
   });
 
   describe('analysis', () => {
-    const PROMPT = 'Synthetic instructions.\n\n{{emails}}';
+    it('previews the built-in prompt on load while no override is set', async () => {
+      const { q } = await render();
+      expect((q('analysisPromptTemplate') as HTMLTextAreaElement).value).toBe('');
+      expect(q('default-prompt-preview')!.textContent).toBe(PROMPT);
+    });
 
-    it('Reset to default clears the field and previews the built-in prompt', async () => {
+    it('Reset to default clears the field without fetching the prompt again', async () => {
       const { fixture, q } = await render();
+      const prompt = q('analysisPromptTemplate') as HTMLTextAreaElement;
+      prompt.value = 'Custom {{emails}}';
+      prompt.dispatchEvent(new Event('input'));
+      await fixture.whenStable();
+      expect(q('default-prompt-preview')).toBeNull();
+
       q('reset-prompt')!.click();
       await fixture.whenStable();
-
-      http
-        .expectOne({ method: 'GET', url: '/api/analysis/prompt/default' })
-        .flush({ version: 'test-v1', template: PROMPT });
-      await fixture.whenStable();
-      expect((q('analysisPromptTemplate') as HTMLTextAreaElement).value).toBe('');
+      http.expectNone({ method: 'GET', url: '/api/analysis/prompt/default' });
+      expect(prompt.value).toBe('');
       expect(q('default-prompt-preview')!.textContent).toBe(PROMPT);
     });
 
