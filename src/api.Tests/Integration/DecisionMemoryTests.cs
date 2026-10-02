@@ -119,7 +119,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         embeddings.Failure = null;
         settings.Current = settings.Current with { EmbeddingModel = null };
         (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
-        embeddings.Inputs.Count.ShouldBe(1);
+        embeddings.Inputs.ShouldBe([embeddings.Inputs[0], DecisionMemory.ProbeText]);
         await using (var db = postgres.CreateDbContext())
         {
             (await db.Decisions.AsNoTracking().SingleAsync(Ct)).Embedding.ShouldBeNull();
@@ -165,10 +165,8 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         }
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task A_batch_in_which_nothing_embeds_marks_no_decision(bool embedderDown)
+    [Fact]
+    public async Task An_embedder_outage_marks_no_decision()
     {
         await using (var db = postgres.CreateDbContext())
         {
@@ -176,25 +174,57 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
             await db.SaveChangesAsync(Ct);
         }
 
-        if (embedderDown)
-        {
-            embeddings.Failure = new HttpRequestException("synthetic outage");
-        }
-        else
-        {
-            embeddings.Rejects = text => text != DecisionMemory.ProbeText;
-        }
-
+        embeddings.Failure = new HttpRequestException("synthetic outage");
         (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
-        if (embedderDown)
-        {
-            embeddings.Inputs.ShouldBe([.. embeddings.Inputs.Take(4), DecisionMemory.ProbeText]);
-        }
-
+        embeddings.Inputs.ShouldBe([.. embeddings.Inputs.Take(4), DecisionMemory.ProbeText]);
         await using (var db = postgres.CreateDbContext())
         {
             (await db.Decisions.AsNoTracking().ToListAsync(Ct)).ShouldAllBe(d => d.Embedding == null && d.EmbeddingFailedAt == null);
         }
+    }
+
+    [Fact]
+    public async Task A_batch_the_embedder_rejects_entirely_while_the_probe_works_marks_every_decision()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.AddRange(Enumerable.Range(0, 4).Select(i => Decision($"s{i}@example.com", "Shopping", DecisionOutcome.Approved, Now)));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        embeddings.Rejects = text => text != DecisionMemory.ProbeText;
+        (await EmbeddingService(new FakeTimeProvider(Now)).EmbedPendingAsync(Ct)).ShouldBe(0);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Decisions.AsNoTracking().ToListAsync(Ct)).ShouldAllBe(d => d.Embedding == null && d.EmbeddingFailedAt == Now);
+        }
+    }
+
+    [Fact]
+    public async Task A_lone_rejected_decision_is_marked_once_and_restamped_after_the_daily_retry()
+    {
+        var clock = new FakeTimeProvider(Now);
+        var row = Decision(Shop, "Shopping", DecisionOutcome.Approved, Now);
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.Add(row);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        embeddings.Rejects = text => text != DecisionMemory.ProbeText;
+        (await EmbeddingService(clock).EmbedPendingAsync(Ct)).ShouldBe(0);
+        embeddings.Inputs.Count.ShouldBe(2);
+        (await FailedAt(row.Id)).ShouldBe(Now);
+
+        clock.Advance(DecisionEmbeddingService.FailedRetryInterval - TimeSpan.FromMinutes(1));
+        (await EmbeddingService(clock).EmbedPendingAsync(Ct)).ShouldBe(0);
+        embeddings.Inputs.Count.ShouldBe(2);
+        (await FailedAt(row.Id)).ShouldBe(Now);
+
+        clock.Advance(TimeSpan.FromMinutes(2));
+        (await EmbeddingService(clock).EmbedPendingAsync(Ct)).ShouldBe(0);
+        embeddings.Inputs.Count.ShouldBe(4);
+        (await FailedAt(row.Id)).ShouldBe(clock.GetUtcNow());
     }
 
     [Fact]
@@ -397,6 +427,12 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         return new DecisionEmbeddingService(
             providers[^1].GetRequiredService<IServiceScopeFactory>(), new DecisionEmbeddingQueue(), clock ?? TimeProvider.System,
             NullLogger<DecisionEmbeddingService>.Instance);
+    }
+
+    private async Task<DateTimeOffset?> FailedAt(Guid id)
+    {
+        await using var db = postgres.CreateDbContext();
+        return (await db.Decisions.AsNoTracking().SingleAsync(d => d.Id == id, Ct)).EmbeddingFailedAt;
     }
 
     private static string TextOf(MessageRow m) =>

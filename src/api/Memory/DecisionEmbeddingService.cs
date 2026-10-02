@@ -34,8 +34,9 @@ public sealed class DecisionEmbeddingQueue : IDecisionEmbeddingQueue
 /// Embeds decisions that have no vector, off the review's request path: after each notification and every
 /// <see cref="RetryInterval"/>, so rows left behind by an unavailable model are retried later. Best effort: a failure
 /// leaves the rows for the next pass. A batch that embeds nothing while the embedder answers a probe is split in halves
-/// to isolate the decisions it rejects; those get <see cref="DecisionRow.EmbeddingFailedAt"/> and wait
-/// <see cref="FailedRetryInterval"/>. A batch in which no decision embeds is treated as an outage: nothing is marked.
+/// down to single decisions to isolate the ones it rejects; each decision that fails alone gets (or renews)
+/// <see cref="DecisionRow.EmbeddingFailedAt"/> and waits <see cref="FailedRetryInterval"/>. Only a failed probe counts as an
+/// outage: then nothing is marked.
 /// </summary>
 public sealed partial class DecisionEmbeddingService(
     IServiceScopeFactory scopes, DecisionEmbeddingQueue queue, TimeProvider time, ILogger<DecisionEmbeddingService> logger)
@@ -62,17 +63,26 @@ public sealed partial class DecisionEmbeddingService(
                 .OrderByDescending(d => d.CreatedAt)
                 .Take(BatchSize)
                 .ToListAsync(ct);
-            await memory.EmbedAsync(rows, ct);
-            if (rows.Count > 1 && rows.All(r => r.Embedding is null) && await memory.CanEmbedAsync(ct))
-            {
-                await BisectAsync(memory, rows, ct);
-            }
-
-            var done = rows.Count(r => r.Embedding is not null);
-            if (done == 0)
+            if (rows.Count == 0)
             {
                 return embedded;
             }
+
+            await memory.EmbedAsync(rows, ct);
+            if (rows.All(r => r.Embedding is null))
+            {
+                if (!await memory.CanEmbedAsync(ct))
+                {
+                    return embedded;
+                }
+
+                if (rows.Count > 1)
+                {
+                    await BisectAsync(memory, rows, ct);
+                }
+            }
+
+            var done = rows.Count(r => r.Embedding is not null);
 
             var now = time.GetUtcNow();
             foreach (var row in rows)
