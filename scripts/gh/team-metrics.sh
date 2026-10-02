@@ -60,11 +60,20 @@ forked = {}  # agentId -> command name, from the launch records
 fork_src = {}  # agentId -> uuid of the assistant record that invoked the skill
 skill_args = {}  # assistant uuid -> args of its /code-review call ("high 234", "medium pull/170", "165")
 first_prompt = {}  # agentId -> the task the run was started with
+meta = {}  # agentId -> (name, agentType) from subagents/agent-<id>.meta.json, written at spawn
+for mf in glob.glob(os.path.join(proj, "*", "subagents", "agent-*.meta.json")):
+    try: j = json.load(open(mf, encoding="utf-8"))
+    except (OSError, ValueError): continue
+    meta[os.path.basename(mf)[len("agent-"):-len(".meta.json")]] = (j.get("name") or "", j.get("agentType") or "")
+agent_type = {}  # run label -> agentType
 def role(agent):
     if not agent: return "lead"
     if agent in forked: return "code-review" if forked[agent] == "code-review" else f"skill:{forked[agent]}"
     for pat, name in ROLES:
         if re.search(pat, agent): return name
+    # Named after its definition (backend-coder, tester...) when the lead gave no name.
+    for pat, name in ROLES:
+        if agent_type.get(agent) and re.search(pat, agent_type[agent]): return name
     # An agent spawned without a name has a bare hex id; its task says what it was (#207 review 4:
     # 13 of 13 first-round coders were unnamed, so every feature PR read "coder runs 0").
     p = first_prompt.get(agent, "")
@@ -117,6 +126,15 @@ for f in files:
             vals = [u.get("input_tokens", 0), u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0), u.get("output_tokens", 0)]
             cur = req.setdefault(k, {"model": m.get("model", "?"), "agent": r.get("agentId") or "", "v": [0, 0, 0, 0], "sid": r.get("sessionId") or "", "ts": r.get("timestamp") or ""})
             cur["v"] = [max(a, b) for a, b in zip(cur["v"], vals)]
+# Transcripts carry only the hex agentId; the name the lead gave (afe-18, atest-37) is in meta.json.
+# Without this every named run read as unnamed-agent (eco-review 1, #52: 37 % of input).
+def label(a):
+    if not a or a in forked: return a
+    n, t = meta.get(a, ("", ""))
+    lb = n or a; agent_type[lb] = t
+    if a in first_prompt and lb != a: first_prompt[lb] = first_prompt[a]
+    return lb
+for x in req.values(): x["agent"] = label(x["agent"])
 by_model = collections.defaultdict(lambda: [0, 0, 0, 0]); by_role = collections.defaultdict(lambda: [0, 0, 0, 0, 0])
 runs = collections.defaultdict(lambda: {"ctx": [], "out": 0})
 for x in req.values():
@@ -236,7 +254,7 @@ fi
 echo
 
 echo "=== 4. Rates"
-ci=$(gh run list -R "$OWNER/$REPO" --workflow app.yml --event pull_request --limit 40 --json createdAt,updatedAt \
+ci=$(gh run list -R "$OWNER/$REPO" --workflow ci.yml --event pull_request --limit 40 --json createdAt,updatedAt \
   --jq "[.[] | select(.createdAt >= \"$since\") | ((.updatedAt|fromdate)-(.createdAt|fromdate))/60] | if length>0 then (add/length*10|round)/10 else 0 end")
 # Arithmetic in python: an awk program inside $(...) loses its braces under some shells and then
 # blocks reading stdin.

@@ -61,6 +61,17 @@ has '\bgh pr view\b' && ! has '\bgh pr view\b[^|;&]*--json\b' && block "use scri
 has '\bgh pr checks\b.*--watch\b' && block "use scripts/gh/wait-ci.sh <pr> (bounded, prints progress)."
 has '\bgh run watch\b' && block "use scripts/gh/wait-ci.sh <pr>."
 
+# Issues stay at ~15 changed files (CLAUDE.md). 5 of 20 PRs went over, including the two most
+# expensive coder runs (eco-review 1, #52). Lockfiles and generated EF migration files don't count.
+if has '\bgh pr create\b' && ! has '^FILE_CAP_OK=1 '; then
+  dir=$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null); dir=${dir:-.}
+  cd_to=$(grep -oE '(^|[;&] *)cd +[^ ;&]+' <<<"$cmd" | tail -1 | sed -E 's/.*cd +//')
+  [[ -n "$cd_to" ]] && { [[ "$cd_to" == /* ]] && dir=$cd_to || dir="$dir/$cd_to"; }
+  files=$(git -C "$dir" diff --name-only origin/main...HEAD 2>/dev/null \
+    | grep -vE '(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|packages\.lock\.json)$|/Migrations/.*(\.Designer\.cs|ModelSnapshot\.cs)$' | wc -l | tr -d ' ')
+  (( ${files:-0} > 15 )) && block "PR over the file cap: $files files changed (cap ~15; lockfiles and migration designer files excluded). Split it, or if it must stay one PR, prefix FILE_CAP_OK=1 and add a line 'Over the file cap: <why>' to the PR body so the BA sizes similar issues smaller."
+fi
+
 # Coders push and hand off; the lead reads CI. A coder fixing red CI inside its own round ran 173
 # turns in the previous project (eco-review 6, proposal 1).
 is_coder && has 'wait-ci\.sh|\bgh pr checks\b|\bgh run (view|list)\b' \
