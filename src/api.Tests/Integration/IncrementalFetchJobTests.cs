@@ -90,6 +90,22 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
     }
 
     [Fact]
+    public async Task BatchModify_label_changes_reach_the_local_store_through_history()
+    {
+        var label = await gmail.CreateLabelAsync("Synthetic/Applied", Ct);
+        await gmail.BatchModifyAsync([Id(0), Id(1)], [label.Id], ["INBOX"], Ct);
+        var job = await EnqueueAsync(IncrementalFetchJob.JobType);
+
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        await using var db = postgres.CreateDbContext();
+        (await db.Messages.SingleAsync(m => m.Id == Id(0), Ct)).LabelIds.ShouldBe(["CATEGORY_UPDATES", label.Id], ignoreOrder: true);
+        (await db.Messages.SingleAsync(m => m.Id == Id(1), Ct)).LabelIds.ShouldBe(["CATEGORY_UPDATES", label.Id], ignoreOrder: true);
+        (await db.Messages.SingleAsync(m => m.Id == Id(2), Ct)).LabelIds.ShouldContain("INBOX");
+    }
+
+    [Fact]
     public async Task Second_run_without_changes_touches_nothing()
     {
         gmail.Inner.SetLabels(Id(3), []);

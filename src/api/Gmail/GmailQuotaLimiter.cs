@@ -12,11 +12,17 @@ public sealed class GmailQuotaLimiter(IOptions<GmailOptions> options, TimeProvid
     /// <summary>Cost of <c>messages.list</c> and <c>messages.get</c> in Gmail quota units.</summary>
     public const int MessageCallUnits = 5;
 
-    /// <summary>Cost of <c>labels.get</c> in Gmail quota units.</summary>
+    /// <summary>Cost of <c>labels.get</c> and <c>labels.list</c> in Gmail quota units.</summary>
     public const int LabelCallUnits = 1;
 
     /// <summary>Cost of <c>history.list</c> in Gmail quota units.</summary>
     public const int HistoryCallUnits = 2;
+
+    /// <summary>Cost of <c>labels.create</c> in Gmail quota units.</summary>
+    public const int LabelCreateUnits = 5;
+
+    /// <summary>Cost of <c>messages.batchModify</c> in Gmail quota units; the most expensive call the app makes.</summary>
+    public const int BatchModifyUnits = 50;
 
     private static readonly TimeSpan Window = TimeSpan.FromSeconds(1);
 

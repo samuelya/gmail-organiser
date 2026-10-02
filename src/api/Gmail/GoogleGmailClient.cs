@@ -1,11 +1,15 @@
+using System.Buffers.Text;
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
 using GmailOrganiser.Settings;
 using Google;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Gmail.v1;
+using Google.Apis.Gmail.v1.Data;
 using Google.Apis.Services;
 using Google.Apis.Util;
 using Microsoft.Extensions.Options;
@@ -130,6 +134,180 @@ public sealed class GoogleGmailClient(
             var page = await GmailHistoryList.SendAsync(service, startHistoryId, pageToken, token);
             logger.LogDebug("Listed {Count} Gmail history records", page.Records.Count);
             return page;
+        }, ct), ct);
+    }
+
+    public Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        return RunAsync(service => retry.ExecuteAsync(async token =>
+        {
+            await quota.AcquireAsync(GmailQuotaLimiter.MessageCallUnits, token);
+            return await GetBodyAsync(service, id, logger, token);
+        }, ct), ct);
+    }
+
+    /// <summary>One <c>messages.get</c> (format=full); null on 404. Logs sizes only, never content.</summary>
+    public static async Task<GmailMessageBody?> GetBodyAsync(GmailService service, string id, ILogger logger, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(service);
+        ArgumentNullException.ThrowIfNull(logger);
+        var request = service.Users.Messages.Get(Me, id);
+        request.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Full;
+        try
+        {
+            var body = ReadBody(await request.ExecuteAsync(ct));
+            logger.LogDebug(
+                "Read a Gmail message body: {TextLength} text and {HtmlLength} html characters",
+                body.Text?.Length ?? 0,
+                body.Html?.Length ?? 0);
+            return body;
+        }
+        catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound)
+        {
+            logger.LogDebug("Gmail no longer has the message whose body was requested");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The first <c>text/plain</c> and first <c>text/html</c> part, depth-first through <c>payload.parts</c>. Parts with
+    /// a filename are attachments and skipped; bodies Gmail moved to an attachment id are not fetched.
+    /// </summary>
+    public static GmailMessageBody ReadBody(Message message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        string? text = null;
+        string? html = null;
+        var stack = new Stack<MessagePart>();
+        if (message.Payload is not null)
+        {
+            stack.Push(message.Payload);
+        }
+
+        while (stack.Count > 0 && (text is null || html is null))
+        {
+            var part = stack.Pop();
+            if (part.Parts is { Count: > 0 } children)
+            {
+                for (var i = children.Count - 1; i >= 0; i--)
+                {
+                    stack.Push(children[i]);
+                }
+
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(part.Filename) || part.Body?.Data is not { } data)
+            {
+                continue;
+            }
+
+            if (text is null && IsMimeType(part, "text/plain"))
+            {
+                text = Decode(part, data);
+            }
+            else if (html is null && IsMimeType(part, "text/html"))
+            {
+                html = Decode(part, data);
+            }
+        }
+
+        return new GmailMessageBody(text, html);
+    }
+
+    private static bool IsMimeType(MessagePart part, string mimeType) =>
+        string.Equals(part.MimeType, mimeType, StringComparison.OrdinalIgnoreCase);
+
+    private static string Decode(MessagePart part, string data) => CharsetOf(part).GetString(Base64Url.DecodeFromChars(data));
+
+    /// <summary>The part's <c>Content-Type</c> charset when .NET knows it, UTF-8 otherwise.</summary>
+    private static Encoding CharsetOf(MessagePart part)
+    {
+        var contentType = part.Headers?.FirstOrDefault(h => string.Equals(h.Name, "Content-Type", StringComparison.OrdinalIgnoreCase))?.Value;
+        if (contentType is null || !MediaTypeHeaderValue.TryParse(contentType, out var parsed) || parsed.CharSet is not { Length: > 0 } charset)
+        {
+            return Encoding.UTF8;
+        }
+
+        charset = charset.Trim('"');
+        try
+        {
+            return CodePagesEncodingProvider.Instance.GetEncoding(charset) ?? Encoding.GetEncoding(charset);
+        }
+        catch (ArgumentException)
+        {
+            return Encoding.UTF8;
+        }
+    }
+
+    public Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(CancellationToken ct) =>
+        RunAsync(service => ListLabelsAsync(service, ct), ct);
+
+    private Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(GmailService service, CancellationToken ct) =>
+        retry.ExecuteAsync<IReadOnlyList<GmailLabel>>(async token =>
+        {
+            await quota.AcquireAsync(GmailQuotaLimiter.LabelCallUnits, token);
+            var response = await service.Users.Labels.List(Me).ExecuteAsync(token);
+            return response.Labels?.Select(ToLabel).ToList() ?? [];
+        }, ct);
+
+    public Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct)
+    {
+        GmailLimits.EnsureValidLabelName(name);
+        return RunAsync(async service =>
+        {
+            try
+            {
+                return await retry.ExecuteAsync(async token =>
+                {
+                    await quota.AcquireAsync(GmailQuotaLimiter.LabelCreateUnits, token);
+                    var label = new Label { Name = name, LabelListVisibility = "labelShow", MessageListVisibility = "show" };
+                    return ToLabel(await service.Users.Labels.Create(label, Me).ExecuteAsync(token));
+                }, ct);
+            }
+            catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.Conflict)
+            {
+                // The name exists (created earlier, or by a parallel run): return that label.
+                var labels = await ListLabelsAsync(service, ct);
+                return FindByName(labels, name)
+                    ?? throw new InvalidOperationException("Gmail reported the label as existing but did not list it.", ex);
+            }
+        }, ct);
+    }
+
+    /// <summary>Gmail compares label names case-insensitively; an exact match wins.</summary>
+    public static GmailLabel? FindByName(IEnumerable<GmailLabel> labels, string name)
+    {
+        var list = labels as IReadOnlyList<GmailLabel> ?? [.. labels];
+        return list.FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.Ordinal))
+            ?? list.FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static GmailLabel ToLabel(Label label) =>
+        new(label.Id, label.Name ?? "", string.Equals(label.Type, "system", StringComparison.OrdinalIgnoreCase) ? GmailLabelType.System : GmailLabelType.User);
+
+    public Task BatchModifyAsync(
+        IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct)
+    {
+        GmailLimits.EnsureValidBatchModify(ids, addLabelIds, removeLabelIds);
+        if (ids.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        return RunAsync(service => retry.ExecuteAsync(async token =>
+        {
+            await quota.AcquireAsync(GmailQuotaLimiter.BatchModifyUnits, token);
+            var body = new BatchModifyMessagesRequest
+            {
+                Ids = [.. ids.Distinct(StringComparer.Ordinal)],
+                AddLabelIds = addLabelIds.Count > 0 ? [.. addLabelIds] : null,
+                RemoveLabelIds = removeLabelIds.Count > 0 ? [.. removeLabelIds] : null,
+            };
+            await service.Users.Messages.BatchModify(body, Me).ExecuteAsync(token);
+            logger.LogInformation("Modified labels on {Count} Gmail messages", body.Ids.Count);
+            return true;
         }, ct), ct);
     }
 
