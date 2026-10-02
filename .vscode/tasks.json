@@ -24,7 +24,16 @@
       "problemMatcher": "$msCompile"
     },
     {
+      "label": "web-install",
+      "detail": "Runs npm ci in src/web when node_modules is missing or older than package-lock.json.",
+      "type": "shell",
+      "command": "[ -d node_modules ] && [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci",
+      "options": { "cwd": "${workspaceFolder}/src/web" },
+      "problemMatcher": []
+    },
+    {
       "label": "npm: start",
+      "dependsOn": ["web-install"],
       "type": "npm",
       "script": "start",
       "path": "src/web",
