@@ -20,6 +20,7 @@ public static class FetchExtensions
 
         services.AddKeyedScoped<IJobHandler, MailboxFetchJob>(MailboxFetchJob.JobType);
         services.AddKeyedScoped<IJobHandler, SenderFetchJob>(SenderFetchJob.JobType);
+        services.AddKeyedScoped<IJobHandler, IncrementalFetchJob>(IncrementalFetchJob.JobType);
         return services;
     }
 }

@@ -13,6 +13,7 @@ public static class FetchEndpoints
     {
         var group = endpoints.MapGroup("/api/fetch").WithTags("Fetch");
         group.MapPost("/mailbox/start", StartMailboxAsync).RequireAccountMatch();
+        group.MapPost("/incremental", StartIncrementalAsync).RequireAccountMatch();
         group.MapGet("/status", GetStatusAsync);
         group.MapPost("/sender", StartSenderAsync).RequireAccountMatch();
         return endpoints;
@@ -20,38 +21,76 @@ public static class FetchEndpoints
 
     /// <summary>
     /// 202 with a new job; 200 with the active one, or with the latest failed or paused one after resuming it from its
-    /// cursor; 409 when the local data belongs to another account (<see cref="AccountGuardEndpointExtensions.RequireAccountMatch"/>), Gmail is not connected or the mailbox is already fetched (that is the incremental fetch's job).
+    /// cursor; 409 when the local data belongs to another account (<see cref="AccountGuardEndpointExtensions.RequireAccountMatch"/>)
+    /// or Gmail is not connected. Once the mailbox is fetched it starts the incremental fetch instead.
     /// </summary>
     private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartMailboxAsync(
         ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
     {
-        if (await tokens.GetAsync(ct) is not { ReauthRequired: false })
+        if (!await IsConnectedAsync(tokens, ct))
         {
             return GmailNotConnected("Connect Gmail in Setup before fetching the mailbox.");
         }
 
         // A new job would reset fetch_state and discard the failed or paused job's checkpoint.
-        var latest = await LatestMailboxJobAsync(db, ct);
+        var latest = await LatestJobAsync(db, [MailboxFetchJob.JobType], ct);
         if (latest is { Status: JobStatus.Failed or JobStatus.Paused }
             && await jobs.ResumeAsync(latest.Id, ct) == JobActionResult.Ok)
         {
             return TypedResults.Ok(new StartFetchResponse(latest.Id));
         }
 
-        if (latest is null || !JobRow.Active.Contains(latest.Status))
+        if ((latest is null || !JobRow.Active.Contains(latest.Status)) && IsFetched(await ReadStateAsync(db, ct)))
         {
-            var phase = await db.FetchState.Where(s => s.Id == FetchStateRow.SingletonId).Select(s => s.MailboxPhase).SingleAsync(ct);
-            if (phase == MailboxPhase.Completed)
-            {
-                return TypedResults.Problem(
-                    statusCode: StatusCodes.Status409Conflict,
-                    title: "Mailbox already fetched",
-                    detail: "The full mailbox fetch has completed; use the incremental fetch.");
-            }
+            return await EnqueueOrResumeIncrementalAsync(jobs, db, ct);
         }
 
         // A concurrent start that loses the insert gets the winner's job back with Created false.
-        var (job, created) = await jobs.EnqueueAsync(MailboxFetchJob.JobType, MailboxFetchJob.Queue, null, ct);
+        return await EnqueueAsync(jobs, MailboxFetchJob.JobType, MailboxFetchJob.Queue, ct);
+    }
+
+    /// <summary>
+    /// 202 with a new job; 200 with the active one, or with the latest failed or paused one after resuming it; 409 when
+    /// the local data belongs to another account, Gmail is not connected or the full mailbox fetch has not completed
+    /// (there is no history ID to replay from).
+    /// </summary>
+    private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartIncrementalAsync(
+        ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
+    {
+        if (!await IsConnectedAsync(tokens, ct))
+        {
+            return GmailNotConnected("Connect Gmail in Setup before fetching the mailbox.");
+        }
+
+        if (!IsFetched(await ReadStateAsync(db, ct)))
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Mailbox not fetched",
+                detail: "The incremental fetch replays changes since the full fetch; run the mailbox fetch first.");
+        }
+
+        return await EnqueueOrResumeIncrementalAsync(jobs, db, ct);
+    }
+
+    /// <summary>The caller has checked the Gmail connection and that the mailbox is fetched.</summary>
+    private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> EnqueueOrResumeIncrementalAsync(
+        IJobService jobs, AppDbContext db, CancellationToken ct)
+    {
+        var latest = await LatestJobAsync(db, [IncrementalFetchJob.JobType], ct);
+        if (latest is { Status: JobStatus.Failed or JobStatus.Paused }
+            && await jobs.ResumeAsync(latest.Id, ct) == JobActionResult.Ok)
+        {
+            return TypedResults.Ok(new StartFetchResponse(latest.Id));
+        }
+
+        return await EnqueueAsync(jobs, IncrementalFetchJob.JobType, IncrementalFetchJob.Queue, ct);
+    }
+
+    private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> EnqueueAsync(
+        IJobService jobs, string type, string queue, CancellationToken ct)
+    {
+        var (job, created) = await jobs.EnqueueAsync(type, queue, null, ct);
         var response = new StartFetchResponse(job.Id);
         return created ? TypedResults.Accepted($"/api/jobs/{job.Id}", response) : TypedResults.Ok(response);
     }
@@ -72,7 +111,7 @@ public static class FetchEndpoints
                 detail: "Enter a sender address (name@example.com) or a domain (example.com).");
         }
 
-        if (await tokens.GetAsync(ct) is not { ReauthRequired: false })
+        if (!await IsConnectedAsync(tokens, ct))
         {
             return GmailNotConnected("Connect Gmail in Setup before fetching a sender.");
         }
@@ -95,6 +134,15 @@ public static class FetchEndpoints
         return created ? TypedResults.Accepted($"/api/jobs/{job.Id}", response) : TypedResults.Ok(response);
     }
 
+    private static async Task<bool> IsConnectedAsync(ITokenStore tokens, CancellationToken ct) =>
+        await tokens.GetAsync(ct) is { ReauthRequired: false };
+
+    private static Task<FetchStateRow> ReadStateAsync(AppDbContext db, CancellationToken ct) =>
+        db.FetchState.AsNoTracking().SingleAsync(s => s.Id == FetchStateRow.SingletonId, ct);
+
+    private static bool IsFetched(FetchStateRow state) =>
+        state.MailboxPhase == MailboxPhase.Completed && state.LastHistoryId is not null;
+
     private static async Task<Ok<FetchStatusDto>> GetStatusAsync(AppDbContext db, ITokenStore tokens, CancellationToken ct)
     {
         var counts = await db.FetchState.AsNoTracking()
@@ -107,7 +155,7 @@ public static class FetchEndpoints
             })
             .SingleAsync(ct);
         var state = counts.State;
-        var latest = await LatestMailboxJobAsync(db, ct);
+        var latest = await LatestJobAsync(db, [MailboxFetchJob.JobType, IncrementalFetchJob.JobType], ct);
         var check = AccountGuard.Compare(state.AccountEmail, (await tokens.GetAsync(ct))?.AccountEmail);
 
         return TypedResults.Ok(new FetchStatusDto(
@@ -130,10 +178,13 @@ public static class FetchEndpoints
     private static ProblemHttpResult GmailNotConnected(string detail) =>
         TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: "Gmail not connected", detail: detail);
 
-    /// <summary>The active mailbox fetch job (at most one, by the unique index), else the most recent one.</summary>
-    private static Task<JobRow?> LatestMailboxJobAsync(AppDbContext db, CancellationToken ct) =>
+    /// <summary>
+    /// The active job of <paramref name="types"/> (at most one per type, by the unique index; the newest if both are),
+    /// else the most recent one.
+    /// </summary>
+    private static Task<JobRow?> LatestJobAsync(AppDbContext db, string[] types, CancellationToken ct) =>
         db.Jobs.AsNoTracking()
-            .Where(j => j.Type == MailboxFetchJob.JobType)
+            .Where(j => types.Contains(j.Type))
             .OrderByDescending(j => JobRow.Active.Contains(j.Status))
             .ThenByDescending(j => j.CreatedAt)
             .FirstOrDefaultAsync(ct);

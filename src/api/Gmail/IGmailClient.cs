@@ -28,6 +28,17 @@ public interface IGmailClient
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct);
+
+    /// <summary>
+    /// One page of <c>history.list</c> records after <paramref name="startHistoryId"/>, with all four history types.
+    /// Pass the same start id with every page token of one listing.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    /// <exception cref="ArgumentException"><paramref name="startHistoryId"/> is not a history ID; a data bug, never expiry.</exception>
+    /// <exception cref="GmailHistoryExpiredException">Gmail no longer keeps history that old; resync fully.</exception>
+    /// <exception cref="GmailInvalidPageTokenException">Gmail rejected <paramref name="pageToken"/>.</exception>
+    Task<HistoryPage> ListHistoryAsync(string startHistoryId, string? pageToken, CancellationToken ct);
 }
 
 /// <param name="HistoryId">Gmail's history ID as a decimal string (it is an unsigned 64-bit number).</param>
@@ -70,6 +81,19 @@ public sealed record GmailMessageMetadata(
     int SizeEstimate,
     bool HasAttachment);
 
+/// <param name="HistoryId">The mailbox's current history ID when the page was read.</param>
+public sealed record HistoryPage(IReadOnlyList<HistoryRecord> Records, string? NextPageToken, string HistoryId);
+
+/// <summary>One history record; a message id can appear in several records of one page.</summary>
+public sealed record HistoryRecord(
+    string Id,
+    IReadOnlyList<string> MessagesAdded,
+    IReadOnlyList<string> MessagesDeleted,
+    IReadOnlyList<LabelChange> LabelsAdded,
+    IReadOnlyList<LabelChange> LabelsRemoved);
+
+public sealed record LabelChange(string MessageId, IReadOnlyList<string> LabelIds);
+
 /// <summary>The app is not connected to Gmail (or the connection was revoked); the user must reconnect.</summary>
 public sealed class GmailNotConnectedException(string message, Exception? inner = null) : Exception(message, inner);
 
@@ -78,3 +102,6 @@ public sealed class GmailRateLimitedException(string message, Exception? inner =
 
 /// <summary>Gmail rejected a list page token (expired or malformed); the caller restarts the listing from the first page.</summary>
 public sealed class GmailInvalidPageTokenException(string message, Exception? inner = null) : Exception(message, inner);
+
+/// <summary>Gmail answered 404 to <c>history.list</c>: the start history ID is older than Gmail keeps; resync fully.</summary>
+public sealed class GmailHistoryExpiredException(string message, Exception? inner = null) : Exception(message, inner);

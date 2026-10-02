@@ -22,7 +22,9 @@ public sealed class FakeGmailClient : IGmailClient
     private readonly FakeTokenStore tokens;
     private readonly GmailRetryPolicy retry;
     private readonly List<FakeMessage> messages;
+    private readonly FakeHistory history = new(FakeMailboxSeed.HistoryId);
     private long historyId = FakeMailboxSeed.HistoryId;
+    private int historyPageSize = 100;
     private HttpStatusCode failureStatus;
     private int failuresLeft;
 
@@ -75,6 +77,87 @@ public sealed class FakeGmailClient : IGmailClient
         lock (gate)
         {
             historyId += by;
+        }
+    }
+
+    /// <summary>How many history records Gmail keeps; a start id older than the oldest kept record is expired.</summary>
+    public int HistoryRetention
+    {
+        get
+        {
+            lock (gate)
+            {
+                return history.Retention;
+            }
+        }
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value);
+            lock (gate)
+            {
+                history.Retention = value;
+                history.Trim();
+            }
+        }
+    }
+
+    /// <summary>Records per <see cref="ListHistoryAsync"/> page.</summary>
+    public int HistoryPageSize
+    {
+        get => Volatile.Read(ref historyPageSize);
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+            Volatile.Write(ref historyPageSize, value);
+        }
+    }
+
+    /// <summary>Delivers <paramref name="message"/> (its history id is replaced) and records a <c>messageAdded</c>.</summary>
+    public void AddMessage(FakeMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        lock (gate)
+        {
+            if (messages.Exists(m => m.Id == message.Id))
+            {
+                throw new InvalidOperationException($"Message {message.Id} already exists.");
+            }
+
+            var id = NextHistoryId();
+            messages.Add(message with { HistoryId = id });
+            history.Append(new HistoryRecord(id, [message.Id], [], [], []));
+        }
+    }
+
+    /// <summary>Deletes <paramref name="id"/> permanently and records a <c>messageDeleted</c>.</summary>
+    public void DeleteMessage(string id)
+    {
+        lock (gate)
+        {
+            var index = IndexOf(id);
+            messages.RemoveAt(index);
+            history.Append(new HistoryRecord(NextHistoryId(), [], [id], [], []));
+        }
+    }
+
+    /// <summary>Replaces the labels of <paramref name="id"/> and records the <c>labelAdded</c>/<c>labelRemoved</c> deltas.</summary>
+    public void SetLabels(string id, IReadOnlyList<string> labelIds)
+    {
+        ArgumentNullException.ThrowIfNull(labelIds);
+        lock (gate)
+        {
+            var index = IndexOf(id);
+            var old = messages[index].LabelIds;
+            var added = labelIds.Except(old, StringComparer.Ordinal).ToList();
+            var removed = old.Except(labelIds, StringComparer.Ordinal).ToList();
+            var historyIdText = NextHistoryId();
+            messages[index] = messages[index] with { LabelIds = [.. labelIds], HistoryId = historyIdText };
+            history.Append(new HistoryRecord(
+                historyIdText,
+                [],
+                [],
+                added.Count > 0 ? [new LabelChange(id, added)] : [],
+                removed.Count > 0 ? [new LabelChange(id, removed)] : []));
         }
     }
 
@@ -158,6 +241,27 @@ public sealed class FakeGmailClient : IGmailClient
         return [.. unique.Where(byId.ContainsKey).Select(id => byId[id])];
     }
 
+    public async Task<HistoryPage> ListHistoryAsync(string startHistoryId, string? pageToken, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(startHistoryId);
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        var pageSize = HistoryPageSize;
+
+        return await retry.ExecuteAsync(async _ =>
+        {
+            if (TakeFailure() is { } failure)
+            {
+                await ThrowFailureAsync(failure).ConfigureAwait(false);
+            }
+
+            lock (gate)
+            {
+                var (records, next) = history.Page(startHistoryId, pageToken, pageSize);
+                return new HistoryPage(records, next, historyId.ToString(CultureInfo.InvariantCulture));
+            }
+        }, ct).ConfigureAwait(false);
+    }
+
     public async Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(labelId);
@@ -213,6 +317,14 @@ public sealed class FakeGmailClient : IGmailClient
         return token.ReauthRequired
             ? throw new GmailNotConnectedException("The fake Gmail connection needs to be reconnected.")
             : token;
+    }
+
+    private string NextHistoryId() => (++historyId).ToString(CultureInfo.InvariantCulture);
+
+    private int IndexOf(string id)
+    {
+        var index = messages.FindIndex(m => m.Id == id);
+        return index >= 0 ? index : throw new InvalidOperationException($"Message {id} does not exist.");
     }
 
     private HttpStatusCode? TakeFailure()
