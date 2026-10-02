@@ -214,7 +214,7 @@ public sealed class GroupingTests
     [Fact]
     public void Rule_agrees_case_insensitively_with_penalised_minimum_confidence()
     {
-        var result = DerivationRule.Decide([Out(confidence: 0.95), Out("shopping ", confidence: 0.8, unsubscribe: true), null], 0.10);
+        var result = DerivationRule.Decide([Out(confidence: 0.95), Out("shopping ", confidence: 0.8, unsubscribe: true), Out()], 0.10);
 
         var agreed = result.ShouldBeOfType<Agreed>();
         agreed.TopicLabel.ShouldBe("Shopping");
@@ -236,6 +236,8 @@ public sealed class GroupingTests
         new RepresentativeOutput?[] { Out(), Out(action: true) },
         new RepresentativeOutput?[] { Out(), Out(delete: false) },
         new RepresentativeOutput?[] { Out(), null, null },
+        new RepresentativeOutput?[] { Out(), Out(), null },
+        new RepresentativeOutput?[] { Out(), Out(), Out(" ") },
         new RepresentativeOutput?[] { Out() },
         new RepresentativeOutput?[] { },
         new RepresentativeOutput?[] { Out(), Out(confidence: double.NaN) },
@@ -244,7 +246,7 @@ public sealed class GroupingTests
 
     [Theory]
     [MemberData(nameof(MixedCases))]
-    public void Rule_is_mixed_on_disagreement_or_fewer_than_two_valid_outputs(RepresentativeOutput?[] outputs) =>
+    public void Rule_is_mixed_on_disagreement_or_any_invalid_output(RepresentativeOutput?[] outputs) =>
         DerivationRule.Decide(outputs, 0.10).ShouldBe(Mixed.Instance);
 
     private sealed class FuncRefiner(Func<IReadOnlyList<MessageGroup>, IReadOnlyList<MessageGroup>> refine) : IGroupRefiner
