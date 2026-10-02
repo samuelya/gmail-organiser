@@ -305,14 +305,28 @@ export class AttachmentSettingsSection {
   }
 }
 
-/** The vision picker's options: vision-capable models when Ollama reports capabilities, otherwise all. */
+/**
+ * The vision picker's options: vision-capable models when Ollama reports capabilities, otherwise all.
+ * Like the API, a model with an empty capability list is unknown and stays listed (`unknown`).
+ */
 export function visionChoices(
   models: OllamaModel[],
   saved: string | null | undefined,
-): { options: ModelOption[]; filtered: boolean } {
+): { options: ModelOption[]; filtered: boolean; unknown: boolean } {
   const filtered = models.some((m) => m.capabilities.length > 0);
-  const list = filtered ? models.filter((m) => m.capabilities.includes(VISION_CAPABILITY)) : models;
-  return { options: modelOptions(list, saved), filtered };
+  if (!filtered) return { options: modelOptions(models, saved), filtered, unknown: false };
+  const list = models.filter(
+    (m) => m.capabilities.length === 0 || m.capabilities.includes(VISION_CAPABILITY),
+  );
+  const options = modelOptions(list, null).map((o, i) =>
+    list[i].capabilities.length === 0 ? { ...o, label: `${o.label} (capabilities unknown)` } : o,
+  );
+  if (saved && !list.some((m) => m.name === saved)) {
+    const onServer = models.some((m) => m.name === saved);
+    const note = onServer ? 'no vision capability reported' : 'not found on the server';
+    options.unshift({ value: saved, label: `${saved} (${note})` });
+  }
+  return { options, filtered, unknown: list.some((m) => m.capabilities.length === 0) };
 }
 
 function savedTypeEnabled(settings: AttachmentSettings, type: AttachmentType): boolean {

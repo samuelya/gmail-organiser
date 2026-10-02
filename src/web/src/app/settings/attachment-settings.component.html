@@ -45,7 +45,7 @@
           matInput
           type="number"
           [formControl]="ctl"
-          [min]="r.min"
+          [min]="r.inputMin ?? r.min"
           [max]="r.max"
           [step]="r.step"
           [attr.data-testid]="f.key"
@@ -105,6 +105,9 @@
               images.
             } @else if (vision().options.length === 0) {
               No vision-capable models found; pull one on the host.
+            } @else if (vision().unknown) {
+              Vision-capable models are listed, plus models whose capabilities Ollama did not
+              report.
             } @else {
               Only vision-capable models are listed.
             }

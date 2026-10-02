@@ -46,6 +46,8 @@ export interface Range {
   max: number;
   step: number;
   integer: boolean;
+  /** The input's `min` attribute when it differs from `min`: HTML uses it as the step base. */
+  inputMin?: number;
 }
 
 /** Same bounds as the API's `SettingsValidation`; `step` only sets the arrow-key increment. */
@@ -166,11 +168,12 @@ export const BYTES_PER_MB = 1024 * 1024;
 
 /**
  * Same bounds as the API's `SettingsValidation`, in the units the form shows: the byte limits are
- * in MB (64 KB–25 MB) and converted on load and save.
+ * in MB (64 KB–25 MB) and converted on load and save. Their input `min` is 0 so the spinner
+ * moves in whole MB; the form validator keeps the 64 KB minimum.
  */
 export const ATTACHMENT_LIMITS: Record<NumericAttachmentField, Range> = {
-  maxBytes: { min: 0.0625, max: 25, step: 1, integer: false },
-  maxImageBytes: { min: 0.0625, max: 25, step: 1, integer: false },
+  maxBytes: { min: 0.0625, max: 25, step: 1, integer: false, inputMin: 0 },
+  maxImageBytes: { min: 0.0625, max: 25, step: 1, integer: false, inputMin: 0 },
   maxChars: { min: 500, max: 50_000, step: 500, integer: true },
   maxPerMessage: { min: 1, max: 20, step: 1, integer: true },
 };

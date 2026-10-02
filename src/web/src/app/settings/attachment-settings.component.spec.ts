@@ -104,6 +104,19 @@ describe('AttachmentSettingsSection', () => {
     expect(section.c.enabled.value).toBe(false);
   });
 
+  it('steps the MB inputs in whole MB and keeps the 64 KB minimum', async () => {
+    await render(attachments());
+    const input = q<HTMLInputElement>('maxBytes')!;
+    expect(input.getAttribute('min')).toBe('0');
+    input.stepUp();
+    expect(input.value).toBe('11');
+
+    await type('maxBytes', '0.03');
+    expect(section.c.maxBytes.hasError('min')).toBe(true);
+    await type('maxBytes', '0.0625');
+    expect(section.c.maxBytes.valid).toBe(true);
+  });
+
   it('keeps the form disabled until settings arrive', async () => {
     await render(null);
     expect(section.form.disabled).toBe(true);
@@ -222,5 +235,32 @@ describe('visionChoices', () => {
     const choice = visionChoices([model('test-a:1b', []), model('test-b:1b', [])], 'test-gone:1b');
     expect(choice.filtered).toBe(false);
     expect(choice.options.map((o) => o.value)).toEqual(['test-gone:1b', 'test-a:1b', 'test-b:1b']);
+  });
+
+  it('keeps models with unknown capabilities, labelled, like the API', () => {
+    const choice = visionChoices(
+      [
+        model('test-vision:1b', ['vision']),
+        model('test-chat:1b', ['completion']),
+        model('test-unknown:1b', []),
+      ],
+      'test-unknown:1b',
+    );
+    expect(choice.filtered).toBe(true);
+    expect(choice.unknown).toBe(true);
+    expect(choice.options.map((o) => o.value)).toEqual(['test-vision:1b', 'test-unknown:1b']);
+    expect(choice.options[1].label).toContain('(capabilities unknown)');
+  });
+
+  it('labels a saved model on the server without vision apart from a missing one', () => {
+    const models = [model('test-vision:1b', ['vision']), model('test-chat:1b', ['completion'])];
+    const onServer = visionChoices(models, 'test-chat:1b').options[0];
+    expect(onServer.value).toBe('test-chat:1b');
+    expect(onServer.label).toContain('(no vision capability reported)');
+    expect(onServer.label).not.toContain('not found');
+    expect(visionChoices(models, 'test-gone:1b').options[0].label).toContain(
+      '(not found on the server)',
+    );
+    expect(visionChoices(models, null).unknown).toBe(false);
   });
 });
