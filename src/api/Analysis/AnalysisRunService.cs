@@ -191,9 +191,14 @@ public sealed class AnalysisRunService(
         from run in db.AnalysisRuns.AsNoTracking()
         join job in db.Jobs.AsNoTracking() on run.JobId equals job.Id into jobsOfRun
         from job in jobsOfRun.DefaultIfEmpty()
-        select new RunWithJob(run, job);
+        select new RunWithJob { Run = run, Job = job };
 
-    private sealed record RunWithJob(AnalysisRunRow Run, JobRow? Job);
+    // Member-init, not a positional record: EF translates filters on its properties only in this shape.
+    private sealed class RunWithJob
+    {
+        public required AnalysisRunRow Run { get; init; }
+        public JobRow? Job { get; init; }
+    }
 
     /// <summary>
     /// The run as stored, except while it says queued or running but its job has already ended (refused before the
