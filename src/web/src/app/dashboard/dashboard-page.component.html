@@ -60,11 +60,11 @@
               />
               <span class="muted text-sm" data-testid="fetch-progress-text">
                 {{ statusText(job) }}
+                @if (pendingHint(job); as hint) {
+                  <span data-testid="fetch-pending-hint">({{ hint }})</span>
+                }
                 @if (job.progress; as p) {
-                  · {{ p.done | number }}
-                  @if (p.total !== null) {
-                    / {{ p.total | number }}
-                  }
+                  · {{ p.done | countOf: p.total }}
                   @if (p.message) {
                     · {{ p.message }}
                   }
@@ -76,11 +76,13 @@
           <dl class="m-0 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
             <div>
               <dt>Inbox</dt>
-              <dd data-testid="inbox-fetched">{{ s.inboxFetched | number }}</dd>
+              <dd data-testid="inbox-fetched">{{ s.inboxFetched | countOf: s.inboxTotal }}</dd>
             </div>
             <div>
               <dt>All mail</dt>
-              <dd data-testid="all-mail-fetched">{{ s.allMailFetched | number }}</dd>
+              <dd data-testid="all-mail-fetched">
+                {{ s.allMailFetched | countOf: s.allMailTotal }}
+              </dd>
             </div>
             <div>
               <dt>Messages stored</dt>
@@ -170,8 +172,11 @@
             <span class="min-w-0 flex-1">
               <span>{{ jobLabel(row.job) }}</span>
               <span class="muted text-sm" data-testid="job-status">
-                · {{ statusText(row.job) }}</span
-              >
+                · {{ statusText(row.job) }}
+                @if (pendingHint(row.job); as hint) {
+                  <span data-testid="job-pending-hint">({{ hint }})</span>
+                }
+              </span>
             </span>
             @if (row.controls.pause) {
               <button
@@ -226,11 +231,8 @@
             />
           }
           @if (row.job.progress; as p) {
-            <span class="muted text-sm">
-              {{ p.done | number }}
-              @if (p.total !== null) {
-                / {{ p.total | number }}
-              }
+            <span class="muted text-sm" data-testid="job-progress-text">
+              {{ p.done | countOf: p.total }}
             </span>
           }
         </div>

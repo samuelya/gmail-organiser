@@ -20,6 +20,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { auditTime, catchError, filter, map, Observable, of, Subject, switchMap } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
+import { CountOfPipe } from '../core/count-of.pipe';
 import { JobDto, JobStatus, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PageHeader } from '../layout/page-header';
@@ -40,6 +41,7 @@ export const STATUS_REFRESH_MS = 5000;
 @Component({
   selector: 'app-dashboard-page',
   imports: [
+    CountOfPipe,
     DatePipe,
     DecimalPipe,
     MatButtonModule,
@@ -206,6 +208,13 @@ export class DashboardPage {
     if (action === 'pause') return 'Pausing…';
     if (action === 'cancel') return 'Cancelling…';
     return job.status;
+  }
+
+  /** Why a pause or cancel takes a while: the job stops only after the current chunk is stored. */
+  pendingHint(job: JobDto): string | null {
+    return this.pendingAction(job) !== null && job.status === 'running'
+      ? 'Finishing the current batch…'
+      : null;
   }
 
   jobLabel(job: JobDto): string {
