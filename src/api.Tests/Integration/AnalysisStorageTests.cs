@@ -18,6 +18,7 @@ public sealed class AnalysisStorageTests(PostgresFixture postgres) : IAsyncLifet
     public async ValueTask InitializeAsync()
     {
         await using var db = postgres.CreateDbContext();
+        await db.ActionLog.ExecuteDeleteAsync(Ct);
         await db.ActionBatches.ExecuteDeleteAsync(Ct);
         await db.Decisions.ExecuteDeleteAsync(Ct);
         await db.Suggestions.ExecuteDeleteAsync(Ct);
@@ -35,7 +36,8 @@ public sealed class AnalysisStorageTests(PostgresFixture postgres) : IAsyncLifet
         var batchId = Guid.NewGuid();
         await using (var db = postgres.CreateDbContext())
         {
-            db.Messages.Add(Message("msg-1", AnalysisStatus.Approved));
+            var message = Message("msg-1", AnalysisStatus.Analysed);
+            db.Messages.Add(message);
             db.AnalysisRuns.Add(new AnalysisRunRow
             {
                 Id = runId,
@@ -48,7 +50,7 @@ public sealed class AnalysisStorageTests(PostgresFixture postgres) : IAsyncLifet
                 MessagesFromMemory = 1,
                 CreatedAt = Now,
             });
-            db.Suggestions.Add(new SuggestionRow
+            var suggestion = new SuggestionRow
             {
                 Id = suggestionId,
                 MessageId = "msg-1",
@@ -57,12 +59,13 @@ public sealed class AnalysisStorageTests(PostgresFixture postgres) : IAsyncLifet
                 GroupKey = "news@example.com|weekly",
                 Source = SuggestionSource.SenderPattern,
                 TopicLabel = "Topic/Sub",
-                Confidence = 0.75f,
+                Confidence = 0.95,
                 Reason = "Synthetic reason",
                 FilterCriteria = """{"from":"news@example.com"}""",
-                Status = SuggestionStatus.Approved,
                 CreatedAt = Now,
-            });
+            };
+            suggestion.SetStatus(SuggestionStatus.Approved, message, Now);
+            db.Suggestions.Add(suggestion);
             db.Decisions.Add(new DecisionRow
             {
                 Id = Guid.NewGuid(),
@@ -77,7 +80,11 @@ public sealed class AnalysisStorageTests(PostgresFixture postgres) : IAsyncLifet
             });
             db.ActionBatches.Add(new ActionBatchRow
             {
-                Id = batchId, Kind = ActionKind.ApplyRest, Description = "Synthetic batch", MessageCount = 1, CreatedAt = Now,
+                Id = batchId,
+                Kind = ActionKind.ApplyRest,
+                Description = "Synthetic batch",
+                MessageCount = 1,
+                CreatedAt = Now,
             });
             db.ActionLog.Add(new ActionLogRow
             {
@@ -105,7 +112,10 @@ public sealed class AnalysisStorageTests(PostgresFixture postgres) : IAsyncLifet
             var suggestion = await db.Suggestions.AsNoTracking().SingleAsync(Ct);
             suggestion.RunId.ShouldBe(runId);
             suggestion.Source.ShouldBe(SuggestionSource.SenderPattern);
-            suggestion.Confidence.ShouldBe(0.75f);
+            suggestion.Confidence.ShouldBe(0.95);
+            (suggestion.Confidence >= 0.95).ShouldBeTrue();
+            suggestion.Status.ShouldBe(SuggestionStatus.Approved);
+            suggestion.DecidedAt.ShouldBe(Now);
             suggestion.FilterCriteria.ShouldNotBeNull().ShouldContain("news@example.com");
             var decision = await db.Decisions.AsNoTracking().SingleAsync(Ct);
             decision.Embedding.ShouldNotBeNull().ToArray().ShouldBe([0.1f, 0.2f, 0.3f]);
@@ -160,6 +170,31 @@ public sealed class AnalysisStorageTests(PostgresFixture postgres) : IAsyncLifet
             (await db.Suggestions.AsNoTracking().SingleAsync(Ct)).RunId.ShouldBeNull();
             await db.Messages.ExecuteDeleteAsync(Ct);
             (await db.Suggestions.CountAsync(Ct)).ShouldBe(0);
+        }
+    }
+
+    [Fact]
+    public async Task Deleting_a_batch_with_log_rows_is_refused()
+    {
+        var batchId = Guid.NewGuid();
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.ActionBatches.Add(new ActionBatchRow
+            {
+                Id = batchId,
+                Kind = ActionKind.ApplyRest,
+                Description = "Synthetic batch",
+                MessageCount = 1,
+                CreatedAt = Now,
+            });
+            db.ActionLog.Add(new ActionLogRow { Id = Guid.NewGuid(), BatchId = batchId, MessageId = "msg-1", CreatedAt = Now });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            await Should.ThrowAsync<Exception>(() => db.ActionBatches.ExecuteDeleteAsync(Ct));
+            (await db.ActionLog.CountAsync(Ct)).ShouldBe(1);
         }
     }
 

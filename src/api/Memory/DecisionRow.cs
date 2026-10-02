@@ -50,6 +50,7 @@ public sealed class DecisionRow
             e.Property(r => r.Source).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionSource>());
             e.Property(r => r.Embedding).HasColumnType("vector");
             e.HasIndex(r => new { r.SenderAddress, r.Outcome, r.CreatedAt });
+            e.HasIndex(r => new { r.EmbeddingModel, r.SenderAddress });
         });
     }
 }

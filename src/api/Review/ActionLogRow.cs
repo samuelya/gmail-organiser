@@ -4,7 +4,8 @@ namespace GmailOrganiser.Review;
 
 /// <summary>
 /// One Gmail mutation of one message (<c>action_log</c>), with the label IDs before and after so it can be undone.
-/// <see cref="SuggestionId"/> has no foreign key: re-analyse deletes suggestions, the log stays.
+/// <see cref="SuggestionId"/> has no foreign key: re-analyse deletes suggestions, the log stays. Deleting a batch
+/// that still has log rows is refused (<c>RESTRICT</c>) so undo history is never erased by accident.
 /// </summary>
 public sealed class ActionLogRow
 {
@@ -36,7 +37,7 @@ public sealed class ActionLogRow
             e.Property(r => r.LabelsRemoved).IsRequired();
             e.Property(r => r.LabelIdsBefore).IsRequired();
             e.Property(r => r.LabelIdsAfter).IsRequired();
-            e.HasOne<ActionBatchRow>().WithMany().HasForeignKey(r => r.BatchId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<ActionBatchRow>().WithMany().HasForeignKey(r => r.BatchId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(r => r.BatchId);
             e.HasIndex(r => r.MessageId);
         });

@@ -112,7 +112,7 @@ namespace GmailOrganiser.Data.Migrations
                         column: x => x.batch_id,
                         principalTable: "action_batches",
                         principalColumn: "id",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -130,7 +130,7 @@ namespace GmailOrganiser.Data.Migrations
                     needs_action = table.Column<bool>(type: "boolean", nullable: false),
                     to_be_deleted = table.Column<bool>(type: "boolean", nullable: false),
                     unsubscribe_suggested = table.Column<bool>(type: "boolean", nullable: false),
-                    confidence = table.Column<float>(type: "real", nullable: false),
+                    confidence = table.Column<double>(type: "double precision", nullable: false),
                     reason = table.Column<string>(type: "text", nullable: false),
                     filter_criteria = table.Column<string>(type: "jsonb", nullable: true),
                     model = table.Column<string>(type: "text", nullable: true),
@@ -179,6 +179,11 @@ namespace GmailOrganiser.Data.Migrations
                 columns: new[] { "status", "created_at" });
 
             migrationBuilder.CreateIndex(
+                name: "ix_decisions_embedding_model_sender_address",
+                table: "decisions",
+                columns: new[] { "embedding_model", "sender_address" });
+
+            migrationBuilder.CreateIndex(
                 name: "ix_decisions_sender_address_outcome_created_at",
                 table: "decisions",
                 columns: new[] { "sender_address", "outcome", "created_at" });
@@ -208,6 +213,9 @@ namespace GmailOrganiser.Data.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            // The pre-M3 AnalysisStatus has no approved/rejected; fold them back so old code can read every row.
+            migrationBuilder.Sql("UPDATE messages SET analysis_status = 'analysed' WHERE analysis_status IN ('approved', 'rejected');");
+
             migrationBuilder.DropTable(
                 name: "action_log");
 

@@ -13,7 +13,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261002161539_M3_Analysis")]
+    [Migration("20261002162132_M3_Analysis")]
     partial class M3_Analysis
     {
         /// <inheritdoc />
@@ -143,8 +143,8 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<float>("Confidence")
-                        .HasColumnType("real")
+                    b.Property<double>("Confidence")
+                        .HasColumnType("double precision")
                         .HasColumnName("confidence");
 
                     b.Property<DateTimeOffset>("CreatedAt")
@@ -633,6 +633,9 @@ namespace GmailOrganiser.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_decisions");
 
+                    b.HasIndex("EmbeddingModel", "SenderAddress")
+                        .HasDatabaseName("ix_decisions_embedding_model_sender_address");
+
                     b.HasIndex("SenderAddress", "Outcome", "CreatedAt")
                         .HasDatabaseName("ix_decisions_sender_address_outcome_created_at");
 
@@ -842,7 +845,7 @@ namespace GmailOrganiser.Data.Migrations
                     b.HasOne("GmailOrganiser.Review.ActionBatchRow", null)
                         .WithMany()
                         .HasForeignKey("BatchId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_action_log_action_batches_batch_id");
                 });
