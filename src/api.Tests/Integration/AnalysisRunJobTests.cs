@@ -234,6 +234,9 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
     /// <summary>The embedding generator the host hands out; none (a failing factory) by default.</summary>
     public FakeEmbeddingGenerator? Embeddings { get; init; }
 
+    /// <summary>Changes seeded messages, for example to add attachments; applied to the mailbox and the stored rows.</summary>
+    public Func<FakeMessage, FakeMessage>? Customise { get; init; }
+
     /// <summary>Extra test services, applied last.</summary>
     public Action<IServiceCollection>? ConfigureServices { get; init; }
     public JobRunner Runner { get; private set; } = null!;
@@ -266,6 +269,7 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
                 InternalDate = m.Date,
                 LabelIds = [.. m.LabelIds],
                 Category = MessageCategory.Updates,
+                HasAttachment = m.HasAttachment,
                 FetchedAt = Newest,
                 UpdatedAt = Newest,
             }));
@@ -401,7 +405,9 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         }),
     });
 
-    private static List<FakeMessage> Seed() =>
+    private List<FakeMessage> Seed() => [.. SeedMessages().Select(m => Customise?.Invoke(m) ?? m)];
+
+    private static List<FakeMessage> SeedMessages() =>
     [
         .. Enumerable.Range(0, 10).Select(i => Message($"a{i:D2}", Shop, $"Weekly offer {i + 1}", i)),
         .. Enumerable.Range(0, 6).Select(i => Message($"b{i:D2}", News, $"Newsletter issue {i + 1}", 20 + i)),

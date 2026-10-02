@@ -15,7 +15,7 @@ namespace GmailOrganiser.Tests.Integration;
 public sealed class AttachmentConversionStorageTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>
 {
     /// <summary>Only the seeded PDFs carry this text; see <c>FakeMailboxSeed</c>.</summary>
-    private const string PdfText = "Synthetic invoice for example.com testing.";
+    internal const string PdfText = "Synthetic invoice for example.com testing.";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -35,11 +35,11 @@ public sealed class AttachmentConversionStorageTests(ApiFactory factory, Postgre
 
         digest.Skipped.ShouldBeEmpty();
         digest.Converted.Single().Markdown.ShouldContain(PdfText);
-        (await TablesContainingAsync(PdfText)).ShouldBeEmpty();
+        (await TablesContainingAsync(postgres, PdfText)).ShouldBeEmpty();
     }
 
     /// <summary>Every public table whose rows, rendered as text, contain <paramref name="text"/>.</summary>
-    private async Task<List<string>> TablesContainingAsync(string text)
+    internal static async Task<List<string>> TablesContainingAsync(PostgresFixture postgres, string text)
     {
         await using var db = postgres.CreateDbContext();
         var tables = await db.Database
