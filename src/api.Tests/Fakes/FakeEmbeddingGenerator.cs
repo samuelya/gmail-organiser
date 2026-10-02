@@ -12,6 +12,9 @@ public sealed class FakeEmbeddingGenerator(int dimension = 8) : IEmbeddingGenera
 
     public int Dimension { get; } = dimension > 0 ? dimension : throw new ArgumentOutOfRangeException(nameof(dimension));
     public Exception? Failure { get; set; }
+
+    /// <summary>A call with any input this matches fails as a whole, like a model rejecting one invalid input.</summary>
+    public Func<string, bool>? Rejects { get; set; }
     public bool Disposed { get; private set; }
 
     public IReadOnlyList<string> Inputs
@@ -38,6 +41,11 @@ public sealed class FakeEmbeddingGenerator(int dimension = 8) : IEmbeddingGenera
         if (Failure is not null)
         {
             throw Failure;
+        }
+
+        if (Rejects is { } rejects && list.Any(rejects))
+        {
+            throw new HttpRequestException("synthetic rejected input");
         }
 
         return Task.FromResult(new GeneratedEmbeddings<Embedding<float>>(list.Select(v => new Embedding<float>(Vector(v)))));

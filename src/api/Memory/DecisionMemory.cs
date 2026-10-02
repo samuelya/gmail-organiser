@@ -26,6 +26,9 @@ public sealed partial class DecisionMemory(
     /// <summary>A pattern looks at the latest approvals of a scope only, so an old habit fades out.</summary>
     public const int MaxPatternApprovals = 100;
 
+    /// <summary>Embedded to tell an unavailable embedder from inputs it rejects.</summary>
+    public const string ProbeText = "example.com | probe | ";
+
     /// <summary>The text a decision and a message are embedded from: sender, subject template and snippet.</summary>
     public static string EmbeddingText(string sender, string? subjectTemplate, string? snippet) =>
         $"{sender} | {subjectTemplate ?? ""} | {snippet ?? ""}";
@@ -55,6 +58,8 @@ public sealed partial class DecisionMemory(
             decisions[i].EmbeddingModel = embedded.Model;
         }
     }
+
+    public async Task<bool> CanEmbedAsync(CancellationToken ct) => await EmbedTextsAsync([ProbeText], ct) is not null;
 
     public async Task<MessageVectors?> EmbedMessagesAsync(IReadOnlyList<MessageRow> messages, CancellationToken ct)
     {

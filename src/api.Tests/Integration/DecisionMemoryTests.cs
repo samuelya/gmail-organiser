@@ -131,6 +131,73 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     }
 
     [Fact]
+    public async Task A_rejected_decision_is_isolated_marked_and_retried_after_a_day_while_the_rest_embed()
+    {
+        var clock = new FakeTimeProvider(Now);
+        var rows = Enumerable.Range(0, 7).Select(i => Decision($"s{i}@example.com", "Shopping", DecisionOutcome.Approved, Now.AddMinutes(i))).ToList();
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.AddRange(rows);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var poison = DecisionMemory.EmbeddingText(rows[3].SenderAddress, rows[3].SubjectTemplate, null);
+        embeddings.Rejects = text => text == poison;
+        (await EmbeddingService(clock).EmbedPendingAsync(Ct)).ShouldBe(6);
+        await using (var db = postgres.CreateDbContext())
+        {
+            var stored = await db.Decisions.AsNoTracking().ToListAsync(Ct);
+            stored.Where(d => d.Embedding is null).Select(d => (d.Id, d.EmbeddingFailedAt)).ShouldBe([(rows[3].Id, Now)]);
+            stored.ShouldAllBe(d => d.Id == rows[3].Id || d.EmbeddingFailedAt == null);
+        }
+
+        var calls = embeddings.Inputs.Count;
+        clock.Advance(DecisionEmbeddingService.FailedRetryInterval - TimeSpan.FromMinutes(1));
+        (await EmbeddingService(clock).EmbedPendingAsync(Ct)).ShouldBe(0);
+        embeddings.Inputs.Count.ShouldBe(calls);
+
+        embeddings.Rejects = null;
+        clock.Advance(TimeSpan.FromMinutes(2));
+        (await EmbeddingService(clock).EmbedPendingAsync(Ct)).ShouldBe(1);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Decisions.AsNoTracking().SingleAsync(d => d.Id == rows[3].Id, Ct)).EmbeddingFailedAt.ShouldBeNull();
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_batch_in_which_nothing_embeds_marks_no_decision(bool embedderDown)
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.AddRange(Enumerable.Range(0, 4).Select(i => Decision($"s{i}@example.com", "Shopping", DecisionOutcome.Approved, Now)));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        if (embedderDown)
+        {
+            embeddings.Failure = new HttpRequestException("synthetic outage");
+        }
+        else
+        {
+            embeddings.Rejects = text => text != DecisionMemory.ProbeText;
+        }
+
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
+        if (embedderDown)
+        {
+            embeddings.Inputs.ShouldBe([.. embeddings.Inputs.Take(4), DecisionMemory.ProbeText]);
+        }
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Decisions.AsNoTracking().ToListAsync(Ct)).ShouldAllBe(d => d.Embedding == null && d.EmbeddingFailedAt == null);
+        }
+    }
+
+    [Fact]
     public async Task Similar_retrieval_ranks_the_same_sender_decision_first_and_embeds_all_messages_in_one_call()
     {
         var query = Message("q1", Shop, "Weekly offer 7", "Synthetic deals of the week");
@@ -321,14 +388,14 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     private DecisionMemory Memory(AppDbContext db) =>
         new(db, new FakeLlmClientFactory(embed: embeddings), settings, NullLogger<DecisionMemory>.Instance);
 
-    private DecisionEmbeddingService EmbeddingService()
+    private DecisionEmbeddingService EmbeddingService(TimeProvider? clock = null)
     {
         var services = new ServiceCollection();
         services.AddScoped(_ => postgres.CreateDbContext());
         services.AddScoped<IDecisionMemory>(sp => Memory(sp.GetRequiredService<AppDbContext>()));
         providers.Add(services.BuildServiceProvider());
         return new DecisionEmbeddingService(
-            providers[^1].GetRequiredService<IServiceScopeFactory>(), new DecisionEmbeddingQueue(), TimeProvider.System,
+            providers[^1].GetRequiredService<IServiceScopeFactory>(), new DecisionEmbeddingQueue(), clock ?? TimeProvider.System,
             NullLogger<DecisionEmbeddingService>.Instance);
     }
 

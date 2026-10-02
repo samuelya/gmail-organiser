@@ -22,6 +22,9 @@ public interface IDecisionMemory
     /// </summary>
     Task EmbedAsync(IReadOnlyList<DecisionRow> decisions, CancellationToken ct);
 
+    /// <summary>Whether the configured embedding model embeds a fixed probe text; false without a model or on failure.</summary>
+    Task<bool> CanEmbedAsync(CancellationToken ct);
+
     /// <summary>The messages' vectors in one model call; null without an embedding model or on failure.</summary>
     Task<MessageVectors?> EmbedMessagesAsync(IReadOnlyList<MessageRow> messages, CancellationToken ct);
 
