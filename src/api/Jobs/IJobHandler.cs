@@ -13,13 +13,8 @@ public interface IJobHandler
     Task RunAsync(JobContext ctx, CancellationToken ct);
 }
 
-/// <summary>Receives every job status change and checkpoint (SignalR in #55).</summary>
+/// <summary>Receives every job status change and checkpoint.</summary>
 public interface IJobProgressPublisher
 {
     Task JobChangedAsync(JobDto job, CancellationToken ct);
-}
-
-internal sealed class NoOpJobProgressPublisher : IJobProgressPublisher
-{
-    public Task JobChangedAsync(JobDto job, CancellationToken ct) => Task.CompletedTask;
 }

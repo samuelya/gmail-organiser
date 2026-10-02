@@ -5,13 +5,16 @@ namespace GmailOrganiser.Common;
 /// <summary>
 /// Anti-CSRF guard for state-changing requests under <c>/api</c>. The app has no login and
 /// registers no CORS policy, so a browser on another site can neither read responses nor send
-/// the custom <c>X-Requested-With</c> header without a (refused) preflight.
+/// the custom <c>X-Requested-With</c> header without a (refused) preflight. Every request under
+/// <c>/hubs</c> (SignalR negotiate and the WebSocket upgrade, which no preflight protects) must
+/// come from an allowed <c>Origin</c> when one is sent.
 /// </summary>
 public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<SecurityOptions> options)
 {
     public const string RequestedWithHeader = "X-Requested-With";
 
     private static readonly PathString ApiPrefix = new("/api");
+    private static readonly PathString HubsPrefix = new("/hubs");
 
     // Normalised once; start-up validation guarantees every configured value normalises.
     private readonly HashSet<string> _allowedOrigins = new(
@@ -23,13 +26,10 @@ public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<Sec
     public async Task InvokeAsync(HttpContext context, IProblemDetailsService problemDetails)
     {
         var request = context.Request;
-        if (!request.Path.StartsWithSegments(ApiPrefix, StringComparison.OrdinalIgnoreCase) || !IsStateChanging(request.Method))
-        {
-            await next(context);
-            return;
-        }
-
-        var failure = Check(request, _allowedOrigins);
+        var failure =
+            request.Path.StartsWithSegments(HubsPrefix, StringComparison.OrdinalIgnoreCase) ? CheckOrigin(request, _allowedOrigins)
+            : request.Path.StartsWithSegments(ApiPrefix, StringComparison.OrdinalIgnoreCase) && IsStateChanging(request.Method) ? Check(request, _allowedOrigins)
+            : null;
         if (failure is null)
         {
             await next(context);
@@ -62,6 +62,12 @@ public sealed class ApiRequestGuardMiddleware(RequestDelegate next, IOptions<Sec
             return $"The {RequestedWithHeader} header is required.";
         }
 
+        return CheckOrigin(request, allowedOrigins);
+    }
+
+    /// <returns>A reason when an <c>Origin</c> is sent and is not allowed, otherwise <c>null</c>.</returns>
+    internal static string? CheckOrigin(HttpRequest request, IReadOnlySet<string> allowedOrigins)
+    {
         var origins = request.Headers.Origin;
         if (origins.Count == 0)
         {
