@@ -142,6 +142,42 @@ public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
+    public async Task A_resent_chunk_drops_a_label_deleted_in_gmail_meanwhile()
+    {
+        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 2;
+        await SeedAsync([.. Enumerable.Range(0, 4).Select(i => ($"a{i:D2}", "Example", false, false))]);
+        var apply = await ApplyAndRunAsync();
+        using var stop = new CancellationTokenSource();
+        IReadOnlyList<string> pending = [];
+        h.Gmail.BeforeBatchModify = (call, ids) =>
+        {
+            if (call != 4)
+            {
+                return Task.CompletedTask;
+            }
+
+            pending = ids;
+            return Stop(stop);
+        };
+        var undo = await UndoAsync(apply.Id);
+        await h.RunNextAsync(stop.Token);
+
+        var example = (await h.Gmail.Inner.ListLabelsAsync(Ct)).Single(l => l.Name == "Example").Id;
+        h.Gmail.Inner.DeleteLabel(example);
+        (await h.Runner.RecoverAsync(Ct)).ShouldBe(1);
+        await h.RunNextAsync();
+
+        (await JobAsync(undo)).Status.ShouldBe(JobStatus.Completed);
+        Enumerable.Range(0, 4).ShouldAllBe(i => Labels($"a{i:D2}").Contains("INBOX"));
+        (await DetailAsync(apply.Id)).Batch.UndoneAt.ShouldNotBeNull();
+        await using var db = postgres.CreateDbContext();
+        var rows = await db.ActionLog.AsNoTracking().Where(l => l.BatchId == undo.Id).ToListAsync(Ct);
+        rows.Count.ShouldBe(4);
+        pending.Count.ShouldBe(2);
+        rows.Where(r => pending.Contains(r.MessageId)).ShouldAllBe(r => r.LabelsAdded.SequenceEqual(new[] { "INBOX" }) && !r.LabelsRemoved.Contains("Example"));
+    }
+
+    [Fact]
     public async Task Messages_gone_from_gmail_are_skipped_with_a_note()
     {
         await SeedAsync(("a00", "Example", false, false), ("a01", "Example", false, false), ("a02", "Example", false, false));

@@ -31,7 +31,7 @@ public sealed record UndoChunk(Guid[] LogIds, string[] MessageIds, string[] Add,
 /// inverse label sets, adds what the batch removed and removes what it added. Like <see cref="ApplyActionsJob"/>, each
 /// chunk is two transactions around the Gmail call: the first locks the original rows, writes the inverse rows and
 /// marks the originals undone, checkpointing the chunk as pending; the second restores the stored labels, suggestions
-/// and counts. Labels the batch created are deleted at the end only when nothing carries them any more.
+/// and counts. Labels the batch created are kept; the History detail lists them for the user to remove by hand.
 /// </summary>
 public sealed partial class UndoActionsJob(
     AppDbContext db,
@@ -44,6 +44,7 @@ public sealed partial class UndoActionsJob(
     public const string JobType = ReviewJobTypes.Undo;
     public const string Queue = JobQueues.Apply;
     public const string GoneNote = "message gone";
+    public const string LabelDeletedNote = "label deleted in Gmail";
 
     public string Type => JobType;
 
@@ -62,6 +63,7 @@ public sealed partial class UndoActionsJob(
         var total = Done(cursor) + (cursor.Pending?.LogIds.Length ?? 0) + plan.Sum(c => c.LogIds.Length);
         if (cursor.Pending is not null)
         {
+            cursor = await DropDeletedLabelsAsync(ctx, cursor, labels, total, ct);
             (cursor, var signal, total) = await SendAsync(ctx, cursor, resent: true, total, ct);
             if (signal != JobSignal.Continue)
             {
@@ -211,6 +213,49 @@ public sealed partial class UndoActionsJob(
 
         db.ChangeTracker.Clear();
         return next;
+    }
+
+    /// <summary>
+    /// Drops from the pending chunk the labels deleted in Gmail since it was prepared, so the resend isn't refused: a
+    /// label to remove is gone already, a label to re-add is skipped with <see cref="LabelDeletedNote"/>. Rewrites the
+    /// chunk and its inverse rows in one transaction; unchanged when every label still exists.
+    /// </summary>
+    private async Task<UndoCursor> DropDeletedLabelsAsync(
+        JobContext ctx, UndoCursor cursor, IReadOnlyList<GmailLabel> labels, int total, CancellationToken ct)
+    {
+        var pending = cursor.Pending!;
+        var existing = labels.Select(l => l.Id).ToHashSet(StringComparer.Ordinal);
+        var keepAdd = Array.ConvertAll(pending.Add, existing.Contains);
+        var keepRemove = Array.ConvertAll(pending.Remove, existing.Contains);
+        var addDropped = keepAdd.Contains(false);
+        if (pending.Gone || (!addDropped && !keepRemove.Contains(false)))
+        {
+            return cursor;
+        }
+
+        var chunk = pending with { Add = Keep(pending.Add, keepAdd), Remove = Keep(pending.Remove, keepRemove) };
+        var next = cursor with { Pending = chunk };
+        await ctx.CheckpointAsync(next, Progress(cursor, total), async t =>
+        {
+            var rows = await db.ActionLog
+                .Where(l => l.BatchId == cursor.BatchId && pending.MessageIds.Contains(l.MessageId))
+                .ToListAsync(t);
+            foreach (var row in rows)
+            {
+                // The display names were written in the chunk's label order, so the same flags apply.
+                row.LabelsAdded = Keep(row.LabelsAdded, keepAdd);
+                row.LabelsRemoved = Keep(row.LabelsRemoved, keepRemove);
+                row.LabelIdsAfter = LabelChunks.After(row.LabelIdsBefore, chunk.Add, chunk.Remove);
+                row.Note ??= addDropped ? LabelDeletedNote : null;
+            }
+
+            await db.SaveChangesAsync(t);
+        }, ct);
+        db.ChangeTracker.Clear();
+        return next;
+
+        static string[] Keep(string[] values, bool[] keep) =>
+            values.Length == keep.Length ? [.. values.Where((_, i) => keep[i])] : values;
     }
 
     /// <summary>
