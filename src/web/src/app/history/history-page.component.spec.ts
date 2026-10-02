@@ -239,4 +239,44 @@ describe('HistoryPage', () => {
     await fixture.whenStable();
     expect(api.list).toHaveBeenCalledTimes(2);
   });
+
+  async function startUndo() {
+    const r = await render();
+    api.undo.mockReturnValue(
+      of(batch({ id: 'u-1', kind: 'undo', jobId: 'job-undo', canUndo: false })),
+    );
+    r.q('undo')?.click();
+    await r.fixture.whenStable();
+    r.overlay('confirm-ok')?.click();
+    await r.fixture.whenStable();
+    expect(r.q('row-progress')?.textContent).toContain('Undoing…');
+    return r;
+  }
+
+  it('stops showing Undoing… once a reload reports the batch undone', async () => {
+    const { fixture, q } = await startUndo();
+    api.list.mockReturnValue(
+      of(paged([batch({ undoneAt: '2026-01-01T12:00:00Z', canUndo: false })])),
+    );
+    jobs.reconnects.set(1);
+    await fixture.whenStable();
+    expect(q('row-progress')).toBeNull();
+    expect(q('undone-at')).not.toBeNull();
+  });
+
+  it('treats a reported undo job dropped by a reconnect snapshot as finished', async () => {
+    const { fixture, q } = await startUndo();
+    jobs.held.set([job('job-undo', 'running')]);
+    await fixture.whenStable();
+    expect(api.list).toHaveBeenCalledTimes(2);
+
+    api.list.mockReturnValue(
+      of(paged([batch({ undoneAt: '2026-01-01T12:00:00Z', canUndo: false })])),
+    );
+    jobs.held.set([]);
+    await fixture.whenStable();
+    expect(api.list).toHaveBeenCalledTimes(3);
+    expect(q('row-progress')).toBeNull();
+    expect(q('undone-at')).not.toBeNull();
+  });
 });

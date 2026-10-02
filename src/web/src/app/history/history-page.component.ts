@@ -34,12 +34,12 @@ import {
 } from './history.models';
 import { HistoryService } from './history.service';
 
-/** A row's live job: the batch's own (an apply or undo still running) or the undo started from it. */
 /** Below this width the table folds into two columns so Undo stays on screen. */
 const NARROW_QUERY = '(max-width: 767.98px)';
 const WIDE_COLUMNS = ['when', 'kind', 'description', 'messages', 'status'];
 const NARROW_COLUMNS = ['description', 'status'];
 
+/** A row's live job: the batch's own (an apply or undo still running) or the undo started from it. */
 interface RowJob {
   job: JobDto | undefined;
   percent: number | null;
@@ -159,13 +159,18 @@ export class HistoryPage {
       .subscribe((page) => this.onLoaded(page));
 
     // A followed job finishing changes the batches: reload, and stop following a finished undo.
+    // A job the hub reported and then dropped (missing from a reconnect snapshot) also finished.
     let previous = new Set<string>();
+    const reported = new Set<string>();
     effect(() => {
       const current = this.followed();
       const ended = [...current, ...previous].filter((id) => {
         const job = this.jobs.job(id);
-        return !!job && !isActiveJob(job);
+        if (!job) return reported.has(id);
+        reported.add(id);
+        return !isActiveJob(job);
       });
+      for (const id of ended) reported.delete(id);
       previous = new Set([...current].filter((id) => !ended.includes(id)));
       if (ended.length === 0) return;
       untracked(() => {
@@ -251,6 +256,12 @@ export class HistoryPage {
       return;
     }
     this.result.set(page);
+    // An undo that finished unseen (e.g. while the hub was down) shows up here as undone.
+    const undone = new Set(page.items.filter((b) => b.undoneAt).map((b) => b.id));
+    const undo = this.undoJobs();
+    if ([...undo.keys()].some((id) => undone.has(id))) {
+      this.undoJobs.set(new Map([...undo].filter(([id]) => !undone.has(id))));
+    }
   }
 
   private endRequest(id: string): void {
