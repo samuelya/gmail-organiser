@@ -7,6 +7,7 @@ using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
+using Google;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -155,7 +156,7 @@ public sealed class ActionDoneScannerTests(ApiFactory factory, PostgresFixture p
         var first = h.Gmail.BatchModifyCalls.Count + 1;
         h.Gmail.BeforeBatchModify = (call, _) => call == first ? throw new HttpRequestException("Synthetic timeout.") : Task.CompletedTask;
 
-        (await FetchAsync()).Status.ShouldBe("failed");
+        (await FetchAsync()).Status.ShouldBe("completed");
         await using (var db = postgres.CreateDbContext())
         {
             var pending = (await db.ActionBatches.Where(b => b.Kind == ActionKind.AutoArchive).ToListAsync(Ct)).ShouldHaveSingleItem();
@@ -176,11 +177,85 @@ public sealed class ActionDoneScannerTests(ApiFactory factory, PostgresFixture p
         }
     }
 
-    private async Task SettingsAsync(bool on)
+    [Fact]
+    public async Task Resends_that_keep_failing_never_fail_the_fetch_and_the_third_finalises_the_batch_as_partial()
+    {
+        await SeedAsync("a00");
+        await ApplyAsync();
+        RemoveLabel("a00", await ActionLabelIdAsync());
+        h.Gmail.BeforeBatchModify = (_, _) => throw new HttpRequestException("Synthetic timeout.");
+        (await FetchAsync()).Status.ShouldBe("completed");
+
+        h.Gmail.BeforeBatchModify = (_, _) => throw new GoogleApiException("gmail", "Synthetic refusal.") { HttpStatusCode = HttpStatusCode.Forbidden };
+        for (var i = 1; i <= ActionDoneScanner.MaxSendFailures; i++)
+        {
+            (await FetchAsync()).Status.ShouldBe("completed");
+            await using var db = postgres.CreateDbContext();
+            var batch = await db.ActionBatches.SingleAsync(b => b.Kind == ActionKind.AutoArchive, Ct);
+            batch.SendFailures.ShouldBe(i);
+            (batch.MessageCount, batch.Description).ShouldBe(i < ActionDoneScanner.MaxSendFailures
+                ? (0, ActionDoneScanner.Description)
+                : (1, ActionDoneScanner.Description + ActionDoneScanner.PartialSuffix));
+            (await db.ActionLog.CountAsync(l => l.BatchId == batch.Id, Ct)).ShouldBe(1);
+        }
+
+        // Finalised: not re-sent again, and History can undo it.
+        var calls = h.Gmail.BatchModifyCalls.Count;
+        (await FetchAsync()).Status.ShouldBe("completed");
+        h.Gmail.BatchModifyCalls.Count.ShouldBe(calls);
+    }
+
+    [Fact]
+    public async Task A_message_of_an_apply_job_with_a_pending_chunk_is_skipped_until_the_job_is_finalised()
+    {
+        await SeedAsync("a00");
+        await ApplyAsync();
+        Guid jobId;
+        await using (var db = postgres.CreateDbContext())
+        {
+            jobId = (await db.ActionBatches.SingleAsync(b => b.Kind == ActionKind.Apply, Ct)).JobId!.Value;
+            var pending = """{"messageIds": ["a00"], "add": [], "remove": []}""";
+            await db.Database.ExecuteSqlAsync(
+                $"UPDATE jobs SET status = 'failed', cursor = cursor || jsonb_build_object('pending', {pending}::jsonb) WHERE id = {jobId}", Ct);
+        }
+
+        RemoveLabel("a00", await ActionLabelIdAsync());
+        await FetchAsync();
+        Labels("a00").ShouldContain("INBOX");
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.ActionBatches.AnyAsync(b => b.Kind == ActionKind.AutoArchive, Ct)).ShouldBeFalse();
+            await db.Database.ExecuteSqlAsync($"UPDATE jobs SET status = 'completed', cursor = cursor - 'pending' WHERE id = {jobId}", Ct);
+        }
+
+        h.Gmail.Inner.SetLabels("a00", [.. Labels("a00"), "CATEGORY_PERSONAL"]);
+        await FetchAsync();
+        Labels("a00").ShouldNotContain("INBOX");
+    }
+
+    [Fact]
+    public async Task Renaming_the_action_label_setting_does_not_archive_older_to_dos()
+    {
+        await SeedAsync("a00");
+        await ApplyAsync();
+        await h.Gmail.CreateLabelAsync(ActionLabel + " Renamed", Ct);
+        await SettingsAsync(on: true, ActionLabel + " Renamed");
+        h.Services.GetRequiredService<LabelCatalog>().Invalidate();
+        var calls = h.Gmail.BatchModifyCalls.Count;
+
+        // a00 keeps the old action label and never had the new one.
+        h.Gmail.Inner.SetLabels("a00", [.. Labels("a00"), "CATEGORY_PERSONAL"]);
+        await FetchAsync();
+
+        h.Gmail.BatchModifyCalls.Count.ShouldBe(calls);
+        Labels("a00").ShouldContain("INBOX");
+    }
+
+    private async Task SettingsAsync(bool on, string actionLabel = ActionLabel)
     {
         await using var scope = h.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
-            .UpdateAsync(s => s with { ActionLabelName = ActionLabel, AutoArchiveOnActionDone = on }, Ct);
+            .UpdateAsync(s => s with { ActionLabelName = actionLabel, AutoArchiveOnActionDone = on }, Ct);
     }
 
     private Task SeedAsync(params string[] ids) => SeedAsync([.. ids.Select(id => (id, true))]);
