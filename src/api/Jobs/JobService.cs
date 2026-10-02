@@ -14,6 +14,9 @@ public enum JobActionResult
 
 public interface IJobService
 {
+    /// <summary>How many finished jobs <see cref="ListAsync"/> adds after the active ones.</summary>
+    const int RecentFinishedCount = 20;
+
     /// <summary>Queues a job, or returns the existing one of that type that is queued, running or paused.</summary>
     Task<JobDto> EnqueueAsync(string type, string queue, object? initialCursor = null, CancellationToken ct = default);
 
@@ -26,14 +29,12 @@ public interface IJobService
 
     Task<JobDto?> GetAsync(Guid id, CancellationToken ct);
 
-    /// <summary>Active jobs, plus the last <see cref="JobService.RecentFinishedCount"/> finished ones unless <paramref name="activeOnly"/>.</summary>
+    /// <summary>Active jobs, plus the last <see cref="RecentFinishedCount"/> finished ones unless <paramref name="activeOnly"/>.</summary>
     Task<IReadOnlyList<JobDto>> ListAsync(bool activeOnly, CancellationToken ct);
 }
 
 internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier notifier) : IJobService
 {
-    public const int RecentFinishedCount = 20;
-
     // A transition races the runner (claim, finish); retry against the fresh status a few times.
     private const int MaxAttempts = 5;
 
@@ -117,7 +118,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
             rows.AddRange(await db.Jobs.AsNoTracking()
                 .Where(j => JobRow.Finished.Contains(j.Status))
                 .OrderByDescending(j => j.FinishedAt ?? j.UpdatedAt)
-                .Take(RecentFinishedCount)
+                .Take(IJobService.RecentFinishedCount)
                 .ToListAsync(ct));
         }
 
