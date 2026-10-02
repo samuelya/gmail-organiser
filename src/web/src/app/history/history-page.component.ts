@@ -110,11 +110,13 @@ export class HistoryPage {
       if (undoJobId) {
         const job = this.jobs.job(undoJobId);
         // Until the hub reports it, the undo shows as starting.
-        if (!job || isActiveJob(job)) map.set(batch.id, { job, percent: progressPercent(job?.progress) });
+        if (!job || isActiveJob(job))
+          map.set(batch.id, { job, percent: progressPercent(job?.progress) });
         continue;
       }
       const job = batch.jobId ? this.jobs.job(batch.jobId) : undefined;
-      if (job && isActiveJob(job)) map.set(batch.id, { job, percent: progressPercent(job.progress) });
+      if (job && isActiveJob(job))
+        map.set(batch.id, { job, percent: progressPercent(job.progress) });
     }
     return map;
   });
@@ -154,7 +156,7 @@ export class HistoryPage {
         const job = this.jobs.job(id);
         return !!job && !isActiveJob(job);
       });
-      previous = current;
+      previous = new Set([...current].filter((id) => !ended.includes(id)));
       if (ended.length === 0) return;
       untracked(() => {
         const undo = this.undoJobs();

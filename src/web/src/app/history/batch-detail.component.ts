@@ -2,7 +2,12 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
-import { MAT_DIALOG_DATA, MatDialog, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
+import {
+  MAT_DIALOG_DATA,
+  MatDialog,
+  MatDialogModule,
+  MatDialogRef,
+} from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { ActionBatchDetailDto, ActionBatchDto, kindLabel } from './history.models';
@@ -15,9 +20,18 @@ export interface BatchDetailData {
 /** Side drawer with a batch's log: subject and labels added / removed by name per message. */
 @Component({
   selector: 'app-batch-detail',
-  imports: [DatePipe, DecimalPipe, MatButtonModule, MatDialogModule, MatIconModule, MatProgressBarModule],
+  imports: [
+    DatePipe,
+    DecimalPipe,
+    MatButtonModule,
+    MatDialogModule,
+    MatIconModule,
+    MatProgressBarModule,
+  ],
   template: `
-    <h2 mat-dialog-title>{{ kind(data.batch.kind) }} · {{ data.batch.createdAt | date: 'short' }}</h2>
+    <h2 mat-dialog-title>
+      {{ kind(data.batch.kind) }} · {{ data.batch.createdAt | date: 'short' }}
+    </h2>
     <mat-dialog-content class="flex flex-col gap-4">
       <p class="m-0" data-testid="detail-description">
         {{ data.batch.description }} · {{ data.batch.messageCount | number }}
@@ -140,7 +154,10 @@ export class BatchDetail {
 }
 
 /** Opens the detail as a full-height drawer on the right. */
-export function openBatchDetail(dialog: MatDialog, batch: ActionBatchDto): MatDialogRef<BatchDetail> {
+export function openBatchDetail(
+  dialog: MatDialog,
+  batch: ActionBatchDto,
+): MatDialogRef<BatchDetail> {
   return dialog.open<BatchDetail, BatchDetailData>(BatchDetail, {
     data: { batch },
     position: { right: '0', top: '0' },
