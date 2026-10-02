@@ -1,0 +1,230 @@
+using System.Collections.Concurrent;
+using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
+using GmailOrganiser.Gmail.Fake;
+using GmailOrganiser.Jobs;
+using GmailOrganiser.Settings;
+using GmailOrganiser.Tests.Fakes;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+namespace GmailOrganiser.Tests.Integration;
+
+[Collection(PostgresCollection.Name)]
+public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+{
+    private const int MessageCount = 2300;
+    private const int InboxCount = 900;
+    private const int SenderCount = 10;
+    private static readonly DateTimeOffset Newest = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+    private readonly ConcurrentQueue<JobDto> published = new();
+    private CountingGmailClient gmail = null!;
+    private WebApplicationFactory<Program> host = null!;
+    private JobRunner runner = null!;
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    public async ValueTask InitializeAsync()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Jobs.ExecuteDeleteAsync();
+            await db.Messages.ExecuteDeleteAsync();
+            await db.Senders.ExecuteDeleteAsync();
+            await db.Settings.ExecuteDeleteAsync();
+        }
+
+        gmail = new CountingGmailClient(new FakeGmailClient(new FakeTokenStore(TimeProvider.System), Seed()));
+        host = factory.WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+        {
+            services.AddSingleton<IGmailClient>(gmail);
+            services.AddSingleton<IJobProgressPublisher>(new RecordingPublisher(published));
+            services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)));
+        }));
+        runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
+        await WithAsync<ISettingsStore, AppSettings>(s => s.UpdateAsync(x => x with { FetchChunkSize = 1000 }, Ct));
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await host.DisposeAsync();
+        await using var db = postgres.CreateDbContext();
+        await db.Settings.ExecuteDeleteAsync();
+    }
+
+    [Fact]
+    public async Task Full_run_stores_every_message_once_inbox_first_and_checkpoints_each_chunk()
+    {
+        gmail.AfterMetadata = _ =>
+        {
+            gmail.Inner.AdvanceHistoryId(50);
+            return Task.CompletedTask;
+        };
+        var job = await EnqueueAsync();
+
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        await using var db = postgres.CreateDbContext();
+        (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
+
+        var inboxIds = InboxIds();
+        gmail.ListCalls.Take(2).ShouldAllBe(q => q.LabelIds != null && q.LabelIds.SequenceEqual(new[] { "INBOX" }));
+        gmail.ListCalls.Skip(2).ShouldAllBe(q => q.LabelIds == null);
+        gmail.MetadataCalls.Select(c => c.Count).ShouldBe([900, 1000, 1000, 300]);
+        gmail.MetadataCalls.First().ShouldAllBe(id => inboxIds.Contains(id));
+
+        // One checkpoint for the start, then one per chunk.
+        published.Count(j => j.Status == "running" && j.Progress != null).ShouldBe(5);
+        published.Last(j => j.Status == "running").Progress.ShouldBe(new JobProgress(MessageCount, MessageCount, "Fetching All Mail"));
+
+        var state = await db.FetchState.SingleAsync(Ct);
+        state.MailboxPhase.ShouldBe(MailboxPhase.Completed);
+        state.PageToken.ShouldBeNull();
+        state.CompletedAt.ShouldNotBeNull();
+        state.AccountEmail.ShouldBe(FakeGmailClient.AccountEmail);
+        state.MessagesTotal.ShouldBe(MessageCount);
+        state.InboxFetched.ShouldBe(InboxCount);
+        state.AllMailFetched.ShouldBe(MessageCount);
+        state.LastHistoryId.ShouldBe(FakeMailboxSeed.HistoryId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        (await gmail.GetProfileAsync(Ct)).HistoryId.ShouldNotBe(state.LastHistoryId);
+
+        var named = await db.Senders.SingleAsync(s => s.Address == "sender0@example.com", Ct);
+        named.Domain.ShouldBe("example.com");
+        named.TotalCount.ShouldBe(MessageCount / SenderCount);
+        named.LastSeenAt.ShouldBe(Newest);
+        named.DisplayName.ShouldBe("New Name");
+        var bare = await db.Senders.SingleAsync(s => s.Address == "sender1@example.com", Ct);
+        bare.TotalCount.ShouldBe(MessageCount / SenderCount);
+        bare.LastSeenAt.ShouldBe(Newest.AddMinutes(-1));
+        bare.DisplayName.ShouldBeNull();
+        (await db.Senders.CountAsync(Ct)).ShouldBe(SenderCount);
+    }
+
+    [Fact]
+    public async Task Pause_after_the_first_chunk_then_resume_does_not_refetch_it()
+    {
+        var job = await EnqueueAsync();
+        gmail.AfterMetadata = call => call == 1 ? WithAsync<IJobService, JobActionResult>(s => s.PauseAsync(job.Id, Ct)) : Task.CompletedTask;
+
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("paused");
+        gmail.MetadataCalls.Count.ShouldBe(1);
+
+        gmail.AfterMetadata = null;
+        (await WithAsync<IJobService, JobActionResult>(s => s.ResumeAsync(job.Id, Ct))).ShouldBe(JobActionResult.Ok);
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        gmail.ListCalls.Count(q => q.LabelIds != null).ShouldBe(2);
+        gmail.MetadataCalls.Select(c => c.Count).ShouldBe([900, 1000, 1000, 300]);
+        await using var db = postgres.CreateDbContext();
+        (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
+    }
+
+    [Fact]
+    public async Task Second_full_run_keeps_analysis_status_and_fetched_at()
+    {
+        await EnqueueAsync();
+        await RunNextAsync();
+        await using var db = postgres.CreateDbContext();
+        var analysed = await db.Messages.OrderBy(m => m.Id).Select(m => m.Id).Take(50).ToListAsync(Ct);
+        await db.Messages.Where(m => analysed.Contains(m.Id)).ExecuteUpdateAsync(s => s.SetProperty(m => m.AnalysisStatus, AnalysisStatus.Analysed), Ct);
+        var fetchedAt = await db.Messages.ToDictionaryAsync(m => m.Id, m => m.FetchedAt, Ct);
+        await db.Senders.ExecuteUpdateAsync(s => s.SetProperty(x => x.AnalysedCount, 7), Ct);
+
+        var second = await EnqueueAsync();
+        await RunNextAsync();
+
+        (await GetJobAsync(second.Id)).Status.ShouldBe("completed");
+        db.ChangeTracker.Clear();
+        (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
+        (await db.Messages.CountAsync(m => m.AnalysisStatus == AnalysisStatus.Analysed, Ct)).ShouldBe(analysed.Count);
+        (await db.Messages.ToDictionaryAsync(m => m.Id, m => m.FetchedAt, Ct)).ShouldBe(fetchedAt, ignoreOrder: true);
+        (await db.Senders.SingleAsync(s => s.Address == "sender0@example.com", Ct)).TotalCount.ShouldBe(MessageCount / SenderCount);
+        (await db.Senders.AllAsync(s => s.AnalysedCount == 7, Ct)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Rejected_page_token_restarts_the_phase_from_its_first_page()
+    {
+        var job = await EnqueueAsync();
+        gmail.AfterMetadata = call => call == 2 ? WithAsync<IJobService, JobActionResult>(s => s.PauseAsync(job.Id, Ct)) : Task.CompletedTask;
+        await RunNextAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Database.ExecuteSqlAsync(
+                $"UPDATE jobs SET cursor = jsonb_set(cursor, '{{pageToken}}', '\"expired-token\"') WHERE id = {job.Id}", Ct);
+        }
+
+        gmail.AfterMetadata = null;
+        (await WithAsync<IJobService, JobActionResult>(s => s.ResumeAsync(job.Id, Ct))).ShouldBe(JobActionResult.Ok);
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        gmail.ListCalls.ShouldContain(q => q.PageToken == "expired-token");
+        gmail.ListCalls.Count(q => q.LabelIds == null && q.PageToken == null).ShouldBe(2);
+        await using var check = postgres.CreateDbContext();
+        (await check.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
+        (await check.FetchState.SingleAsync(Ct)).AllMailFetched.ShouldBe(MessageCount);
+    }
+
+    /// <summary>
+    /// Newest first, one minute apart; sender <c>i % 10</c>; 900 interleaved Inbox messages. <c>sender0</c> changed its
+    /// display name for its newest mail, <c>sender1</c> sends without a name.
+    /// </summary>
+    private static List<FakeMessage> Seed() =>
+    [
+        .. Enumerable.Range(0, MessageCount).Select(i =>
+        {
+            var sender = i % SenderCount;
+            var address = $"sender{sender}@example.com";
+            var from = sender switch
+            {
+                0 => i < 100 ? $"New Name <{address}>" : $"Old Name <{address}>",
+                1 => address,
+                _ => $"Sender {sender} <{address}>",
+            };
+            string[] labels = IsInbox(i) ? ["INBOX", "CATEGORY_UPDATES"] : ["CATEGORY_PROMOTIONS"];
+            return new FakeMessage($"m{i:D5}", $"t{i:D5}", from, $"Synthetic subject {i}", Newest.AddMinutes(-i), labels);
+        }),
+    ];
+
+    private static bool IsInbox(int i) => i % 23 < 9;
+
+    private static HashSet<string> InboxIds() =>
+        [.. Enumerable.Range(0, MessageCount).Where(IsInbox).Select(i => $"m{i:D5}")];
+
+    private Task<JobDto> EnqueueAsync() =>
+        WithAsync<IJobService, JobDto>(s => s.EnqueueAsync(MailboxFetchJob.JobType, MailboxFetchJob.Queue, null, Ct));
+
+    private async Task<JobDto> GetJobAsync(Guid id) =>
+        (await WithAsync<IJobService, JobDto?>(s => s.GetAsync(id, Ct))).ShouldNotBeNull();
+
+    private async Task<TResult> WithAsync<TService, TResult>(Func<TService, Task<TResult>> action)
+        where TService : notnull
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        return await action(scope.ServiceProvider.GetRequiredService<TService>());
+    }
+
+    private async Task RunNextAsync()
+    {
+        var id = (await runner.ClaimAsync(Ct)).ShouldHaveSingleItem();
+        await runner.RunAsync(id, Ct);
+    }
+
+    private sealed class RecordingPublisher(ConcurrentQueue<JobDto> published) : IJobProgressPublisher
+    {
+        public Task JobChangedAsync(JobDto job, CancellationToken ct)
+        {
+            published.Enqueue(job);
+            return Task.CompletedTask;
+        }
+    }
+}
