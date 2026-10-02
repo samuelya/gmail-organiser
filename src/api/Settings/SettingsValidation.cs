@@ -17,7 +17,8 @@ public static class SettingsValidation
     public const int MaxAnalysisDefaultCount = 1000;
     public const int MinAnalysisBodyMaxChars = 500;
     public const int MaxAnalysisBodyMaxChars = 50_000;
-    public const int MinAnalysisRepresentativesPerGroup = 1;
+    // Two: a group is only derived when at least two representatives agree.
+    public const int MinAnalysisRepresentativesPerGroup = 2;
     public const int MaxAnalysisRepresentativesPerGroup = 10;
     public const int MinAnalysisMinGroupSize = 2;
     public const int MaxAnalysisMinGroupSize = 50;
