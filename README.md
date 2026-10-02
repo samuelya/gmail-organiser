@@ -35,6 +35,22 @@ Only the `web` container is published, on `127.0.0.1:${WEB_PORT:-5180}`; `api` a
 Data lives in the `db-data` and `dp-keys` volumes (`dp-keys` holds the key that encrypts your Google token; keep it
 with the database).
 
+### Run published images
+
+To skip building from source, set the image variables in `.env` (replace `<owner>` with the GitHub owner of the
+repository you run from):
+
+```bash
+API_IMAGE=ghcr.io/<owner>/gmail-organiser-api:latest
+WEB_IMAGE=ghcr.io/<owner>/gmail-organiser-web:latest
+```
+
+then `docker compose pull && docker compose up -d`. Images are built for `linux/amd64` and `linux/arm64`. If the
+packages are private, `docker login ghcr.io` first.
+
+Releasing: `git tag vX.Y.Z && git push origin vX.Y.Z` publishes `X.Y.Z`, `X.Y` and `latest`; a manual run of the
+Publish workflow publishes `sha-<short>` and the branch name.
+
 ## Development from the IDE
 
 Requirements: .NET SDK 10 (see `global.json`), Node per `.nvmrc`, Docker for the dev database.
