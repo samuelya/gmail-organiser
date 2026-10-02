@@ -25,6 +25,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MessageRow> Messages => Set<MessageRow>();
     public DbSet<SenderRow> Senders => Set<SenderRow>();
     public DbSet<FetchStateRow> FetchState => Set<FetchStateRow>();
+    public DbSet<FetchRunMessageRow> FetchRunMessages => Set<FetchRunMessageRow>();
     public DbSet<JobRow> Jobs => Set<JobRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -62,7 +63,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .HasConversion(new SnakeCaseEnumConverter<AnalysisStatus>())
                 .HasDefaultValue(AnalysisStatus.NotAnalysed);
             e.Property(r => r.DeletedInGmail).HasDefaultValue(false);
-            e.HasIndex(r => r.FromAddress);
+            // Sender stats count, max and sort a sender's messages by date.
+            e.HasIndex(r => new { r.FromAddress, r.InternalDate });
             e.HasIndex(r => r.InternalDate);
             e.HasIndex(r => r.LabelIds).HasMethod("gin");
             e.HasIndex(r => r.AnalysisStatus);
@@ -85,6 +87,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.MailboxPhase).HasConversion(new SnakeCaseEnumConverter<MailboxPhase>());
             e.HasData(new FetchStateRow { Id = FetchStateRow.SingletonId, UpdatedAt = DateTimeOffset.UnixEpoch });
+        });
+
+        modelBuilder.Entity<FetchRunMessageRow>(e =>
+        {
+            e.ToTable("fetch_run_messages");
+            e.HasKey(r => r.MessageId);
+            e.Property(r => r.MessageId).ValueGeneratedNever();
         });
 
         JobRow.Configure(modelBuilder);

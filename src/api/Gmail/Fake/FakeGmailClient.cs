@@ -105,6 +105,7 @@ public sealed class FakeGmailClient : IGmailClient
             lock (gate)
             {
                 var hits = messages
+                    .Where(m => !m.LabelIds.Any(IsSpamOrTrash))
                     .Where(m => query.LabelIds is null || query.LabelIds.All(l => m.LabelIds.Contains(l, StringComparer.OrdinalIgnoreCase)))
                     .Where(matches)
                     .OrderByDescending(m => m.Date)
@@ -154,6 +155,16 @@ public sealed class FakeGmailClient : IGmailClient
 
         var byId = fetched.ToDictionary(m => m.Id, StringComparer.Ordinal);
         return [.. unique.Where(byId.ContainsKey).Select(id => byId[id])];
+    }
+
+    public async Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(labelId);
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        lock (gate)
+        {
+            return messages.Count(m => m.LabelIds.Contains(labelId, StringComparer.OrdinalIgnoreCase));
+        }
     }
 
     /// <summary>The seeded synthetic mailbox; see <see cref="FakeMailboxSeed"/>.</summary>
@@ -216,6 +227,10 @@ public sealed class FakeGmailClient : IGmailClient
             return failureStatus;
         }
     }
+
+    /// <summary>Like Gmail with <c>includeSpamTrash=false</c>, listings skip Spam and Trash.</summary>
+    private static bool IsSpamOrTrash(string labelId) =>
+        labelId.Equals("SPAM", StringComparison.OrdinalIgnoreCase) || labelId.Equals("TRASH", StringComparison.OrdinalIgnoreCase);
 
     private static string? ReasonFor(HttpStatusCode status) => status == HttpStatusCode.Forbidden ? "rateLimitExceeded" : null;
 

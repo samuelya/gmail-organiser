@@ -16,13 +16,20 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
     /// <summary>Runs after the n-th (1-based) metadata call returned.</summary>
     public Func<int, Task>? AfterMetadata { get; set; }
 
+    /// <summary>Rejects the n-th (1-based) list call's page token, as Gmail does for an expired token, when it returns true.</summary>
+    public Func<int, MessageListQuery, bool>? RejectPageToken { get; set; }
+
     public Task<GmailProfile> GetProfileAsync(CancellationToken ct) => inner.GetProfileAsync(ct);
 
     public Task<MessageIdPage> ListMessageIdsAsync(MessageListQuery query, CancellationToken ct)
     {
         ListCalls.Enqueue(query);
-        return inner.ListMessageIdsAsync(query, ct);
+        return RejectPageToken?.Invoke(ListCalls.Count, query) == true
+            ? throw new GmailInvalidPageTokenException("Invalid page token.")
+            : inner.ListMessageIdsAsync(query, ct);
     }
+
+    public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct) => inner.GetLabelMessagesTotalAsync(labelId, ct);
 
     public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {

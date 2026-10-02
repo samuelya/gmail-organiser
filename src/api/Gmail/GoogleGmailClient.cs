@@ -46,12 +46,28 @@ public sealed class GoogleGmailClient(
             {
                 return await ListAsync(service, query, ct);
             }
-            catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.BadRequest && query.PageToken is not null)
+            catch (GoogleApiException ex) when (query.PageToken is not null && IsInvalidPageToken(ex))
             {
                 throw new GmailInvalidPageTokenException("Gmail rejected the list page token.", ex);
             }
         }, ct);
     }
+
+    /// <summary>
+    /// Gmail answers an expired or malformed page token with a 400 whose message names the page token. Other 400s
+    /// (a bad query or label id) are real validation errors and must surface as they are.
+    /// </summary>
+    public static bool IsInvalidPageToken(GoogleApiException ex)
+    {
+        ArgumentNullException.ThrowIfNull(ex);
+        return ex.HttpStatusCode == HttpStatusCode.BadRequest
+            && (NamesPageToken(ex.Error?.Message)
+                || ex.Error?.Errors?.Any(e => NamesPageToken(e.Message) || NamesPageToken(e.Location)) == true);
+    }
+
+    private static bool NamesPageToken(string? text) =>
+        text is not null
+        && (text.Contains("pageToken", StringComparison.OrdinalIgnoreCase) || text.Contains("page token", StringComparison.OrdinalIgnoreCase));
 
     private Task<MessageIdPage> ListAsync(GmailService service, MessageListQuery query, CancellationToken ct) =>
         retry.ExecuteAsync(async token =>
@@ -92,6 +108,17 @@ public sealed class GoogleGmailClient(
         var byId = fetched.ToDictionary(m => m.Id, StringComparer.Ordinal);
         logger.LogDebug("Fetched metadata for {Fetched} of {Requested} Gmail messages", byId.Count, ids.Count);
         return [.. ids.Distinct(StringComparer.Ordinal).Where(byId.ContainsKey).Select(id => byId[id])];
+    }
+
+    public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(labelId);
+        return RunAsync(service => retry.ExecuteAsync(async token =>
+        {
+            await quota.AcquireAsync(GmailQuotaLimiter.LabelCallUnits, token);
+            var label = await service.Users.Labels.Get(Me, labelId).ExecuteAsync(token);
+            return (long)(label.MessagesTotal ?? 0);
+        }, ct), ct);
     }
 
     /// <summary>Runs <paramref name="call"/> with a fresh service; a revoked or expired grant flags reauth.</summary>

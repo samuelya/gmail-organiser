@@ -6,7 +6,8 @@ namespace GmailOrganiser.Fetch;
 
 /// <summary>
 /// Stores Gmail metadata in <c>messages</c> keyed by the Gmail message ID: new ids are inserted, known ids get their
-/// mutable fields refreshed. <c>analysis_status</c> and <c>fetched_at</c> of existing rows are never touched.
+/// mutable fields refreshed. <c>analysis_status</c> and <c>fetched_at</c> of existing rows are never touched, and a
+/// row whose Gmail metadata is unchanged is not written at all (<c>updated_at</c> means "changed in Gmail").
 /// </summary>
 public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
 {
@@ -36,7 +37,13 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
         {
             if (existing.TryGetValue(metadata.Id, out var row))
             {
-                Refresh(row, metadata, now);
+                var entry = db.Entry(row);
+                Refresh(row, metadata);
+                entry.DetectChanges();
+                if (entry.State == EntityState.Modified)
+                {
+                    row.UpdatedAt = now;
+                }
             }
             else
             {
@@ -67,12 +74,13 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
             Subject = m.Subject,
             InternalDate = m.InternalDate.ToUniversalTime(),
             FetchedAt = now,
+            UpdatedAt = now,
         };
-        Refresh(row, m, now);
+        Refresh(row, m);
         return row;
     }
 
-    private static void Refresh(MessageRow row, GmailMessageMetadata m, DateTimeOffset now)
+    private static void Refresh(MessageRow row, GmailMessageMetadata m)
     {
         row.LabelIds = [.. m.LabelIds];
         row.Category = CategoryOf(m.LabelIds);
@@ -83,6 +91,5 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
         row.ListId = m.ListId;
         row.ListUnsubscribe = m.ListUnsubscribe;
         row.DeletedInGmail = false;
-        row.UpdatedAt = now;
     }
 }

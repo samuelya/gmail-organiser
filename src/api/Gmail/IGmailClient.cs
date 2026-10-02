@@ -23,6 +23,11 @@ public interface IGmailClient
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct);
+
+    /// <summary>How many messages carry the label <paramref name="labelId"/> (<c>labels.get</c> <c>messagesTotal</c>).</summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct);
 }
 
 /// <param name="HistoryId">Gmail's history ID as a decimal string (it is an unsigned 64-bit number).</param>

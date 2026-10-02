@@ -19,6 +19,8 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
     private const int MessageCount = 2300;
     private const int InboxCount = 900;
     private const int SenderCount = 10;
+    private const int SpamCount = 20;
+    private const int TrashCount = 10;
     private static readonly DateTimeOffset Newest = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     private readonly ConcurrentQueue<JobDto> published = new();
@@ -33,6 +35,7 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         await using (var db = postgres.CreateDbContext())
         {
             await db.Jobs.ExecuteDeleteAsync();
+            await db.FetchRunMessages.ExecuteDeleteAsync();
             await db.Messages.ExecuteDeleteAsync();
             await db.Senders.ExecuteDeleteAsync();
             await db.Settings.ExecuteDeleteAsync();
@@ -75,19 +78,21 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         var inboxIds = InboxIds();
         gmail.ListCalls.Take(2).ShouldAllBe(q => q.LabelIds != null && q.LabelIds.SequenceEqual(new[] { "INBOX" }));
         gmail.ListCalls.Skip(2).ShouldAllBe(q => q.LabelIds == null);
-        gmail.MetadataCalls.Select(c => c.Count).ShouldBe([900, 1000, 1000, 300]);
-        gmail.MetadataCalls.First().ShouldAllBe(id => inboxIds.Contains(id));
+        gmail.MetadataCalls.First().ShouldBe(inboxIds, ignoreOrder: true);
+        AssertEachMessageFetchedOnce();
 
-        // One checkpoint for the start, then one per chunk.
+        // One checkpoint for the start, then one per chunk; Spam and Trash are not part of the All Mail total.
         published.Count(j => j.Status == "running" && j.Progress != null).ShouldBe(5);
+        published.Single(j => j.Progress is { Message: "Fetching Inbox" }).Progress.ShouldBe(new JobProgress(InboxCount, InboxCount, "Fetching Inbox"));
         published.Last(j => j.Status == "running").Progress.ShouldBe(new JobProgress(MessageCount, MessageCount, "Fetching All Mail"));
+        (await db.FetchRunMessages.CountAsync(Ct)).ShouldBe(0);
 
         var state = await db.FetchState.SingleAsync(Ct);
         state.MailboxPhase.ShouldBe(MailboxPhase.Completed);
         state.PageToken.ShouldBeNull();
         state.CompletedAt.ShouldNotBeNull();
         state.AccountEmail.ShouldBe(FakeGmailClient.AccountEmail);
-        state.MessagesTotal.ShouldBe(MessageCount);
+        state.MessagesTotal.ShouldBe(MessageCount + SpamCount + TrashCount);
         state.InboxFetched.ShouldBe(InboxCount);
         state.AllMailFetched.ShouldBe(MessageCount);
         state.LastHistoryId.ShouldBe(FakeMailboxSeed.HistoryId.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -122,7 +127,7 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
 
         (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
         gmail.ListCalls.Count(q => q.LabelIds != null).ShouldBe(2);
-        gmail.MetadataCalls.Select(c => c.Count).ShouldBe([900, 1000, 1000, 300]);
+        AssertEachMessageFetchedOnce();
         await using var db = postgres.CreateDbContext();
         (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
     }
@@ -136,6 +141,7 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         var analysed = await db.Messages.OrderBy(m => m.Id).Select(m => m.Id).Take(50).ToListAsync(Ct);
         await db.Messages.Where(m => analysed.Contains(m.Id)).ExecuteUpdateAsync(s => s.SetProperty(m => m.AnalysisStatus, AnalysisStatus.Analysed), Ct);
         var fetchedAt = await db.Messages.ToDictionaryAsync(m => m.Id, m => m.FetchedAt, Ct);
+        var updatedAt = await db.Messages.ToDictionaryAsync(m => m.Id, m => m.UpdatedAt, Ct);
         await db.Senders.ExecuteUpdateAsync(s => s.SetProperty(x => x.AnalysedCount, 7), Ct);
 
         var second = await EnqueueAsync();
@@ -146,6 +152,7 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
         (await db.Messages.CountAsync(m => m.AnalysisStatus == AnalysisStatus.Analysed, Ct)).ShouldBe(analysed.Count);
         (await db.Messages.ToDictionaryAsync(m => m.Id, m => m.FetchedAt, Ct)).ShouldBe(fetchedAt, ignoreOrder: true);
+        (await db.Messages.ToDictionaryAsync(m => m.Id, m => m.UpdatedAt, Ct)).ShouldBe(updatedAt, ignoreOrder: true);
         (await db.Senders.SingleAsync(s => s.Address == "sender0@example.com", Ct)).TotalCount.ShouldBe(MessageCount / SenderCount);
         (await db.Senders.AllAsync(s => s.AnalysedCount == 7, Ct)).ShouldBeTrue();
     }
@@ -174,6 +181,46 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         (await check.FetchState.SingleAsync(Ct)).AllMailFetched.ShouldBe(MessageCount);
     }
 
+    [Fact]
+    public async Task Rejected_token_within_a_chunk_retries_that_chunk_without_restarting_the_phase()
+    {
+        // List calls: Inbox 1-2, All Mail chunk 1 = 3-4, chunk 2 = 5 (the stored token) and 6 (issued within the chunk).
+        gmail.RejectPageToken = (call, _) => call == 6;
+        var job = await EnqueueAsync();
+
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        var calls = gmail.ListCalls.ToList();
+        calls[6].PageToken.ShouldBe(calls[4].PageToken);
+        calls.Count(q => q.LabelIds == null && q.PageToken == null).ShouldBe(1);
+        await using var db = postgres.CreateDbContext();
+        (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount);
+        (await db.FetchState.SingleAsync(Ct)).AllMailFetched.ShouldBe(MessageCount);
+    }
+
+    [Fact]
+    public async Task Cancel_during_the_last_chunk_still_ends_completed()
+    {
+        var job = await EnqueueAsync();
+        gmail.AfterMetadata = call => call == 4 ? WithAsync<IJobService, JobActionResult>(s => s.CancelAsync(job.Id, Ct)) : Task.CompletedTask;
+
+        await RunNextAsync();
+
+        gmail.MetadataCalls.Count.ShouldBe(4);
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        await using var db = postgres.CreateDbContext();
+        (await db.FetchState.SingleAsync(Ct)).MailboxPhase.ShouldBe(MailboxPhase.Completed);
+    }
+
+    /// <summary>All Mail skips the Inbox messages this run already stored, also across a pause.</summary>
+    private void AssertEachMessageFetchedOnce()
+    {
+        var fetched = gmail.MetadataCalls.SelectMany(c => c).ToList();
+        fetched.Count.ShouldBe(MessageCount);
+        fetched.ShouldBeUnique();
+    }
+
     /// <summary>
     /// Newest first, one minute apart; sender <c>i % 10</c>; 900 interleaved Inbox messages. <c>sender0</c> changed its
     /// display name for its newest mail, <c>sender1</c> sends without a name.
@@ -193,6 +240,8 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
             string[] labels = IsInbox(i) ? ["INBOX", "CATEGORY_UPDATES"] : ["CATEGORY_PROMOTIONS"];
             return new FakeMessage($"m{i:D5}", $"t{i:D5}", from, $"Synthetic subject {i}", Newest.AddMinutes(-i), labels);
         }),
+        .. Enumerable.Range(0, SpamCount + TrashCount).Select(i => new FakeMessage(
+            $"x{i:D5}", $"x{i:D5}", "junk@example.com", $"Synthetic junk {i}", Newest.AddMinutes(-i), [i < SpamCount ? "SPAM" : "TRASH"])),
     ];
 
     private static bool IsInbox(int i) => i % 23 < 9;
