@@ -33,10 +33,7 @@ export interface BatchDetailData {
       {{ kind(data.batch.kind) }} · {{ data.batch.createdAt | date: 'short' }}
     </h2>
     <mat-dialog-content class="flex flex-col gap-4">
-      <p class="m-0" data-testid="detail-description">
-        {{ data.batch.description }} · {{ data.batch.messageCount | number }}
-        {{ data.batch.messageCount === 1 ? 'message' : 'messages' }}
-      </p>
+      <p class="m-0 break-words" data-testid="detail-description">{{ data.batch.description }}</p>
       @if (loading()) {
         <mat-progress-bar mode="indeterminate" aria-label="Loading the batch" />
       }
@@ -162,6 +159,7 @@ export function openBatchDetail(
     data: { batch },
     position: { right: '0', top: '0' },
     height: '100dvh',
+    maxHeight: '100dvh',
     width: 'min(640px, 100vw)',
     maxWidth: '100vw',
     autoFocus: 'dialog',

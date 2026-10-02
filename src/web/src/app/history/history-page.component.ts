@@ -1,3 +1,4 @@
+import { BreakpointObserver } from '@angular/cdk/layout';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import {
   ChangeDetectionStrategy,
@@ -9,7 +10,7 @@ import {
   signal,
   untracked,
 } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatDialog } from '@angular/material/dialog';
@@ -17,7 +18,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTableModule } from '@angular/material/table';
-import { catchError, EMPTY, filter, Subject, switchMap } from 'rxjs';
+import { catchError, EMPTY, filter, map, Subject, switchMap } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
 import { isActiveJob, JobDto, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
@@ -34,6 +35,11 @@ import {
 import { HistoryService } from './history.service';
 
 /** A row's live job: the batch's own (an apply or undo still running) or the undo started from it. */
+/** Below this width the table folds into two columns so Undo stays on screen. */
+const NARROW_QUERY = '(max-width: 767.98px)';
+const WIDE_COLUMNS = ['when', 'kind', 'description', 'messages', 'status'];
+const NARROW_COLUMNS = ['description', 'status'];
+
 interface RowJob {
   job: JobDto | undefined;
   percent: number | null;
@@ -75,7 +81,7 @@ interface RowJob {
       outline-offset: 2px;
     }
     .status {
-      min-width: 9rem;
+      min-width: 7rem;
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -87,7 +93,11 @@ export class HistoryPage {
   private readonly destroyRef = inject(DestroyRef);
   private readonly loads = new Subject<{ page: number; pageSize: number }>();
 
-  readonly columns = ['when', 'kind', 'description', 'messages', 'status'];
+  private readonly breakpoints = inject(BreakpointObserver);
+  readonly narrow = toSignal(this.breakpoints.observe(NARROW_QUERY).pipe(map((s) => s.matches)), {
+    initialValue: this.breakpoints.isMatched(NARROW_QUERY),
+  });
+  readonly columns = computed(() => (this.narrow() ? NARROW_COLUMNS : WIDE_COLUMNS));
   readonly pageSizes = HISTORY_PAGE_SIZES;
   readonly page = signal(1);
   readonly pageSize = signal(DEFAULT_HISTORY_PAGE_SIZE);

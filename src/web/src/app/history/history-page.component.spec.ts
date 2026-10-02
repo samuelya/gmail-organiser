@@ -233,7 +233,7 @@ describe('HistoryPage', () => {
       job('job-apply', 'running', { progress: { done: 2, total: null, message: null } }),
     ]);
     await fixture.whenStable();
-    expect(q('row-progress')?.textContent).toContain('Running…');
+    expect(q('row-progress')?.textContent).toContain('Applying…');
 
     jobs.reconnects.set(1);
     await fixture.whenStable();
