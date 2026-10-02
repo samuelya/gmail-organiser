@@ -152,6 +152,61 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
         (await db.Decisions.CountAsync(Ct)).ShouldBe(0);
     }
 
+    [Fact]
+    public async Task Apply_rest_without_a_body_applies_the_pattern()
+    {
+        await SeedAsync(("c00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm));
+
+        var response = await h.PostWithoutBodyAsync($"/api/review/senders/{AnalysisRunHarness.Billing}/apply-rest");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        (await response.Content.ReadFromJsonAsync<ApplyRestResponse>(Ct)).ShouldNotBeNull().Created.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Apply_rest_waits_for_a_group_being_stored_and_leaves_its_messages()
+    {
+        await SeedAsync(("a00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm));
+
+        // An analysis store in progress: the members' message rows locked and their pending suggestions not committed.
+        await using var store = postgres.CreateDbContext();
+        await using var tx = await store.Database.BeginTransactionAsync(Ct);
+        string[] members = ["a08", "a09"];
+        await store.Database
+            .SqlQuery<string>($"SELECT id AS \"Value\" FROM messages WHERE id = ANY({members}) ORDER BY id FOR UPDATE")
+            .ToListAsync(Ct);
+        foreach (var id in members)
+        {
+            var message = await store.Messages.SingleAsync(m => m.Id == id, Ct);
+            var suggestion = new SuggestionRow
+            {
+                Id = Guid.NewGuid(),
+                MessageId = id,
+                SenderAddress = message.FromAddress,
+                Source = SuggestionSource.Llm,
+                TopicLabel = "Example/Other",
+                Reason = "Synthetic reason",
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            suggestion.SetStatus(SuggestionStatus.Pending, message, DateTimeOffset.UtcNow);
+            store.Suggestions.Add(suggestion);
+        }
+
+        await store.SaveChangesAsync(Ct);
+
+        var applyRest = h.PostWithoutBodyAsync($"/api/review/senders/{AnalysisRunHarness.Shop}/apply-rest");
+        await h.WaitForLockWaitAsync();
+        applyRest.IsCompleted.ShouldBeFalse();
+        await tx.CommitAsync(Ct);
+
+        var response = await applyRest;
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        (await response.Content.ReadFromJsonAsync<ApplyRestResponse>(Ct)).ShouldNotBeNull().Created.ShouldBe(7);
+        await using var db = postgres.CreateDbContext();
+        (await db.Suggestions.Where(s => members.Contains(s.MessageId)).Select(s => s.Status).ToListAsync(Ct))
+            .ShouldAllBe(s => s == SuggestionStatus.Pending);
+    }
+
     private async Task<SenderPatternDto> PatternAsync(string address)
     {
         var response = await h.GetAsync($"/api/review/senders/{address}/pattern");

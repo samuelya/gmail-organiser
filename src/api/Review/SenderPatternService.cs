@@ -69,6 +69,12 @@ public sealed class SenderPatternService(
         var filter = new FilterCandidateDto(address, await CommonListIdAsync(address, ct));
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
+
+        // The sender's message rows by id, as the analysis store locks its members: a group being stored finishes
+        // first and its suggestions are then seen below, and a run storing later waits for this commit.
+        await db.Database
+            .SqlQuery<string>($"SELECT id AS \"Value\" FROM messages WHERE from_address = {address} ORDER BY id FOR UPDATE")
+            .ToListAsync(ct);
         var messages = await Remaining(address).OrderBy(m => m.Id).ToListAsync(ct);
         if (messages.Count == 0)
         {

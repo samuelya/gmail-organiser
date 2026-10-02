@@ -93,8 +93,9 @@ public static class ReviewEndpoints
 
     /// <summary>202 with the queued batch, 200 when nothing remained; 409 without a pattern or topic label, or on a race.</summary>
     private static async Task<Results<Accepted<ApplyRestResponse>, Ok<ApplyRestResponse>, ValidationProblem, ProblemHttpResult>> ApplyRestAsync(
-        string address, ApplyRestRequest request, SenderPatternService patterns, CancellationToken ct)
+        string address, ApplyRestRequest? request, SenderPatternService patterns, CancellationToken ct)
     {
+        request ??= new();
         var errors = Normalise(address) is null ? AddressError() : [];
         if (request.TopicLabel is { } label && !LabelResolver.IsValid(label.Trim()))
         {

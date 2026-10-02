@@ -111,8 +111,8 @@ public sealed partial class DecisionMemory(
 
     /// <summary>
     /// Per scope: the latest <see cref="MaxPatternApprovals"/> approvals a person verified (of model or edited
-    /// suggestions, never derived or memory ones, so memory cannot reinforce itself), one per message; at least
-    /// <paramref name="minApprovals"/> of them, all with the same outcome, and no rejection in the scope since the latest.
+    /// suggestions, never derived, memory or sender-pattern ones, so memory cannot reinforce itself), one per message;
+    /// at least <paramref name="minApprovals"/> of them, all with the same outcome, and no rejection in the scope since the latest.
     /// </summary>
     public async Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
         IReadOnlyCollection<string> scopeKeys, int minApprovals, CancellationToken ct)
@@ -126,7 +126,8 @@ public sealed partial class DecisionMemory(
 
         var rows = await db.Decisions.AsNoTracking()
             .Where(d => d.ScopeKey != null && keys.Contains(d.ScopeKey))
-            .Where(d => d.Outcome == DecisionOutcome.Rejected || d.Source == SuggestionSource.Llm || d.Edited)
+            .Where(d => d.Outcome == DecisionOutcome.Rejected
+                || (d.Source != SuggestionSource.SenderPattern && (d.Source == SuggestionSource.Llm || d.Edited)))
             .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.CreatedAt })
             .ToListAsync(ct);
         foreach (var scope in rows.GroupBy(r => r.ScopeKey, StringComparer.Ordinal))
