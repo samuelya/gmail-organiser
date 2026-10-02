@@ -70,8 +70,12 @@ public sealed class SenderPatternService(
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        // The sender's message rows by id, as the analysis store locks its members: a group being stored finishes
-        // first and its suggestions are then seen below, and a run storing later waits for this commit.
+        // Suggestions, then messages, each by id: the order the review endpoints and the analysis store lock in. A
+        // group being stored finishes first and its suggestions are then seen below; a run storing later waits.
+        await db.Suggestions
+            .FromSql($"SELECT * FROM suggestions WHERE sender_address = {address} ORDER BY id FOR UPDATE")
+            .AsNoTracking()
+            .ToListAsync(ct);
         await db.Database
             .SqlQuery<string>($"SELECT id AS \"Value\" FROM messages WHERE from_address = {address} ORDER BY id FOR UPDATE")
             .ToListAsync(ct);
@@ -108,7 +112,8 @@ public sealed class SenderPatternService(
             db.Suggestions.Add(suggestion);
         }
 
-        // One decision for the whole action, tied to no message; its source keeps it apart from per-message approvals.
+        // One decision for the whole action, tied to no message. ScopeKey stays null: it spans the sender's templates,
+        // and memory patterns never count sender-pattern approvals anyway, so apply-rest cannot reinforce itself.
         db.Decisions.Add(new DecisionRow
         {
             Id = Guid.CreateVersion7(now),

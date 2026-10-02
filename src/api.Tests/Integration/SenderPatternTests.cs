@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
@@ -205,6 +206,47 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
         await using var db = postgres.CreateDbContext();
         (await db.Suggestions.Where(s => members.Contains(s.MessageId)).Select(s => s.Status).ToListAsync(Ct))
             .ShouldAllBe(s => s == SuggestionStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Apply_rest_never_creates_or_strengthens_a_memory_pattern()
+    {
+        await SeedAsync(
+            ("a00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm),
+            ("a01", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm));
+        string[] scopes;
+        await using (var db = postgres.CreateDbContext())
+        {
+            var shop = await db.Messages.Where(m => m.FromAddress == AnalysisRunHarness.Shop).ToListAsync(Ct);
+            scopes = [.. shop.Select(GroupKey.For).Distinct()];
+            foreach (var message in shop.Where(m => m.Id is "a00" or "a01"))
+            {
+                db.Decisions.Add(new DecisionRow
+                {
+                    Id = Guid.NewGuid(),
+                    MessageId = message.Id,
+                    SenderAddress = message.FromAddress,
+                    ScopeKey = GroupKey.For(message),
+                    TopicLabel = Topic,
+                    Outcome = DecisionOutcome.Approved,
+                    Source = SuggestionSource.Llm,
+                    CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                });
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        // An edited apply-rest (the user overrides the pattern) is the case an "edited" rule alone would count.
+        var response = await h.PostAsync(
+            $"/api/review/senders/{AnalysisRunHarness.Shop}/apply-rest", new ApplyRestRequest(ToBeDeleted: true));
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+
+        await using var scope = h.Services.CreateAsyncScope();
+        var memory = scope.ServiceProvider.GetRequiredService<IDecisionMemory>();
+        (await memory.FindPatternsAsync(scopes, minApprovals: 3, Ct)).ShouldBeEmpty();
+        var pattern = (await memory.FindPatternsAsync(scopes, minApprovals: 2, Ct)).ShouldHaveSingleItem().Value;
+        (pattern.TopicLabel, pattern.ToBeDeleted, pattern.Approvals).ShouldBe((Topic, false, 2));
     }
 
     private async Task<SenderPatternDto> PatternAsync(string address)
