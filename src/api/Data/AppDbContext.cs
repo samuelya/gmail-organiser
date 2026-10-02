@@ -1,6 +1,9 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Memory;
+using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -27,6 +30,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<FetchStateRow> FetchState => Set<FetchStateRow>();
     public DbSet<FetchRunMessageRow> FetchRunMessages => Set<FetchRunMessageRow>();
     public DbSet<JobRow> Jobs => Set<JobRow>();
+    public DbSet<AnalysisRunRow> AnalysisRuns => Set<AnalysisRunRow>();
+    public DbSet<SuggestionRow> Suggestions => Set<SuggestionRow>();
+    public DbSet<DecisionRow> Decisions => Set<DecisionRow>();
+    public DbSet<ActionBatchRow> ActionBatches => Set<ActionBatchRow>();
+    public DbSet<ActionLogRow> ActionLog => Set<ActionLogRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -97,6 +105,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         });
 
         JobRow.Configure(modelBuilder);
+        AnalysisRunRow.Configure(modelBuilder);
+        SuggestionRow.Configure(modelBuilder);
+        DecisionRow.Configure(modelBuilder);
+        ActionBatchRow.Configure(modelBuilder);
+        ActionLogRow.Configure(modelBuilder);
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>
