@@ -90,6 +90,61 @@ public sealed class GroupingTests
     }
 
     [Fact]
+    public async Task Refined_groups_are_resorted_newest_first_with_display_and_sender_recomputed()
+    {
+        var messages = new[] { Msg(1, subject: "Order 1 shipped"), Msg(2, subject: "Hello"), Msg(3, from: "other@example.com", subject: "Late news") };
+        var grouper = new AnalysisGrouper(new FuncRefiner(groups =>
+            [groups[0] with { Key = "cluster:1", Members = [.. groups.SelectMany(g => g.Members).OrderBy(m => m.InternalDate)] }]));
+
+        var group = (await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, Ct)).Single();
+
+        group.Key.ShouldBe("cluster:1");
+        group.Members.Select(m => m.Id).ShouldBe(["m003", "m002", "m001"]);
+        group.Display.ShouldBe("Late news");
+        group.SenderAddress.ShouldBe("other@example.com");
+    }
+
+    public static TheoryData<string> BrokenRefinements => new() { "drop", "duplicate", "empty" };
+
+    [Theory]
+    [MemberData(nameof(BrokenRefinements))]
+    public async Task A_refiner_that_does_not_partition_the_input_fails_loudly(string broken)
+    {
+        var messages = Enumerable.Range(1, 3).Select(i => Msg(i, subject: $"Subject {(char)('a' + i)}")).ToList();
+        var grouper = new AnalysisGrouper(new FuncRefiner(groups => broken switch
+        {
+            "drop" => [.. groups.Skip(1)],
+            "duplicate" => [.. groups, groups[0]],
+            _ => [.. groups, groups[0] with { Members = [] }],
+        }));
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, Ct));
+    }
+
+    [Fact]
+    public async Task Protected_members_beyond_k_are_analysed_individually()
+    {
+        var messages = Enumerable.Range(0, 10).Select(i => Msg(i)).ToList();
+        messages.ForEach(m => m.HasAttachment = true);
+        messages[0].HasAttachment = false;
+
+        var groups = await GroupAsync(messages);
+
+        var group = groups.Single(g => !g.Individual);
+        group.Members.Select(m => m.Id).ShouldBe(["m009", "m008", "m007", "m000"]);
+        group.RepresentativeIds.ShouldBe(["m007", "m008", "m009"]);
+        groups.Where(g => g.Individual).Select(g => g.Key).Order().ShouldBe(Enumerable.Range(1, 6).Select(i => $"msg:m{i:D3}"));
+    }
+
+    [Fact]
+    public void Representatives_per_group_is_at_least_the_derivation_minimum()
+    {
+        GroupingSettings.From(new AppSettings { AnalysisRepresentativesPerGroup = 1 }).RepresentativesPerGroup
+            .ShouldBe(DerivationRule.MinValidRepresentatives);
+    }
+
+    [Fact]
     public void Picker_takes_newest_oldest_longest_then_spread()
     {
         var members = Enumerable.Range(0, 10).Select(i => Msg(i, subject: i == 4 ? "Order 1 shipped with a long note" : "Order 1 shipped")).ToList();
@@ -191,6 +246,12 @@ public sealed class GroupingTests
     [MemberData(nameof(MixedCases))]
     public void Rule_is_mixed_on_disagreement_or_fewer_than_two_valid_outputs(RepresentativeOutput?[] outputs) =>
         DerivationRule.Decide(outputs, 0.10).ShouldBe(Mixed.Instance);
+
+    private sealed class FuncRefiner(Func<IReadOnlyList<MessageGroup>, IReadOnlyList<MessageGroup>> refine) : IGroupRefiner
+    {
+        public Task<IReadOnlyList<MessageGroup>> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct) =>
+            Task.FromResult(refine(groups));
+    }
 
     private sealed class RecordingRefiner : IGroupRefiner
     {

@@ -108,11 +108,21 @@ public sealed class AnalysisPreviewTests(ApiFactory factory, PostgresFixture pos
 
         var preview = await PreviewAsync(new { scope = "sender", senderAddress = Filter });
 
+        // All four are allowlisted: the newest k=3 form the group, the fourth is analysed on its own.
         preview.Messages.ShouldBe(4);
-        preview.Groups.ShouldBe(1);
+        preview.Groups.ShouldBe(2);
         preview.EstimatedDerived.ShouldBe(0);
-        preview.LargestGroups.ShouldHaveSingleItem().Representatives.ShouldBe(4);
+        preview.LargestGroups[0].Size.ShouldBe(3);
+        preview.LargestGroups[0].Representatives.ShouldBe(3);
         preview.LargestGroups[0].Display.ShouldBe("Report 4");
+    }
+
+    [Fact]
+    public async Task Messages_scope_covers_every_id_regardless_of_the_default_count()
+    {
+        var ids = Enumerable.Range(0, 30).Select(i => $"shop-{i:D4}").ToArray();
+
+        (await PreviewAsync(new { scope = "messages", messageIds = ids, count = 1 })).Messages.ShouldBe(30);
     }
 
     [Theory]
@@ -122,6 +132,9 @@ public sealed class AnalysisPreviewTests(ApiFactory factory, PostgresFixture pos
     [InlineData("""{"scope":"sender"}""")]
     [InlineData("""{"scope":"messages"}""")]
     [InlineData("""{"scope":"messages","messageIds":[""]}""")]
+    [InlineData("""{"scope":"messages","messageIds":["abc def"]}""")]
+    [InlineData("""{"scope":"messages","messageIds":["a%27--"]}""")]
+    [InlineData("""{"scope":"messages","messageIds":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}""")]
     [InlineData("""{}""")]
     public async Task Invalid_requests_are_400(string body)
     {

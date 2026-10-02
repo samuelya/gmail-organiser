@@ -22,9 +22,10 @@ public sealed record GroupingSettings(
     double DerivedConfidencePenalty,
     double ClusterDistance)
 {
+    /// <summary>k is at least <see cref="DerivationRule.MinValidRepresentatives"/>, or no group could ever be derived.</summary>
     public static GroupingSettings From(AppSettings s) => new(
         s.AnalysisGroupingMode,
-        s.AnalysisRepresentativesPerGroup,
+        Math.Max(s.AnalysisRepresentativesPerGroup, DerivationRule.MinValidRepresentatives),
         s.AnalysisMinGroupSize,
         s.AnalysisDerivedConfidencePenalty,
         s.AnalysisClusterDistance);
@@ -44,24 +45,37 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
         IReadOnlySet<string> allowlistedSenders,
         CancellationToken ct)
     {
-        var ordered = messages.OrderByDescending(m => m.InternalDate).ThenBy(m => m.Id, StringComparer.Ordinal).ToList();
+        var ordered = Newest(messages);
         if (settings.Mode == AnalysisGroupingMode.Off)
         {
             return ordered.Select(Single).ToList();
         }
 
-        IReadOnlyList<MessageGroup> keyed = ordered
+        List<MessageGroup> keyed = ordered
             .GroupBy(GroupKey.For, StringComparer.Ordinal)
             .Select(g => Keyed(g.Key, g.ToList()))
             .ToList();
         if (settings.Mode == AnalysisGroupingMode.Auto)
         {
-            keyed = await refiner.RefineAsync(keyed, settings, ct);
+            var refined = await refiner.RefineAsync(keyed, settings, ct);
+            EnsurePartition(ordered, refined);
+            keyed = refined.Select(g => Keyed(g.Key, Newest(g.Members))).ToList();
         }
 
         var result = new List<MessageGroup>();
-        foreach (var group in keyed)
+        foreach (var keyedGroup in keyed)
         {
+            // Protected members are never derived: beyond the k newest they go to the model one by one, so a group of
+            // protected mail never becomes one oversized prompt.
+            var overflow = keyedGroup.Members
+                .Where(m => MessageProtection.IsProtected(m, allowlistedSenders))
+                .Skip(settings.RepresentativesPerGroup)
+                .ToHashSet();
+            result.AddRange(overflow.Select(Single));
+            var group = overflow.Count == 0
+                ? keyedGroup
+                : Keyed(keyedGroup.Key, keyedGroup.Members.Where(m => !overflow.Contains(m)).ToList());
+
             if (group.Members.Count < Math.Max(settings.MinGroupSize, 2))
             {
                 result.AddRange(group.Members.Select(Single));
@@ -78,6 +92,21 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
             .OrderByDescending(g => g.Members[0].InternalDate)
             .ThenBy(g => g.Key, StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static List<MessageRow> Newest(IEnumerable<MessageRow> members) =>
+        members.OrderByDescending(m => m.InternalDate).ThenBy(m => m.Id, StringComparer.Ordinal).ToList();
+
+    /// <summary>A refiner may only regroup: every input message in exactly one non-empty group.</summary>
+    private static void EnsurePartition(IReadOnlyList<MessageRow> input, IReadOnlyList<MessageGroup> refined)
+    {
+        var ids = refined.SelectMany(g => g.Members).Select(m => m.Id).ToList();
+        var unique = ids.ToHashSet(StringComparer.Ordinal);
+        if (refined.Any(g => g.Members.Count == 0) || unique.Count != ids.Count || !unique.SetEquals(input.Select(m => m.Id)))
+        {
+            throw new InvalidOperationException(
+                $"The group refiner must partition the {input.Count} candidates exactly; it returned {ids.Count} members ({unique.Count} distinct).");
+        }
     }
 
     private static MessageGroup Keyed(string key, IReadOnlyList<MessageRow> members)

@@ -1,14 +1,18 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Settings;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Analysis.Grouping;
 
-public static class AnalysisPreviewEndpoint
+public static partial class AnalysisPreviewEndpoint
 {
     public const int LargestGroupsShown = 10;
     public const int MaxSenderAddressLength = 320;
+
+    // Gmail message ids are short hex strings; the bound leaves room without accepting arbitrary text.
+    public const int MaxMessageIdLength = 64;
 
     public static IServiceCollection AddAnalysisGrouping(this IServiceCollection services)
     {
@@ -30,8 +34,12 @@ public static class AnalysisPreviewEndpoint
         var errors = new Dictionary<string, string[]>();
         var scope = ParseScope(request.Scope, errors);
         var settings = await settingsStore.GetAsync(ct);
-        var count = request.Count ?? settings.AnalysisDefaultCount;
-        if (count is < SettingsValidation.MinAnalysisDefaultCount or > SettingsValidation.MaxAnalysisDefaultCount)
+        // The messages scope covers exactly its ids; a count would silently drop some.
+        var count = scope == AnalysisScope.Messages && request.MessageIds is { Length: > 0 } ids
+            ? ids.Length
+            : request.Count ?? settings.AnalysisDefaultCount;
+        if (scope != AnalysisScope.Messages
+            && count is < SettingsValidation.MinAnalysisDefaultCount or > SettingsValidation.MaxAnalysisDefaultCount)
         {
             errors["count"] = [$"Must be between {SettingsValidation.MinAnalysisDefaultCount} and {SettingsValidation.MaxAnalysisDefaultCount}."];
         }
@@ -44,9 +52,11 @@ public static class AnalysisPreviewEndpoint
 
         if (scope == AnalysisScope.Messages
             && (request.MessageIds is not { Length: > 0 and <= AnalysisCandidates.MaxMessageIds }
-                || request.MessageIds.Any(string.IsNullOrWhiteSpace)))
+                || !request.MessageIds.All(id => id is { Length: <= MaxMessageIdLength } && MessageId().IsMatch(id))))
         {
-            errors["messageIds"] = [$"Required for the messages scope: 1 to {AnalysisCandidates.MaxMessageIds} ids."];
+            errors["messageIds"] = [
+                $"Required for the messages scope: 1 to {AnalysisCandidates.MaxMessageIds} ids of letters, digits, '-' or '_', "
+                + $"at most {MaxMessageIdLength} characters each."];
         }
 
         if (errors.Count > 0 || scope is not { } s)
@@ -88,4 +98,7 @@ public static class AnalysisPreviewEndpoint
 
         return scope;
     }
+
+    [GeneratedRegex(@"^[A-Za-z0-9_-]+$", RegexOptions.CultureInvariant)]
+    private static partial Regex MessageId();
 }

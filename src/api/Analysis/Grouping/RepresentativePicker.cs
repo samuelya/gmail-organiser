@@ -5,7 +5,7 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// <summary>
 /// Picks the members of a group that go to the LLM: every protected member, then newest, oldest, the longest distinct
 /// subject and members spread over the group's date range, until there are <c>k</c> (or more, when protected members
-/// alone exceed <c>k</c>).
+/// alone exceed <c>k</c>; <see cref="AnalysisGrouper"/> keeps at most <c>k</c> protected members in a group).
 /// </summary>
 public static class RepresentativePicker
 {

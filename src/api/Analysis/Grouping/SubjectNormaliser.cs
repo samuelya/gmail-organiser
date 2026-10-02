@@ -26,13 +26,15 @@ public static partial class SubjectNormaliser
         s = BracketTags().Replace(s, " ");
         s = IsoDateTime().Replace(s, "#");
         s = LocalDate().Replace(s, "#");
+        s = DayMonthYear().Replace(s, "#");
+        s = MonthDayOrYear().Replace(s, "#");
+        s = DayUnambiguousMonth().Replace(s, "#");
         s = Time().Replace(s, "#");
         s = Currency().Replace(s, "#");
         s = Percentage().Replace(s, "#");
         s = Reference().Replace(s, "#");
         s = Digits().Replace(s, "#");
         s = NumberGroups().Replace(s, "#");
-        s = MonthNextToNumber().Replace(s, "#");
         s = Whitespace().Replace(s, " ").Trim();
         return s.Length > MaxLength ? s[..MaxLength].TrimEnd() : s;
     }
@@ -69,10 +71,27 @@ public static partial class SubjectNormaliser
     [GeneratedRegex(@"#+([.,:/'-]?#+)*", RegexOptions.CultureInvariant)]
     private static partial Regex NumberGroups();
 
-    [GeneratedRegex(
-        @"#\.?\s+(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?|nov(ember)?|dec(ember)?)\b\.?(\s+#)?|\b(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?|nov(ember)?|dec(ember)?)\.?\s+#",
-        RegexOptions.CultureInvariant)]
-    private static partial Regex MonthNextToNumber();
+    // Month words that are also common words ("may", "march") only count with a day and a year, or before a day or year;
+    // "order 12 may be delayed" keeps its "may". Applied before digits become placeholders, on the raw numbers.
+    private const string Month =
+        "(jan(uary)?|feb(ruary)?|mar(ch)?|apr(il)?|may|june?|july?|aug(ust)?|sept?(ember)?|oct(ober)?|nov(ember)?|dec(ember)?)";
+
+    private const string UnambiguousMonth =
+        "(jan(uary)?|feb(ruary)?|mar|apr(il)?|jun|jul|aug(ust)?|sept?(ember)?|oct(ober)?|nov(ember)?|dec(ember)?)";
+
+    private const string Day = @"\d{1,2}(st|nd|rd|th)?";
+
+    // "3 march 2026", "3rd may, 2026".
+    [GeneratedRegex(@"\b" + Day + @"\.?\s+" + Month + @"\.?,?\s+\d{4}\b", RegexOptions.CultureInvariant)]
+    private static partial Regex DayMonthYear();
+
+    // "mar 3", "may 3rd, 2026", "march 2026".
+    [GeneratedRegex(@"\b" + Month + @"\.?\s+(" + Day + @"\b(,?\s+\d{4}\b)?|\d{4}\b)", RegexOptions.CultureInvariant)]
+    private static partial Regex MonthDayOrYear();
+
+    // "3 aug", "12. oct".
+    [GeneratedRegex(@"\b" + Day + @"\.?\s+" + UnambiguousMonth + @"\b\.?", RegexOptions.CultureInvariant)]
+    private static partial Regex DayUnambiguousMonth();
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
     private static partial Regex Whitespace();

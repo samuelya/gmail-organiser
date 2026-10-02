@@ -7,7 +7,6 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// <summary>Selects the next messages a run (or its preview) covers, newest first.</summary>
 public static class AnalysisCandidates
 {
-    public const string InboxLabel = "INBOX";
     public const int MaxMessageIds = 500;
 
     /// <summary>
@@ -26,9 +25,9 @@ public static class AnalysisCandidates
         var query = db.Messages.AsNoTracking().Where(m => !m.DeletedInGmail);
         query = scope switch
         {
-            AnalysisScope.Inbox => NotAnalysed(query).Where(m => m.LabelIds.Contains(InboxLabel)),
+            AnalysisScope.Inbox => NotAnalysed(query).Where(m => m.LabelIds.Contains(MailboxFetchJob.InboxLabelId)),
             AnalysisScope.All => NotAnalysed(query),
-            AnalysisScope.Sender => NotAnalysed(query).Where(m => m.FromAddress == RequireSender(senderAddress)),
+            AnalysisScope.Sender => BySender(NotAnalysed(query), senderAddress),
             AnalysisScope.Messages => ExplicitIds(query, messageIds),
             _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, null),
         };
@@ -43,10 +42,17 @@ public static class AnalysisCandidates
     private static IQueryable<MessageRow> NotAnalysed(IQueryable<MessageRow> query) =>
         query.Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed);
 
-    private static string RequireSender(string? senderAddress) =>
-        string.IsNullOrWhiteSpace(senderAddress)
-            ? throw new ArgumentException("A sender scope needs a sender address.", nameof(senderAddress))
-            : senderAddress.Trim().ToLowerInvariant();
+    private static IQueryable<MessageRow> BySender(IQueryable<MessageRow> query, string? senderAddress)
+    {
+        // Validated into a local: a throw inside the expression would surface as an EF translation error.
+        if (string.IsNullOrWhiteSpace(senderAddress))
+        {
+            throw new ArgumentException("A sender scope needs a sender address.", nameof(senderAddress));
+        }
+
+        var address = senderAddress.Trim().ToLowerInvariant();
+        return query.Where(m => m.FromAddress == address);
+    }
 
     private static IQueryable<MessageRow> ExplicitIds(IQueryable<MessageRow> query, IReadOnlyCollection<string>? messageIds)
     {
