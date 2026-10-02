@@ -289,7 +289,7 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         [.. Enumerable.Range(0, MessageCount).Where(IsInbox).Select(i => $"m{i:D5}")];
 
     private Task<JobDto> EnqueueAsync() =>
-        WithAsync<IJobService, JobDto>(s => s.EnqueueAsync(MailboxFetchJob.JobType, MailboxFetchJob.Queue, null, Ct));
+        WithAsync<IJobService, JobDto>(async s => (await s.EnqueueAsync(MailboxFetchJob.JobType, MailboxFetchJob.Queue, null, Ct)).Job);
 
     private async Task<JobDto> GetJobAsync(Guid id) =>
         (await WithAsync<IJobService, JobDto?>(s => s.GetAsync(id, Ct))).ShouldNotBeNull();

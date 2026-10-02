@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GmailOrganiser.Common;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Tests.Fakes;
@@ -118,7 +119,7 @@ public sealed class SendersEndpointsTests(ApiFactory factory, PostgresFixture po
     [Fact]
     public async Task Active_sender_fetch_job_is_attached_to_the_matching_address_or_domain()
     {
-        var job = await AddJobAsync(SenderQuery.SenderFetchJobType, JobStatus.Running, new { target = "d2.example.com" });
+        var job = await AddJobAsync(FetchJobTypes.Sender, JobStatus.Running, new { target = "d2.example.com" });
         await AddJobAsync("other_type", JobStatus.Running, new { target = "s001@d1.example.com" });
 
         var page = await GetAsync("/api/senders?sort=address&dir=asc&pageSize=6");
@@ -149,6 +150,17 @@ public sealed class SendersEndpointsTests(ApiFactory factory, PostgresFixture po
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<ValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors.Keys.ShouldBe(["search"]);
+    }
+
+    [Fact]
+    public async Task Search_is_trimmed_before_the_length_check()
+    {
+        var padded = Uri.EscapeDataString(new string('a', 190) + new string(' ', 20) + "\n");
+        var blank = Uri.EscapeDataString(new string(' ', 250));
+
+        (await factory.CreateClient().GetAsync($"/api/senders?search={padded}", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        await using var db = postgres.CreateDbContext();
+        (await GetAsync($"/api/senders?search={blank}&pageSize=200")).Total.ShouldBe(await db.Senders.LongCountAsync(Ct));
     }
 
     private async Task<PagedDto<SenderDto>> GetAsync(string url) =>

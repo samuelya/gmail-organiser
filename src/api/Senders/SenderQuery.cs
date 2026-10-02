@@ -1,6 +1,7 @@
 using System.Text.Json;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
 using Microsoft.EntityFrameworkCore;
 
@@ -24,9 +25,6 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
     /// <summary>Keeps <c>(page - 1) * pageSize</c> inside an <see cref="int"/>.</summary>
     public const int MaxPage = 1_000_000;
 
-    /// <summary>The per-sender fetch job type; its cursor's <c>target</c> is a sender address or a domain.</summary>
-    public const string SenderFetchJobType = "sender_fetch";
-
     private const char LikeEscape = '\\';
 
     /// <summary>Parses the query string values; <paramref name="errors"/> holds the field errors when it returns null.</summary>
@@ -47,7 +45,7 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
         }
 
         var term = string.IsNullOrWhiteSpace(search) ? null : search.Trim();
-        if (search is { Length: > MaxSearchLength } || (term is not null && term.Any(char.IsControl)))
+        if (term is { Length: > MaxSearchLength } || (term is not null && term.Any(char.IsControl)))
         {
             errors["search"] = [$"Must be at most {MaxSearchLength} characters, without control characters."];
         }
@@ -127,7 +125,7 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
     private static async Task<List<(string Target, JobDto Job)>> ActiveSenderFetchJobsAsync(AppDbContext db, CancellationToken ct)
     {
         var jobs = await db.Jobs.AsNoTracking()
-            .Where(j => j.Type == SenderFetchJobType && JobRow.Active.Contains(j.Status) && j.Cursor != null)
+            .Where(j => j.Type == FetchJobTypes.Sender && JobRow.Active.Contains(j.Status) && j.Cursor != null)
             .ToListAsync(ct);
         return [.. jobs.Select(j => (Target: ReadTarget(j.Cursor!), Job: j)).Where(t => t.Target is not null).Select(t => (t.Target!, t.Job.ToDto()))];
     }

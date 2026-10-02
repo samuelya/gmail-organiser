@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Jobs;
@@ -47,7 +48,7 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
 
         var status = await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct);
 
-        status.ShouldBe(new FetchStatusDto(null, "not_started", 0, 0, null, 0, 0, null, null, null, null));
+        status.ShouldBe(new FetchStatusDto(null, "not_started", 0, 0, null, 0, 0, null, null, null, null, null));
     }
 
     [Fact]
@@ -116,6 +117,102 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         status.ActiveJob.ShouldBeNull();
         await using var check = postgres.CreateDbContext();
         status.SendersCount.ShouldBe(await check.Senders.LongCountAsync(Ct));
+    }
+
+    [Fact]
+    public async Task Concurrent_starts_answer_one_202_and_200s_with_the_same_job()
+    {
+        await using var host = FakeGmailHost();
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => Task.Run(() => PostStartAsync(host), Ct)));
+
+        responses.Count(r => r.StatusCode == HttpStatusCode.Accepted).ShouldBe(1);
+        responses.Count(r => r.StatusCode == HttpStatusCode.OK).ShouldBe(5);
+        var ids = await Task.WhenAll(responses.Select(r => r.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)));
+        ids.Select(r => r.ShouldNotBeNull().JobId).Distinct().ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Failed)]
+    [InlineData(JobStatus.Paused)]
+    public async Task Start_after_a_failed_or_paused_fetch_resumes_that_job_with_its_cursor(JobStatus status)
+    {
+        await using var host = FakeGmailHost();
+        var id = await AddMailboxJobAsync(status, "{\"pageToken\":\"p-7\"}", status == JobStatus.Failed ? "Gmail unavailable" : null);
+
+        var response = await PostStartAsync(host);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldBe(new StartFetchResponse(id));
+        await using var db = postgres.CreateDbContext();
+        var job = (await db.Jobs.ToListAsync(Ct)).ShouldHaveSingleItem();
+        job.Status.ShouldBe(JobStatus.Queued);
+        JsonDocument.Parse(job.Cursor.ShouldNotBeNull()).RootElement.GetProperty("pageToken").GetString().ShouldBe("p-7");
+        job.Error.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Start_after_a_completed_fetch_is_a_409_problem()
+    {
+        await using var host = FakeGmailHost();
+        await AddMailboxJobAsync(JobStatus.Completed, null, null);
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.MailboxPhase, MailboxPhase.Completed), Ct);
+        }
+
+        var response = await PostStartAsync(host);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadFromJsonAsync<ProblemDetails>(Ct)).ShouldNotBeNull().Title.ShouldBe("Mailbox already fetched");
+        await using var check = postgres.CreateDbContext();
+        (await check.Jobs.CountAsync(Ct)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Status_reports_the_failed_mailbox_job_and_ignores_other_fetch_queue_jobs()
+    {
+        await using var host = FakeGmailHost();
+        var failed = await AddMailboxJobAsync(JobStatus.Failed, null, "Gmail unavailable");
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Jobs.Add(NewJob(FetchJobTypes.Sender, JobStatus.Running, "{\"target\":\"example.com\"}", null));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var status = (await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct)).ShouldNotBeNull();
+
+        status.ActiveJob.ShouldBeNull();
+        var job = status.FailedJob.ShouldNotBeNull();
+        job.Id.ShouldBe(failed);
+        job.Status.ShouldBe("failed");
+        job.Error.ShouldBe("Gmail unavailable");
+    }
+
+    private async Task<Guid> AddMailboxJobAsync(JobStatus status, string? cursor, string? error)
+    {
+        await using var db = postgres.CreateDbContext();
+        var row = NewJob(MailboxFetchJob.JobType, status, cursor, error);
+        db.Jobs.Add(row);
+        await db.SaveChangesAsync(Ct);
+        return row.Id;
+    }
+
+    private static JobRow NewJob(string type, JobStatus status, string? cursor, string? error)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new JobRow
+        {
+            Id = Guid.NewGuid(),
+            Type = type,
+            Queue = JobQueues.Fetch,
+            Status = status,
+            Cursor = cursor,
+            Error = error,
+            CreatedAt = now,
+            UpdatedAt = now,
+            FinishedAt = JobRow.Finished.Contains(status) ? now : null,
+        };
     }
 
     private WebApplicationFactory<Program> FakeGmailHost() =>
