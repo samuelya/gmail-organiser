@@ -95,4 +95,21 @@
       />
     </mat-card-content>
   </mat-card>
+
+  @if (attachments()?.attachments; as attachmentSettings) {
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-attachments">
+      <mat-card-content data-testid="section-attachments">
+        <h2 id="settings-attachments" class="section-title">Attachments</h2>
+        <p class="section-hint">Which attachments analysis reads, and how much of each.</p>
+        <app-attachment-settings
+          [settings]="attachmentSettings"
+          [visionModel]="attachments()?.visionModel"
+          [baseUrl]="ollamaUrl()"
+          [saving]="attachmentsSaving()"
+          [serverErrors]="attachmentsErrors()"
+          (changed)="saveAttachments($event)"
+        />
+      </mat-card-content>
+    </mat-card>
+  }
 </div>

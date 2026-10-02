@@ -1,0 +1,143 @@
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-4" novalidate>
+  <mat-slide-toggle formControlName="enabled" data-testid="attachments-enabled">
+    Read attachment contents during analysis
+  </mat-slide-toggle>
+
+  <fieldset class="flex flex-col gap-2" formGroupName="types">
+    <legend class="mb-1">Attachment types</legend>
+    <ul class="m-0 flex list-none flex-col gap-2 p-0">
+      @for (type of typeNames; track type) {
+        @let info = typeInfo[type];
+        <li>
+          @if (type === archive) {
+            <span matTooltip="Archives are never opened" class="inline-block">
+              <mat-slide-toggle
+                [formControlName]="type"
+                [attr.data-testid]="'type-' + type"
+                aria-describedby="type-help-archive"
+              >
+                {{ info.label }}
+              </mat-slide-toggle>
+            </span>
+          } @else {
+            <mat-slide-toggle
+              [formControlName]="type"
+              [attr.data-testid]="'type-' + type"
+              [attr.aria-describedby]="'type-help-' + type"
+            >
+              {{ info.label }}
+            </mat-slide-toggle>
+          }
+          <p class="help ml-14" [id]="'type-help-' + type">{{ info.description }}</p>
+        </li>
+      }
+    </ul>
+  </fieldset>
+
+  <fieldset class="flex flex-col gap-2">
+    <legend class="mb-1">Limits</legend>
+    @for (f of numberFields; track f.key) {
+      @let ctl = control(f.key);
+      @let r = range(f.key);
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>{{ f.label }}</mat-label>
+        <input
+          matInput
+          type="number"
+          [formControl]="ctl"
+          [min]="r.inputMin ?? r.min"
+          [max]="r.max"
+          [step]="r.step"
+          [attr.data-testid]="f.key"
+        />
+        @if (ctl.hasError('server')) {
+          <mat-error>{{ ctl.getError('server') }}</mat-error>
+        } @else if (ctl.hasError('required')) {
+          <mat-error>{{ f.label }} is required.</mat-error>
+        } @else if (ctl.hasError('min') || ctl.hasError('max')) {
+          <mat-error>{{ rangeMessage(f.key) }}</mat-error>
+        } @else if (ctl.hasError('integer')) {
+          <mat-error>Enter a whole number.</mat-error>
+        }
+        <mat-hint>{{ f.hint }}</mat-hint>
+      </mat-form-field>
+    }
+  </fieldset>
+
+  @if (imageModeSupported()) {
+    <fieldset class="flex flex-col gap-2">
+      <legend id="attachments-image-mode" class="mb-1">Reading images</legend>
+      <mat-radio-group
+        formControlName="imageMode"
+        aria-labelledby="attachments-image-mode"
+        class="flex flex-col gap-1"
+        data-testid="imageMode"
+      >
+        @for (mode of imageModes; track mode.value) {
+          <div>
+            <mat-radio-button [value]="mode.value" [attr.data-testid]="'image-mode-' + mode.value">
+              {{ mode.label }}
+            </mat-radio-button>
+            <p class="help ml-10">{{ mode.help }}</p>
+          </div>
+        }
+      </mat-radio-group>
+
+      @if (visionShown()) {
+        <mat-form-field subscriptSizing="dynamic">
+          <mat-label>Vision model</mat-label>
+          <mat-select formControlName="visionModel" data-testid="vision-model">
+            <mat-option [value]="null">None (images are skipped)</mat-option>
+            @for (option of vision().options; track option.value) {
+              <mat-option [value]="option.value">{{ option.label }}</mat-option>
+            }
+          </mat-select>
+          @if (c.visionModel.hasError('server')) {
+            <mat-error>{{ c.visionModel.getError('server') }}</mat-error>
+          }
+          <mat-hint data-testid="vision-hint">
+            @if (modelsLoading()) {
+              Loading the models from Ollama…
+            } @else if (!models()?.reachable) {
+              Ollama is not reachable; check the Ollama section.
+            } @else if (!vision().filtered) {
+              Ollama does not report capabilities: all models are listed, choose one that reads
+              images.
+            } @else if (vision().options.length === 0) {
+              No vision-capable models found; pull one on the host.
+            } @else if (vision().unknown) {
+              Vision-capable models are listed, plus models whose capabilities Ollama did not
+              report.
+            } @else {
+              Only vision-capable models are listed.
+            }
+          </mat-hint>
+        </mat-form-field>
+      }
+    </fieldset>
+  }
+
+  @for (message of otherErrors(); track $index) {
+    <p class="help warn" role="alert" data-testid="attachments-error">{{ message }}</p>
+  }
+
+  <div class="flex flex-wrap gap-2">
+    <button
+      mat-flat-button
+      type="submit"
+      [disabled]="!settings() || saving()"
+      data-testid="save-attachments"
+    >
+      Save
+    </button>
+    <button
+      mat-button
+      type="button"
+      (click)="discard()"
+      [disabled]="!settings() || saving() || form.pristine"
+      data-testid="discard-attachments"
+    >
+      Discard
+    </button>
+  </div>
+</form>
