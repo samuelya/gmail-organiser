@@ -50,6 +50,7 @@ public static partial class AnalysisPreviewEndpoint
 
         return TypedResults.Ok(new GroupingPreviewDto(
             Messages: candidates.Count,
+            Skipped: AnalysisCandidates.Skipped(s, count, candidates.Count),
             Groups: groups.Count,
             EstimatedLlmCalls: groups.Count,
             EstimatedDerived: groups.Where(g => !g.Individual).Sum(g => g.Members.Count - g.RepresentativeIds.Count),

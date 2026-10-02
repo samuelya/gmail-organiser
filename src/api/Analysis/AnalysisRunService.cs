@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
@@ -26,7 +27,10 @@ public sealed class AnalysisRunService(
 {
     public const int MaxListLimit = 200;
 
-    /// <summary>Stores a queued run and enqueues its job (one per run; the analysis queue runs them one at a time).</summary>
+    /// <summary>
+    /// Freezes the run's candidates, then stores a queued run and enqueues its job (one per run; the analysis queue
+    /// runs them one at a time) in one transaction, so a failed enqueue leaves no run behind.
+    /// </summary>
     /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
     public async Task<AnalysisRunDto> StartAsync(
         AnalysisScope scope, string? senderAddress, string[]? messageIds, int count, AnalysisGroupingMode? groupingMode,
@@ -39,74 +43,115 @@ public sealed class AnalysisRunService(
         }
 
         var now = time.GetUtcNow();
+        var sender = scope == AnalysisScope.Sender ? senderAddress?.Trim().ToLowerInvariant() : null;
+        var ids = scope == AnalysisScope.Messages ? messageIds?.Distinct(StringComparer.Ordinal).ToArray() : null;
+
+        // A resume works over exactly these ids, whatever is fetched meanwhile.
+        var candidates = await AnalysisCandidates.QueryAsync(db, scope, sender, ids, count, ct);
         var run = new AnalysisRunRow
         {
             Id = Guid.CreateVersion7(now),
             Scope = scope,
-            SenderAddress = scope == AnalysisScope.Sender ? senderAddress?.Trim().ToLowerInvariant() : null,
-            MessageIds = scope == AnalysisScope.Messages ? messageIds?.Distinct(StringComparer.Ordinal).ToArray() : null,
+            SenderAddress = sender,
+            MessageIds = ids,
             RequestedCount = count,
             GroupingMode = groupingMode ?? settings.AnalysisGroupingMode,
             Status = AnalysisRunStatus.Queued,
+            SkippedMessages = AnalysisCandidates.Skipped(scope, count, candidates.Count),
             CreatedAt = now,
         };
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
         db.AnalysisRuns.Add(run);
         await db.SaveChangesAsync(ct);
-
-        var (job, _) = await jobs.EnqueueAsync(
-            AnalysisRunJob.JobType, AnalysisRunJob.Queue, new AnalysisRunCursor(run.Id), ct, dedupKey: run.Id.ToString());
+        var cursor = new AnalysisRunCursor(run.Id, CandidateIds: [.. candidates.Select(m => m.Id)]);
+        var (job, _) = await jobs.EnqueueAsync(AnalysisRunJob.JobType, AnalysisRunJob.Queue, cursor, ct, dedupKey: run.Id.ToString());
         run.JobId = job.Id;
         await db.SaveChangesAsync(ct);
-        return ToDto(run, null);
+        await tx.CommitAsync(ct);
+        return ToDto(run);
     }
 
     public async Task<IReadOnlyList<AnalysisRunDto>> ListAsync(bool? active, int limit, CancellationToken ct)
     {
-        var query = WithJobs();
+        await SyncEndedJobsAsync(ct);
+        var query = db.AnalysisRuns.AsNoTracking();
         if (active is { } a)
         {
             query = a
-                ? query.Where(x => x.Run.Status == AnalysisRunStatus.Queued || x.Run.Status == AnalysisRunStatus.Running)
-                : query.Where(x => x.Run.Status != AnalysisRunStatus.Queued && x.Run.Status != AnalysisRunStatus.Running);
+                ? query.Where(r => r.Status == AnalysisRunStatus.Queued || r.Status == AnalysisRunStatus.Running)
+                : query.Where(r => r.Status != AnalysisRunStatus.Queued && r.Status != AnalysisRunStatus.Running);
         }
 
-        var rows = await query.OrderByDescending(x => x.Run.CreatedAt).Take(Math.Clamp(limit, 1, MaxListLimit)).ToListAsync(ct);
-        return [.. rows.Select(x => ToDto(x.Run, x.Job))];
+        var rows = await query.OrderByDescending(r => r.CreatedAt).Take(Math.Clamp(limit, 1, MaxListLimit)).ToListAsync(ct);
+        return [.. rows.Select(ToDto)];
     }
 
-    public async Task<AnalysisRunDto?> GetAsync(Guid id, CancellationToken ct) =>
-        await WithJobs().Where(x => x.Run.Id == id).FirstOrDefaultAsync(ct) is { } x ? ToDto(x.Run, x.Job) : null;
+    public async Task<AnalysisRunDto?> GetAsync(Guid id, CancellationToken ct)
+    {
+        await SyncEndedJobsAsync(ct);
+        return await db.AnalysisRuns.AsNoTracking().SingleOrDefaultAsync(r => r.Id == id, ct) is { } run ? ToDto(run) : null;
+    }
 
     /// <summary>
-    /// Asks the run's job to stop after its current group; a queued run ends at once. Null when the run does not exist,
-    /// <see cref="JobActionResult.Conflict"/> when it has already finished.
+    /// Asks the run's job to stop after its current group; a queued or paused run ends at once. Allowed only while the
+    /// job is queued, running or paused: otherwise <see cref="JobActionResult.Conflict"/> and nothing changes.
     /// </summary>
     public async Task<(JobActionResult Result, AnalysisRunDto? Run)> CancelAsync(Guid id, CancellationToken ct)
     {
-        var run = await db.AnalysisRuns.SingleOrDefaultAsync(r => r.Id == id, ct);
+        var run = await db.AnalysisRuns.AsNoTracking().SingleOrDefaultAsync(r => r.Id == id, ct);
         if (run is null)
         {
             return (JobActionResult.NotFound, null);
         }
 
-        var result = run.JobId is { } jobId ? await jobs.CancelAsync(jobId, ct) : JobActionResult.NotFound;
-        if (result == JobActionResult.Ok
-            && await db.Jobs.AsNoTracking().AnyAsync(j => j.Id == run.JobId && j.Status == JobStatus.Cancelled, ct))
+        var jobActive = run.JobId is { } jobId
+            && await db.Jobs.AsNoTracking().AnyAsync(j => j.Id == jobId && JobRow.Active.Contains(j.Status), ct);
+        if (!jobActive || run.Status is AnalysisRunStatus.Completed or AnalysisRunStatus.Cancelled)
         {
-            // The job never ran (or was paused or failed): nothing else will end the run.
-            await db.AnalysisRuns
-                .Where(r => r.Id == id && (r.Status == AnalysisRunStatus.Queued || r.Status == AnalysisRunStatus.Running))
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(r => r.Status, AnalysisRunStatus.Cancelled)
-                    .SetProperty(r => r.FinishedAt, time.GetUtcNow()), ct);
+            return (JobActionResult.Conflict, await GetAsync(id, ct));
         }
 
+        var result = await jobs.CancelAsync(run.JobId!.Value, ct);
         if (result == JobActionResult.NotFound)
         {
             result = JobActionResult.Conflict;
         }
 
+        // A queued or paused job is cancelled at once and no handler will end the run; GetAsync syncs it.
         return (result, await GetAsync(id, ct));
+    }
+
+    /// <summary>
+    /// Ends the runs whose job ended without the handler recording it (refused by the guard, cancelled while queued or
+    /// paused, failed while recording) with the job's end state, so the stored status, the <c>active</c> filter and
+    /// the DTO agree.
+    /// </summary>
+    private async Task SyncEndedJobsAsync(CancellationToken ct)
+    {
+        var stale = await (
+                from run in db.AnalysisRuns.AsNoTracking()
+                join job in db.Jobs.AsNoTracking() on run.JobId equals job.Id
+                where (run.Status == AnalysisRunStatus.Queued || run.Status == AnalysisRunStatus.Running)
+                    && JobRow.Finished.Contains(job.Status)
+                select new { run.Id, job.Status, job.Error, job.FinishedAt })
+            .ToListAsync(ct);
+        foreach (var x in stale)
+        {
+            var status = x.Status switch
+            {
+                JobStatus.Completed => AnalysisRunStatus.Completed,
+                JobStatus.Cancelled => AnalysisRunStatus.Cancelled,
+                _ => AnalysisRunStatus.Failed,
+            };
+            var finishedAt = x.FinishedAt ?? time.GetUtcNow();
+            await db.AnalysisRuns
+                .Where(r => r.Id == x.Id && (r.Status == AnalysisRunStatus.Queued || r.Status == AnalysisRunStatus.Running))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.Status, status)
+                    .SetProperty(r => r.Error, r => r.Error ?? x.Error)
+                    .SetProperty(r => r.FinishedAt, finishedAt), ct);
+        }
     }
 
     /// <summary>
@@ -187,60 +232,28 @@ public sealed class AnalysisRunService(
     /// <summary><c>1 − llmCalls / max(1, covered)</c>; negative when retries cost more calls than emails covered.</summary>
     public static double SavedPercent(long llmCalls, long covered) => 1 - ((double)llmCalls / Math.Max(1, covered));
 
-    private IQueryable<RunWithJob> WithJobs() =>
-        from run in db.AnalysisRuns.AsNoTracking()
-        join job in db.Jobs.AsNoTracking() on run.JobId equals job.Id into jobsOfRun
-        from job in jobsOfRun.DefaultIfEmpty()
-        select new RunWithJob { Run = run, Job = job };
-
-    // Member-init, not a positional record: EF translates filters on its properties only in this shape.
-    private sealed class RunWithJob
-    {
-        public required AnalysisRunRow Run { get; init; }
-        public JobRow? Job { get; init; }
-    }
-
-    /// <summary>
-    /// The run as stored, except while it says queued or running but its job has already ended (refused before the
-    /// handler ran, cancelled while queued, or failed while recording): then the job's end state is reported.
-    /// </summary>
-    private static AnalysisRunDto ToDto(AnalysisRunRow run, JobRow? job)
-    {
-        var status = run.Status;
-        var error = run.Error;
-        if (status is AnalysisRunStatus.Queued or AnalysisRunStatus.Running && job is { Status: var js } && JobRow.Finished.Contains(js))
-        {
-            status = js switch
-            {
-                JobStatus.Completed => AnalysisRunStatus.Completed,
-                JobStatus.Cancelled => AnalysisRunStatus.Cancelled,
-                _ => AnalysisRunStatus.Failed,
-            };
-            error ??= job.Error;
-        }
-
-        return new AnalysisRunDto(
-            run.Id,
-            run.JobId,
-            SnakeCaseEnumConverter<AnalysisScope>.ToDb(run.Scope),
-            run.SenderAddress,
-            run.RequestedCount,
-            SnakeCaseEnumConverter<AnalysisGroupingMode>.ToDb(run.GroupingMode),
-            SnakeCaseEnumConverter<AnalysisRunStatus>.ToDb(status),
-            run.MessagesCovered,
-            run.MessagesLlm,
-            run.MessagesDerived,
-            run.MessagesFromMemory,
-            run.LlmCalls,
-            run.Groups,
-            run.MixedGroups,
-            run.FailedMessages,
-            run.Model,
-            run.PromptVersion,
-            error,
-            SavedPercent(run.LlmCalls, run.MessagesCovered),
-            run.CreatedAt,
-            run.StartedAt,
-            run.FinishedAt ?? (status != run.Status ? job?.FinishedAt : null));
-    }
+    private static AnalysisRunDto ToDto(AnalysisRunRow run) => new(
+        run.Id,
+        run.JobId,
+        SnakeCaseEnumConverter<AnalysisScope>.ToDb(run.Scope),
+        run.SenderAddress,
+        run.RequestedCount,
+        SnakeCaseEnumConverter<AnalysisGroupingMode>.ToDb(run.GroupingMode),
+        SnakeCaseEnumConverter<AnalysisRunStatus>.ToDb(run.Status),
+        run.MessagesCovered,
+        run.MessagesLlm,
+        run.MessagesDerived,
+        run.MessagesFromMemory,
+        run.LlmCalls,
+        run.Groups,
+        run.MixedGroups,
+        run.FailedMessages,
+        run.SkippedMessages,
+        run.Model,
+        run.PromptVersion,
+        run.Error,
+        SavedPercent(run.LlmCalls, run.MessagesCovered),
+        run.CreatedAt,
+        run.StartedAt,
+        run.FinishedAt);
 }

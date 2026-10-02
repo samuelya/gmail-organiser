@@ -17,18 +17,23 @@ namespace GmailOrganiser.Analysis;
 /// <param name="LastGroupKey">The key of the last stored unit; informational.</param>
 /// <param name="FailedIds">Members whose model output stayed invalid; a resume skips them instead of retrying.</param>
 /// <param name="IndividualIds">Remaining members of a mixed group; a resume analyses them one by one, never derived.</param>
+/// <param name="CandidateIds">
+/// The run's candidates, frozen at the start; a resume covers exactly these (minus stored, failed and no longer
+/// eligible ones), so mail fetched meanwhile never shifts the window.
+/// </param>
 public sealed record AnalysisRunCursor(
     Guid RunId,
     int GroupsDone = 0,
     string? LastGroupKey = null,
     IReadOnlyList<string>? FailedIds = null,
-    IReadOnlyList<string>? IndividualIds = null);
+    IReadOnlyList<string>? IndividualIds = null,
+    IReadOnlyList<string>? CandidateIds = null);
 
 /// <summary>
-/// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining candidates, then per group asks the model about
-/// the representatives, derives the other members when the representatives agree and stores everything with the run
-/// counters and the checkpoint in one transaction. The model call is not idempotent, so a restart repeats at most the
-/// group whose transaction did not commit; stored members have dropped out of the candidates by then.
+/// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining frozen candidates, then per group asks the model
+/// about the representatives, derives the other members when the representatives agree and stores everything with the
+/// run counters and the checkpoint in one transaction. The model call is not idempotent, so a restart repeats at most
+/// the group whose transaction did not commit; members with a suggestion of this run are not candidates any more.
 /// </summary>
 public sealed partial class AnalysisRunJob(
     AppDbContext db,
@@ -87,6 +92,7 @@ public sealed partial class AnalysisRunJob(
         await db.SaveChangesAsync(ct);
 
         var work = await PlanAsync(run, cursor, settings, ct);
+        cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
         var context = new RunContext(run, settings, builder, chat, await UserLabelsAsync(ct), work.Allowlisted);
 
@@ -126,7 +132,7 @@ public sealed partial class AnalysisRunJob(
             }
         }
 
-        await ctx.CompleteAsync(cursor, Progress(run), async c =>
+        await ctx.CompleteAsync(cursor, Progress(run, cursor), async c =>
         {
             run.Status = AnalysisRunStatus.Completed;
             run.FinishedAt = time.GetUtcNow();
@@ -134,27 +140,40 @@ public sealed partial class AnalysisRunJob(
         }, ct);
     }
 
-    private sealed record Plan(IReadOnlyList<MessageGroup> Individual, IReadOnlyList<MessageGroup> Groups, IReadOnlySet<string> Allowlisted);
+    private sealed record Plan(
+        IReadOnlyList<MessageGroup> Individual, IReadOnlyList<MessageGroup> Groups, IReadOnlySet<string> Allowlisted, AnalysisRunCursor Cursor);
 
     /// <summary>
-    /// The candidates still to cover, newest first: the explicit ids of a messages run, else the next
-    /// <c>count − covered − failed</c> not-analysed messages. Members left over from a mixed group come first, one by one.
+    /// The frozen candidates still to cover, newest first: not failed, without a suggestion of this run and still
+    /// eligible. Candidates no longer eligible leave the cursor and count as skipped (both stored with the next
+    /// checkpoint). Members left over from a mixed group come first, one by one.
     /// </summary>
     private async Task<Plan> PlanAsync(AnalysisRunRow run, AnalysisRunCursor cursor, AppSettings settings, CancellationToken ct)
     {
-        var remaining = run.RequestedCount - run.MessagesCovered - run.FailedMessages;
+        var frozen = cursor.CandidateIds ?? throw new JobRefusedException("The analysis run has no frozen candidates.");
         var failed = (cursor.FailedIds ?? []).ToHashSet(StringComparer.Ordinal);
-        if (remaining <= 0)
-        {
-            return new Plan([], [], new HashSet<string>());
-        }
-
-        // A messages run may list analysed ids; querying all of them keeps a covered newer id from hiding an older one.
-        var take = run.Scope == AnalysisScope.Messages ? Math.Max(run.MessageIds?.Length ?? 0, 1) : remaining + failed.Count;
-        var candidates = (await AnalysisCandidates.QueryAsync(db, run.Scope, run.SenderAddress, run.MessageIds, take, ct))
-            .Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed && !failed.Contains(m.Id))
-            .Take(remaining)
+        var stored = await db.Suggestions.AsNoTracking()
+            .Where(s => s.RunId == run.Id)
+            .Select(s => s.MessageId)
+            .ToListAsync(ct);
+        var open = frozen.Except(failed, StringComparer.Ordinal).Except(stored, StringComparer.Ordinal).ToArray();
+        var rows = await db.Messages.AsNoTracking().Where(m => open.Contains(m.Id)).ToListAsync(ct);
+        var candidates = rows
+            .Where(m => AnalysisCandidates.IsEligible(run.Scope, m))
+            .OrderByDescending(m => m.InternalDate)
+            .ThenBy(m => m.Id, StringComparer.Ordinal)
             .ToList();
+
+        var dropped = open.Except(candidates.Select(m => m.Id), StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
+        if (dropped.Count > 0)
+        {
+            run.SkippedMessages += dropped.Count;
+            cursor = cursor with
+            {
+                CandidateIds = [.. frozen.Where(id => !dropped.Contains(id))],
+                IndividualIds = cursor.IndividualIds?.Where(id => !dropped.Contains(id)).ToList(),
+            };
+        }
 
         var addresses = candidates.Select(m => m.FromAddress).Distinct().ToArray();
         var allowlisted = (await db.Senders.AsNoTracking()
@@ -166,7 +185,7 @@ public sealed partial class AnalysisRunJob(
         var individual = (cursor.IndividualIds ?? []).ToHashSet(StringComparer.Ordinal);
         var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode };
         var groups = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, ct);
-        return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(Single)], groups, allowlisted);
+        return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], groups, allowlisted, cursor);
     }
 
     /// <summary>The mailbox's user labels, sorted; read once per run for the prompt.</summary>
@@ -178,39 +197,52 @@ public sealed partial class AnalysisRunJob(
             .ToList();
 
     /// <summary>
-    /// One transaction: the group's suggestion rows, the members' status, the senders' analysed counts, the run
-    /// counters and the job checkpoint. Returns the checkpoint's pause/cancel signal.
+    /// One transaction: the group's suggestion rows (replacing a pending or rejected suggestion of a re-analysed
+    /// message), the members' status, the senders' analysed counts, the run counters and the job checkpoint. A member
+    /// approved or applied meanwhile keeps its suggestion and counts as skipped. Returns the pause/cancel signal.
     /// </summary>
     private async Task<JobSignal> StoreAsync(
         JobContext ctx, AnalysisRunRow run, MessageGroup group, GroupOutcome outcome, AnalysisRunCursor cursor, CancellationToken ct)
     {
         var now = time.GetUtcNow();
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
         var members = group.Members.ToDictionary(m => m.Id, StringComparer.Ordinal);
-        foreach (var row in outcome.Suggestions)
-        {
-            var message = members[row.MessageId];
-            db.Messages.Attach(message);
-            row.RunId = run.Id;
-            row.CreatedAt = now;
-            db.Suggestions.Add(row);
-            row.SetStatus(SuggestionStatus.Pending, message, now);
-        }
+        var ids = outcome.Suggestions.Select(s => s.MessageId).ToArray();
+        var decided = (await db.Suggestions.AsNoTracking()
+                .Where(s => ids.Contains(s.MessageId) && (s.Status == SuggestionStatus.Approved || s.Status == SuggestionStatus.Applied))
+                .Select(s => s.MessageId)
+                .ToListAsync(ct))
+            .ToHashSet(StringComparer.Ordinal);
+        var rows = outcome.Suggestions.Where(s => !decided.Contains(s.MessageId)).ToList();
 
-        run.MessagesCovered += outcome.Suggestions.Count;
-        run.MessagesLlm += outcome.Suggestions.Count(s => s.Source == SuggestionSource.Llm);
-        run.MessagesDerived += outcome.Suggestions.Count(s => s.Source == SuggestionSource.Derived);
-        run.MessagesFromMemory += outcome.Suggestions.Count(s => s.Source == SuggestionSource.Memory);
+        run.MessagesCovered += rows.Count;
+        run.MessagesLlm += rows.Count(s => s.Source == SuggestionSource.Llm);
+        run.MessagesDerived += rows.Count(s => s.Source == SuggestionSource.Derived);
+        run.MessagesFromMemory += rows.Count(s => s.Source == SuggestionSource.Memory);
         run.FailedMessages += outcome.FailedIds.Count;
+        run.SkippedMessages += decided.Count;
         run.LlmCalls += outcome.LlmCalls;
         run.Groups++;
         run.MixedGroups += outcome.Mixed ? 1 : 0;
-        await db.SaveChangesAsync(ct);
-        await senderStats.UpdateAnalysedCountsAsync(outcome.Suggestions.Select(s => s.SenderAddress), ct);
 
-        var signal = await ctx.CheckpointAsync(cursor, Progress(run), ct);
-        await tx.CommitAsync(ct);
-        return signal;
+        return await ctx.CheckpointAsync(cursor, Progress(run, cursor), async c =>
+        {
+            var replaced = rows.Select(r => r.MessageId).ToArray();
+            await db.Suggestions
+                .Where(s => replaced.Contains(s.MessageId) && (s.Status == SuggestionStatus.Pending || s.Status == SuggestionStatus.Rejected))
+                .ExecuteDeleteAsync(c);
+            foreach (var row in rows)
+            {
+                var message = members[row.MessageId];
+                db.Messages.Attach(message);
+                row.RunId = run.Id;
+                row.CreatedAt = now;
+                db.Suggestions.Add(row);
+                row.SetStatus(SuggestionStatus.Pending, message, now);
+            }
+
+            await db.SaveChangesAsync(c);
+            await senderStats.UpdateAnalysedCountsAsync(rows.Select(s => s.SenderAddress), c);
+        }, ct);
     }
 
     /// <summary>Sets a final status unless the run already has one; not tracked, so it works after a failed save.</summary>
@@ -225,16 +257,9 @@ public sealed partial class AnalysisRunJob(
                 .SetProperty(r => r.FinishedAt, now), ct);
     }
 
-    private static JobProgress Progress(AnalysisRunRow run) =>
-        new(run.MessagesCovered, run.RequestedCount, $"{run.Groups} groups, {run.LlmCalls} LLM calls");
-
-    private static MessageGroup Single(MessageRow m) => new(
-        AnalysisGrouper.IndividualKeyPrefix + m.Id,
-        m.FromAddress,
-        string.IsNullOrWhiteSpace(m.Subject) ? AnalysisGrouper.NoSubjectDisplay : m.Subject,
-        [m],
-        [m.Id],
-        Individual: true);
+    /// <summary>Covered and failed candidates out of the frozen ones (skipped ones have left the cursor).</summary>
+    private static JobProgress Progress(AnalysisRunRow run, AnalysisRunCursor cursor) =>
+        new(run.MessagesCovered + run.FailedMessages, cursor.CandidateIds?.Count, $"{run.Groups} groups, {run.LlmCalls} LLM calls");
 
     private static string Shorten(string message) =>
         message.Length <= MaxErrorLength ? message : message[..(MaxErrorLength - 1)] + "…";

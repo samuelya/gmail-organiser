@@ -47,6 +47,9 @@ public sealed class AnalysisRunRow
     public int Groups { get; set; }
     public int MixedGroups { get; set; }
     public int FailedMessages { get; set; }
+
+    /// <summary>Selected messages the run does not analyse (approved, applied, deleted or unknown ids).</summary>
+    public int SkippedMessages { get; set; }
     public int AttachmentsConverted { get; set; }
     public int AttachmentsSkipped { get; set; }
     public string? Model { get; set; }

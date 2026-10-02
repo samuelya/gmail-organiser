@@ -116,7 +116,8 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
         return new MessageGroup(key, newest.FromAddress, display, members, [], Individual: false);
     }
 
-    private static MessageGroup Single(MessageRow m) =>
+    /// <summary>A message analysed on its own.</summary>
+    internal static MessageGroup Single(MessageRow m) =>
         new(IndividualKeyPrefix + m.Id, m.FromAddress, Subject(m), [m], [m.Id], Individual: true);
 
     private static string Subject(MessageRow m) => string.IsNullOrWhiteSpace(m.Subject) ? NoSubjectDisplay : m.Subject;

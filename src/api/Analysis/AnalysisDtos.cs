@@ -3,9 +3,13 @@ namespace GmailOrganiser.Analysis;
 /// <summary><c>scope</c> is <c>inbox | all | sender | messages</c>; <c>count</c> defaults to the AnalysisDefaultCount setting.</summary>
 public sealed record AnalysisPreviewRequest(string? Scope, string? SenderAddress, int? Count, string[]? MessageIds);
 
-/// <summary>What a run with these settings would cost, without any model call.</summary>
+/// <summary>
+/// What a run with these settings would cost, without any model call. <c>skipped</c>: ids of a messages scope that
+/// are approved, applied, deleted or unknown and so are not analysed (0 for the other scopes).
+/// </summary>
 public sealed record GroupingPreviewDto(
     int Messages,
+    int Skipped,
     int Groups,
     int EstimatedLlmCalls,
     int EstimatedDerived,
@@ -27,6 +31,12 @@ public sealed record ReanalyseRequest(string[]? MessageIds, string? SenderAddres
 
 public sealed record ReanalyseResponse(int Reset);
 
+/// <summary>
+/// One run. <c>status</c> stays <c>running</c> while its job is paused (the run has no paused status; the job shows
+/// it). <c>skippedMessages</c>: ids of a messages scope not analysed because they are approved, applied, deleted or
+/// unknown, plus candidates that stopped qualifying before their group ran. <c>savedPercent</c> is
+/// <c>1 − llmCalls / max(1, messagesCovered)</c>; retries count as calls, so it can go negative.
+/// </summary>
 public sealed record AnalysisRunDto(
     Guid Id,
     Guid? JobId,
@@ -43,6 +53,7 @@ public sealed record AnalysisRunDto(
     int Groups,
     int MixedGroups,
     int FailedMessages,
+    int SkippedMessages,
     string? Model,
     string? PromptVersion,
     string? Error,

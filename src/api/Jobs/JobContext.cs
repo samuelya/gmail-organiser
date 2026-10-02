@@ -55,6 +55,43 @@ public sealed class JobContext
     public async Task<JobSignal> CheckpointAsync<T>(T cursor, JobProgress progress, CancellationToken ct)
     {
         await EnsureAllowedAsync(ct);
+        var signal = await WriteCheckpointAsync(cursor, progress, ct);
+        await notifier.PublishAsync(db, JobId, ct);
+        return signal;
+    }
+
+    /// <summary>
+    /// A checkpoint whose <paramref name="writes"/> (the unit of work's own rows) commit in the same transaction as
+    /// the cursor; progress is published only after the commit. Guarded like <see cref="CheckpointAsync{T}(T, JobProgress, CancellationToken)"/>.
+    /// </summary>
+    public async Task<JobSignal> CheckpointAsync<T>(T cursor, JobProgress progress, Func<CancellationToken, Task> writes, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(writes);
+        await EnsureAllowedAsync(ct);
+        var (previousCursor, previousSignal) = (this.cursor, LastSignal);
+        JobSignal signal;
+        await using (var tx = await db.Database.BeginTransactionAsync(ct))
+        {
+            await writes(ct);
+            signal = await WriteCheckpointAsync(cursor, progress, ct);
+            try
+            {
+                await tx.CommitAsync(ct);
+            }
+            catch
+            {
+                // Nothing was stored: the cursor in memory stays at the previous checkpoint.
+                (this.cursor, LastSignal) = (previousCursor, previousSignal);
+                throw;
+            }
+        }
+
+        await notifier.PublishAsync(db, JobId, ct);
+        return signal;
+    }
+
+    private async Task<JobSignal> WriteCheckpointAsync<T>(T cursor, JobProgress progress, CancellationToken ct)
+    {
         var cursorJson = JsonSerializer.Serialize(cursor, JobRow.Json);
         var progressJson = JsonSerializer.Serialize(progress, JobRow.Json);
         var now = time.GetUtcNow();
@@ -69,7 +106,6 @@ public sealed class JobContext
 
         this.cursor = cursorJson;
         LastSignal = flags.Count == 0 ? JobSignal.Cancel : (JobSignal)flags[0];
-        await notifier.PublishAsync(db, JobId, ct);
         return LastSignal;
     }
 

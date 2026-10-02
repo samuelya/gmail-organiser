@@ -2,6 +2,7 @@ using System.Text.Json;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
 using Microsoft.Extensions.AI;
 
@@ -19,6 +20,9 @@ public sealed partial class AnalysisRunJob
 {
     public const string RetryInstruction = "Return only the JSON array.";
 
+    /// <summary>Representative bodies fetched at once; the Gmail quota limiter still paces the calls.</summary>
+    public const int MaxConcurrentBodyFetches = 4;
+
     /// <summary>
     /// Short-circuit, else one model call about the representatives (plus one retry when some answers are invalid).
     /// Nothing is written here. Bodies live only in this call's locals.
@@ -32,17 +36,19 @@ public sealed partial class AnalysisRunJob
 
         var members = group.Members.ToDictionary(m => m.Id, StringComparer.Ordinal);
         var representatives = group.RepresentativeIds.Select(id => members[id]).ToList();
-        var emails = new List<EmailForPrompt>(representatives.Count);
-        foreach (var m in representatives)
-        {
-            if (await gmail.GetMessageBodyAsync(m.Id, ct) is { } body)
-            {
-                emails.Add(new EmailForPrompt(
-                    m.Id, m.FromAddress, m.FromName, m.Subject, m.InternalDate, m.Category?.ToString(),
-                    !string.IsNullOrEmpty(m.ListUnsubscribe), m.HasAttachment,
-                    BodyCleaner.Clean(body.Text, body.Html, context.Settings.AnalysisBodyMaxChars)));
-            }
-        }
+        var bodies = new GmailMessageBody?[representatives.Count];
+        await Parallel.ForEachAsync(
+            Enumerable.Range(0, representatives.Count),
+            new ParallelOptions { MaxDegreeOfParallelism = MaxConcurrentBodyFetches, CancellationToken = ct },
+            async (i, c) => bodies[i] = await gmail.GetMessageBodyAsync(representatives[i].Id, c));
+        var emails = representatives
+            .Zip(bodies)
+            .Where(x => x.Second is not null)
+            .Select(x => new EmailForPrompt(
+                x.First.Id, x.First.FromAddress, x.First.FromName, x.First.Subject, x.First.InternalDate, x.First.Category?.ToString(),
+                !string.IsNullOrEmpty(x.First.ListUnsubscribe), x.First.HasAttachment,
+                BodyCleaner.Clean(x.Second!.Text, x.Second.Html, context.Settings.AnalysisBodyMaxChars)))
+            .ToList();
 
         if (emails.Count < representatives.Count)
         {
@@ -75,7 +81,7 @@ public sealed partial class AnalysisRunJob
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
         {
-            return new GroupOutcome(rows, failed, [.. others.Select(Single)], calls, Mixed: true);
+            return new GroupOutcome(rows, failed, [.. others.Select(AnalysisGrouper.Single)], calls, Mixed: true);
         }
 
         // A derived toBeDeleted never lands on protected mail; the grouper makes such members representatives, this
@@ -89,7 +95,7 @@ public sealed partial class AnalysisRunJob
         {
             if (agreed.ToBeDeleted && MessageProtection.IsProtected(m, context.Allowlisted))
             {
-                individual.Add(Single(m));
+                individual.Add(AnalysisGrouper.Single(m));
             }
             else
             {
