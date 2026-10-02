@@ -16,7 +16,7 @@ namespace GmailOrganiser.Tests.Integration;
 public sealed class AnalysisAttachmentRunTests : IClassFixture<ApiFactory>, IAsyncLifetime
 {
     /// <summary>Only the synthetic PDFs carry this text.</summary>
-    private const string PdfText = "Synthetic statement for example.com, reference QUILLWORT-7731.";
+    private const string PdfText = "Synthetic statement for example.com, reference QUILLWORT-7731, due on the first working day.";
 
     private readonly PostgresFixture postgres;
     private readonly CapturingLoggerProvider logs = new();
@@ -70,12 +70,29 @@ public sealed class AnalysisAttachmentRunTests : IClassFixture<ApiFactory>, IAsy
         prompts.Except(billing).ShouldAllBe(p => !p.Contains("Attachment"));
         h.Chat.Requests[0][0].Text.ShouldContain("converted to text");
 
-        // Only messages with attachments cost the combined fetch.
-        h.Gmail.ContentCalls.ShouldAllBe(id => id.StartsWith('c'));
+        // With the switch on every representative costs the one combined fetch, whatever HasAttachment says.
+        h.Gmail.ContentCalls.ShouldContain(id => !id.StartsWith('c'));
 
         (await AttachmentConversionStorageTests.TablesContainingAsync(postgres, "QUILLWORT")).ShouldBeEmpty();
         logs.Messages.ShouldNotBeEmpty();
         logs.Messages.ShouldAllBe(m => !m.Contains("QUILLWORT"));
+    }
+
+    [Fact]
+    public async Task A_reason_quoting_the_pdf_is_stored_naming_the_attachment_only()
+    {
+        h.Chat.Respond = (ids, _, messages, _) => Task.FromResult(messages[^1].Text.Contains(PdfText, StringComparison.Ordinal)
+            ? AnalysisRunHarness.Agree(ids).Replace("Synthetic reason", "The PDF says: " + PdfText, StringComparison.Ordinal)
+            : AnalysisRunHarness.Agree(ids));
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+
+        await h.RunNextAsync();
+
+        (await h.GetRunAsync(run.Id)).Status.ShouldBe("completed");
+        await using var db = postgres.CreateDbContext();
+        var reasons = await db.Suggestions.Where(s => s.SenderAddress == AnalysisRunHarness.Billing).Select(s => s.Reason).ToListAsync(Ct);
+        reasons.ShouldContain(r => r.StartsWith("Based on the attachment statement-c0", StringComparison.Ordinal));
+        (await AttachmentConversionStorageTests.TablesContainingAsync(postgres, "QUILLWORT")).ShouldBeEmpty();
     }
 
     [Fact]

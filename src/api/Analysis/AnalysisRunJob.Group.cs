@@ -23,8 +23,8 @@ internal sealed record GroupOutcome(
     int AttachmentsConverted = 0,
     int AttachmentsSkipped = 0);
 
-/// <summary>A representative's body and its attachment digest; both live only in the group's analysis.</summary>
-internal sealed record FetchedMessage(GmailMessageBody Body, AttachmentDigest Attachments);
+/// <summary>A representative's body and its attachment list (empty with the master switch off); both live only in the group's analysis.</summary>
+internal sealed record FetchedMessage(GmailMessageBody Body, IReadOnlyList<GmailAttachment> Attachments);
 
 /// <summary>A group's looked-ahead memory: its short-circuit result, or the vectors of its representatives.</summary>
 internal sealed record PreparedGroup(ShortCircuitResult? Covered, MessageVectors? Vectors);
@@ -84,9 +84,16 @@ public sealed partial class AnalysisRunJob
                 !string.IsNullOrEmpty(x.First.ListUnsubscribe), x.First.HasAttachment,
                 BodyCleaner.Clean(x.Second!.Body.Text, x.Second.Body.Html, context.Settings.AnalysisBodyMaxChars)))
             .ToList();
-        var digests = present.Select(x => x.Second!.Attachments).ToList();
-        var (converted, skipped) = (digests.Sum(d => d.Converted.Count), digests.Sum(d => d.Skipped.Count));
-        var attachmentsSection = attachments.Render([.. present.Select((x, i) => new MessageAttachments(i + 1, x.First.Id, x.Second!.Attachments))]);
+
+        // One message's attachments at a time, and groups run one after another: conversions (OCR, vision, office
+        // documents) never compete with each other or with the analysis model.
+        var converted = new List<IReadOnlyList<PromptAttachment>>();
+        foreach (var (message, content) in present)
+        {
+            converted.Add(await attachments.ConvertAsync(message.Id, content!.Attachments, context.Attachments, ct));
+        }
+
+        var attachmentsSection = attachments.Render([.. present.Select((x, i) => new MessageAttachments(i + 1, x.First.Id, converted[i]))]);
 
         if (emails.Count < representatives.Count)
         {
@@ -104,8 +111,14 @@ public sealed partial class AnalysisRunJob
         if (outputs.Count == 0)
         {
             // Nothing usable: the members stay not analysed rather than costing one call each against a failing model.
-            return new GroupOutcome([], [.. group.Members.Select(m => m.Id)], [], calls, Mixed: false, converted, skipped);
+            return new GroupOutcome([], [.. group.Members.Select(m => m.Id)], [], calls, Mixed: false);
         }
+
+        outputs = WithoutAttachmentText(outputs, converted);
+
+        // Counted for the analysed representatives only, so the totals match the messages that got a suggestion.
+        var counted = present.Select((x, i) => outputs.ContainsKey(x.First.Id) ? converted[i] : []).SelectMany(l => l).ToList();
+        var (convertedCount, skipped) = (counted.Count(a => a.Converted is not null), counted.Count(a => a.Skipped is not null));
 
         var filterJson = filter is null ? null : JsonSerializer.Serialize(filter, JsonSerializerOptions.Web);
         var groupKey = group.Individual ? null : group.Key;
@@ -114,7 +127,7 @@ public sealed partial class AnalysisRunJob
         var others = group.Members.Where(m => !group.RepresentativeIds.Contains(m.Id, StringComparer.Ordinal)).ToList();
         if (others.Count == 0)
         {
-            return new GroupOutcome(rows, failed, [], calls, Mixed: false, converted, skipped);
+            return new GroupOutcome(rows, failed, [], calls, Mixed: false, convertedCount, skipped);
         }
 
         var decision = DerivationRule.Decide(
@@ -124,7 +137,7 @@ public sealed partial class AnalysisRunJob
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
         {
-            return new GroupOutcome(rows, failed, [.. others.Select(AnalysisGrouper.Single)], calls, Mixed: true, converted, skipped);
+            return new GroupOutcome(rows, failed, [.. others.Select(AnalysisGrouper.Single)], calls, Mixed: true, convertedCount, skipped);
         }
 
         // A derived toBeDeleted never lands on protected mail; the grouper makes such members representatives, this
@@ -146,24 +159,33 @@ public sealed partial class AnalysisRunJob
             }
         }
 
-        return new GroupOutcome(rows, failed, individual, calls, Mixed: false, converted, skipped);
+        return new GroupOutcome(rows, failed, individual, calls, Mixed: false, convertedCount, skipped);
     }
 
     /// <summary>
-    /// The body, plus the attachment digest when the message has attachments and the master switch is on: then body
-    /// and attachment list come from one <c>messages.get</c>. Null when Gmail no longer knows the message.
+    /// The body, plus the attachment list when the master switch is on: both from the one <c>messages.get</c> a body
+    /// costs, whatever <see cref="MessageRow.HasAttachment"/> says (it misses signed and nested multiparts). Null when
+    /// Gmail no longer knows the message.
     /// </summary>
     private async Task<FetchedMessage?> FetchAsync(RunContext context, MessageRow message, CancellationToken ct)
     {
-        if (!message.HasAttachment || !context.Attachments.Enabled)
+        if (!context.Attachments.Enabled)
         {
-            return await gmail.GetMessageBodyAsync(message.Id, ct) is { } body ? new FetchedMessage(body, AttachmentDigest.Empty) : null;
+            return await gmail.GetMessageBodyAsync(message.Id, ct) is { } body ? new FetchedMessage(body, []) : null;
         }
 
-        var content = await gmail.GetMessageContentAsync(message.Id, ct);
-        return content is null
-            ? null
-            : new FetchedMessage(content.Body, await attachments.ConvertAsync(message.Id, content.Attachments, context.Attachments, ct));
+        return await gmail.GetMessageContentAsync(message.Id, ct) is { } content ? new FetchedMessage(content.Body, content.Attachments) : null;
+    }
+
+    /// <summary>The outputs, a reason that quotes an attachment of the prompt replaced by one naming it (#74).</summary>
+    private static Dictionary<string, SuggestionOutput> WithoutAttachmentText(
+        Dictionary<string, SuggestionOutput> outputs, IEnumerable<IReadOnlyList<PromptAttachment>> converted)
+    {
+        var texts = converted.SelectMany(l => l).Select(a => a.Converted).OfType<ConvertedAttachment>().ToList();
+        return texts.Count == 0
+            ? outputs
+            : outputs.ToDictionary(
+                kv => kv.Key, kv => kv.Value with { Reason = AttachmentReasonGuard.Scrub(kv.Value.Reason, texts) }, StringComparer.Ordinal);
     }
 
     /// <summary>

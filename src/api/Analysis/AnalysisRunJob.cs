@@ -47,6 +47,7 @@ public sealed partial class AnalysisRunJob(
     IAnalysisShortCircuit shortCircuit,
     IDecisionMemory memory,
     SenderStatsUpdater senderStats,
+    IAttachmentPolicy attachmentPolicy,
     AttachmentPromptSection attachments,
     IOptions<LlmOptions> llmOptions,
     TimeProvider time,
@@ -101,7 +102,7 @@ public sealed partial class AnalysisRunJob(
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
         var context = new RunContext(
-            run, settings, builder, chat, await UserLabelsAsync(ct), work.Allowlisted, await attachments.GetPolicyAsync(ct));
+            run, settings, builder, chat, await UserLabelsAsync(ct), work.Allowlisted, await attachmentPolicy.GetAsync(ct));
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
