@@ -5,6 +5,7 @@
       "Bash(scripts/gh/pr-context.sh:*)",
       "Bash(scripts/gh/wait-ci.sh:*)",
       "Bash(scripts/gh/set-status.sh:*)",
+      "Bash(scripts/gh/set-fields.sh:*)",
       "Bash(scripts/gh/link-sub-issue.sh:*)"
     ],
     "deny": [

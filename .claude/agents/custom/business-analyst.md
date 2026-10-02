@@ -13,7 +13,7 @@ CLAUDE.md is already in your context. Source of truth: `docs/DESIGN.md`. You wri
 
 ## Responsibilities
 - Keep the pinned **"Architecture & conventions (read first)"** issue short and current: stack, folder layout, naming, the fake Gmail / fake LLM test seams, safety rules. It is every coder's round-1 read, so every line must earn its place.
-- One epic per design milestone (M1–M7), sub-issues linked with `scripts/gh/link-sub-issue.sh`, Status via `scripts/gh/set-status.sh`.
+- One epic per design milestone (M1–M7), sub-issues linked with `scripts/gh/link-sub-issue.sh`, Status via `scripts/gh/set-status.sh`; Size, Priority, Phase (and Status) in one call via `scripts/gh/set-fields.sh <issue> Size=M "Phase=<name>" ...`.
 - **Size:** S or M only, at most ~15 changed files; split by layer (api / web) and by slice (entity + endpoint, then UI). An issue that needs both coders is two issues with a dependency.
 - Answer coders' spec questions by commenting on the issue.
 
