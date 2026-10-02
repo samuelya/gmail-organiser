@@ -31,6 +31,12 @@ public sealed class FetchStateRow
     /// <summary>The mailbox total from the last Gmail profile call.</summary>
     public long? MessagesTotal { get; set; }
 
+    /// <summary>The Inbox label's message total when the current run started; null before the run's first checkpoint.</summary>
+    public long? InboxTotal { get; set; }
+
+    /// <summary>The run's All Mail total (mailbox total minus Spam and Trash); null before the run's first checkpoint.</summary>
+    public long? AllMailTotal { get; set; }
+
     public string? LastHistoryId { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }

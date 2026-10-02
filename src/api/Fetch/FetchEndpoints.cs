@@ -172,7 +172,9 @@ public static class FetchEndpoints
             latest is not null && JobRow.Active.Contains(latest.Status) ? latest.ToDto() : null,
             latest is { Status: JobStatus.Failed } ? latest.ToDto() : null,
             check.IsMismatch,
-            check.LocalAccountMasked));
+            check.LocalAccountMasked,
+            state.InboxTotal,
+            state.AllMailTotal));
     }
 
     private static ProblemHttpResult GmailNotConnected(string detail) =>

@@ -34,6 +34,8 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
             .SetProperty(r => r.InboxFetched, 0)
             .SetProperty(r => r.AllMailFetched, 0)
             .SetProperty(r => r.MessagesTotal, (long?)null)
+            .SetProperty(r => r.InboxTotal, (long?)null)
+            .SetProperty(r => r.AllMailTotal, (long?)null)
             .SetProperty(r => r.LastHistoryId, (string?)null)
             .SetProperty(r => r.StartedAt, (DateTimeOffset?)null)
             .SetProperty(r => r.CompletedAt, (DateTimeOffset?)null));
@@ -48,7 +50,7 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
 
         var status = await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct);
 
-        status.ShouldBe(new FetchStatusDto(null, "not_started", 0, 0, null, 0, 0, null, null, null, null, null, false, null));
+        status.ShouldBe(new FetchStatusDto(null, "not_started", 0, 0, null, 0, 0, null, null, null, null, null, false, null, null, null));
     }
 
     [Fact]
@@ -111,6 +113,8 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         status.SendersCount.ShouldBeGreaterThan(0);
         status.AllMailFetched.ShouldBeGreaterThan(0);
         status.InboxFetched.ShouldBeGreaterThan(0);
+        status.InboxTotal.ShouldBe(status.InboxFetched);
+        status.AllMailTotal.ShouldBe(status.AllMailFetched);
         status.LastHistoryId.ShouldNotBeNull();
         status.StartedAt.ShouldNotBeNull();
         status.CompletedAt.ShouldNotBeNull();
