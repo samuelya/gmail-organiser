@@ -1,4 +1,6 @@
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +21,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 {
     public DbSet<SettingsRow> Settings => Set<SettingsRow>();
     public DbSet<OAuthTokenRow> OAuthTokens => Set<OAuthTokenRow>();
+    public DbSet<MessageRow> Messages => Set<MessageRow>();
+    public DbSet<SenderRow> Senders => Set<SenderRow>();
+    public DbSet<FetchStateRow> FetchState => Set<FetchStateRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -40,6 +45,44 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.AccountEmail).IsRequired();
             e.Property(r => r.RefreshTokenProtected).IsRequired();
             e.Property(r => r.Scopes).IsRequired();
+        });
+
+        modelBuilder.Entity<MessageRow>(e =>
+        {
+            e.ToTable("messages");
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Id).ValueGeneratedNever();
+            e.Property(r => r.ThreadId).IsRequired();
+            e.Property(r => r.FromAddress).IsRequired();
+            e.Property(r => r.LabelIds).IsRequired();
+            e.Property(r => r.Category).HasConversion(new SnakeCaseEnumConverter<MessageCategory>());
+            e.Property(r => r.AnalysisStatus)
+                .HasConversion(new SnakeCaseEnumConverter<AnalysisStatus>())
+                .HasDefaultValue(AnalysisStatus.NotAnalysed);
+            e.Property(r => r.DeletedInGmail).HasDefaultValue(false);
+            e.HasIndex(r => r.FromAddress);
+            e.HasIndex(r => r.InternalDate);
+            e.HasIndex(r => r.LabelIds).HasMethod("gin");
+            e.HasIndex(r => r.AnalysisStatus);
+        });
+
+        modelBuilder.Entity<SenderRow>(e =>
+        {
+            e.ToTable("senders");
+            e.HasKey(r => r.Address);
+            e.Property(r => r.Address).ValueGeneratedNever();
+            e.Property(r => r.Domain).IsRequired();
+            e.Property(r => r.Allowlisted).HasDefaultValue(false);
+            e.HasIndex(r => r.Domain);
+        });
+
+        modelBuilder.Entity<FetchStateRow>(e =>
+        {
+            e.ToTable("fetch_state", t => t.HasCheckConstraint("ck_fetch_state_singleton", $"id = {FetchStateRow.SingletonId}"));
+            e.HasKey(r => r.Id);
+            e.Property(r => r.Id).ValueGeneratedNever();
+            e.Property(r => r.MailboxPhase).HasConversion(new SnakeCaseEnumConverter<MailboxPhase>());
+            e.HasData(new FetchStateRow { Id = FetchStateRow.SingletonId, UpdatedAt = DateTimeOffset.UnixEpoch });
         });
     }
 
