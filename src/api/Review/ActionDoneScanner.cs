@@ -34,7 +34,21 @@ public sealed partial class ActionDoneScanner(
     public const int MaxSendFailures = 3;
     private static readonly string[] Remove = [ActionPlanner.InboxLabel];
 
+    /// <summary>Any failure but cancellation is only logged: the messages are checked again by a later fetch.</summary>
     public async Task ScanAsync(IReadOnlyList<string> refreshedIds, CancellationToken ct)
+    {
+        try
+        {
+            await ScanCoreAsync(refreshedIds, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            db.ChangeTracker.Clear();
+            LogScanFailed(logger, ex.GetType().Name, (ex as GoogleApiException)?.HttpStatusCode);
+        }
+    }
+
+    private async Task ScanCoreAsync(IReadOnlyList<string> refreshedIds, CancellationToken ct)
     {
         await ResendPendingAsync(ct);
         if (refreshedIds.Count == 0)
@@ -282,6 +296,9 @@ public sealed partial class ActionDoneScanner(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Re-sending an auto-archive of {Count} messages failed ({Failures}) ({Error}, HTTP {Status}).")]
     private static partial void LogResendFailed(ILogger logger, int count, int failures, string error, HttpStatusCode? status);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Auto-archive failed ({Error}, HTTP {Status}); a later fetch checks the messages again.")]
+    private static partial void LogScanFailed(ILogger logger, string error, HttpStatusCode? status);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "An auto-archive of {Count} messages was finalised as partial after repeated failed re-sends.")]
     private static partial void LogFinalisedPartial(ILogger logger, int count);

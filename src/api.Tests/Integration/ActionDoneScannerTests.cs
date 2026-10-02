@@ -234,6 +234,31 @@ public sealed class ActionDoneScannerTests(ApiFactory factory, PostgresFixture p
     }
 
     [Fact]
+    public async Task A_label_list_failure_never_fails_the_fetch_and_archives_nothing()
+    {
+        await SeedAsync("a00");
+        await ApplyAsync();
+        RemoveLabel("a00", await ActionLabelIdAsync());
+        h.Services.GetRequiredService<LabelCatalog>().Invalidate();
+        h.Gmail.AfterListLabels = () => throw new GoogleApiException("gmail", "Synthetic 500.") { HttpStatusCode = HttpStatusCode.InternalServerError };
+        var calls = h.Gmail.BatchModifyCalls.Count;
+
+        try
+        {
+            (await FetchAsync()).Status.ShouldBe("completed");
+        }
+        finally
+        {
+            h.Gmail.AfterListLabels = null;
+        }
+
+        h.Gmail.BatchModifyCalls.Count.ShouldBe(calls);
+        Labels("a00").ShouldContain("INBOX");
+        await using var db = postgres.CreateDbContext();
+        (await db.ActionBatches.AnyAsync(b => b.Kind == ActionKind.AutoArchive, Ct)).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task Renaming_the_action_label_setting_does_not_archive_older_to_dos()
     {
         await SeedAsync("a00");
