@@ -101,6 +101,35 @@ public sealed class AnalysisRunConsistencyTests(ApiFactory factory, PostgresFixt
     }
 
     [Fact]
+    public async Task A_suggestion_committed_while_the_group_is_stored_is_skipped_not_a_failed_run()
+    {
+        Task? writer = null;
+        h.Chat.Respond = async (ids, _, _, _) =>
+        {
+            // Another writer inserts a decided suggestion for a member before the store and commits only once the run
+            // waits on it: on the member's lock, or without that lock on the unique index, whose violation is retried.
+            if (writer is null)
+            {
+                var inserted = new TaskCompletionSource();
+                writer = ApproveConcurrentlyAsync(ids[0], inserted);
+                await inserted.Task;
+            }
+
+            return AnalysisRunHarness.Agree(ids);
+        };
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+
+        await h.RunNextAsync();
+        await writer.ShouldNotBeNull();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.MessagesCovered, done.SkippedMessages, done.FailedMessages).ShouldBe(("completed", 19, 1, 0));
+        await using var check = postgres.CreateDbContext();
+        (await check.Suggestions.CountAsync(s => s.Status == SuggestionStatus.Approved && s.RunId == null, Ct)).ShouldBe(1);
+        (await check.Suggestions.CountAsync(Ct)).ShouldBe(20);
+    }
+
+    [Fact]
     public async Task Cancel_is_409_and_changes_nothing_once_the_job_has_failed()
     {
         var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 5, null));
@@ -236,5 +265,28 @@ public sealed class AnalysisRunConsistencyTests(ApiFactory factory, PostgresFixt
         public Task<JobDto?> GetAsync(Guid id, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<JobDto>> ListAsync(bool activeOnly, CancellationToken ct) => throw new NotSupportedException();
+    }
+
+    private async Task ApproveConcurrentlyAsync(string messageId, TaskCompletionSource inserted)
+    {
+        await using var db = postgres.CreateDbContext();
+        await using var tx = await db.Database.BeginTransactionAsync(Ct);
+        var sender = await db.Messages.Where(m => m.Id == messageId).Select(m => m.FromAddress).SingleAsync(Ct);
+        var suggestion = new SuggestionRow
+        {
+            Id = Guid.NewGuid(),
+            MessageId = messageId,
+            SenderAddress = sender,
+            Source = SuggestionSource.SenderPattern,
+            TopicLabel = "Example/Offers",
+            Reason = "Synthetic reason",
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+        suggestion.SetStatus(SuggestionStatus.Approved, new MessageRow { Id = messageId }, DateTimeOffset.UtcNow);
+        db.Suggestions.Add(suggestion);
+        await db.SaveChangesAsync(Ct);
+        inserted.SetResult();
+        await h.WaitForLockWaitAsync();
+        await tx.CommitAsync(Ct);
     }
 }

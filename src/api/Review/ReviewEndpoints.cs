@@ -20,6 +20,8 @@ public static class ReviewEndpoints
         var group = endpoints.MapGroup("/api/review").WithTags("Review");
         group.MapGet("/senders", ListSendersAsync);
         group.MapGet("/senders/{address}", GetSenderAsync);
+        group.MapGet("/senders/{address}/pattern", GetPatternAsync);
+        group.MapPost("/senders/{address}/apply-rest", ApplyRestAsync).RequireAccountMatch();
         group.MapPost("/suggestions/{id:guid}/approve", (Guid id, ReviewService review, CancellationToken ct) =>
             ToResultAsync(review.DecideAsync(id, DecisionOutcome.Approved, ct)));
         group.MapPost("/suggestions/{id:guid}/reject", (Guid id, ReviewService review, CancellationToken ct) =>
@@ -81,6 +83,43 @@ public static class ReviewEndpoints
             && await query.DetailAsync(a, parsed!.Value, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct) is { } detail
             ? TypedResults.Ok(detail)
             : TypedResults.NotFound();
+    }
+
+    private static async Task<Results<Ok<SenderPatternDto>, ValidationProblem>> GetPatternAsync(
+        string address, SenderPatternService patterns, CancellationToken ct) =>
+        Normalise(address) is { } a
+            ? TypedResults.Ok(await patterns.GetAsync(a, ct))
+            : TypedResults.ValidationProblem(AddressError());
+
+    /// <summary>202 with the queued batch, 200 when nothing remained; 409 without a pattern or topic label, or on a race.</summary>
+    private static async Task<Results<Accepted<ApplyRestResponse>, Ok<ApplyRestResponse>, ValidationProblem, ProblemHttpResult>> ApplyRestAsync(
+        string address, ApplyRestRequest? request, SenderPatternService patterns, CancellationToken ct)
+    {
+        request ??= new();
+        var errors = Normalise(address) is null ? AddressError() : [];
+        if (request.TopicLabel is { } label && !LabelResolver.IsValid(label.Trim()))
+        {
+            errors["topicLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters, not a Gmail system label."];
+        }
+
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        return await patterns.ApplyRestAsync(Normalise(address)!, request, ct) switch
+        {
+            (ApplyRestStatus.Ok, { Batch: { } batch } r) => TypedResults.Accepted($"/api/jobs/{batch.JobId}", r),
+            (ApplyRestStatus.Ok, { } r) => TypedResults.Ok(r),
+            (ApplyRestStatus.NoPattern, _) => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "No pattern",
+                detail: "The sender has no approved outcome with a label Gmail accepts; pass a topic label."),
+            _ => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Messages changed",
+                detail: "Some of the sender's messages got a suggestion meanwhile; nothing was created. Try again."),
+        };
     }
 
     /// <summary>Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied.</summary>
@@ -201,6 +240,9 @@ public static class ReviewEndpoints
 
         return errors;
     }
+
+    private static Dictionary<string, string[]> AddressError() =>
+        new() { ["address"] = [$"At most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters, not blank."] };
 
     /// <summary>Trimmed lower-case address, or null when blank or too long.</summary>
     private static string? Normalise(string? address) =>

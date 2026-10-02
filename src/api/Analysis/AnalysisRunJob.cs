@@ -11,6 +11,7 @@ using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace GmailOrganiser.Analysis;
 
@@ -52,6 +53,7 @@ public sealed partial class AnalysisRunJob(
     public const string JobType = AnalysisJobTypes.Run;
     public const string Queue = JobQueues.Analysis;
     public const int MaxErrorLength = 300;
+    private const int MaxStoreAttempts = 3;
 
     public string Type => JobType;
 
@@ -234,46 +236,78 @@ public sealed partial class AnalysisRunJob(
         run.Groups++;
         run.MixedGroups += outcome.Mixed ? 1 : 0;
 
-        return await ctx.CheckpointAsync(cursor, Progress(run, cursor), async c =>
+        // A unique violation means another writer committed a suggestion for a member after the re-check: the retry's
+        // re-check then skips it as decided meanwhile (or replaces it if undecided); it never fails the run.
+        for (var attempt = 1; ; attempt++)
         {
-            // A review may have decided a member since the check above: re-check under the row locks and skip it. Locks
-            // are taken in id order, like the review's, so a group approve and this checkpoint cannot deadlock.
-            var candidates = rows.Select(r => r.MessageId).ToArray();
-            var lateDecided = (await db.Suggestions
-                    .FromSql($"SELECT * FROM suggestions WHERE message_id = ANY({candidates}) ORDER BY id FOR UPDATE")
-                    .AsNoTracking()
-                    .ToListAsync(c))
-                .Where(s => s.Status is SuggestionStatus.Approved or SuggestionStatus.Applied)
-                .Select(s => s.MessageId)
-                .ToHashSet(StringComparer.Ordinal);
-            foreach (var late in rows.Where(r => lateDecided.Contains(r.MessageId)))
+            try
             {
-                run.MessagesCovered--;
-                run.MessagesLlm -= late.Source == SuggestionSource.Llm ? 1 : 0;
-                run.MessagesDerived -= late.Source == SuggestionSource.Derived ? 1 : 0;
-                run.MessagesFromMemory -= late.Source == SuggestionSource.Memory ? 1 : 0;
-                run.SkippedMessages++;
+                return await ctx.CheckpointAsync(cursor, Progress(run, cursor), c => WriteGroupAsync(run, members, rows, now, c), ct);
             }
-
-            rows.RemoveAll(r => lateDecided.Contains(r.MessageId));
-            var replaced = rows.Select(r => r.MessageId).ToArray();
-            await db.Suggestions
-                .Where(s => replaced.Contains(s.MessageId) && (s.Status == SuggestionStatus.Pending || s.Status == SuggestionStatus.Rejected))
-                .ExecuteDeleteAsync(c);
-            foreach (var row in rows)
+            catch (DbUpdateException ex) when (attempt < MaxStoreAttempts && IsSuggestionConflict(ex))
             {
-                var message = members[row.MessageId];
-                db.Messages.Attach(message);
-                row.RunId = run.Id;
-                row.CreatedAt = now;
-                db.Suggestions.Add(row);
-                row.SetStatus(SuggestionStatus.Pending, message, now);
+                foreach (var entry in db.ChangeTracker.Entries().Where(e => e.Entity is SuggestionRow or MessageRow).ToList())
+                {
+                    entry.State = EntityState.Detached;
+                }
             }
-
-            await db.SaveChangesAsync(c);
-            await senderStats.UpdateAnalysedCountsAsync(rows.Select(s => s.SenderAddress), c);
-        }, ct);
+        }
     }
+
+    /// <summary>The group's rows under the members' locks; adjusts the run counters for members decided meanwhile.</summary>
+    private async Task WriteGroupAsync(
+        AnalysisRunRow run, Dictionary<string, MessageRow> members, List<SuggestionRow> rows, DateTimeOffset now, CancellationToken c)
+    {
+        // Suggestions, then messages, each by id: the review endpoints lock in the same order, so a group approve and
+        // this checkpoint cannot deadlock. Apply-rest locks the sender's messages before inserting its suggestions, so
+        // once the messages are locked, the read below sees every suggestion committed for a member meanwhile.
+        var candidates = rows.Select(r => r.MessageId).ToArray();
+        await db.Suggestions
+            .FromSql($"SELECT * FROM suggestions WHERE message_id = ANY({candidates}) ORDER BY id FOR UPDATE")
+            .AsNoTracking()
+            .ToListAsync(c);
+        await db.Database
+            .SqlQuery<string>($"SELECT id AS \"Value\" FROM messages WHERE id = ANY({candidates}) ORDER BY id FOR UPDATE")
+            .ToListAsync(c);
+
+        // A review or apply-rest may have decided a member since the check in StoreAsync: skip it.
+        var lateDecided = (await db.Suggestions.AsNoTracking()
+                .Where(s => candidates.Contains(s.MessageId) && (s.Status == SuggestionStatus.Approved || s.Status == SuggestionStatus.Applied))
+                .Select(s => s.MessageId)
+                .ToListAsync(c))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var late in rows.Where(r => lateDecided.Contains(r.MessageId)))
+        {
+            run.MessagesCovered--;
+            run.MessagesLlm -= late.Source == SuggestionSource.Llm ? 1 : 0;
+            run.MessagesDerived -= late.Source == SuggestionSource.Derived ? 1 : 0;
+            run.MessagesFromMemory -= late.Source == SuggestionSource.Memory ? 1 : 0;
+            run.SkippedMessages++;
+        }
+
+        rows.RemoveAll(r => lateDecided.Contains(r.MessageId));
+        var replaced = rows.Select(r => r.MessageId).ToArray();
+        await db.Suggestions
+            .Where(s => replaced.Contains(s.MessageId) && (s.Status == SuggestionStatus.Pending || s.Status == SuggestionStatus.Rejected))
+            .ExecuteDeleteAsync(c);
+        foreach (var row in rows)
+        {
+            var message = members[row.MessageId];
+            db.Messages.Attach(message);
+            row.RunId = run.Id;
+            row.CreatedAt = now;
+            db.Suggestions.Add(row);
+            row.SetStatus(SuggestionStatus.Pending, message, now);
+            db.Entry(message).Property(m => m.AnalysisStatus).IsModified = true;
+            db.Entry(message).Property(m => m.UpdatedAt).IsModified = true;
+        }
+
+        await db.SaveChangesAsync(c);
+        await senderStats.UpdateAnalysedCountsAsync(rows.Select(s => s.SenderAddress), c);
+    }
+
+    private static bool IsSuggestionConflict(DbUpdateException ex) =>
+        ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, TableName: "suggestions" };
 
     /// <summary>Sets a final status unless the run already has one; not tracked, so it works after a failed save.</summary>
     private async Task FinishRunAsync(Guid runId, AnalysisRunStatus status, string? error, CancellationToken ct)

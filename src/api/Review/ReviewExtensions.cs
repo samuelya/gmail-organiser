@@ -13,6 +13,7 @@ public static class ReviewExtensions
         services.AddScoped<ReviewService>();
         services.AddScoped<LabelResolver>();
         services.AddScoped<ApplyService>();
+        services.AddScoped<SenderPatternService>();
 
         // Its account guard comes with FetchJobTypes.ReadsGmail; a cancel is refused while a chunk is pending.
         services.AddKeyedScoped<IJobCancelHook, ApplyActionsJob>(ApplyActionsJob.JobType);

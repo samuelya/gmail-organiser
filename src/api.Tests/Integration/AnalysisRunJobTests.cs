@@ -316,6 +316,27 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         return client.PostAsJsonAsync(path, body, Ct);
     }
 
+    public Task<HttpResponseMessage> PostWithoutBodyAsync(string path)
+    {
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+        return client.PostAsync(path, null, Ct);
+    }
+
+    /// <summary>Returns once some session waits for a row lock or a uniqueness check another transaction holds.</summary>
+    public async Task WaitForLockWaitAsync()
+    {
+        await using var db = postgres.CreateDbContext();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        while ((await db.Database
+                   .SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM pg_stat_activity WHERE wait_event_type = 'Lock'")
+                   .ToListAsync(timeout.Token))[0] == 0)
+        {
+            await Task.Delay(20, timeout.Token);
+        }
+    }
+
     public Task<HttpResponseMessage> PutAsync(string path, object body)
     {
         var client = host.CreateClient();

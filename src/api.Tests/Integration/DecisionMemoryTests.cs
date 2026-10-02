@@ -205,6 +205,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     [InlineData("newer rejection in another template", 3)]
     [InlineData("derived and memory approvals", null)]
     [InlineData("edited derived approval", 3)]
+    [InlineData("sender-pattern approvals, edited or not", null)]
     [InlineData("same message twice", null)]
     public async Task Pattern_needs_N_consistent_human_approvals_of_distinct_messages_in_the_group_scope(string scenario, int? expected)
     {
@@ -232,6 +233,8 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
             "derived and memory approvals" =>
                 [Approval(-8, source: SuggestionSource.Derived), Approval(-7, source: SuggestionSource.Memory)],
             "edited derived approval" => [Approval(-8, source: SuggestionSource.Derived, edited: true)],
+            "sender-pattern approvals, edited or not" =>
+                [Approval(-8, source: SuggestionSource.SenderPattern), Approval(-7, source: SuggestionSource.SenderPattern, edited: true)],
             "same message twice" => [Approval(-8, messageId: "m-10")],
             _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
         });
