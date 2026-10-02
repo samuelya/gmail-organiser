@@ -27,7 +27,7 @@ public sealed class ActionBatchRow
     /// <summary>Gmail label ids this batch created, recorded right after each create, so undo can tell them apart.</summary>
     public string[] CreatedLabelIds { get; set; } = [];
 
-    /// <summary>Failed re-sends of a pending <see cref="ActionKind.AutoArchive"/> batch.</summary>
+    /// <summary>Failed re-sends of a pending <see cref="ActionKind.AutoArchive"/> batch, or of an apply batch's pending chunk.</summary>
     public int SendFailures { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 

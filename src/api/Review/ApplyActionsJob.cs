@@ -37,8 +37,8 @@ public sealed record ApplySkip(Guid SuggestionId, string MessageId, string Reaso
 /// chunks of at most <see cref="GmailOptions.BatchModifyMaxIds"/>. Each chunk is two transactions around the Gmail
 /// call: the first locks the suggestions and messages, re-plans them, writes the undo log, marks them applied and
 /// checkpoints the chunk as pending; the second updates the stored labels and counts and clears it. A pending chunk
-/// is only ever finished by a send that succeeds; it is reverted only when this run sent it for the first time and
-/// Gmail certainly changed nothing.
+/// is finished by a send that succeeds, or reconciled with Gmail after <see cref="MaxSendFailures"/> refused
+/// re-sends; it is reverted only when this run sent it for the first time and Gmail certainly changed nothing.
 /// </summary>
 public sealed partial class ApplyActionsJob(
     AppDbContext db,

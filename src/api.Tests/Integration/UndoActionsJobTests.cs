@@ -16,7 +16,7 @@ namespace GmailOrganiser.Tests.Integration;
 
 /// <summary>Apply, then undo, over the harness mailbox (every message starts in INBOX) with synthetic labels.</summary>
 [Collection(PostgresCollection.Name)]
-public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed partial class UndoActionsJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
 {
     private const string ActionLabel = "Synthetic Action";
     private const string DeleteLabel = "Synthetic Delete";
