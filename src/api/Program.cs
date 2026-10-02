@@ -49,6 +49,7 @@ app.MapLlmEndpoints();
 app.MapGmailAuthEndpoints();
 app.MapSetupEndpoints();
 app.MapJobsEndpoints();
+app.MapHub<JobsHub>(JobsHub.Path);
 
 // Hosted services start before the server listens: DatabaseMigrator applies the migrations first.
 // A start-up failure is logged and propagates out of Run, so the process exits non-zero.

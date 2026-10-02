@@ -48,7 +48,8 @@ public sealed class JobContext
 
         // Raw SQL so the write and the flag read are one statement. Not composed: Postgres can't nest UPDATE.
         var flags = await db.Database.SqlQuery<int>($"""
-            UPDATE jobs SET cursor = {cursorJson}::jsonb, progress = {progressJson}::jsonb, updated_at = {now}
+            UPDATE jobs SET cursor = {cursorJson}::jsonb, progress = {progressJson}::jsonb, updated_at = {now},
+                version = version + 1
             WHERE id = {JobId}
             RETURNING (CASE WHEN cancel_requested THEN 2 WHEN pause_requested THEN 1 ELSE 0 END) AS "Value"
             """).ToListAsync(ct);
@@ -74,7 +75,8 @@ public sealed class JobContext
         {
             await finalWrites(ct);
             await db.Database.ExecuteSqlAsync($"""
-                UPDATE jobs SET cursor = {cursorJson}::jsonb, progress = {progressJson}::jsonb, updated_at = {now}
+                UPDATE jobs SET cursor = {cursorJson}::jsonb, progress = {progressJson}::jsonb, updated_at = {now},
+                    version = version + 1
                 WHERE id = {JobId}
                 """, ct);
             await tx.CommitAsync(ct);

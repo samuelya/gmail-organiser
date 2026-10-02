@@ -10,4 +10,8 @@ public sealed class JobsOptions
     /// <summary>How often the runner looks for queued jobs.</summary>
     [Range(typeof(TimeSpan), "00:00:00.010", "00:10:00")]
     public TimeSpan PollInterval { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>Minimum gap between two progress events for the same job on <c>/hubs/jobs</c>; status changes are never delayed.</summary>
+    [Range(typeof(TimeSpan), "00:00:00", "00:01:00")]
+    public TimeSpan ProgressInterval { get; set; } = TimeSpan.FromSeconds(1);
 }

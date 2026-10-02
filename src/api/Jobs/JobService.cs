@@ -90,8 +90,8 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
 
     public Task<JobActionResult> PauseAsync(Guid id, CancellationToken ct) => TransitionAsync(id, (status, now) => status switch
     {
-        JobStatus.Queued => q => q.SetProperty(j => j.Status, JobStatus.Paused).SetProperty(j => j.UpdatedAt, now),
-        JobStatus.Running => q => q.SetProperty(j => j.PauseRequested, true).SetProperty(j => j.UpdatedAt, now),
+        JobStatus.Queued => q => q.SetProperty(j => j.Status, JobStatus.Paused).Touch(now),
+        JobStatus.Running => q => q.SetProperty(j => j.PauseRequested, true).Touch(now),
         JobStatus.Paused => NoChange,
         _ => null,
     }, ct);
@@ -104,9 +104,9 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
             .SetProperty(j => j.PauseRequested, false)
             .SetProperty(j => j.CancelRequested, false)
             .SetProperty(j => j.FinishedAt, (DateTimeOffset?)null)
-            .SetProperty(j => j.UpdatedAt, now),
+            .Touch(now),
         // Withdraws a pending pause. If the handler already stopped for it, the runner re-queues the job.
-        JobStatus.Running => q => q.SetProperty(j => j.PauseRequested, false).SetProperty(j => j.UpdatedAt, now),
+        JobStatus.Running => q => q.SetProperty(j => j.PauseRequested, false).Touch(now),
         JobStatus.Queued => NoChange,
         _ => null,
     }, ct);
@@ -117,8 +117,8 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
             .SetProperty(j => j.Status, JobStatus.Cancelled)
             .SetProperty(j => j.PauseRequested, false)
             .SetProperty(j => j.FinishedAt, now)
-            .SetProperty(j => j.UpdatedAt, now),
-        JobStatus.Running => q => q.SetProperty(j => j.CancelRequested, true).SetProperty(j => j.UpdatedAt, now),
+            .Touch(now),
+        JobStatus.Running => q => q.SetProperty(j => j.CancelRequested, true).Touch(now),
         _ => null,
     }, ct);
 

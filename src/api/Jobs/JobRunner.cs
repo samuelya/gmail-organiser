@@ -131,7 +131,7 @@ public sealed partial class JobRunner(
                     .SetProperty(j => j.PauseRequested, false)
                     .SetProperty(j => j.CancelRequested, false)
                     .SetProperty(j => j.StartedAt, j => j.StartedAt ?? now)
-                    .SetProperty(j => j.UpdatedAt, now), ct);
+                    .Touch(now), ct);
             if (rows == 1)
             {
                 claimed.Add(id);
@@ -229,7 +229,7 @@ public sealed partial class JobRunner(
             .SetProperty(j => j.PauseRequested, false)
             .SetProperty(j => j.CancelRequested, false)
             .SetProperty(j => j.FinishedAt, now)
-            .SetProperty(j => j.UpdatedAt, now));
+            .Touch(now));
     }
 
     // Not cancellable: the outcome must be recorded even while the host stops.
@@ -246,7 +246,7 @@ public sealed partial class JobRunner(
         .SetProperty(j => j.FinishedAt, j => j.CancelRequested ? now : (DateTimeOffset?)null)
         .SetProperty(j => j.PauseRequested, false)
         .SetProperty(j => j.CancelRequested, false)
-        .SetProperty(j => j.UpdatedAt, now);
+        .Touch(now);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Re-queued {Count} job(s) interrupted by the previous shutdown")]
     private static partial void LogRecovered(ILogger logger, int count);

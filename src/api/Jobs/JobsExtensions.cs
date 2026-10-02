@@ -5,7 +5,7 @@ namespace GmailOrganiser.Jobs;
 public static class JobsExtensions
 {
     /// <summary>
-    /// Registers the job service and the runner. Handlers register themselves with
+    /// Registers the job service, the runner and the SignalR progress publisher. Handlers register themselves with
     /// <c>AddKeyedScoped&lt;IJobHandler, THandler&gt;(type)</c>. Call after <c>AddAppDatabase()</c> so
     /// migrations run before the runner starts.
     /// </summary>
@@ -17,7 +17,8 @@ public static class JobsExtensions
             .ValidateOnStart();
 
         services.TryAddSingleton(TimeProvider.System);
-        services.TryAddSingleton<IJobProgressPublisher, NoOpJobProgressPublisher>();
+        services.AddSignalR();
+        services.TryAddSingleton<IJobProgressPublisher, SignalRJobProgressPublisher>();
         services.AddScoped<JobNotifier>();
         services.AddScoped<IJobService, JobService>();
         services.AddHostedService<JobRunner>();
