@@ -5,7 +5,7 @@
       "name": ".NET: API",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build-api",
+      "preLaunchTask": "api: prepare",
       "program": "${workspaceFolder}/src/api/bin/Debug/net10.0/GmailOrganiser.Api.dll",
       "cwd": "${workspaceFolder}/src/api",
       "launchSettingsProfile": "GmailOrganiser.Api",
