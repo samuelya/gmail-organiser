@@ -11,6 +11,7 @@ import { errorInterceptor } from '../core/error.interceptor';
 import { isActiveJob, JobDto, JobsConnectionState, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PagedDto } from '../core/paging.models';
+import { SettingsService } from '../settings/settings.service';
 import { SEARCH_DEBOUNCE_MS, SendersPage } from './senders-page.component';
 import { DEFAULT_SENDER_QUERY, SenderDto, SenderQuery } from './senders.models';
 import { SendersService } from './senders.service';
@@ -80,6 +81,10 @@ describe('SendersPage', () => {
         provideRouter([{ path: 'senders', component: SendersPage }]),
         { provide: JobsService, useValue: jobs },
         { provide: SendersService, useValue: api },
+        {
+          provide: SettingsService,
+          useValue: { getSettings: () => of({ analysisDefaultCount: 30 }) },
+        },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
@@ -119,6 +124,12 @@ describe('SendersPage', () => {
     expect(row.textContent).toContain('Example News');
     expect(row.textContent).toContain('news@example.com');
     expect(row.textContent).toMatch(/4\/10/);
+  });
+
+  it('each row links to Analyse with the sender and the default count from settings', async () => {
+    const { q } = await render('/senders', paged([sender()]));
+    const link = q('analyse-sender') as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('/analyse?sender=news@example.com&count=30');
   });
 
   it('paging, page size and sort navigate, and the URL drives list()', async () => {
@@ -445,6 +456,10 @@ describe('SendersPage API errors', () => {
         provideHttpClient(withInterceptors([errorInterceptor])),
         provideHttpClientTesting(),
         { provide: JobsService, useValue: new FakeJobs() },
+        {
+          provide: SettingsService,
+          useValue: { getSettings: () => of({ analysisDefaultCount: 30 }) },
+        },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });

@@ -162,6 +162,16 @@
                 class="whitespace-nowrap"
                 data-testid="cell-actions"
               >
+                <a
+                  mat-icon-button
+                  routerLink="/analyse"
+                  [queryParams]="{ sender: row.sender.address, count: analyseCount() }"
+                  matTooltip="Analyse from sender"
+                  [attr.aria-label]="'Analyse from ' + row.sender.address"
+                  data-testid="analyse-sender"
+                >
+                  <mat-icon aria-hidden="true">psychology</mat-icon>
+                </a>
                 @if (rowJobs().get(row.sender.address); as job) {
                   <app-sender-progress
                     [job]="job"
