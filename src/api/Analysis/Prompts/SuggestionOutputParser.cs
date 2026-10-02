@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
-using GmailOrganiser.Gmail;
+using GmailOrganiser.Review;
 
 namespace GmailOrganiser.Analysis.Prompts;
 
@@ -9,9 +8,9 @@ namespace GmailOrganiser.Analysis.Prompts;
 /// Validates the model's JSON answer. Never throws on model output: anything unusable becomes an error string
 /// (ids and field names only, never email content) and the caller records it as a failure.
 /// </summary>
-public static partial class SuggestionOutputParser
+public static class SuggestionOutputParser
 {
-    public const int MaxLabelPathLength = 225;
+    public const int MaxLabelPathLength = LabelPath.MaxLength;
     public const int MaxReasonLength = 300;
     public const int MaxFilterValueLength = 200;
     public const double ConfidenceTolerance = 0.01;
@@ -195,7 +194,7 @@ public static partial class SuggestionOutputParser
         {
             errors.Add($"Email '{id}': 'topicLabel' is missing or not a valid label path.");
         }
-        else if (GmailLimits.ReservedLabelNames.Contains(label))
+        else if (LabelPath.IsReserved(label))
         {
             errors.Add($"Email '{id}': 'topicLabel' is a Gmail system label.");
         }
@@ -217,9 +216,8 @@ public static partial class SuggestionOutputParser
                 Cut(reason!, MaxReasonLength));
     }
 
-    /// <summary>Up to five <c>/</c>-separated segments, none blank or starting with whitespace, at most 225 chars.</summary>
-    public static bool IsValidLabelPath(string path) =>
-        path.Length <= MaxLabelPathLength && !path.Any(char.IsControl) && LabelPathRegex().IsMatch(path);
+    /// <inheritdoc cref="LabelPath.IsValid"/>
+    public static bool IsValidLabelPath(string path) => LabelPath.IsValid(path);
 
     private static double ReadConfidence(string id, JsonElement item, List<string> errors)
     {
@@ -295,7 +293,4 @@ public static partial class SuggestionOutputParser
     /// <summary>First <paramref name="max"/> chars without splitting a surrogate pair.</summary>
     private static string Cut(string value, int max) =>
         value.Length <= max ? value : value[..(char.IsHighSurrogate(value[max - 1]) ? max - 1 : max)];
-
-    [GeneratedRegex(@"^[^/\s][^/]{0,99}(/[^/\s][^/]{0,99}){0,4}$")]
-    private static partial Regex LabelPathRegex();
 }
