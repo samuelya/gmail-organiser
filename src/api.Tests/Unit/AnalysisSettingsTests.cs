@@ -45,4 +45,15 @@ public sealed class AnalysisSettingsTests
 
         errors.Keys.ShouldBe(["analysisGroupingMode"]);
     }
+
+    [Theory]
+    [InlineData("Classify these.", true)]
+    [InlineData("Classify these:\n{{emails}}", false)]
+    [InlineData("   ", false)]
+    public void Prompt_override_needs_the_emails_placeholder(string template, bool rejected)
+    {
+        var errors = SettingsValidation.Validate(new UpdateSettingsRequest(null, null, null, null, AnalysisPromptTemplate: template));
+
+        errors.ContainsKey("analysisPromptTemplate").ShouldBe(rejected);
+    }
 }
