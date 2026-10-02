@@ -12,7 +12,11 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
   imports: [DatePipe, MatButtonModule, MatCheckboxModule, MatIconModule, MatTooltipModule],
   template: `
     @let s = suggestion();
-    <div class="flex items-start gap-2 py-2" data-testid="member-row" [attr.data-id]="s.id">
+    <div
+      class="flex flex-wrap items-start gap-2 py-2"
+      data-testid="member-row"
+      [attr.data-id]="s.id"
+    >
       <mat-checkbox
         [checked]="selected()"
         [disabled]="s.status === 'applied'"
@@ -20,7 +24,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
         [aria-label]="'Select ' + subject()"
         data-testid="member-select"
       />
-      <div class="min-w-0 flex-1">
+      <div class="min-w-0 flex-1 basis-60">
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span class="subject min-w-0 font-medium">{{ subject() }}</span>
           <span class="muted text-sm">{{ s.date | date: 'mediumDate' }}</span>
@@ -57,7 +61,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           }
         </div>
       </div>
-      <div class="flex shrink-0 flex-wrap justify-end">
+      <div class="ml-auto flex shrink-0">
         @if (s.status !== 'approved') {
           <button
             mat-icon-button

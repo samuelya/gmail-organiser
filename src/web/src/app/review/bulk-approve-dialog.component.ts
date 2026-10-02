@@ -46,7 +46,7 @@ export interface BulkApproveDialogData {
             >Approve pending model suggestions with confidence of at least
             <strong data-testid="bulk-threshold-value">{{ thresholdText() }}</strong></label
           >
-          <mat-slider [min]="data.min" [max]="data.max" [step]="data.step" discrete>
+          <mat-slider class="mt-4" [min]="data.min" [max]="data.max" [step]="data.step" discrete>
             <input
               matSliderThumb
               id="bulk-threshold"
