@@ -10,7 +10,13 @@ import {
   untracked,
 } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { AbstractControl, FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
+import {
+  AbstractControl,
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  Validators,
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatDialog } from '@angular/material/dialog';
@@ -113,17 +119,24 @@ export class SendersPage {
     nonNullable: true,
     validators: [Validators.maxLength(MAX_SEARCH_LENGTH)],
   });
-  readonly target = new FormControl('', {
-    nonNullable: true,
-    validators: [Validators.required, fetchTargetValidator],
+  readonly targetForm = new FormGroup({
+    target: new FormControl('', {
+      nonNullable: true,
+      validators: [Validators.required, fetchTargetValidator],
+    }),
   });
+  readonly target = this.targetForm.controls.target;
 
   /** Each row with the live state of its active fetch job (`null` once it finished). */
   readonly rows = computed(() =>
     (this.result()?.items ?? []).map((sender) => {
       const held = sender.activeFetchJob;
       const job = held ? newerJob(held, this.jobs.job(held.id)) : null;
-      return { sender, job: job && isActiveJob(job) ? job : null, percent: analysedPercent(sender) };
+      return {
+        sender,
+        job: job && isActiveJob(job) ? job : null,
+        percent: analysedPercent(sender),
+      };
     }),
   );
 
@@ -213,7 +226,7 @@ export class SendersPage {
       this.target.markAsTouched();
       return;
     }
-    this.startFetch(target, () => this.target.reset());
+    this.startFetch(target, () => this.targetForm.reset());
   }
 
   cancel(job: JobDto, label: string): void {

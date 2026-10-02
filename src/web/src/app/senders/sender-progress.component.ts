@@ -9,7 +9,13 @@ import { JobDto, progressPercent } from '../core/jobs.models';
 /** A sender's active fetch job in its row: a small progress indicator and a cancel button. */
 @Component({
   selector: 'app-sender-progress',
-  imports: [DecimalPipe, MatButtonModule, MatIconModule, MatProgressSpinnerModule, MatTooltipModule],
+  imports: [
+    DecimalPipe,
+    MatButtonModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+    MatTooltipModule,
+  ],
   template: `
     <span class="inline-flex items-center gap-1" data-testid="sender-progress">
       @switch (job().status) {
@@ -40,7 +46,7 @@ import { JobDto, progressPercent } from '../core/jobs.models';
       <button
         mat-icon-button
         type="button"
-        (click)="cancel.emit()"
+        (click)="cancelFetch.emit()"
         [disabled]="cancelling()"
         [matTooltip]="'Cancel fetch from ' + label()"
         [attr.aria-label]="'Cancel fetch from ' + label()"
@@ -62,7 +68,7 @@ export class SenderProgress {
   /** The sender, for labels. */
   readonly label = input.required<string>();
   readonly cancelling = input(false);
-  readonly cancel = output<void>();
+  readonly cancelFetch = output<void>();
 
   readonly percent = computed(() => progressPercent(this.job().progress));
 }
