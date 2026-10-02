@@ -19,6 +19,12 @@ public sealed class CountingJobState
 
     /// <summary>Runs after a step's work and before its checkpoint.</summary>
     public Func<Guid, int, Task>? AfterStep { get; set; }
+
+    /// <summary>Runs after a checkpoint returned pause or cancel, just before the handler returns.</summary>
+    public Func<Guid, Task>? OnStop { get; set; }
+
+    /// <summary>Return normally (instead of throwing) when the token is cancelled, as a polite handler may.</summary>
+    public bool ReturnOnShutdown { get; set; }
 }
 
 /// <summary>Test-only handler: runs steps 1..N, checkpointing after each, resuming from the cursor.</summary>
@@ -44,9 +50,19 @@ public sealed class CountingJobHandler(CountingJobState state) : IJobHandler
                 await hook(ctx.JobId, step);
             }
 
+            if (state.ReturnOnShutdown && ct.IsCancellationRequested)
+            {
+                return;
+            }
+
             var signal = await ctx.CheckpointAsync(new CountingCursor(step + 1), new JobProgress(step, state.Steps, $"step {step}"), ct);
             if (signal != JobSignal.Continue)
             {
+                if (state.OnStop is { } onStop)
+                {
+                    await onStop(ctx.JobId);
+                }
+
                 return;
             }
         }

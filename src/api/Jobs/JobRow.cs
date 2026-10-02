@@ -42,6 +42,9 @@ public sealed class JobRow
 
     internal static readonly JsonSerializerOptions Json = JsonSerializerOptions.Web;
 
+    /// <summary>Unique partial index: at most one queued, running or paused job per type.</summary>
+    internal const string ActiveTypeIndex = "ux_jobs_type_active";
+
     public JobDto ToDto() => new(
         Id, Type, Queue, FormatStatus(Status),
         Progress is null ? null : JsonSerializer.Deserialize<JobProgress>(Progress, Json),
@@ -64,6 +67,10 @@ public sealed class JobRow
             e.Property(r => r.PauseRequested).HasDefaultValue(false);
             e.Property(r => r.CancelRequested).HasDefaultValue(false);
             e.HasIndex(r => new { r.Queue, r.Status, r.CreatedAt });
+            e.HasIndex(r => r.Type)
+                .IsUnique()
+                .HasDatabaseName(ActiveTypeIndex)
+                .HasFilter("status IN ('queued', 'running', 'paused')");
         });
     }
 }

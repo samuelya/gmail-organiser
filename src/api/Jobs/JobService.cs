@@ -2,6 +2,7 @@ using System.Text.Json;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
+using Npgsql;
 
 namespace GmailOrganiser.Jobs;
 
@@ -43,31 +44,48 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentException.ThrowIfNullOrWhiteSpace(queue);
 
-        var existing = await db.Jobs.AsNoTracking()
-            .Where(j => j.Type == type && JobRow.Active.Contains(j.Status))
-            .OrderBy(j => j.CreatedAt)
-            .FirstOrDefaultAsync(ct);
-        if (existing is not null)
+        // The unique index on active jobs per type makes this atomic: a concurrent enqueue that loses the
+        // insert reads the winner's row instead.
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            return existing.ToDto();
+            var existing = await db.Jobs.AsNoTracking()
+                .Where(j => j.Type == type && JobRow.Active.Contains(j.Status))
+                .FirstOrDefaultAsync(ct);
+            if (existing is not null)
+            {
+                return existing.ToDto();
+            }
+
+            var now = time.GetUtcNow();
+            var row = new JobRow
+            {
+                Id = Guid.CreateVersion7(now),
+                Type = type,
+                Queue = queue,
+                Status = JobStatus.Queued,
+                Cursor = initialCursor is null ? null : JsonSerializer.Serialize(initialCursor, initialCursor.GetType(), JobRow.Json),
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            db.Jobs.Add(row);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex) when (IsActiveTypeConflict(ex))
+            {
+                continue;
+            }
+            finally
+            {
+                db.Entry(row).State = EntityState.Detached;
+            }
+
+            await notifier.PublishAsync(db, row.Id, ct);
+            return row.ToDto();
         }
 
-        var now = time.GetUtcNow();
-        var row = new JobRow
-        {
-            Id = Guid.CreateVersion7(now),
-            Type = type,
-            Queue = queue,
-            Status = JobStatus.Queued,
-            Cursor = initialCursor is null ? null : JsonSerializer.Serialize(initialCursor, initialCursor.GetType(), JobRow.Json),
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
-        db.Jobs.Add(row);
-        await db.SaveChangesAsync(ct);
-        db.Entry(row).State = EntityState.Detached;
-        await notifier.PublishAsync(db, row.Id, ct);
-        return row.ToDto();
+        throw new InvalidOperationException($"Could not enqueue a job of type '{type}': the active job kept changing.");
     }
 
     public Task<JobActionResult> PauseAsync(Guid id, CancellationToken ct) => TransitionAsync(id, (status, now) => status switch
@@ -87,7 +105,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
             .SetProperty(j => j.CancelRequested, false)
             .SetProperty(j => j.FinishedAt, (DateTimeOffset?)null)
             .SetProperty(j => j.UpdatedAt, now),
-        // A pause that has not reached a checkpoint yet is simply withdrawn.
+        // Withdraws a pending pause. If the handler already stopped for it, the runner re-queues the job.
         JobStatus.Running => q => q.SetProperty(j => j.PauseRequested, false).SetProperty(j => j.UpdatedAt, now),
         JobStatus.Queued => NoChange,
         _ => null,
@@ -154,7 +172,18 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
             }
 
             var current = status.Value;
-            if (await db.Jobs.Where(j => j.Id == id && j.Status == current).ExecuteUpdateAsync(update, ct) == 1)
+            int rows;
+            try
+            {
+                rows = await db.Jobs.Where(j => j.Id == id && j.Status == current).ExecuteUpdateAsync(update, ct);
+            }
+            catch (Exception ex) when (IsActiveTypeConflict(ex))
+            {
+                // Resuming would make a second active job of this type.
+                return JobActionResult.Conflict;
+            }
+
+            if (rows == 1)
             {
                 await notifier.PublishAsync(db, id, ct);
                 return JobActionResult.Ok;
@@ -163,4 +192,8 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
 
         return JobActionResult.Conflict;
     }
+
+    private static bool IsActiveTypeConflict(Exception ex) =>
+        (ex as PostgresException ?? ex.InnerException as PostgresException) is
+        { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: JobRow.ActiveTypeIndex };
 }

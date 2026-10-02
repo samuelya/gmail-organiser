@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Jobs;
@@ -61,14 +62,17 @@ public sealed partial class JobRunner(
         await Task.WhenAll(inFlight.Values);
     }
 
-    /// <summary>Moves every <c>running</c> job back to <c>queued</c>: the process that ran it is gone.</summary>
+    /// <summary>
+    /// Ends the run of every <c>running</c> job, since the process that ran it is gone. A cancel or pause
+    /// requested before the restart is honoured; any other job goes back to <c>queued</c>.
+    /// </summary>
     public async Task<int> RecoverAsync(CancellationToken ct)
     {
         await using var scope = scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var now = time.GetUtcNow();
         var count = await db.Jobs.Where(j => j.Status == JobStatus.Running)
-            .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, JobStatus.Queued).SetProperty(j => j.UpdatedAt, now), ct);
+            .ExecuteUpdateAsync(s => SetRequestedEnd(s, now), ct);
         if (count > 0)
         {
             LogRecovered(logger, count);
@@ -95,6 +99,22 @@ public sealed partial class JobRunner(
             .ToListAsync(ct);
 
         var claimed = new List<Guid>();
+        try
+        {
+            await ClaimEachAsync(db, notifier, idleQueues, claimed, ct);
+        }
+        catch (Exception ex) when (claimed.Count > 0 && ex is not OperationCanceledException)
+        {
+            // Jobs claimed before the failure are already running: hand them over so they don't block their queues.
+            LogPollFailed(logger, ex);
+        }
+
+        return claimed;
+    }
+
+    private async Task ClaimEachAsync(
+        AppDbContext db, JobNotifier notifier, List<string> idleQueues, List<Guid> claimed, CancellationToken ct)
+    {
         foreach (var queue in idleQueues)
         {
             var id = await db.Jobs
@@ -118,8 +138,6 @@ public sealed partial class JobRunner(
                 await notifier.PublishAsync(db, id, ct);
             }
         }
-
-        return claimed;
     }
 
     private async Task RunSafelyAsync(Guid jobId, CancellationToken ct)
@@ -139,8 +157,8 @@ public sealed partial class JobRunner(
     }
 
     /// <summary>
-    /// Runs a claimed job to its next end state. Host shutdown (<paramref name="ct"/> cancelled) leaves
-    /// it <c>running</c> so <see cref="RecoverAsync"/> re-queues it on the next start.
+    /// Runs a claimed job to its next end state. Host shutdown (<paramref name="ct"/> cancelled, whether the
+    /// handler throws or returns early) leaves it <c>running</c> so <see cref="RecoverAsync"/> re-queues it on the next start.
     /// </summary>
     public async Task RunAsync(Guid jobId, CancellationToken ct)
     {
@@ -182,31 +200,53 @@ public sealed partial class JobRunner(
             return;
         }
 
-        var status = context.LastSignal switch
+        if (context.LastSignal != JobSignal.Continue)
         {
-            JobSignal.Pause => JobStatus.Paused,
-            JobSignal.Cancel => JobStatus.Cancelled,
-            _ => JobStatus.Completed,
-        };
-        LogFinished(logger, JobRow.FormatStatus(status));
-        await FinishAsync(db, notifier, jobId, status, null);
+            // Stopped at a checkpoint on request. The flags as they are now decide the end state, so a
+            // pause withdrawn by a resume after that checkpoint re-queues the job instead of pausing it.
+            LogStopped(logger);
+            await EndRunAsync(db, notifier, jobId, s => SetRequestedEnd(s, time.GetUtcNow()));
+            return;
+        }
+
+        if (ct.IsCancellationRequested)
+        {
+            // The handler honoured shutdown by returning early; its work is not done.
+            LogInterrupted(logger);
+            return;
+        }
+
+        LogFinished(logger, JobRow.FormatStatus(JobStatus.Completed));
+        await FinishAsync(db, notifier, jobId, JobStatus.Completed, null);
+    }
+
+    private Task FinishAsync(AppDbContext db, JobNotifier notifier, Guid jobId, JobStatus status, string? error)
+    {
+        var now = time.GetUtcNow();
+        return EndRunAsync(db, notifier, jobId, s => s
+            .SetProperty(j => j.Status, status)
+            .SetProperty(j => j.Error, error)
+            .SetProperty(j => j.PauseRequested, false)
+            .SetProperty(j => j.CancelRequested, false)
+            .SetProperty(j => j.FinishedAt, now)
+            .SetProperty(j => j.UpdatedAt, now));
     }
 
     // Not cancellable: the outcome must be recorded even while the host stops.
-    private async Task FinishAsync(AppDbContext db, JobNotifier notifier, Guid jobId, JobStatus status, string? error)
+    private static async Task EndRunAsync(
+        AppDbContext db, JobNotifier notifier, Guid jobId, Action<UpdateSettersBuilder<JobRow>> update)
     {
-        var now = time.GetUtcNow();
-        DateTimeOffset? finishedAt = status == JobStatus.Paused ? null : now;
-        await db.Jobs.Where(j => j.Id == jobId && j.Status == JobStatus.Running)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(j => j.Status, status)
-                .SetProperty(j => j.Error, error)
-                .SetProperty(j => j.PauseRequested, false)
-                .SetProperty(j => j.CancelRequested, false)
-                .SetProperty(j => j.FinishedAt, finishedAt)
-                .SetProperty(j => j.UpdatedAt, now), CancellationToken.None);
+        await db.Jobs.Where(j => j.Id == jobId && j.Status == JobStatus.Running).ExecuteUpdateAsync(update, CancellationToken.None);
         await notifier.PublishAsync(db, jobId, CancellationToken.None);
     }
+
+    /// <summary>End state of a run stopped by request: cancelled, else paused, else back to queued.</summary>
+    private static void SetRequestedEnd(UpdateSettersBuilder<JobRow> s, DateTimeOffset now) => s
+        .SetProperty(j => j.Status, j => j.CancelRequested ? JobStatus.Cancelled : j.PauseRequested ? JobStatus.Paused : JobStatus.Queued)
+        .SetProperty(j => j.FinishedAt, j => j.CancelRequested ? now : (DateTimeOffset?)null)
+        .SetProperty(j => j.PauseRequested, false)
+        .SetProperty(j => j.CancelRequested, false)
+        .SetProperty(j => j.UpdatedAt, now);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Re-queued {Count} job(s) interrupted by the previous shutdown")]
     private static partial void LogRecovered(ILogger logger, int count);
@@ -216,6 +256,9 @@ public sealed partial class JobRunner(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job ended as {Status}")]
     private static partial void LogFinished(ILogger logger, string status);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Job stopped at a checkpoint on request")]
+    private static partial void LogStopped(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job interrupted by shutdown; it resumes from its cursor on the next start")]
     private static partial void LogInterrupted(ILogger logger);

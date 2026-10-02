@@ -307,6 +307,11 @@ namespace GmailOrganiser.Data.Migrations
                     b.HasIndex("Queue", "Status", "CreatedAt")
                         .HasDatabaseName("ix_jobs_queue_status_created_at");
 
+                    b.HasIndex("Type")
+                        .IsUnique()
+                        .HasDatabaseName("ux_jobs_type_active")
+                        .HasFilter("status IN ('queued', 'running', 'paused')");
+
                     b.ToTable("jobs", (string)null);
                 });
 

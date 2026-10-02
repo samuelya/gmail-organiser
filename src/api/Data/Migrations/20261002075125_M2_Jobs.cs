@@ -38,6 +38,13 @@ namespace GmailOrganiser.Data.Migrations
                 name: "ix_jobs_queue_status_created_at",
                 table: "jobs",
                 columns: new[] { "queue", "status", "created_at" });
+
+            migrationBuilder.CreateIndex(
+                name: "ux_jobs_type_active",
+                table: "jobs",
+                column: "type",
+                unique: true,
+                filter: "status IN ('queued', 'running', 'paused')");
         }
 
         /// <inheritdoc />

@@ -1,7 +1,11 @@
+using System.Data.Common;
+using GmailOrganiser.Data;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailOrganiser.Tests.Integration;
@@ -218,6 +222,112 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
         (await GetAsync(job.Id)).Status.ShouldBe("completed");
     }
 
+    [Fact]
+    public async Task Handler_returning_early_on_shutdown_leaves_the_job_running()
+    {
+        var job = await EnqueueAsync();
+        state.ReturnOnShutdown = true;
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        state.AfterStep = (_, step) =>
+        {
+            if (step == 3)
+            {
+                shutdown.Cancel();
+            }
+
+            return Task.CompletedTask;
+        };
+
+        var claimed = await runner.ClaimAsync(Ct);
+        await runner.RunAsync(claimed.Single(), shutdown.Token);
+
+        (await GetAsync(job.Id)).Status.ShouldBe("running");
+        (await ReadCursorAsync(job.Id)).ShouldBe(new CountingCursor(3));
+    }
+
+    [Fact]
+    public async Task Concurrent_enqueues_of_one_type_create_one_job()
+    {
+        var jobs = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() => EnqueueAsync(), Ct)));
+
+        jobs.Select(j => j.Id).Distinct().ShouldHaveSingleItem();
+        await using var db = postgres.CreateDbContext();
+        (await db.Jobs.CountAsync(Ct)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Resume_of_a_failed_job_is_a_conflict_while_another_of_its_type_is_active()
+    {
+        var failed = await EnqueueAsync();
+        state.FailAtStep = 1;
+        await RunNextAsync();
+        var next = await EnqueueAsync();
+        next.Id.ShouldNotBe(failed.Id);
+
+        (await WithJobsAsync(s => s.ResumeAsync(failed.Id, Ct))).ShouldBe(JobActionResult.Conflict);
+        (await GetAsync(failed.Id)).Status.ShouldBe("failed");
+    }
+
+    [Fact]
+    public async Task Resume_after_the_pause_checkpoint_requeues_the_job()
+    {
+        var job = await EnqueueAsync();
+        state.AfterStep = (id, step) => step == 2 ? WithJobsAsync(s => s.PauseAsync(id, Ct)) : Task.CompletedTask;
+        state.OnStop = async id => (await WithJobsAsync(s => s.ResumeAsync(id, Ct))).ShouldBe(JobActionResult.Ok);
+
+        await RunNextAsync();
+
+        (await GetAsync(job.Id)).Status.ShouldBe("queued");
+        state.AfterStep = null;
+        state.OnStop = null;
+        await RunNextAsync();
+
+        (await GetAsync(job.Id)).Status.ShouldBe("completed");
+        state.Executed.ShouldBe([1, 2, 3, 4, 5]);
+    }
+
+    [Fact]
+    public async Task Startup_recovery_honours_a_cancel_or_pause_requested_before_the_restart()
+    {
+        var cancelled = await EnqueueAsync();
+        var paused = await WithJobsAsync(s => s.EnqueueAsync("test-other", "test-other-queue", null, Ct));
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Jobs.Where(j => j.Id == cancelled.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, JobStatus.Running).SetProperty(j => j.CancelRequested, true), Ct);
+            await db.Jobs.Where(j => j.Id == paused.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, JobStatus.Running).SetProperty(j => j.PauseRequested, true), Ct);
+        }
+
+        (await runner.RecoverAsync(Ct)).ShouldBe(2);
+
+        var c = await GetAsync(cancelled.Id);
+        c.Status.ShouldBe("cancelled");
+        c.FinishedAt.ShouldNotBeNull();
+        var p = await GetAsync(paused.Id);
+        p.Status.ShouldBe("paused");
+        p.FinishedAt.ShouldBeNull();
+        (await runner.ClaimAsync(Ct)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Claim_failure_after_a_claim_still_returns_the_claimed_job()
+    {
+        var failSecondClaim = new FailNthJobUpdateInterceptor(2);
+        await using var failing = host.WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+            services.ConfigureDbContext<AppDbContext>(o => o.AddInterceptors(failSecondClaim))));
+        var failingRunner = ActivatorUtilities.CreateInstance<JobRunner>(failing.Services);
+        var a = await EnqueueAsync();
+        var b = await WithJobsAsync(s => s.EnqueueAsync("test-other", "test-other-queue", null, Ct));
+
+        var claimed = (await failingRunner.ClaimAsync(Ct)).ShouldHaveSingleItem();
+
+        var other = claimed == a.Id ? b.Id : a.Id;
+        (await GetAsync(claimed)).Status.ShouldBe("running");
+        (await GetAsync(other)).Status.ShouldBe("queued");
+        (await failingRunner.ClaimAsync(Ct)).ShouldBe([other]);
+    }
+
     private Task<JobDto> EnqueueAsync(CountingCursor? cursor = null) =>
         WithJobsAsync(s => s.EnqueueAsync(CountingJobHandler.JobType, JobQueues.Fetch, cursor, Ct));
 
@@ -241,5 +351,22 @@ public sealed class JobRunnerTests(ApiFactory factory, PostgresFixture postgres)
         await using var db = postgres.CreateDbContext();
         var json = await db.Jobs.Where(j => j.Id == id).Select(j => j.Cursor).SingleAsync(Ct);
         return json is null ? null : System.Text.Json.JsonSerializer.Deserialize<CountingCursor>(json, System.Text.Json.JsonSerializerOptions.Web);
+    }
+}
+
+/// <summary>Throws on the <c>n</c>-th <c>UPDATE jobs</c> statement (bulk update), once.</summary>
+internal sealed class FailNthJobUpdateInterceptor(int n) : DbCommandInterceptor
+{
+    private int count;
+
+    public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+        DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+    {
+        if (command.CommandText.Contains("UPDATE jobs", StringComparison.Ordinal) && Interlocked.Increment(ref count) == n)
+        {
+            throw new InvalidOperationException("Synthetic database failure");
+        }
+
+        return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
     }
 }
