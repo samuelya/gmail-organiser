@@ -356,10 +356,13 @@ public sealed partial class UndoActionsJob(
             message.UpdatedAt = now;
         }
 
-        var suggestionIds = await db.ActionLog
+        var applied = await db.ActionLog
             .Where(l => chunk.LogIds.Contains(l.Id) && reverted.Contains(l.MessageId) && l.SuggestionId != null)
-            .Select(l => l.SuggestionId!.Value)
+            .Select(l => new { l.MessageId, SuggestionId = l.SuggestionId!.Value })
             .ToListAsync(ct);
+        var suggestionIds = applied.ConvertAll(l => l.SuggestionId);
+        // Only rows of an applied suggestion counted towards applied_count (an auto-archive has none).
+        var counted = applied.Select(l => l.MessageId).Distinct(StringComparer.Ordinal).ToArray();
         var suggestions = await db.Suggestions
             .Where(s => suggestionIds.Contains(s.Id) && s.Status == SuggestionStatus.Applied)
             .ToListAsync(ct);
@@ -372,7 +375,7 @@ public sealed partial class UndoActionsJob(
         await db.SaveChangesAsync(ct);
         await db.Database.ExecuteSqlAsync($"""
             UPDATE senders AS s SET applied_count = GREATEST(s.applied_count - c.n, 0)
-            FROM (SELECT from_address, count(*)::int AS n FROM messages WHERE id = ANY({reverted}) GROUP BY from_address) AS c
+            FROM (SELECT from_address, count(*)::int AS n FROM messages WHERE id = ANY({counted}) GROUP BY from_address) AS c
             WHERE s.address = c.from_address
             """, ct);
         await db.ActionBatches.Where(b => b.Id == cursor.BatchId)

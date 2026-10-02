@@ -19,11 +19,13 @@ public sealed record IncrementalFetchCursor(
 /// checkpoint. A page is applied as state, not as deltas: deleted ids are marked deleted and every other touched id is
 /// re-read and upserted (which is how removed labels show), so re-applying a page changes nothing.
 /// <c>fetch_state.last_history_id</c> moves only on completion. Expired history resets the mailbox phase on completion
-/// and then queues a full resync, which reconciles the stored mail it does not list.
+/// and then queues a full resync, which reconciles the stored mail it does not list. After each page the re-read
+/// messages go to <see cref="IActionDoneScanner"/> (auto-archive).
 /// </summary>
 public sealed partial class IncrementalFetchJob(
     IGmailClient gmail,
     MessageFetchPipeline pipeline,
+    IActionDoneScanner actionDone,
     LocalAccountClaim accountClaim,
     IJobService jobs,
     AppDbContext db,
@@ -116,6 +118,7 @@ public sealed partial class IncrementalFetchJob(
 
         var marked = await pipeline.MarkDeletedAsync([.. deleted], ct);
         var refreshed = await pipeline.RefreshByIdsAsync(touched, ct);
+        await actionDone.ScanAsync(touched, ct);
         return cursor with
         {
             PageToken = page.NextPageToken,

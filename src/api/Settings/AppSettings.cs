@@ -42,6 +42,11 @@ public sealed record AppSettings
     public bool AnalysisMemoryShortCircuit { get; init; } = true;
     public int AnalysisMemoryMinApprovals { get; init; } = DefaultAnalysisMemoryMinApprovals;
     public double BulkApproveThreshold { get; init; } = DefaultBulkApproveThreshold;
+
+    /// <summary>
+    /// Archive an applied needs-action message once its action label is removed in Gmail (off by default). Checked by
+    /// the incremental fetch for the messages it re-reads, so turning it on archives nothing retroactively.
+    /// </summary>
     public bool AutoArchiveOnActionDone { get; init; }
 
     /// <summary>User override of the analysis prompt; <c>null</c> means the built-in template.</summary>
