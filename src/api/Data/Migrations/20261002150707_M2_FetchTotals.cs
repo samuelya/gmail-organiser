@@ -22,11 +22,12 @@ namespace GmailOrganiser.Data.Migrations
                 type: "bigint",
                 nullable: true);
 
-            // The totals a finished phase reports are its fetched counts (MailboxFetchJob.InboxTotalOf).
-            migrationBuilder.Sql(
-                "UPDATE fetch_state SET inbox_total = inbox_fetched WHERE mailbox_phase IN ('all_mail', 'reconcile', 'completed');");
-            migrationBuilder.Sql(
-                "UPDATE fetch_state SET all_mail_total = all_mail_fetched WHERE mailbox_phase IN ('reconcile', 'completed');");
+            migrationBuilder.UpdateData(
+                table: "fetch_state",
+                keyColumn: "id",
+                keyValue: 1,
+                columns: new[] { "all_mail_total", "inbox_total" },
+                values: new object[] { null, null });
         }
 
         /// <inheritdoc />
