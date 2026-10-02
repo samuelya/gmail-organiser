@@ -1,0 +1,125 @@
+<app-page-header title="History" />
+
+<mat-card appearance="outlined">
+  <mat-card-content class="flex flex-col gap-4">
+    @if (loading()) {
+      <mat-progress-bar mode="indeterminate" aria-label="Loading history" />
+    }
+    @if (loadFailed()) {
+      <p class="m-0 flex items-center gap-2" role="alert" data-testid="load-error">
+        <mat-icon aria-hidden="true">error</mat-icon>
+        The history could not be {{ result() ? 'refreshed' : 'loaded' }}.
+        <button mat-button type="button" (click)="reload()">Retry</button>
+      </p>
+    }
+
+    @if (result(); as page) {
+      @if (page.total === 0) {
+        <p class="muted m-0" role="status" data-testid="no-batches">
+          Nothing applied yet. Changes approved on the Review page are listed here.
+        </p>
+      } @else {
+        <div class="overflow-x-auto">
+          <table mat-table [dataSource]="rows()" [trackBy]="trackRow" class="w-full">
+            <ng-container matColumnDef="when">
+              <th mat-header-cell *matHeaderCellDef>When</th>
+              <td mat-cell *matCellDef="let b" class="whitespace-nowrap">
+                {{ b.createdAt | date: 'short' }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="kind">
+              <th mat-header-cell *matHeaderCellDef>Kind</th>
+              <td mat-cell *matCellDef="let b" class="whitespace-nowrap" data-testid="cell-kind">
+                {{ kind(b.kind) }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="description">
+              <th mat-header-cell *matHeaderCellDef>Description</th>
+              <td mat-cell *matCellDef="let b" class="min-w-40 py-2" data-testid="cell-description">
+                <button
+                  type="button"
+                  class="link"
+                  (click)="openDetail(b); $event.stopPropagation()"
+                  [attr.aria-label]="'Details of ' + kind(b.kind) + ': ' + b.description"
+                  data-testid="open-detail"
+                >
+                  {{ b.description }}
+                </button>
+                @if (narrow()) {
+                  <span class="muted block text-sm" data-testid="row-meta">
+                    {{ kind(b.kind) }} · {{ b.createdAt | date: 'short' }} ·
+                    {{ b.messageCount | number }}
+                    {{ b.messageCount === 1 ? 'message' : 'messages' }}
+                  </span>
+                }
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="messages">
+              <th mat-header-cell *matHeaderCellDef>Messages</th>
+              <td mat-cell *matCellDef="let b">{{ b.messageCount | number }}</td>
+            </ng-container>
+
+            <ng-container matColumnDef="status">
+              <th mat-header-cell *matHeaderCellDef>Status</th>
+              <td mat-cell *matCellDef="let b" class="status py-1" data-testid="cell-status">
+                @if (rowJobs().get(b.id); as live) {
+                  <div class="flex flex-col gap-1" data-testid="row-progress">
+                    <span class="text-sm">
+                      {{
+                        live.job?.progress?.message ||
+                          (undoJobs().has(b.id) || b.kind === 'undo' ? 'Undoing…' : 'Applying…')
+                      }}
+                    </span>
+                    <mat-progress-bar
+                      [mode]="live.percent === null ? 'indeterminate' : 'determinate'"
+                      [value]="live.percent ?? 0"
+                      [attr.aria-label]="'Progress of ' + b.description"
+                    />
+                  </div>
+                } @else if (b.undoneAt) {
+                  <span class="muted" data-testid="undone-at">
+                    Undone {{ b.undoneAt | date: 'short' }}
+                  </span>
+                } @else if (b.canUndo) {
+                  <button
+                    mat-stroked-button
+                    type="button"
+                    (click)="undo(b, $event)"
+                    [disabled]="undoDisabled(b)"
+                    [attr.aria-label]="'Undo ' + b.description"
+                    data-testid="undo"
+                  >
+                    <mat-icon aria-hidden="true">undo</mat-icon>Undo
+                  </button>
+                } @else {
+                  <span class="muted">—</span>
+                }
+              </td>
+            </ng-container>
+
+            <tr mat-header-row *matHeaderRowDef="columns()"></tr>
+            <tr
+              mat-row
+              *matRowDef="let b; columns: columns()"
+              class="batch"
+              (click)="openDetail(b)"
+              data-testid="batch-row"
+            ></tr>
+          </table>
+        </div>
+
+        <mat-paginator
+          [length]="page.total"
+          [pageIndex]="page.page - 1"
+          [pageSize]="page.pageSize"
+          [pageSizeOptions]="pageSizes"
+          (page)="onPage($event)"
+          aria-label="History pages"
+        />
+      }
+    }
+  </mat-card-content>
+</mat-card>
