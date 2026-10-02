@@ -25,6 +25,38 @@ public sealed record AppSettings
 
     public const int DefaultFetchChunkSize = 100;
 
+    // Analysis (epic #22); ranges are in SettingsValidation.
+    public int AnalysisDefaultCount { get; init; } = DefaultAnalysisDefaultCount;
+    public int AnalysisBodyMaxChars { get; init; } = DefaultAnalysisBodyMaxChars;
+    public AnalysisGroupingMode AnalysisGroupingMode { get; init; } = DefaultAnalysisGroupingMode;
+    public int AnalysisRepresentativesPerGroup { get; init; } = DefaultAnalysisRepresentativesPerGroup;
+    public int AnalysisMinGroupSize { get; init; } = DefaultAnalysisMinGroupSize;
+
+    /// <summary>Subtracted from the representatives' confidence for suggestions copied to the rest of a group.</summary>
+    public double AnalysisDerivedConfidencePenalty { get; init; } = DefaultAnalysisDerivedConfidencePenalty;
+
+    /// <summary>Maximum cosine distance between embeddings in one <see cref="AnalysisGroupingMode.Auto"/> cluster.</summary>
+    public double AnalysisClusterDistance { get; init; } = DefaultAnalysisClusterDistance;
+
+    /// <summary>Skip the LLM when memory has <see cref="AnalysisMemoryMinApprovals"/> matching approvals.</summary>
+    public bool AnalysisMemoryShortCircuit { get; init; } = true;
+    public int AnalysisMemoryMinApprovals { get; init; } = DefaultAnalysisMemoryMinApprovals;
+    public double BulkApproveThreshold { get; init; } = DefaultBulkApproveThreshold;
+    public bool AutoArchiveOnActionDone { get; init; }
+
+    /// <summary>User override of the analysis prompt; <c>null</c> means the built-in template.</summary>
+    public string? AnalysisPromptTemplate { get; init; }
+
+    public const int DefaultAnalysisDefaultCount = 20;
+    public const int DefaultAnalysisBodyMaxChars = 4000;
+    public const AnalysisGroupingMode DefaultAnalysisGroupingMode = AnalysisGroupingMode.Auto;
+    public const int DefaultAnalysisRepresentativesPerGroup = 3;
+    public const int DefaultAnalysisMinGroupSize = 3;
+    public const double DefaultAnalysisDerivedConfidencePenalty = 0.10;
+    public const double DefaultAnalysisClusterDistance = 0.15;
+    public const int DefaultAnalysisMemoryMinApprovals = 3;
+    public const double DefaultBulkApproveThreshold = 0.80;
+
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()
     {
