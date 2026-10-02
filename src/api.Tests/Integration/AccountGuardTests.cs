@@ -103,6 +103,22 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
     }
 
     [Fact]
+    public async Task A_different_account_blocks_a_sender_fetch_start()
+    {
+        await SetLocalAccountAsync(FakeGmailClient.AccountEmail);
+        await ConnectAsync(OtherAccount);
+
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+        var response = await client.PostAsJsonAsync("/api/fetch/sender", new SenderFetchRequest("sender@example.com"), Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("type").GetString().ShouldBe(AccountGuard.ProblemType);
+        await using var db = postgres.CreateDbContext();
+        (await db.Jobs.CountAsync(Ct)).ShouldBe(0);
+    }
+
+    [Fact]
     public async Task A_fetch_job_queued_before_a_reconnect_to_another_account_fails_instead_of_running()
     {
         await SetLocalAccountAsync(FakeGmailClient.AccountEmail);

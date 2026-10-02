@@ -22,14 +22,13 @@ public sealed record MailboxFetchCursor(
 /// checkpointing the Gmail page token after every chunk. Progress counts the messages processed in the current phase;
 /// All Mail skips the <c>messages.get</c> of ids the Inbox phase of this run already stored.
 /// </summary>
-public sealed partial class MailboxFetchJob(
+public sealed class MailboxFetchJob(
     IGmailClient gmail,
     MessageFetchPipeline pipeline,
     LocalAccountClaim accountClaim,
     ISettingsStore settings,
     AppDbContext db,
-    TimeProvider time,
-    ILogger<MailboxFetchJob> logger) : IJobHandler
+    TimeProvider time) : IJobHandler
 {
     public const string JobType = FetchJobTypes.Mailbox;
     public const string Queue = JobQueues.Fetch;
@@ -100,18 +99,11 @@ public sealed partial class MailboxFetchJob(
         var inbox = cursor.Phase == MailboxPhase.Inbox;
         var query = new MessageListQuery(null, inbox ? [InboxLabelId] : null, cursor.PageToken, MessageListQuery.MaxPageSize);
 
-        ListedChunk chunk;
-        try
+        var chunk = await pipeline.ListChunkAsync(query, chunkSize, ct);
+        if (chunk.Restarted)
         {
-            chunk = await pipeline.ListChunkAsync(query, chunkSize, ct);
-        }
-        catch (GmailInvalidPageTokenException ex) when (cursor.PageToken is not null)
-        {
-            // The pipeline retries tokens issued within a chunk itself, so this is the stored token. The upsert makes
-            // re-reading the phase safe; only the phase's counter starts over.
-            LogPageTokenRejected(logger, cursor.Phase, ex);
-            cursor = inbox ? cursor with { PageToken = null, InboxFetched = 0 } : cursor with { PageToken = null, AllMailFetched = 0 };
-            chunk = await pipeline.ListChunkAsync(query with { PageToken = null }, chunkSize, ct);
+            // The pipeline listed the phase from its first page again; only the phase's counter starts over.
+            cursor = inbox ? cursor with { InboxFetched = 0 } : cursor with { AllMailFetched = 0 };
         }
 
         var done = chunk.NextPageToken is null;
@@ -176,7 +168,4 @@ public sealed partial class MailboxFetchJob(
             await db.FetchRunMessages.ExecuteDeleteAsync(ct);
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail rejected the stored page token; restarting the {Phase} phase from its first page")]
-    private static partial void LogPageTokenRejected(ILogger logger, MailboxPhase phase, Exception ex);
 }

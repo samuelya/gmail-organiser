@@ -14,6 +14,7 @@ public static class FetchEndpoints
         var group = endpoints.MapGroup("/api/fetch").WithTags("Fetch");
         group.MapPost("/mailbox/start", StartMailboxAsync).RequireAccountMatch();
         group.MapGet("/status", GetStatusAsync);
+        group.MapPost("/sender", StartSenderAsync).RequireAccountMatch();
         return endpoints;
     }
 
@@ -26,10 +27,7 @@ public static class FetchEndpoints
     {
         if (await tokens.GetAsync(ct) is not { ReauthRequired: false })
         {
-            return TypedResults.Problem(
-                statusCode: StatusCodes.Status409Conflict,
-                title: "Gmail not connected",
-                detail: "Connect Gmail in Setup before fetching the mailbox.");
+            return GmailNotConnected("Connect Gmail in Setup before fetching the mailbox.");
         }
 
         // A new job would reset fetch_state and discard the failed or paused job's checkpoint.
@@ -54,6 +52,45 @@ public static class FetchEndpoints
 
         // A concurrent start that loses the insert gets the winner's job back with Created false.
         var (job, created) = await jobs.EnqueueAsync(MailboxFetchJob.JobType, MailboxFetchJob.Queue, null, ct);
+        var response = new StartFetchResponse(job.Id);
+        return created ? TypedResults.Accepted($"/api/jobs/{job.Id}", response) : TypedResults.Ok(response);
+    }
+
+    /// <summary>
+    /// 202 with a new job; 200 with the active job for the same target, or with the latest failed or paused one after
+    /// resuming it from its cursor; 400 for an invalid target; 409 when Gmail is not connected. Jobs for different
+    /// targets coexist (the dedup key is the target) and run one at a time on the fetch queue.
+    /// </summary>
+    private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartSenderAsync(
+        SenderFetchRequest request, ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
+    {
+        if (!SenderFetchTarget.TryParse(request.Target, out var cursor))
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Invalid sender",
+                detail: "Enter a sender address (name@example.com) or a domain (example.com).");
+        }
+
+        if (await tokens.GetAsync(ct) is not { ReauthRequired: false })
+        {
+            return GmailNotConnected("Connect Gmail in Setup before fetching a sender.");
+        }
+
+        // A new job would start from page one and discard the failed or paused job's checkpoint.
+        var latest = await db.Jobs.AsNoTracking()
+            .Where(j => j.Type == SenderFetchJob.JobType && j.DedupKey == cursor.Target)
+            .OrderByDescending(j => JobRow.Active.Contains(j.Status))
+            .ThenByDescending(j => j.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (latest is { Status: JobStatus.Failed or JobStatus.Paused }
+            && await jobs.ResumeAsync(latest.Id, ct) == JobActionResult.Ok)
+        {
+            return TypedResults.Ok(new StartFetchResponse(latest.Id));
+        }
+
+        // A concurrent start that loses the insert gets the winner's job back with Created false.
+        var (job, created) = await jobs.EnqueueAsync(SenderFetchJob.JobType, SenderFetchJob.Queue, cursor, ct, dedupKey: cursor.Target);
         var response = new StartFetchResponse(job.Id);
         return created ? TypedResults.Accepted($"/api/jobs/{job.Id}", response) : TypedResults.Ok(response);
     }
@@ -89,6 +126,9 @@ public static class FetchEndpoints
             check.IsMismatch,
             check.LocalAccountMasked));
     }
+
+    private static ProblemHttpResult GmailNotConnected(string detail) =>
+        TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: "Gmail not connected", detail: detail);
 
     /// <summary>The active mailbox fetch job (at most one, by the unique index), else the most recent one.</summary>
     private static Task<JobRow?> LatestMailboxJobAsync(AppDbContext db, CancellationToken ct) =>

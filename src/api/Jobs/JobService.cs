@@ -19,10 +19,12 @@ public interface IJobService
     const int RecentFinishedCount = 20;
 
     /// <summary>
-    /// Queues a job, or returns the existing one of that type that is queued, running or paused;
-    /// <c>Created</c> says which, also when a concurrent enqueue won the insert.
+    /// Queues a job, or returns the existing one of that type and <paramref name="dedupKey"/> that is queued, running
+    /// or paused; <c>Created</c> says which, also when a concurrent enqueue won the insert.
     /// </summary>
-    Task<(JobDto Job, bool Created)> EnqueueAsync(string type, string queue, object? initialCursor = null, CancellationToken ct = default);
+    /// <param name="dedupKey">Allows one active job per key instead of per type (see <see cref="JobRow.DedupKey"/>).</param>
+    Task<(JobDto Job, bool Created)> EnqueueAsync(
+        string type, string queue, object? initialCursor = null, CancellationToken ct = default, string? dedupKey = null);
 
     Task<JobActionResult> PauseAsync(Guid id, CancellationToken ct);
 
@@ -42,17 +44,18 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
     // A transition races the runner (claim, finish); retry against the fresh status a few times.
     private const int MaxAttempts = 5;
 
-    public async Task<(JobDto Job, bool Created)> EnqueueAsync(string type, string queue, object? initialCursor = null, CancellationToken ct = default)
+    public async Task<(JobDto Job, bool Created)> EnqueueAsync(
+        string type, string queue, object? initialCursor = null, CancellationToken ct = default, string? dedupKey = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(type);
         ArgumentException.ThrowIfNullOrWhiteSpace(queue);
 
-        // The unique index on active jobs per type makes this atomic: a concurrent enqueue that loses the
+        // The unique index on active jobs per type and key makes this atomic: a concurrent enqueue that loses the
         // insert reads the winner's row instead.
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
             var existing = await db.Jobs.AsNoTracking()
-                .Where(j => j.Type == type && JobRow.Active.Contains(j.Status))
+                .Where(j => j.Type == type && j.DedupKey == dedupKey && JobRow.Active.Contains(j.Status))
                 .FirstOrDefaultAsync(ct);
             if (existing is not null)
             {
@@ -65,6 +68,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
                 Id = Guid.CreateVersion7(now),
                 Type = type,
                 Queue = queue,
+                DedupKey = dedupKey,
                 Status = JobStatus.Queued,
                 Cursor = initialCursor is null ? null : JsonSerializer.Serialize(initialCursor, initialCursor.GetType(), JobRow.Json),
                 CreatedAt = now,
@@ -182,7 +186,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
             }
             catch (Exception ex) when (IsActiveTypeConflict(ex))
             {
-                // Resuming would make a second active job of this type.
+                // Resuming would make a second active job of this type and key.
                 return JobActionResult.Conflict;
             }
 
