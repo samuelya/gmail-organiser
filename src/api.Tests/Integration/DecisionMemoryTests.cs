@@ -8,6 +8,7 @@ using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Pgvector;
@@ -23,7 +24,11 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     private const string News = "news@example.com";
     private static readonly DateTimeOffset Now = new(2026, 10, 3, 12, 0, 0, TimeSpan.Zero);
 
+    private static readonly string ShopScope = GroupKey.For(Message("s1", Shop, "Weekly offer 7", null));
+    private static readonly string OtherTemplateScope = GroupKey.For(Message("s2", Shop, "Invoice ready", null));
+
     private readonly FakeEmbeddingGenerator embeddings = new();
+    private readonly List<ServiceProvider> providers = [];
     private readonly InMemorySettingsStore settings = new(new AppSettings
     {
         OllamaBaseUrl = "http://ollama.example.com:11434",
@@ -41,50 +46,88 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         await db.Messages.ExecuteDeleteAsync(Ct);
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public async ValueTask DisposeAsync()
+    {
+        foreach (var provider in providers)
+        {
+            await provider.DisposeAsync();
+        }
+    }
 
     [Fact]
-    public async Task Approve_embeds_sender_subject_template_and_snippet_after_the_commit()
+    public async Task Approve_records_the_group_scope_and_the_background_pass_embeds_it_later()
     {
-        var message = Message("m1", Shop, "Order 12345 shipped", "Your synthetic parcel is on its way");
+        var message = Message("m1", Shop, "Order 12345 shipped", "Your synthetic parcel is on its way", listId: " Orders.Example.COM ");
         await using (var db = postgres.CreateDbContext())
         {
             db.Messages.Add(message);
             await db.SaveChangesAsync(Ct);
         }
 
+        var queue = new RecordingEmbeddingQueue();
         await using (var db = postgres.CreateDbContext())
         {
-            var recorder = new DecisionRecorder(db, Memory(db), new FakeTimeProvider(Now));
+            var recorder = new DecisionRecorder(db, queue, new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
             await recorder.RecordAsync(Suggestion(message, "Shopping"), message, DecisionOutcome.Approved, Ct);
             await db.SaveChangesAsync(Ct);
-            embeddings.Inputs.ShouldBeEmpty();
-            await recorder.EmbedRecordedAsync(Ct);
+            recorder.Committed();
+            recorder.Committed(); // nothing new recorded: no second wake-up
         }
+
+        queue.Notified.ShouldBe(1);
+        embeddings.Inputs.ShouldBeEmpty();
+        await using (var check = postgres.CreateDbContext())
+        {
+            var row = await check.Decisions.AsNoTracking().SingleAsync(Ct);
+            (row.ListId, row.ScopeKey, row.Embedding).ShouldBe(("orders.example.com", GroupKey.For(message), null));
+        }
+
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(1);
 
         var text = DecisionMemory.EmbeddingText(Shop, SubjectNormaliser.Template(message.Subject), message.Snippet);
         embeddings.Inputs.ShouldBe([text]);
-        await using var check = postgres.CreateDbContext();
-        var row = await check.Decisions.AsNoTracking().SingleAsync(Ct);
-        row.EmbeddingModel.ShouldBe(EmbeddingModel);
-        row.Embedding!.ToArray().ShouldBe(embeddings.Vector(text));
+        await using var after = postgres.CreateDbContext();
+        var embedded = await after.Decisions.AsNoTracking().SingleAsync(Ct);
+        embedded.EmbeddingModel.ShouldBe(EmbeddingModel);
+        embedded.Embedding!.ToArray().ShouldBe(embeddings.Vector(text));
     }
 
     [Fact]
-    public async Task Embedding_failure_or_no_model_leaves_the_row_without_a_vector()
+    public async Task Post_commit_failure_is_logged_not_thrown()
     {
+        var message = Message("m1", Shop, "Order 12345 shipped", null);
         await using var db = postgres.CreateDbContext();
-        var row = Decision(Shop, "Shopping", DecisionOutcome.Approved, Now);
+        var recorder = new DecisionRecorder(db, new RecordingEmbeddingQueue { Failure = new InvalidOperationException("synthetic") },
+            new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
+        await recorder.RecordAsync(Suggestion(message, "Shopping"), message, DecisionOutcome.Approved, Ct);
+
+        Should.NotThrow(recorder.Committed);
+    }
+
+    [Fact]
+    public async Task Embedding_failure_or_no_model_leaves_the_row_without_a_vector_until_a_later_pass()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Approved, Now));
+            await db.SaveChangesAsync(Ct);
+        }
 
         embeddings.Failure = new HttpRequestException("synthetic outage");
-        await Memory(db).EmbedAsync([row], Ct);
-        (row.Embedding, row.EmbeddingModel).ShouldBe((null, null));
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
 
         embeddings.Failure = null;
         settings.Current = settings.Current with { EmbeddingModel = null };
-        await Memory(db).EmbedAsync([row], Ct);
-        (row.Embedding, row.EmbeddingModel).ShouldBe((null, null));
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
         embeddings.Inputs.Count.ShouldBe(1);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Decisions.AsNoTracking().SingleAsync(Ct)).Embedding.ShouldBeNull();
+        }
+
+        settings.Current = settings.Current with { EmbeddingModel = EmbeddingModel };
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(1);
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
     }
 
     [Fact]
@@ -103,7 +146,9 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         db.Decisions.AddRange(similar, older, unrelated);
         await db.SaveChangesAsync(Ct);
 
-        var hints = await Memory(db).FindSimilarAsync([query, other], DecisionMemory.DefaultSimilarCount, Ct);
+        var memory = Memory(db);
+        var vectors = await memory.EmbedMessagesAsync([query, other, query], Ct);
+        var hints = await memory.FindSimilarAsync([query, other], vectors, DecisionMemory.DefaultSimilarCount, Ct);
 
         embeddings.Inputs.Count.ShouldBe(2);
         hints.Select(h => (h.TopicLabel, h.Outcome)).ShouldBe([("Shopping", "approved"), ("Offers", "rejected")]);
@@ -112,10 +157,10 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     }
 
     [Fact]
-    public async Task Without_an_embedding_model_retrieval_falls_back_to_the_sender_and_list()
+    public async Task Without_an_embedding_model_retrieval_falls_back_to_the_sender_and_the_normalised_list()
     {
         settings.Current = settings.Current with { EmbeddingModel = null };
-        var query = Message("q1", Shop, "Weekly offer 7", null, listId: "offers.example.com");
+        var query = Message("q1", Shop, "Weekly offer 7", null, listId: " Offers.Example.COM ");
         await using var db = postgres.CreateDbContext();
         var listOnly = Decision("lists@example.com", "Lists", DecisionOutcome.Approved, Now);
         listOnly.ListId = "offers.example.com";
@@ -126,7 +171,8 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
             Decision(News, "News", DecisionOutcome.Approved, Now));
         await db.SaveChangesAsync(Ct);
 
-        var hints = await Memory(db).FindSimilarAsync([query], DecisionMemory.DefaultSimilarCount, Ct);
+        var memory = Memory(db);
+        var hints = await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), DecisionMemory.DefaultSimilarCount, Ct);
 
         embeddings.Inputs.ShouldBeEmpty();
         hints.Select(h => (h.TopicLabel, h.Similarity)).ShouldBe([("Shopping", 1.0), ("Lists", DecisionMemory.ListMatchSimilarity)]);
@@ -143,50 +189,79 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         db.Decisions.Add(stale);
         await db.SaveChangesAsync(Ct);
 
-        (await Memory(db).FindSimilarAsync([query], 5, Ct)).ShouldBeEmpty();
+        var memory = Memory(db);
+        (await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), 5, Ct)).ShouldBeEmpty();
 
         settings.Current = settings.Current with { EmbeddingModel = "previous-embedding-model" };
-        (await Memory(db).FindSimilarAsync([query], 5, Ct)).ShouldHaveSingleItem().TopicLabel.ShouldBe("News");
+        (await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), 5, Ct))
+            .ShouldHaveSingleItem().TopicLabel.ShouldBe("News");
     }
 
     [Theory]
-    [InlineData(3, 0, false, "Shopping")] // three consistent approvals
-    [InlineData(2, 0, false, null)] // below N
-    [InlineData(3, 1, false, null)] // 3 of 4 = 75 % < 80 %
-    [InlineData(4, 1, false, "Shopping")] // 4 of 5 = 80 %
-    [InlineData(3, 0, true, null)] // a newer rejection of the same subject template
-    public async Task Sender_pattern_needs_N_consistent_approvals_and_no_newer_rejection(
-        int agreeing, int disagreeing, bool newerRejection, string? expected)
+    [InlineData("consistent", 3)]
+    [InlineData("below N", null)]
+    [InlineData("mixed outcomes", null)]
+    [InlineData("newer rejection in scope", null)]
+    [InlineData("newer rejection in another template", 3)]
+    [InlineData("derived and memory approvals", null)]
+    [InlineData("edited derived approval", 3)]
+    [InlineData("same message twice", null)]
+    public async Task Pattern_needs_N_consistent_human_approvals_of_distinct_messages_in_the_group_scope(string scenario, int? expected)
     {
         await using var db = postgres.CreateDbContext();
-        var template = SubjectNormaliser.Template("Weekly offer 7");
-        for (var i = 0; i < agreeing; i++)
+        DecisionRow Approval(int day, string label = "Shopping", SuggestionSource source = SuggestionSource.Llm, bool edited = false,
+            string? messageId = null, string? scope = null)
         {
-            db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Approved, Now.AddDays(-10 + i), template));
+            var d = Decision(Shop, label, DecisionOutcome.Approved, Now.AddDays(day), scopeKey: scope ?? ShopScope, source: source);
+            d.Edited = edited;
+            d.MessageId = messageId ?? $"m{day}";
+            return d;
         }
 
-        for (var i = 0; i < disagreeing; i++)
+        db.Decisions.AddRange(Approval(-10), Approval(-9));
+        // An older rejection in scope never blocks the pattern.
+        db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Rejected, Now.AddDays(-30), scopeKey: ShopScope));
+        db.Decisions.AddRange(scenario switch
         {
-            db.Decisions.Add(Decision(Shop, "Receipts", DecisionOutcome.Approved, Now.AddDays(-20 + i), template));
-        }
-
-        // Older rejections and rejections of another template never block the pattern.
-        db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Rejected, Now.AddDays(-30), template));
-        db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Rejected, Now, "another template"));
-        if (newerRejection)
-        {
-            db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Rejected, Now, template));
-        }
-
+            "consistent" => [Approval(-8)],
+            "below N" => [],
+            "mixed outcomes" => [Approval(-8), Approval(-20, label: "Receipts")],
+            "newer rejection in scope" => [Approval(-8), Decision(Shop, "Shopping", DecisionOutcome.Rejected, Now, scopeKey: ShopScope)],
+            "newer rejection in another template" =>
+                [Approval(-8), Decision(Shop, "Shopping", DecisionOutcome.Rejected, Now, scopeKey: OtherTemplateScope)],
+            "derived and memory approvals" =>
+                [Approval(-8, source: SuggestionSource.Derived), Approval(-7, source: SuggestionSource.Memory)],
+            "edited derived approval" => [Approval(-8, source: SuggestionSource.Derived, edited: true)],
+            "same message twice" => [Approval(-8, messageId: "m-10")],
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
+        });
         await db.SaveChangesAsync(Ct);
 
-        var pattern = await Memory(db).FindSenderPatternAsync(Shop, null, template, Ct);
+        var patterns = await Memory(db).FindPatternsAsync([ShopScope, OtherTemplateScope], minApprovals: 3, Ct);
 
-        pattern?.TopicLabel.ShouldBe(expected);
-        if (pattern is not null)
+        patterns.ShouldNotContainKey(OtherTemplateScope);
+        if (expected is { } approvals)
         {
-            (pattern.Approvals, pattern.Agreement).ShouldBe((agreeing, (double)agreeing / (agreeing + disagreeing)));
+            var pattern = patterns[ShopScope];
+            (pattern.TopicLabel, pattern.Approvals, pattern.Agreement).ShouldBe(("Shopping", approvals, 1.0));
         }
+        else
+        {
+            patterns.ShouldBeEmpty();
+        }
+    }
+
+    [Fact]
+    public async Task Pattern_uses_the_callers_minimum()
+    {
+        await using var db = postgres.CreateDbContext();
+        db.Decisions.AddRange(
+            Decision(Shop, "Shopping", DecisionOutcome.Approved, Now, scopeKey: ShopScope),
+            Decision(Shop, "Shopping", DecisionOutcome.Approved, Now.AddDays(-1), scopeKey: ShopScope));
+        await db.SaveChangesAsync(Ct);
+
+        (await Memory(db).FindPatternsAsync([ShopScope], minApprovals: 3, Ct)).ShouldBeEmpty();
+        (await Memory(db).FindPatternsAsync([ShopScope], minApprovals: 2, Ct)).ShouldContainKey(ShopScope);
     }
 
     /// <summary>
@@ -243,6 +318,17 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     private DecisionMemory Memory(AppDbContext db) =>
         new(db, new FakeLlmClientFactory(embed: embeddings), settings, NullLogger<DecisionMemory>.Instance);
 
+    private DecisionEmbeddingService EmbeddingService()
+    {
+        var services = new ServiceCollection();
+        services.AddScoped(_ => postgres.CreateDbContext());
+        services.AddScoped<IDecisionMemory>(sp => Memory(sp.GetRequiredService<AppDbContext>()));
+        providers.Add(services.BuildServiceProvider());
+        return new DecisionEmbeddingService(
+            providers[^1].GetRequiredService<IServiceScopeFactory>(), new DecisionEmbeddingQueue(), TimeProvider.System,
+            NullLogger<DecisionEmbeddingService>.Instance);
+    }
+
     private static string TextOf(MessageRow m) =>
         DecisionMemory.EmbeddingText(m.FromAddress, SubjectNormaliser.Template(m.Subject), m.Snippet);
 
@@ -272,14 +358,16 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     };
 
     private static DecisionRow Decision(
-        string sender, string label, DecisionOutcome outcome, DateTimeOffset at, string? template = "weekly offer #") => new()
-    {
-        Id = Guid.NewGuid(),
-        SenderAddress = sender,
-        SubjectTemplate = template,
-        TopicLabel = label,
-        Outcome = outcome,
-        Source = SuggestionSource.Llm,
-        CreatedAt = at,
-    };
+        string sender, string label, DecisionOutcome outcome, DateTimeOffset at, string? template = "weekly offer #",
+        string? scopeKey = null, SuggestionSource source = SuggestionSource.Llm) => new()
+        {
+            Id = Guid.NewGuid(),
+            SenderAddress = sender,
+            SubjectTemplate = template,
+            ScopeKey = scopeKey,
+            TopicLabel = label,
+            Outcome = outcome,
+            Source = source,
+            CreatedAt = at,
+        };
 }

@@ -8,12 +8,13 @@ namespace GmailOrganiser.Review;
 
 /// <summary>
 /// Adds one <c>decisions</c> row per approve or reject to the caller's unit of work; the caller saves it together with
-/// the status change. After the commit, <see cref="EmbedRecordedAsync"/> adds the vectors in one model call, so the
-/// model's latency never holds the review's row locks. Rows are otherwise never updated.
+/// the status change and then calls <see cref="Committed"/>, which wakes the background embedding: the request never
+/// waits on the model. Rows are otherwise only updated with their vector.
 /// </summary>
-public sealed class DecisionRecorder(AppDbContext db, IDecisionMemory memory, TimeProvider time)
+public sealed partial class DecisionRecorder(
+    AppDbContext db, IDecisionEmbeddingQueue embedding, TimeProvider time, ILogger<DecisionRecorder> logger)
 {
-    private readonly List<DecisionRow> recorded = [];
+    private bool recorded;
 
     public ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
     {
@@ -23,7 +24,8 @@ public sealed class DecisionRecorder(AppDbContext db, IDecisionMemory memory, Ti
             Id = Guid.CreateVersion7(now),
             MessageId = suggestion.MessageId,
             SenderAddress = suggestion.SenderAddress,
-            ListId = message.ListId,
+            ListId = GroupKey.NormaliseListId(message.ListId),
+            ScopeKey = GroupKey.For(message),
             // The message's own template: the one GroupKey.For put in its group key, without parsing the key.
             SubjectTemplate = SubjectNormaliser.Template(message.Subject),
             TopicLabel = suggestion.TopicLabel,
@@ -35,27 +37,32 @@ public sealed class DecisionRecorder(AppDbContext db, IDecisionMemory memory, Ti
             CreatedAt = now,
         };
         db.Decisions.Add(row);
-        recorded.Add(row);
+        recorded = true;
         return ValueTask.CompletedTask;
     }
 
     /// <summary>
-    /// Embeds the rows recorded since the last call and saves the vectors; call after the decisions are committed. A
-    /// row stays without a vector when no embedding model is configured or the model fails.
+    /// Post-commit work, best effort: wakes the background embedding when rows were recorded since the last call. Never
+    /// throws, so a group or bulk decision never stops partway on it.
     /// </summary>
-    public async Task EmbedRecordedAsync(CancellationToken ct)
+    public void Committed()
     {
-        if (recorded.Count == 0)
+        if (!recorded)
         {
             return;
         }
 
-        List<DecisionRow> rows = [.. recorded];
-        recorded.Clear();
-        await memory.EmbedAsync(rows, ct);
-        if (rows.Any(r => r.Embedding is not null))
+        recorded = false;
+        try
         {
-            await db.SaveChangesAsync(ct);
+            embedding.Notify();
+        }
+        catch (Exception ex)
+        {
+            LogPostCommitFailed(logger, ex);
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Post-commit work for recorded decisions failed; the embedding retries later")]
+    private static partial void LogPostCommitFailed(ILogger logger, Exception exception);
 }

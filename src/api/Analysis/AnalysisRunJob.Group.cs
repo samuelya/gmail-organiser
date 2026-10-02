@@ -17,6 +17,9 @@ internal sealed record GroupOutcome(
     int LlmCalls,
     bool Mixed);
 
+/// <summary>A group's looked-ahead memory: its short-circuit result, or the vectors of its representatives.</summary>
+internal sealed record PreparedGroup(ShortCircuitResult? Covered, MessageVectors? Vectors);
+
 public sealed partial class AnalysisRunJob
 {
     public const string RetryInstruction = "Return only the JSON array.";
@@ -24,13 +27,36 @@ public sealed partial class AnalysisRunJob
     /// <summary>Representative bodies fetched at once; the Gmail quota limiter still paces the calls.</summary>
     public const int MaxConcurrentBodyFetches = 4;
 
+    /// <summary>Groups looked ahead at once: one memory lookup and one embedding call for their representatives.</summary>
+    public const int MemoryLookaheadGroups = 32;
+
+    /// <summary>
+    /// Looks ahead over the next groups not yet prepared (at most <see cref="MemoryLookaheadGroups"/>): the memory
+    /// short-circuit for all of them in one lookup, then the vectors of the model-bound representatives in one call.
+    /// </summary>
+    private async Task PrepareAsync(
+        RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
+    {
+        var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
+        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree), ct);
+        var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
+        var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
+        for (var i = 0; i < batch.Count; i++)
+        {
+            prepared[batch[i]] = new PreparedGroup(covered[i], vectors);
+        }
+    }
+
+    private static IEnumerable<MessageRow> Representatives(MessageGroup group) =>
+        group.RepresentativeIds.Select(id => group.Members.First(m => m.Id == id));
+
     /// <summary>
     /// Short-circuit, else one model call about the representatives (plus one retry when some answers are invalid).
     /// Nothing is written here. Bodies live only in this call's locals.
     /// </summary>
-    private async Task<GroupOutcome> AnalyseGroupAsync(RunContext context, MessageGroup group, CancellationToken ct)
+    private async Task<GroupOutcome> AnalyseGroupAsync(RunContext context, MessageGroup group, PreparedGroup ready, CancellationToken ct)
     {
-        if (await shortCircuit.TryAsync(group, context.Settings, context.Allowlisted, ct) is { } covered)
+        if (ready.Covered is { } covered)
         {
             return FromMemory(context, group, covered);
         }
@@ -58,7 +84,8 @@ public sealed partial class AnalysisRunJob
 
         var (outputs, filter, calls) = emails.Count == 0
             ? ([], null, 0)
-            : await AskModelAsync(context, emails, await memory.FindSimilarAsync(representatives, DecisionMemory.DefaultSimilarCount, ct), ct);
+            : await AskModelAsync(
+                context, emails, await memory.FindSimilarAsync(representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, ct), ct);
         if (outputs.Count == 0)
         {
             // Nothing usable: the members stay not analysed rather than costing one call each against a failing model.

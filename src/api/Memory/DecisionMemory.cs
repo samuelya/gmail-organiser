@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Data;
@@ -19,12 +20,10 @@ public sealed partial class DecisionMemory(
 {
     public const int DefaultSimilarCount = 5;
     public const double MaxDistance = 0.35;
-    public const double MinAgreement = 0.8;
-
     /// <summary>Similarity of a fallback decision that shares only the mailing list, not the sender.</summary>
     public const double ListMatchSimilarity = 0.9;
 
-    /// <summary>A pattern looks at the latest approvals only, so an old habit fades out.</summary>
+    /// <summary>A pattern looks at the latest approvals of a scope only, so an old habit fades out.</summary>
     public const int MaxPatternApprovals = 100;
 
     /// <summary>The text a decision and a message are embedded from: sender, subject template and snippet.</summary>
@@ -57,27 +56,43 @@ public sealed partial class DecisionMemory(
         }
     }
 
-    public async Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(IReadOnlyList<MessageRow> messages, int k, CancellationToken ct)
+    public async Task<MessageVectors?> EmbedMessagesAsync(IReadOnlyList<MessageRow> messages, CancellationToken ct)
+    {
+        var distinct = messages.DistinctBy(m => m.Id, StringComparer.Ordinal).ToList();
+        if (distinct.Count == 0
+            || await EmbedTextsAsync([.. distinct.Select(m => EmbeddingText(m.FromAddress, SubjectNormaliser.Template(m.Subject), m.Snippet))], ct)
+                is not { } embedded)
+        {
+            return null;
+        }
+
+        return new MessageVectors(
+            embedded.Model, distinct.Select((m, i) => (m.Id, embedded.Vectors[i])).ToDictionary(x => x.Id, x => x.Item2, StringComparer.Ordinal));
+    }
+
+    public async Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
+        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, CancellationToken ct)
     {
         if (messages.Count == 0 || k <= 0)
         {
             return [];
         }
 
-        var embedded = await EmbedTextsAsync(
-            [.. messages.Select(m => EmbeddingText(m.FromAddress, SubjectNormaliser.Template(m.Subject), m.Snippet))], ct);
         var hits = new List<(DecisionRow Decision, double Similarity, bool Filled)>();
-        for (var i = 0; i < messages.Count; i++)
+        foreach (var m in messages)
         {
-            var found = embedded is null ? [] : await NearestAsync(embedded.Model, embedded.Vectors[i], k, ct);
-            hits.AddRange(found.Select(f => (f.Decision, f.Similarity, false)));
-            if (found.Count < k)
+            if (vectors is not null && vectors.ById.TryGetValue(m.Id, out var vector))
             {
-                var seen = found.Select(f => f.Decision.Id).ToHashSet();
-                hits.AddRange((await LatestForSenderAsync(messages[i], k, ct))
-                    .Where(f => !seen.Contains(f.Decision.Id))
-                    .Take(k - found.Count)
-                    .Select(f => (f.Decision, f.Similarity, true)));
+                hits.AddRange((await NearestAsync(vectors.Model, vector, k, ct)).Select(f => (f.Decision, f.Similarity, false)));
+            }
+        }
+
+        if (hits.DistinctBy(h => Outcome(h.Decision)).Count() < k)
+        {
+            // Once per distinct sender and list: a group's representatives usually share both.
+            foreach (var (sender, listId) in messages.Select(m => (m.FromAddress, GroupKey.NormaliseListId(m.ListId))).Distinct())
+            {
+                hits.AddRange((await LatestForSenderAsync(sender, listId, k, ct)).Select(f => (f.Decision, f.Similarity, true)));
             }
         }
 
@@ -86,7 +101,7 @@ public sealed partial class DecisionMemory(
             .OrderBy(h => h.Filled)
             .ThenByDescending(h => h.Similarity)
             .ThenByDescending(h => h.Decision.CreatedAt)
-            .DistinctBy(h => (h.Decision.TopicLabel, h.Decision.NeedsAction, h.Decision.ToBeDeleted, h.Decision.Outcome))
+            .DistinctBy(h => Outcome(h.Decision))
             .Take(k)
             .Select(h => new MemoryHint(
                 h.Decision.SenderAddress, h.Decision.SubjectTemplate, h.Decision.TopicLabel, h.Decision.NeedsAction,
@@ -94,42 +109,52 @@ public sealed partial class DecisionMemory(
             .ToList();
     }
 
-    public async Task<MemoryPattern?> FindSenderPatternAsync(string sender, string? listId, string? subjectTemplate, CancellationToken ct)
+    /// <summary>
+    /// Per scope: the latest <see cref="MaxPatternApprovals"/> approvals a person verified (of model or edited
+    /// suggestions, never derived or memory ones, so memory cannot reinforce itself), one per message; at least
+    /// <paramref name="minApprovals"/> of them, all with the same outcome, and no rejection in the scope since the latest.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
+        IReadOnlyCollection<string> scopeKeys, int minApprovals, CancellationToken ct)
     {
-        var settings = await settingsStore.GetAsync(ct);
-        // The list when there is one (the grouping key does the same), else the sender.
-        var scope = string.IsNullOrWhiteSpace(listId)
-            ? db.Decisions.AsNoTracking().Where(d => d.SenderAddress == sender)
-            : db.Decisions.AsNoTracking().Where(d => d.ListId == listId);
-        var approvals = await scope
-            .Where(d => d.Outcome == DecisionOutcome.Approved)
-            .OrderByDescending(d => d.CreatedAt)
-            .Take(MaxPatternApprovals)
-            .Select(d => new { d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.CreatedAt })
+        var keys = scopeKeys.Distinct(StringComparer.Ordinal).ToArray();
+        var patterns = new Dictionary<string, MemoryPattern>(StringComparer.Ordinal);
+        if (keys.Length == 0)
+        {
+            return patterns;
+        }
+
+        var rows = await db.Decisions.AsNoTracking()
+            .Where(d => d.ScopeKey != null && keys.Contains(d.ScopeKey))
+            .Where(d => d.Outcome == DecisionOutcome.Rejected || d.Source == SuggestionSource.Llm || d.Edited)
+            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.CreatedAt })
             .ToListAsync(ct);
-        if (approvals.Count == 0 || approvals.Count < settings.AnalysisMemoryMinApprovals)
+        foreach (var scope in rows.GroupBy(r => r.ScopeKey, StringComparer.Ordinal))
         {
-            return null;
+            var approvals = scope
+                .Where(r => r.Outcome == DecisionOutcome.Approved)
+                .OrderByDescending(r => r.CreatedAt)
+                .DistinctBy(r => r.MessageId ?? r.Id.ToString())
+                .Take(MaxPatternApprovals)
+                .ToList();
+            if (approvals.Count == 0 || approvals.Count < minApprovals)
+            {
+                continue;
+            }
+
+            var latest = approvals[0];
+            var consistent = approvals.All(a =>
+                a.TopicLabel == latest.TopicLabel && a.NeedsAction == latest.NeedsAction && a.ToBeDeleted == latest.ToBeDeleted);
+            if (consistent && !scope.Any(r => r.Outcome == DecisionOutcome.Rejected && r.CreatedAt > latest.CreatedAt))
+            {
+                patterns[scope.Key] = new MemoryPattern(latest.TopicLabel, latest.NeedsAction, latest.ToBeDeleted, approvals.Count, 1.0);
+            }
         }
 
-        var top = approvals
-            .GroupBy(a => (a.TopicLabel, a.NeedsAction, a.ToBeDeleted))
-            .OrderByDescending(g => g.Count())
-            .ThenByDescending(g => g.Max(a => a.CreatedAt))
-            .First();
-        var agreement = (double)top.Count() / approvals.Count;
-        if (agreement < MinAgreement)
-        {
-            return null;
-        }
-
-        var latestApproval = approvals[0].CreatedAt;
-        var rejectedSince = await scope.AnyAsync(
-            d => d.Outcome == DecisionOutcome.Rejected && d.SubjectTemplate == subjectTemplate && d.CreatedAt > latestApproval, ct);
-        return rejectedSince
-            ? null
-            : new MemoryPattern(top.Key.TopicLabel, top.Key.NeedsAction, top.Key.ToBeDeleted, top.Count(), agreement);
+        return patterns;
     }
+
+    private static (string, bool, bool, DecisionOutcome) Outcome(DecisionRow d) => (d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.Outcome);
 
     private sealed record Embedded(string Model, IReadOnlyList<Vector> Vectors);
 
@@ -185,11 +210,10 @@ public sealed partial class DecisionMemory(
         }
     }
 
-    /// <summary>The latest decisions for the message's sender (similarity 1) or, failing that, its mailing list.</summary>
-    private async Task<List<(DecisionRow Decision, double Similarity)>> LatestForSenderAsync(MessageRow message, int k, CancellationToken ct)
+    /// <summary>The latest decisions for the sender (similarity 1) or, failing that, its normalised mailing list.</summary>
+    private async Task<List<(DecisionRow Decision, double Similarity)>> LatestForSenderAsync(
+        string sender, string? listId, int k, CancellationToken ct)
     {
-        var sender = message.FromAddress;
-        var listId = string.IsNullOrWhiteSpace(message.ListId) ? null : message.ListId;
         var rows = await db.Decisions.AsNoTracking()
             .Where(d => d.SenderAddress == sender || (listId != null && d.ListId == listId))
             .OrderByDescending(d => d.SenderAddress == sender)

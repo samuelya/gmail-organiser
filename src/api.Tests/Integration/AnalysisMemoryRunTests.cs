@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
@@ -23,10 +24,13 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
         await h.InitializeAsync();
         await using var db = postgres.CreateDbContext();
         var at = new DateTimeOffset(2026, 2, 1, 0, 0, 0, TimeSpan.Zero);
+        var scope = GroupKey.For(await db.Messages.AsNoTracking().SingleAsync(m => m.Id == "a00", Ct));
         db.Decisions.AddRange(Enumerable.Range(0, 3).Select(i => new DecisionRow
         {
             Id = Guid.NewGuid(),
+            MessageId = $"seed-{i}",
             SenderAddress = AnalysisRunHarness.Shop,
+            ScopeKey = scope,
             SubjectTemplate = SubjectNormaliser.Template($"Weekly offer {i + 1}"),
             TopicLabel = "Deals",
             Outcome = DecisionOutcome.Approved,
@@ -57,9 +61,27 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
         var shop = await db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Shop).ToListAsync(Ct);
         var memory = shop.Where(s => s.Source == SuggestionSource.Memory).ToList();
         memory.Count.ShouldBe(9);
-        memory.ShouldAllBe(s => s.TopicLabel == "Deals" && s.Reason == "Matches 3 approved decisions for this sender"
+        memory.ShouldAllBe(s => s.TopicLabel == "Deals" && s.IsNewLabel && s.Reason == "Matches 3 approved decisions for this sender"
             && Math.Abs(s.Confidence - (1 - AppSettings.DefaultAnalysisDerivedConfidencePenalty)) < 1e-9);
         shop.Single(s => s.MessageId == StarredId).Source.ShouldBe(SuggestionSource.Llm);
+    }
+
+    [Fact]
+    public async Task Memory_suggestion_of_an_existing_Gmail_label_is_not_a_new_label()
+    {
+        var existing = FakeLabelStore.SeedUserLabelNames[^1];
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Decisions.ExecuteUpdateAsync(s => s.SetProperty(d => d.TopicLabel, existing.ToLowerInvariant()), Ct);
+        }
+
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+
+        (await h.GetRunAsync(run.Id)).MessagesFromMemory.ShouldBe(9);
+        await using var check = postgres.CreateDbContext();
+        (await check.Suggestions.AsNoTracking().Where(s => s.Source == SuggestionSource.Memory).Select(s => s.IsNewLabel).ToListAsync(Ct))
+            .ShouldAllBe(isNew => !isNew);
     }
 
     [Fact]

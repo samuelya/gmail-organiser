@@ -102,9 +102,16 @@ public sealed partial class AnalysisRunJob(
         var rest = new Queue<MessageGroup>(work.Groups);
         var individualIds = new HashSet<string>(cursor.IndividualIds ?? [], StringComparer.Ordinal);
         var failedIds = new List<string>(cursor.FailedIds ?? []);
+        var prepared = new Dictionary<MessageGroup, PreparedGroup>(ReferenceEqualityComparer.Instance);
         while (front.TryDequeue(out var group) || rest.TryDequeue(out group))
         {
-            var outcome = await AnalyseGroupAsync(context, group, ct);
+            if (!prepared.Remove(group, out var ready))
+            {
+                await PrepareAsync(context, [group, .. front.Take(MemoryLookaheadGroups), .. rest.Take(MemoryLookaheadGroups)], prepared, ct);
+                prepared.Remove(group, out ready);
+            }
+
+            var outcome = await AnalyseGroupAsync(context, group, ready!, ct);
             foreach (var single in outcome.Individual)
             {
                 front.Enqueue(single);

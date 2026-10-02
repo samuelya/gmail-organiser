@@ -1,10 +1,14 @@
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Fetch;
+using Pgvector;
 
 namespace GmailOrganiser.Memory;
 
-/// <summary>A consistent approved outcome for a sender (or mailing list); <see cref="Approvals"/> agree with it.</summary>
+/// <summary>A consistent approved outcome for a group scope; <see cref="Approvals"/> distinct messages agree with it.</summary>
 public sealed record MemoryPattern(string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Approvals, double Agreement);
+
+/// <summary>Message vectors of one embedding model, by message id.</summary>
+public sealed record MessageVectors(string Model, IReadOnlyDictionary<string, Vector> ById);
 
 /// <summary>
 /// Past decisions as LLM memory (DESIGN §6.2, §6.3): vectors when an embedding model is configured, exact sender or
@@ -18,12 +22,21 @@ public interface IDecisionMemory
     /// </summary>
     Task EmbedAsync(IReadOnlyList<DecisionRow> decisions, CancellationToken ct);
 
-    /// <summary>
-    /// Up to <paramref name="k"/> past decisions similar to <paramref name="messages"/> (one embedding call for all),
-    /// filled with the sender's or list's latest decisions; deduplicated by label, flags and outcome, best first.
-    /// </summary>
-    Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(IReadOnlyList<MessageRow> messages, int k, CancellationToken ct);
+    /// <summary>The messages' vectors in one model call; null without an embedding model or on failure.</summary>
+    Task<MessageVectors?> EmbedMessagesAsync(IReadOnlyList<MessageRow> messages, CancellationToken ct);
 
-    /// <summary>The sender's (or list's) consistent approved outcome, or null.</summary>
-    Task<MemoryPattern?> FindSenderPatternAsync(string sender, string? listId, string? subjectTemplate, CancellationToken ct);
+    /// <summary>
+    /// Up to <paramref name="k"/> past decisions similar to <paramref name="messages"/> (by their
+    /// <paramref name="vectors"/>), filled with the latest decisions of their senders or lists (one query per distinct
+    /// sender and list); deduplicated by label, flags and outcome, best first.
+    /// </summary>
+    Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
+        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, CancellationToken ct);
+
+    /// <summary>
+    /// The consistent approved outcome per scope key (<see cref="DecisionRow.ScopeKey"/>) in one query; keys without
+    /// one are absent.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
+        IReadOnlyCollection<string> scopeKeys, int minApprovals, CancellationToken ct);
 }
