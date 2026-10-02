@@ -172,7 +172,8 @@ public sealed class GoogleGmailClient(
 
     /// <summary>
     /// The first <c>text/plain</c> and first <c>text/html</c> part, depth-first through <c>payload.parts</c>. Parts with
-    /// a filename are attachments and skipped; bodies Gmail moved to an attachment id are not fetched.
+    /// a filename are attachments and skipped with their children, as are attached messages (<c>message/rfc822</c>);
+    /// bodies Gmail moved to an attachment id are not fetched. A part that doesn't decode counts as absent.
     /// </summary>
     public static GmailMessageBody ReadBody(Message message)
     {
@@ -188,6 +189,11 @@ public sealed class GoogleGmailClient(
         while (stack.Count > 0 && (text is null || html is null))
         {
             var part = stack.Pop();
+            if (!string.IsNullOrEmpty(part.Filename) || IsMimeType(part, "message/rfc822"))
+            {
+                continue;
+            }
+
             if (part.Parts is { Count: > 0 } children)
             {
                 for (var i = children.Count - 1; i >= 0; i--)
@@ -198,18 +204,18 @@ public sealed class GoogleGmailClient(
                 continue;
             }
 
-            if (!string.IsNullOrEmpty(part.Filename) || part.Body?.Data is not { } data)
+            if (part.Body?.Data is not { } data)
             {
                 continue;
             }
 
             if (text is null && IsMimeType(part, "text/plain"))
             {
-                text = Decode(part, data);
+                text = TryDecode(part, data);
             }
             else if (html is null && IsMimeType(part, "text/html"))
             {
-                html = Decode(part, data);
+                html = TryDecode(part, data);
             }
         }
 
@@ -219,7 +225,17 @@ public sealed class GoogleGmailClient(
     private static bool IsMimeType(MessagePart part, string mimeType) =>
         string.Equals(part.MimeType, mimeType, StringComparison.OrdinalIgnoreCase);
 
-    private static string Decode(MessagePart part, string data) => CharsetOf(part).GetString(Base64Url.DecodeFromChars(data));
+    private static string? TryDecode(MessagePart part, string data)
+    {
+        try
+        {
+            return CharsetOf(part).GetString(Base64Url.DecodeFromChars(data));
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>The part's <c>Content-Type</c> charset when .NET knows it, UTF-8 otherwise.</summary>
     private static Encoding CharsetOf(MessagePart part)
@@ -270,18 +286,10 @@ public sealed class GoogleGmailClient(
             {
                 // The name exists (created earlier, or by a parallel run): return that label.
                 var labels = await ListLabelsAsync(service, ct);
-                return FindByName(labels, name)
+                return GmailLabel.FindByName(labels, name)
                     ?? throw new InvalidOperationException("Gmail reported the label as existing but did not list it.", ex);
             }
         }, ct);
-    }
-
-    /// <summary>Gmail compares label names case-insensitively; an exact match wins.</summary>
-    public static GmailLabel? FindByName(IEnumerable<GmailLabel> labels, string name)
-    {
-        var list = labels as IReadOnlyList<GmailLabel> ?? [.. labels];
-        return list.FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.Ordinal))
-            ?? list.FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
     private static GmailLabel ToLabel(Label label) =>

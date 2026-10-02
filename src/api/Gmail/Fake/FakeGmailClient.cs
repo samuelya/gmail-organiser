@@ -190,26 +190,18 @@ public sealed class FakeGmailClient : IGmailClient
         var offset = DecodePageToken(query.PageToken);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
-        return await retry.ExecuteAsync(async _ =>
+        return await RetryAsync(() =>
         {
-            if (TakeFailure() is { } failure)
-            {
-                await ThrowFailureAsync(failure).ConfigureAwait(false);
-            }
-
-            lock (gate)
-            {
-                var hits = messages
-                    .Where(m => includeSpamTrash || !m.LabelIds.Any(IsSpamOrTrash))
-                    .Where(m => query.LabelIds is null || query.LabelIds.All(l => m.LabelIds.Contains(l, StringComparer.OrdinalIgnoreCase)))
-                    .Where(matches)
-                    .OrderByDescending(m => m.Date)
-                    .ThenBy(m => m.Id, StringComparer.Ordinal)
-                    .ToList();
-                var page = hits.Skip(offset).Take(query.MaxResults).Select(m => new MessageRef(m.Id, m.ThreadId)).ToList();
-                var next = offset + page.Count < hits.Count ? EncodePageToken(offset + page.Count) : null;
-                return new MessageIdPage(page, next, hits.Count);
-            }
+            var hits = messages
+                .Where(m => includeSpamTrash || !m.LabelIds.Any(IsSpamOrTrash))
+                .Where(m => query.LabelIds is null || query.LabelIds.All(l => m.LabelIds.Contains(l, StringComparer.OrdinalIgnoreCase)))
+                .Where(matches)
+                .OrderByDescending(m => m.Date)
+                .ThenBy(m => m.Id, StringComparer.Ordinal)
+                .ToList();
+            var page = hits.Skip(offset).Take(query.MaxResults).Select(m => new MessageRef(m.Id, m.ThreadId)).ToList();
+            var next = offset + page.Count < hits.Count ? EncodePageToken(offset + page.Count) : null;
+            return new MessageIdPage(page, next, hits.Count);
         }, ct).ConfigureAwait(false);
     }
 
@@ -258,18 +250,10 @@ public sealed class FakeGmailClient : IGmailClient
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
         var pageSize = HistoryPageSize;
 
-        return await retry.ExecuteAsync(async _ =>
+        return await RetryAsync(() =>
         {
-            if (TakeFailure() is { } failure)
-            {
-                await ThrowFailureAsync(failure).ConfigureAwait(false);
-            }
-
-            lock (gate)
-            {
-                var (records, next) = history.Page(startHistoryId, pageToken, pageSize);
-                return new HistoryPage(records, next, historyId.ToString(CultureInfo.InvariantCulture));
-            }
+            var (records, next) = history.Page(startHistoryId, pageToken, pageSize);
+            return new HistoryPage(records, next, historyId.ToString(CultureInfo.InvariantCulture));
         }, ct).ConfigureAwait(false);
     }
 
@@ -309,6 +293,11 @@ public sealed class FakeGmailClient : IGmailClient
         IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct)
     {
         GmailLimits.EnsureValidBatchModify(ids, addLabelIds, removeLabelIds);
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
         await RetryAsync(() =>
         {

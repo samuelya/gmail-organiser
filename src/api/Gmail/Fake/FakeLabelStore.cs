@@ -7,7 +7,7 @@ namespace GmailOrganiser.Gmail.Fake;
 /// labels get <c>Label_&lt;n&gt;</c> ids as Gmail assigns them. Not thread-safe; <see cref="FakeGmailClient"/> calls it
 /// under its lock.
 /// </summary>
-internal sealed class FakeLabelStore
+public sealed class FakeLabelStore
 {
     public static readonly IReadOnlyList<string> SystemLabelIds =
     [
@@ -33,10 +33,14 @@ internal sealed class FakeLabelStore
 
     public bool Exists(string id) => labels.Exists(l => string.Equals(l.Id, id, StringComparison.Ordinal));
 
-    /// <summary>Creates a user label, or returns the label that already has <paramref name="name"/> (Gmail's 409).</summary>
+    /// <summary>
+    /// Creates a user label, or returns the user label that already has <paramref name="name"/> (Gmail's 409). Reserved
+    /// names are refused as Gmail refuses them.
+    /// </summary>
     public GmailLabel Create(string name)
     {
-        if (GoogleGmailClient.FindByName(labels, name) is { } existing)
+        GmailLimits.EnsureValidLabelName(name);
+        if (GmailLabel.FindByName(labels.Where(l => l.Type == GmailLabelType.User), name) is { } existing)
         {
             return existing;
         }

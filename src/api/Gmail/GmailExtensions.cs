@@ -33,8 +33,8 @@ public static class GmailExtensions
                 o => o.BatchSize is >= 1 and <= GmailOptions.MaxBatchSize,
                 $"{GmailOptions.SectionName}:BatchSize must be between 1 and {GmailOptions.MaxBatchSize}.")
             .Validate(
-                o => o.QuotaUnitsPerSecond is >= GmailQuotaLimiter.BatchModifyUnits and <= GmailOptions.GmailUnitsPerSecondLimit,
-                $"{GmailOptions.SectionName}:QuotaUnitsPerSecond must be between {GmailQuotaLimiter.BatchModifyUnits} and {GmailOptions.GmailUnitsPerSecondLimit}.")
+                o => o.QuotaUnitsPerSecond is >= GmailQuotaLimiter.MessageCallUnits and <= GmailOptions.GmailUnitsPerSecondLimit,
+                $"{GmailOptions.SectionName}:QuotaUnitsPerSecond must be between {GmailQuotaLimiter.MessageCallUnits} and {GmailOptions.GmailUnitsPerSecondLimit}.")
             .Validate(
                 o => o.MaxRetryAttempts is >= 1 and <= GmailOptions.MaxRetryAttemptsLimit,
                 $"{GmailOptions.SectionName}:MaxRetryAttempts must be between 1 and {GmailOptions.MaxRetryAttemptsLimit}.")

@@ -199,8 +199,17 @@ public sealed class GmailThrottlingTests
     }
 
     [Fact]
-    public void QuotaLimiter_rejects_requests_larger_than_the_budget() =>
-        Should.Throw<ArgumentOutOfRangeException>(() => Limiter(budget: 10).TryAcquire(11, out _));
+    public void QuotaLimiter_clamps_a_request_larger_than_the_budget_to_an_empty_window()
+    {
+        var limiter = Limiter(budget: 10);
+        limiter.TryAcquire(1, out _).ShouldBeTrue();
+        limiter.TryAcquire(GmailQuotaLimiter.BatchModifyUnits, out var wait).ShouldBeFalse();
+        wait.ShouldBe(TimeSpan.FromSeconds(1));
+
+        time.Advance(wait);
+        limiter.TryAcquire(GmailQuotaLimiter.BatchModifyUnits, out _).ShouldBeTrue();
+        limiter.TryAcquire(1, out _).ShouldBeFalse();
+    }
 
     private DateTimeOffset Start { get; } = DateTimeOffset.Parse("2026-01-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
 

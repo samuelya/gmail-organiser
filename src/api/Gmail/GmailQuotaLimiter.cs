@@ -52,13 +52,13 @@ public sealed class GmailQuotaLimiter(IOptions<GmailOptions> options, TimeProvid
 
     /// <summary>
     /// Spends <paramref name="units"/> if they fit now; otherwise says how long until they might. A batch spends its
-    /// whole cost in one call, right before it is sent; options validation keeps a full batch within the budget, so
-    /// a larger request is a bug and throws rather than waiting forever.
+    /// whole cost in one call, right before it is sent. A call costing more than the budget (a <c>batchModify</c> under
+    /// a low budget) is clamped to the budget, so it waits for an empty window and then takes the whole second.
     /// </summary>
     public bool TryAcquire(int units, out TimeSpan retryAfter)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(units, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(units, Budget);
+        units = Math.Min(units, Budget);
         lock (sync)
         {
             var now = time.GetUtcNow();

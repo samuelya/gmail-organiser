@@ -57,17 +57,19 @@ public interface IGmailClient
     /// Creates the user label <paramref name="name"/> (<c>/</c> nests; parents are not created), or returns the existing
     /// label of that name.
     /// </summary>
-    /// <exception cref="ArgumentException"><paramref name="name"/> is blank or longer than <see cref="GmailLimits.LabelNameMaxLength"/>.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="name"/> is blank, longer than <see cref="GmailLimits.LabelNameMaxLength"/> or reserved by Gmail.
+    /// </exception>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct);
 
     /// <summary>
     /// Adds and removes labels on up to <see cref="GmailLimits.BatchModifyMaxIds"/> messages in one call; callers chunk.
-    /// Idempotent, so a chunk can be re-sent after a lost response.
+    /// Idempotent, so a chunk can be re-sent after a lost response. A thin I/O seam: callers write the action (undo) log.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">More than <see cref="GmailLimits.BatchModifyMaxIds"/> ids.</exception>
-    /// <exception cref="ArgumentException">Both label lists are empty.</exception>
+    /// <exception cref="ArgumentException">Both label lists are empty, or a label is both added and removed.</exception>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task BatchModifyAsync(
@@ -82,6 +84,15 @@ public static class GmailLimits
 
     public const int LabelNameMaxLength = 225;
 
+    /// <summary>Names Gmail refuses for a user label (system label ids and display names), compared case-insensitively.</summary>
+    public static readonly IReadOnlySet<string> ReservedLabelNames = new HashSet<string>(
+        [
+            "INBOX", "UNREAD", "STARRED", "IMPORTANT", "SENT", "DRAFT", "SPAM", "TRASH", "CHAT",
+            "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS",
+            "Drafts", "Sent Mail", "All Mail", "Chats", "Scheduled", "Snoozed",
+        ],
+        StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Validates a <see cref="IGmailClient.BatchModifyAsync"/> request.</summary>
     public static void EnsureValidBatchModify(
         IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds)
@@ -94,6 +105,11 @@ public static class GmailLimits
         {
             throw new ArgumentException("At least one label must be added or removed.", nameof(addLabelIds));
         }
+
+        if (addLabelIds.Intersect(removeLabelIds, StringComparer.Ordinal).Any())
+        {
+            throw new ArgumentException("A label cannot be both added and removed.", nameof(removeLabelIds));
+        }
     }
 
     /// <summary>Validates a label name for <see cref="IGmailClient.CreateLabelAsync"/>.</summary>
@@ -103,6 +119,11 @@ public static class GmailLimits
         if (name.Length > LabelNameMaxLength)
         {
             throw new ArgumentException($"A label name is at most {LabelNameMaxLength} characters.", nameof(name));
+        }
+
+        if (ReservedLabelNames.Contains(name.Trim()))
+        {
+            throw new ArgumentException("Gmail reserves this label name.", nameof(name));
         }
     }
 }
@@ -116,7 +137,16 @@ public enum GmailLabelType
     User,
 }
 
-public sealed record GmailLabel(string Id, string Name, GmailLabelType Type);
+public sealed record GmailLabel(string Id, string Name, GmailLabelType Type)
+{
+    /// <summary>Gmail compares label names case-insensitively; an exact match wins.</summary>
+    public static GmailLabel? FindByName(IEnumerable<GmailLabel> labels, string name)
+    {
+        var list = labels as IReadOnlyList<GmailLabel> ?? [.. labels];
+        return list.FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.Ordinal))
+            ?? list.FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
+    }
+}
 
 /// <param name="HistoryId">Gmail's history ID as a decimal string (it is an unsigned 64-bit number).</param>
 public sealed record GmailProfile(string EmailAddress, long MessagesTotal, string HistoryId);

@@ -8,8 +8,6 @@ using Google.Apis.Gmail.v1;
 using Google.Apis.Gmail.v1.Data;
 using Google.Apis.Http;
 using Google.Apis.Services;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -64,6 +62,31 @@ public sealed class GmailBodyAndLabelsTests : IDisposable
         };
 
         GoogleGmailClient.ReadBody(message).Text.ShouldBe("Real");
+    }
+
+    [Fact]
+    public void ReadBody_does_not_descend_into_an_attached_message_or_a_named_multipart()
+    {
+        var message = new Message
+        {
+            Payload = Multipart(
+                "multipart/mixed",
+                Multipart("message/rfc822", Part("text/plain", "Forwarded text"), Part("text/html", "<p>Forwarded</p>")),
+                new MessagePart { MimeType = "multipart/alternative", Filename = "fwd.eml", Parts = [Part("text/html", "<p>Named</p>")] },
+                Part("text/plain", "Real")),
+        };
+
+        GoogleGmailClient.ReadBody(message).ShouldBe(new GmailMessageBody("Real", null));
+    }
+
+    [Fact]
+    public void ReadBody_treats_an_undecodable_part_as_absent()
+    {
+        var broken = Part("text/plain", "");
+        broken.Body.Data = "not*base64url!";
+        var message = new Message { Payload = Multipart("multipart/alternative", broken, Part("text/html", "<p>Html</p>")) };
+
+        GoogleGmailClient.ReadBody(message).ShouldBe(new GmailMessageBody(null, "<p>Html</p>"));
     }
 
     [Fact]
@@ -138,20 +161,29 @@ public sealed class GmailBodyAndLabelsTests : IDisposable
         await Should.ThrowAsync<ArgumentException>(() => client.BatchModifyAsync(["fake-msg-0001"], [], [], Ct));
         await Should.ThrowAsync<ArgumentException>(() => client.CreateLabelAsync(new string('a', GmailLimits.LabelNameMaxLength + 1), Ct));
         await Should.ThrowAsync<ArgumentException>(() => client.CreateLabelAsync(" ", Ct));
+        await Should.ThrowAsync<ArgumentException>(() => client.BatchModifyAsync(["fake-msg-0001"], ["STARRED"], ["STARRED"], Ct));
+    }
+
+    [Theory]
+    [InlineData("inbox")]
+    [InlineData("TRASH")]
+    [InlineData("Category_Promotions")]
+    [InlineData(" Sent Mail ")]
+    public async Task CreateLabel_refuses_names_gmail_reserves(string name)
+    {
+        await Should.ThrowAsync<ArgumentException>(() => NewFake().CreateLabelAsync(name, Ct));
+        Should.Throw<ArgumentException>(() => new FakeLabelStore().Create(name));
     }
 
     [Fact]
-    public void Options_require_the_budget_to_fit_one_batchModify()
+    public async Task Fake_batchModify_with_no_ids_does_nothing_and_keeps_injected_failures()
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Gmail:BatchSize"] = "5",
-            ["Gmail:QuotaUnitsPerSecond"] = (GmailQuotaLimiter.BatchModifyUnits - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
-        }).Build();
-        using var provider = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddGmail().BuildServiceProvider();
+        var client = NewFake();
+        client.FailNext(HttpStatusCode.TooManyRequests, new GmailOptions().MaxRetryAttempts);
 
-        Should.Throw<OptionsValidationException>(() => provider.GetRequiredService<IOptions<GmailOptions>>().Value)
-            .Message.ShouldContain("QuotaUnitsPerSecond");
+        await client.BatchModifyAsync([], ["STARRED"], [], Ct);
+
+        await Should.ThrowAsync<GmailRateLimitedException>(() => client.ListLabelsAsync(Ct));
     }
 
     [Fact]
@@ -165,7 +197,7 @@ public sealed class GmailBodyAndLabelsTests : IDisposable
         labels.Where(l => l.Name.StartsWith("CATEGORY_")).ShouldAllBe(l => l.Type == GmailLabelType.System);
 
         var created = await client.CreateLabelAsync("Synthetic/New", Ct);
-        created.ShouldBe(new GmailLabel($"Label_{FakeLabelStoreUserCount + 1}", "Synthetic/New", GmailLabelType.User));
+        created.ShouldBe(new GmailLabel($"Label_{FakeLabelStore.SeedUserLabelNames.Count + 1}", "Synthetic/New", GmailLabelType.User));
         (await client.CreateLabelAsync("synthetic/new", Ct)).ShouldBe(created);
         (await client.ListLabelsAsync(Ct)).Count.ShouldBe(labels.Count + 1);
     }
@@ -220,8 +252,6 @@ public sealed class GmailBodyAndLabelsTests : IDisposable
         bodies.ShouldContain(b => b.Text != null && b.Html != null);
         (await client.GetMessageBodyAsync("unknown-id", Ct)).ShouldBeNull();
     }
-
-    private const int FakeLabelStoreUserCount = 3;
 
     private static FakeGmailClient NewFake() =>
         new(new FakeTokenStore(TimeProvider.System), FakeMailboxSeed.Create(DateTimeOffset.UnixEpoch.AddYears(56)),
