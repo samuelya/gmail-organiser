@@ -63,7 +63,7 @@ npm run e2e                       # headless, Chromium
 npm run e2e:ui                    # Playwright UI mode
 ```
 
-Other ports: `E2E_BASE_URL=http://localhost:<web>` and `E2E_API_URL=http://localhost:<api>` (the dev server then proxies to that API, which must list the web origin in `Security__AllowedOrigins__0`).
+Other ports: `E2E_BASE_URL=http://localhost:<web>` and `E2E_API_URL=http://localhost:<api>` (the dev server then proxies to that API, which must list the web origin in `Security__AllowedOrigins__0`). With `E2E_API_URL` set, the spec always starts its own dev server and fails if the web port is already in use, because a running `npm start` would proxy to 5181 instead.
 
 ## What CI does not have
 

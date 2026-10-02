@@ -19,7 +19,8 @@ export default defineConfig({
   webServer: {
     command: `npx ng serve --port ${port} --proxy-config e2e/proxy.conf.mjs`,
     url: baseURL,
-    reuseExistingServer: true,
+    // With E2E_API_URL set, a running dev server would proxy to the default API instead.
+    reuseExistingServer: !process.env['E2E_API_URL'],
     timeout: 120_000,
   },
 });
