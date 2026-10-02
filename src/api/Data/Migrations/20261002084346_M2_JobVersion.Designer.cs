@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261002083221_M2_JobVersion")]
+    [Migration("20261002084346_M2_JobVersion")]
     partial class M2_JobVersion
     {
         /// <inheritdoc />
@@ -25,6 +25,18 @@ namespace GmailOrganiser.Data.Migrations
 
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "vector");
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("GmailOrganiser.Fetch.FetchRunMessageRow", b =>
+                {
+                    b.Property<string>("MessageId")
+                        .HasColumnType("text")
+                        .HasColumnName("message_id");
+
+                    b.HasKey("MessageId")
+                        .HasName("pk_fetch_run_messages");
+
+                    b.ToTable("fetch_run_messages", (string)null);
+                });
 
             modelBuilder.Entity("GmailOrganiser.Fetch.FetchStateRow", b =>
                 {
@@ -184,9 +196,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.HasIndex("AnalysisStatus")
                         .HasDatabaseName("ix_messages_analysis_status");
 
-                    b.HasIndex("FromAddress")
-                        .HasDatabaseName("ix_messages_from_address");
-
                     b.HasIndex("InternalDate")
                         .HasDatabaseName("ix_messages_internal_date");
 
@@ -194,6 +203,9 @@ namespace GmailOrganiser.Data.Migrations
                         .HasDatabaseName("ix_messages_label_ids");
 
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("LabelIds"), "gin");
+
+                    b.HasIndex("FromAddress", "InternalDate")
+                        .HasDatabaseName("ix_messages_from_address_internal_date");
 
                     b.ToTable("messages", (string)null);
                 });

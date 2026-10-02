@@ -75,7 +75,8 @@ public sealed class JobContext
         {
             await finalWrites(ct);
             await db.Database.ExecuteSqlAsync($"""
-                UPDATE jobs SET cursor = {cursorJson}::jsonb, progress = {progressJson}::jsonb, updated_at = {now}
+                UPDATE jobs SET cursor = {cursorJson}::jsonb, progress = {progressJson}::jsonb, updated_at = {now},
+                    version = version + 1
                 WHERE id = {JobId}
                 """, ct);
             await tx.CommitAsync(ct);
