@@ -91,11 +91,30 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return labels;
     }
 
-    public Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct) => inner.CreateLabelAsync(name, ct);
+    public ConcurrentQueue<string> CreateLabelCalls { get; } = new();
 
-    public Task BatchModifyAsync(
-        IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct) =>
-        inner.BatchModifyAsync(ids, addLabelIds, removeLabelIds, ct);
+    public Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct)
+    {
+        CreateLabelCalls.Enqueue(name);
+        return inner.CreateLabelAsync(name, ct);
+    }
+
+    public ConcurrentQueue<IReadOnlyList<string>> BatchModifyCalls { get; } = new();
+
+    /// <summary>Runs before the n-th (1-based) batch modify reaches the fake, for example to throw a rate limit.</summary>
+    public Func<int, Task>? BeforeBatchModify { get; set; }
+
+    public async Task BatchModifyAsync(
+        IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct)
+    {
+        BatchModifyCalls.Enqueue([.. ids]);
+        if (BeforeBatchModify is { } before)
+        {
+            await before(BatchModifyCalls.Count);
+        }
+
+        await inner.BatchModifyAsync(ids, addLabelIds, removeLabelIds, ct);
+    }
 
     public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {
