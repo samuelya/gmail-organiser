@@ -1,0 +1,385 @@
+import { computed, signal } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { MATERIAL_ANIMATIONS } from '@angular/material/core';
+import { provideRouter } from '@angular/router';
+import { of } from 'rxjs';
+import { isActiveJob, JobDto, JobStatus } from '../core/jobs.models';
+import { JobsService } from '../core/jobs.service';
+import { SettingsService } from '../settings/settings.service';
+import { ReviewPage } from './review-page.component';
+import {
+  REVIEW_EDIT_DIALOG,
+  ReviewGroupDto,
+  ReviewSenderDetailDto,
+  ReviewSenderDto,
+  SenderPatternDto,
+  SuggestionDto,
+} from './review.models';
+import { ReviewService } from './review.service';
+
+const sender = (over: Partial<ReviewSenderDto> = {}): ReviewSenderDto => ({
+  address: 'news@example.com',
+  displayName: 'Example News',
+  pending: 3,
+  approved: 2,
+  rejected: 0,
+  applied: 0,
+  totalMessages: 10,
+  ...over,
+});
+
+const member = (id: string, over: Partial<SuggestionDto> = {}): SuggestionDto => ({
+  id,
+  messageId: `m-${id}`,
+  subject: `Subject ${id}`,
+  date: '2026-01-01T00:00:00Z',
+  snippet: 'A synthetic preview',
+  source: 'llm',
+  topicLabel: 'Topic/Alpha',
+  isNewLabel: true,
+  needsAction: false,
+  toBeDeleted: true,
+  unsubscribeSuggested: false,
+  confidence: 0.9,
+  reason: 'Synthetic reason',
+  status: 'pending',
+  edited: false,
+  protected: false,
+  ...over,
+});
+
+const group = (over: Partial<ReviewGroupDto> = {}): ReviewGroupDto => ({
+  groupKey: 'key-1',
+  display: 'Weekly digest',
+  size: 3,
+  llmCount: 1,
+  derivedCount: 2,
+  memoryCount: 0,
+  topicLabel: 'Topic/Alpha',
+  needsAction: false,
+  toBeDeleted: true,
+  mixed: true,
+  confidenceMin: 0.7,
+  confidenceMax: 0.9,
+  reason: 'Synthetic reason',
+  members: [member('a'), member('b', { source: 'derived', protected: true })],
+  truncated: false,
+  ...over,
+});
+
+const detail = (groups = [group()]): ReviewSenderDetailDto => ({
+  sender: sender(),
+  groups,
+  page: 1,
+  pageSize: 20,
+  totalGroups: groups.length,
+});
+
+const noPattern: SenderPatternDto = {
+  topicLabel: null,
+  needsAction: null,
+  toBeDeleted: null,
+  approvals: 0,
+  agreement: 0,
+  remaining: 4,
+};
+
+const job = (status: JobStatus, over: Partial<JobDto> = {}): JobDto => ({
+  id: 'job-1',
+  type: 'apply_actions',
+  queue: 'gmail',
+  status,
+  progress: { done: 2, total: 4, message: 'Applied 2 of 4 messages' },
+  error: null,
+  createdAt: '2026-01-01T00:00:00Z',
+  startedAt: null,
+  updatedAt: '2026-01-01T00:00:00Z',
+  finishedAt: null,
+  version: 1,
+  ...over,
+});
+
+class FakeJobs {
+  readonly held = signal<JobDto[]>([]);
+  readonly jobs = this.held.asReadonly();
+  readonly activeJobs = computed(() => this.held().filter(isActiveJob));
+  readonly reconnects = signal(0);
+  cancel = vi.fn(() => of(undefined));
+  job(id: string) {
+    return this.held().find((j) => j.id === id);
+  }
+}
+
+describe('ReviewPage', () => {
+  afterEach(() => document.querySelector('.cdk-overlay-container')?.replaceChildren());
+
+  async function render(pattern: SenderPatternDto = noPattern) {
+    const jobs = new FakeJobs();
+    const api = {
+      listSenders: vi.fn(() =>
+        of({
+          items: [sender(), sender({ address: 'shop@example.com', displayName: null })],
+          page: 1,
+          pageSize: 25,
+          total: 2,
+        }),
+      ),
+      sender: vi.fn(() => of(detail())),
+      pattern: vi.fn(() => of(pattern)),
+      approve: vi.fn(() => of(member('a'))),
+      reject: vi.fn(() => of(member('a'))),
+      approveGroup: vi.fn(() => of({ changed: 1, skipped: ['b'] })),
+      rejectGroup: vi.fn(() => of({ changed: 2, skipped: [] })),
+      analyseIndividually: vi.fn(() => of({ id: 'run-1' })),
+      apply: vi.fn(() => of({ id: 'batch-1', jobId: 'job-1' })),
+      applyRest: vi.fn(() =>
+        of({
+          created: 4,
+          protectedAdjusted: 1,
+          batch: { id: 'batch-2', jobId: 'job-2' },
+          filterCandidate: { from: 'news@example.com', listId: null },
+        }),
+      ),
+      job: vi.fn(() => of(job('completed', { version: 5 }))),
+    };
+    const edit = { editGroup: vi.fn(() => of(true)), editMember: vi.fn(() => of(false)) };
+    TestBed.configureTestingModule({
+      providers: [
+        provideRouter([]),
+        { provide: JobsService, useValue: jobs },
+        { provide: ReviewService, useValue: api },
+        { provide: REVIEW_EDIT_DIALOG, useValue: edit },
+        {
+          provide: SettingsService,
+          useValue: {
+            getSettings: () =>
+              of({ bulkApproveThreshold: 0.85, actionLabelName: 'Act', deleteLabelName: 'Bin' }),
+          },
+        },
+        { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
+      ],
+    });
+    const fixture = TestBed.createComponent(ReviewPage);
+    await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
+    const q = (id: string) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    const all = (id: string) => [...el.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
+    const settle = async () => {
+      fixture.detectChanges();
+      await fixture.whenStable();
+    };
+    const expand = async () => {
+      q('group-expand')!.click();
+      await settle();
+    };
+    return { fixture, jobs, api, edit, el, q, all, settle, expand };
+  }
+
+  const dialogButton = (testId: string) =>
+    document.querySelector<HTMLButtonElement>(`mat-dialog-container [data-testid="${testId}"]`)!;
+  const snackText = () => document.querySelector('mat-snack-bar-container')?.textContent ?? '';
+
+  it('lists senders, selects the first and renders its groups', async () => {
+    const { api, q, all } = await render();
+    expect(api.listSenders).toHaveBeenCalledWith('pending', '', 1, 25);
+    expect(all('sender-item')).toHaveLength(2);
+    expect(all('sender-count')[0].textContent).toContain('3');
+    expect(api.sender).toHaveBeenCalledWith('news@example.com', 'pending', 1, 20);
+    expect(q('detail-title')!.textContent).toContain('Example News');
+    expect(q('group-title')!.textContent).toContain('Weekly digest');
+    expect(q('group-origin')!.textContent).toContain('1 analysed by the model · 2 derived');
+    expect(q('group-new-label')).not.toBeNull();
+    expect(q('group-delete')!.textContent).toContain('Bin');
+    expect(q('group-confidence')!.textContent).toContain('70%–90%');
+    expect(q('group-mixed')).not.toBeNull();
+    expect(q('apply-approved')!.textContent).toContain('Apply approved (2)');
+    expect(q('apply-rest')).toBeNull();
+  });
+
+  it('re-fetches the detail for another sender and status', async () => {
+    const { api, all, el, settle } = await render();
+    all('sender-item')[1].click();
+    await settle();
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20);
+    el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')[1].click();
+    await settle();
+    expect(api.listSenders).toHaveBeenLastCalledWith('approved', '', 1, 25);
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'approved', 1, 20);
+  });
+
+  it('approves and rejects a member, then re-fetches', async () => {
+    const { api, all, expand, settle } = await render();
+    await expand();
+    expect(all('member-row')).toHaveLength(2);
+    expect(all('member-source')[1].textContent).toContain('derived');
+    expect(all('member-protected')).toHaveLength(1);
+    const calls = api.sender.mock.calls.length;
+    all('member-approve')[0].click();
+    await settle();
+    expect(api.approve).toHaveBeenCalledWith('a');
+    all('member-reject')[1].click();
+    await settle();
+    expect(api.reject).toHaveBeenCalledWith('b');
+    expect(api.sender.mock.calls.length).toBe(calls + 2);
+  });
+
+  it("approves a group with the card's outcome and shows the skipped members", async () => {
+    const { api, q, all, expand, settle } = await render();
+    q('group-approve')!.click();
+    await settle();
+    expect(api.approveGroup).toHaveBeenCalledWith('news@example.com', 'key-1', {
+      topicLabel: 'Topic/Alpha',
+      needsAction: false,
+      toBeDeleted: true,
+    });
+    expect(snackText()).toContain('1 member was skipped');
+    await expand();
+    expect(all('member-skipped')).toHaveLength(1);
+    q('group-reject')!.click();
+    await settle();
+    expect(api.rejectGroup).toHaveBeenCalledWith('news@example.com', 'key-1');
+  });
+
+  it('decides a message analysed on its own by its suggestion', async () => {
+    const { api, q, settle } = await render();
+    api.sender.mockReturnValue(
+      of(detail([group({ groupKey: null, size: 1, members: [member('solo')] })])),
+    );
+    q('group-reject')!.click();
+    await settle();
+    q('group-approve')!.click();
+    await settle();
+    expect(api.approve).toHaveBeenCalledWith('solo');
+    expect(api.approveGroup).not.toHaveBeenCalled();
+  });
+
+  it('opens the edit hook for a group and re-fetches when saved', async () => {
+    const { api, edit, q, settle } = await render();
+    const calls = api.sender.mock.calls.length;
+    q('group-edit')!.click();
+    await settle();
+    expect(edit.editGroup).toHaveBeenCalledWith(
+      'news@example.com',
+      expect.objectContaining({ groupKey: 'key-1' }),
+    );
+    expect(api.sender.mock.calls.length).toBe(calls + 1);
+  });
+
+  it('analyses the selected members individually', async () => {
+    const { api, q, el, expand, settle } = await render();
+    await expand();
+    el.querySelectorAll<HTMLInputElement>('[data-testid="member-select"] input').forEach((i) =>
+      i.click(),
+    );
+    await settle();
+    expect(q('analyse-individually')!.textContent).toContain('(2)');
+    q('analyse-individually')!.click();
+    await settle();
+    expect(api.analyseIndividually).toHaveBeenCalledWith(['a', 'b']);
+    expect(snackText()).toContain('Analysing 2 messages individually');
+    expect(q('analyse-individually')!.textContent).toContain('(0)');
+  });
+
+  it('applies approved and follows the job from the hub until it completes', async () => {
+    const { api, jobs, q, settle } = await render();
+    q('apply-approved')!.click();
+    await settle();
+    expect(api.apply).toHaveBeenCalledWith('news@example.com');
+    expect(q('apply-progress')).not.toBeNull();
+    jobs.held.set([job('running')]);
+    await settle();
+    expect(q('apply-message')!.textContent).toContain('Applied 2 of 4 messages');
+    const calls = api.sender.mock.calls.length;
+    jobs.held.set([
+      job('completed', {
+        version: 2,
+        progress: {
+          done: 3,
+          total: 4,
+          message: 'Applied 3 of 4 messages; 1 skipped (label refused)',
+        },
+      }),
+    ]);
+    await settle();
+    expect(q('apply-progress')).toBeNull();
+    expect(snackText()).toContain('1 skipped (label refused)');
+    expect(api.sender.mock.calls.length).toBe(calls + 1);
+  });
+
+  it('reads the apply job from the API after a reconnect', async () => {
+    const { api, jobs, q, settle } = await render();
+    q('apply-approved')!.click();
+    await settle();
+    jobs.reconnects.set(1);
+    await settle();
+    expect(api.job).toHaveBeenCalledWith('job-1');
+    expect(q('apply-progress')).toBeNull();
+  });
+
+  it('picks up an apply job already running on load and blocks a second apply', async () => {
+    const { api, jobs, q, settle } = await render();
+    jobs.held.set([job('running', { id: 'job-9', type: 'mailbox_fetch' })]);
+    await settle();
+    expect(q('apply-progress')).toBeNull();
+    jobs.held.set([job('paused', { id: 'job-7' })]);
+    await settle();
+    expect(q('apply-message')!.textContent).toContain('Applied 2 of 4 messages');
+    expect((q('apply-approved') as HTMLButtonElement).disabled).toBe(true);
+    q('apply-approved')!.click();
+    await settle();
+    expect(api.apply).not.toHaveBeenCalled();
+    q('apply-cancel')!.click();
+    await settle();
+    dialogButton('confirm-ok').click();
+    await settle();
+    expect(jobs.cancel).toHaveBeenCalledWith('job-7');
+    jobs.held.set([job('cancelled', { id: 'job-7', version: 2 })]);
+    await settle();
+    expect(q('apply-progress')).toBeNull();
+    expect((q('apply-approved') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('picks up an apply job from the snapshot after a reconnect', async () => {
+    const { jobs, q, settle } = await render();
+    jobs.reconnects.set(1);
+    jobs.held.set([job('queued', { id: 'job-8' })]);
+    await settle();
+    expect(q('apply-progress')).not.toBeNull();
+  });
+
+  it('applies to the rest of the sender after confirming the pattern', async () => {
+    const { api, q, settle } = await render({
+      topicLabel: 'Topic/Alpha',
+      needsAction: true,
+      toBeDeleted: false,
+      approvals: 4,
+      agreement: 0.75,
+      remaining: 6,
+    });
+    expect(q('apply-rest')!.textContent).toContain('remaining 6');
+    q('apply-rest')!.click();
+    await settle();
+    const dialog = document.querySelector('mat-dialog-container')!.textContent!;
+    expect(dialog).toContain('label "Topic/Alpha", "Act"');
+    expect(dialog).toContain('A Gmail filter for this sender can be created in Rules (M6)');
+    dialogButton('confirm-ok').click();
+    await settle();
+    await settle();
+    expect(api.applyRest).toHaveBeenCalledWith('news@example.com');
+    expect(q('apply-progress')).not.toBeNull();
+  });
+
+  it('does not apply to the rest when the confirm is cancelled', async () => {
+    const { api, q, settle } = await render({
+      ...noPattern,
+      topicLabel: 'Topic/Alpha',
+      needsAction: false,
+      toBeDeleted: false,
+    });
+    q('apply-rest')!.click();
+    await settle();
+    dialogButton('confirm-cancel').click();
+    await settle();
+    expect(api.applyRest).not.toHaveBeenCalled();
+  });
+});
