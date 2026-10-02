@@ -14,7 +14,7 @@ public static class FetchJobTypes
     /// <summary>
     /// The job types tied to the local data's account: each gets <see cref="FetchAccountJobGuard"/>, and a connect to
     /// another account is refused while one is active. The fetches also call <see cref="LocalAccountClaim"/>; the apply
-    /// job (<see cref="Review.ReviewJobTypes.Apply"/>) writes Gmail from the local data.
+    /// and undo jobs (<see cref="Review.ReviewJobTypes.WritesGmail"/>) write Gmail from the local data.
     /// </summary>
-    public static readonly string[] ReadsGmail = [Mailbox, Sender, Incremental, Review.ReviewJobTypes.Apply];
+    public static readonly string[] ReadsGmail = [Mailbox, Sender, Incremental, .. Review.ReviewJobTypes.WritesGmail];
 }

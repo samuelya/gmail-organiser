@@ -38,8 +38,8 @@ public interface IAccountGuard
 
     /// <summary>
     /// True when connecting <paramref name="accountEmail"/> would switch accounts under a queued, running or paused job
-    /// that reads Gmail (<see cref="FetchJobTypes.ReadsGmail"/>), or a failed apply with a pending chunk. The account it would switch from is the local data's,
-    /// else the connected one.
+    /// that reads Gmail (<see cref="FetchJobTypes.ReadsGmail"/>), or a failed apply or undo with a pending chunk. The
+    /// account it would switch from is the local data's, else the connected one.
     /// </summary>
     Task<bool> RefusesConnectAsync(string accountEmail, CancellationToken ct = default);
 }
@@ -89,10 +89,10 @@ public sealed partial class AccountGuard(AppDbContext db, ITokenStore tokens, IL
             return true;
         }
 
-        // A failed apply with a pending chunk may have changed Gmail; only a resume on this account finishes it.
+        // A failed apply or undo with a pending chunk may have changed Gmail; only a resume on this account finishes it.
         return await db.Database.SqlQuery<int>($"""
             SELECT 1 AS "Value" FROM jobs
-            WHERE type = {Review.ReviewJobTypes.Apply} AND status = {JobRow.FormatStatus(JobStatus.Failed)} AND cursor ->> 'pending' IS NOT NULL
+            WHERE type = ANY({Review.ReviewJobTypes.WritesGmail}) AND status = {JobRow.FormatStatus(JobStatus.Failed)} AND cursor ->> 'pending' IS NOT NULL
             """).AnyAsync(ct);
     }
 

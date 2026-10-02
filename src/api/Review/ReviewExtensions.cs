@@ -4,7 +4,7 @@ namespace GmailOrganiser.Review;
 
 public static class ReviewExtensions
 {
-    /// <summary>Registers review, decisions, the label cache and the apply job. Needs <c>AddGmail</c>, <c>AddAnalysis</c>, <c>AddFetch</c> and <c>AddJobs</c>.</summary>
+    /// <summary>Registers review, decisions, the label cache, the apply and undo jobs and History. Needs <c>AddGmail</c>, <c>AddAnalysis</c>, <c>AddFetch</c> and <c>AddJobs</c>.</summary>
     public static IServiceCollection AddReview(this IServiceCollection services)
     {
         services.AddSingleton<LabelCatalog>();
@@ -14,10 +14,13 @@ public static class ReviewExtensions
         services.AddScoped<LabelResolver>();
         services.AddScoped<ApplyService>();
         services.AddScoped<SenderPatternService>();
+        services.AddScoped<HistoryQuery>();
 
-        // Its account guard comes with FetchJobTypes.ReadsGmail; a cancel is refused while a chunk is pending.
+        // Their account guard comes with FetchJobTypes.ReadsGmail; a cancel is refused while a chunk is pending.
         services.AddKeyedScoped<IJobCancelHook, ApplyActionsJob>(ApplyActionsJob.JobType);
         services.AddKeyedScoped<IJobHandler, ApplyActionsJob>(ApplyActionsJob.JobType);
+        services.AddKeyedScoped<IJobCancelHook, UndoActionsJob>(UndoActionsJob.JobType);
+        services.AddKeyedScoped<IJobHandler, UndoActionsJob>(UndoActionsJob.JobType);
         return services;
     }
 }

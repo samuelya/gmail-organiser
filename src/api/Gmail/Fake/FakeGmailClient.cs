@@ -141,6 +141,19 @@ public sealed class FakeGmailClient : IGmailClient
         }
     }
 
+    /// <summary>Deletes the user label <paramref name="labelId"/> outside the app, taking it off every message.</summary>
+    public void DeleteLabel(string labelId)
+    {
+        lock (gate)
+        {
+            labels.Delete(labelId);
+            for (var i = 0; i < messages.Count; i++)
+            {
+                ReplaceLabels(i, [.. messages[i].LabelIds.Where(l => l != labelId)], recordUnchanged: false);
+            }
+        }
+    }
+
     /// <summary>Replaces the labels of <paramref name="id"/> and records the <c>labelAdded</c>/<c>labelRemoved</c> deltas.</summary>
     public void SetLabels(string id, IReadOnlyList<string> labelIds)
     {

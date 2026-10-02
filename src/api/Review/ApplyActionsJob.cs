@@ -185,17 +185,13 @@ public sealed partial class ApplyActionsJob(
         var labelIds = valid.Count == 0
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : await labels.EnsureAsync(paths, (label, _) => RecordCreatedAsync(cursor.BatchId, label), ct);
-        var cap = gmailOptions.Value.BatchModifyMaxIds;
-        var chunks = valid
-            .Select(r => new PlannedItem(
-                r.Suggestion, ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress))))
-            .GroupBy(i => (Add: Key(i.Plan.Add), Remove: Key(i.Plan.Remove)))
-            .SelectMany(g => g.Chunk(cap).Select(items => new PlannedChunk(items, Sorted(g.First().Plan.Add), Sorted(g.First().Plan.Remove))))
+        var items = valid.Select(r => new PlannedItem(
+            r.Suggestion, ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress))));
+        var chunks = LabelChunks.Group(items, i => i.Plan.Add, i => i.Plan.Remove, gmailOptions.Value.BatchModifyMaxIds)
+            .Select(c => new PlannedChunk(c.Items, c.Add, c.Remove))
             .ToList();
         var names = labelIds.GroupBy(p => p.Value).ToDictionary(g => g.Key, g => g.First().Key, StringComparer.Ordinal);
         return new Plan(chunks, labelIds, names);
-
-        static string Key(IReadOnlyList<string> ids) => string.Join('\n', Sorted(ids));
     }
 
     /// <summary>
@@ -343,10 +339,9 @@ public sealed partial class ApplyActionsJob(
     private static ApplyCursor? Read(string? cursor) =>
         cursor is null ? null : JsonSerializer.Deserialize<ApplyCursor>(cursor, JobRow.Json);
 
-    private static string[] After(string[] before, string[] add, string[] remove) =>
-        [.. before.Except(remove, StringComparer.Ordinal).Concat(add.Except(before, StringComparer.Ordinal)).Distinct(StringComparer.Ordinal)];
+    private static string[] After(string[] before, string[] add, string[] remove) => LabelChunks.After(before, add, remove);
 
-    private static string[] Sorted(IEnumerable<string> ids) => [.. ids.Order(StringComparer.Ordinal)];
+    private static string[] Sorted(IEnumerable<string> ids) => LabelChunks.Sorted(ids);
 
     private static string SettingLabel(string path, string setting) =>
         LabelResolver.IsValid(path) ? path : throw new JobRefusedException($"The {setting} setting is not a valid Gmail label.");

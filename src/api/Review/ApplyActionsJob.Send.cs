@@ -1,4 +1,3 @@
-using System.Net;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
@@ -9,8 +8,8 @@ namespace GmailOrganiser.Review;
 
 public sealed partial class ApplyActionsJob
 {
-    public const string NotFoundReason = "not found in Gmail";
-    public const string RefusedReason = "refused by Gmail";
+    public const string NotFoundReason = LabelChunks.NotFoundReason;
+    public const string RefusedReason = LabelChunks.RefusedReason;
 
     /// <summary>
     /// Sends the pending chunk, then stores its result and clears it. Ids Gmail refuses one by one are skipped and
@@ -30,7 +29,7 @@ public sealed partial class ApplyActionsJob
             {
                 cursor = await SendChunkAsync(ctx, cursor, total, refused, sent, ct);
             }
-            catch (Exception ex) when (!resent && !sent.Any && NothingChanged(ex))
+            catch (Exception ex) when (!resent && !sent.Any && LabelChunks.NothingChanged(ex))
             {
                 LogChunkReverted(logger, chunk.MessageIds.Length, ex);
                 await RevertAsync(ctx, cursor, total);
@@ -93,7 +92,7 @@ public sealed partial class ApplyActionsJob
             await SendPartAsync(cursor.Pending!, cursor.Pending!.MessageIds, sent, ct);
             return cursor;
         }
-        catch (GoogleApiException ex) when (IsBadIdOrLabel(ex))
+        catch (GoogleApiException ex) when (LabelChunks.IsBadIdOrLabel(ex))
         {
             failure = ex;
         }
@@ -106,46 +105,18 @@ public sealed partial class ApplyActionsJob
                 await SendPartAsync(cursor.Pending!, cursor.Pending!.MessageIds, sent, ct);
                 return cursor;
             }
-            catch (GoogleApiException ex) when (IsBadIdOrLabel(ex))
+            catch (GoogleApiException ex) when (LabelChunks.IsBadIdOrLabel(ex))
             {
                 failure = ex;
             }
         }
 
-        var ids = cursor.Pending!.MessageIds;
-        await IsolateAsync(cursor.Pending!, ids, failure, refused, sent, ct);
-        if (ids.Length > 1 && refused.Count == ids.Length && refused.Values.All(r => r == RefusedReason))
-        {
-            // Not a few bad ids but the call itself: fail the chunk rather than skip every message.
-            refused.Clear();
-            throw failure;
-        }
-
+        var pending = cursor.Pending!;
+        var ids = pending.MessageIds;
+        await LabelChunks.IsolateAsync(gmail, ids, pending.Add, pending.Remove, failure, refused, () => sent.Any = true, ct);
+        LabelChunks.ThrowIfCallRefused(ids, refused, failure);
         LogIdsRefused(logger, refused.Count, ids.Length);
         return cursor;
-    }
-
-    /// <summary><paramref name="ids"/> failed together with <paramref name="failure"/>: sends each half, splitting again on failure.</summary>
-    private async Task IsolateAsync(
-        ApplyChunk chunk, string[] ids, GoogleApiException failure, Dictionary<string, string> refused, SendState sent, CancellationToken ct)
-    {
-        if (ids.Length == 1)
-        {
-            refused[ids[0]] = failure.HttpStatusCode == HttpStatusCode.NotFound ? NotFoundReason : RefusedReason;
-            return;
-        }
-
-        foreach (var half in new[] { ids[..(ids.Length / 2)], ids[(ids.Length / 2)..] })
-        {
-            try
-            {
-                await SendPartAsync(chunk, half, sent, ct);
-            }
-            catch (GoogleApiException ex) when (IsBadIdOrLabel(ex))
-            {
-                await IsolateAsync(chunk, half, ex, refused, sent, ct);
-            }
-        }
     }
 
     private async Task SendPartAsync(ApplyChunk chunk, string[] ids, SendState sent, CancellationToken ct)
@@ -247,17 +218,6 @@ public sealed partial class ApplyActionsJob
         db.ActionLog.RemoveRange(log);
         await db.SaveChangesAsync(ct);
     }
-
-    /// <summary>Gmail refused the call before changing anything: rate-limited on every attempt, not connected, or a 4xx.</summary>
-    private static bool NothingChanged(Exception ex) => ex
-        is GmailRateLimitedException
-        or GmailNotConnectedException
-        or ArgumentException
-        or GoogleApiException { HttpStatusCode: >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError };
-
-    /// <summary>What Gmail answers for an unknown message or label id.</summary>
-    private static bool IsBadIdOrLabel(GoogleApiException ex) =>
-        ex.HttpStatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound;
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail refused a chunk of {Count} messages before changing any; the chunk was reverted.")]
     private static partial void LogChunkReverted(ILogger logger, int count, Exception exception);
