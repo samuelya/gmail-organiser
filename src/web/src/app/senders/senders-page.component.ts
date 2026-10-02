@@ -172,6 +172,17 @@ export class SendersPage {
     return jobs;
   });
 
+  /** Jobs shown on more than one visible row: only a domain fetch covers several senders. */
+  readonly sharedJobs = computed(() => {
+    const seen = new Set<string>();
+    const shared = new Set<string>();
+    for (const job of this.rowJobs().values()) {
+      if (seen.has(job.id)) shared.add(job.id);
+      seen.add(job.id);
+    }
+    return shared;
+  });
+
   constructor() {
     this.requests
       .pipe(
@@ -292,10 +303,13 @@ export class SendersPage {
     this.runPending(job, 'resume', this.jobs.resume(job.id));
   }
 
-  cancel(job: JobDto, label: string): void {
+  /** The job has no target: a domain fetch is certain only when several rows share it. */
+  cancel(job: JobDto, domainFetch: boolean): void {
     openConfirm(this.dialog, {
-      title: 'Cancel sender fetch?',
-      message: `Stops fetching from ${label} at its next checkpoint. Mail already fetched stays.`,
+      title: domainFetch ? 'Cancel domain fetch?' : 'Cancel sender fetch?',
+      message: domainFetch
+        ? 'This fetch covers a whole domain, so it stops for every sender at that domain, at its next checkpoint. Mail already fetched stays.'
+        : 'It stops at its next checkpoint. If it was started for the whole domain, it stops for every sender at that domain. Mail already fetched stays.',
       confirm: 'Cancel fetch',
     })
       .pipe(

@@ -166,9 +166,10 @@
                   <app-sender-progress
                     [job]="job"
                     [label]="row.sender.address"
+                    [domainFetch]="sharedJobs().has(job.id)"
                     [busy]="isPending(job)"
                     (resumeFetch)="resume(job)"
-                    (cancelFetch)="cancel(job, row.sender.address)"
+                    (cancelFetch)="cancel(job, sharedJobs().has(job.id))"
                   />
                 } @else {
                   <button

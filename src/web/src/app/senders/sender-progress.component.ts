@@ -34,8 +34,8 @@ import { JobDto, progressPercent } from '../core/jobs.models';
             type="button"
             (click)="resumeFetch.emit()"
             [disabled]="busy()"
-            [matTooltip]="'Resume fetch from ' + label()"
-            [attr.aria-label]="'Resume fetch from ' + label()"
+            [matTooltip]="'Resume ' + fetchLabel()"
+            [attr.aria-label]="'Resume ' + fetchLabel()"
             data-testid="sender-resume"
           >
             <mat-icon aria-hidden="true">play_arrow</mat-icon>
@@ -47,7 +47,7 @@ import { JobDto, progressPercent } from '../core/jobs.models';
             strokeWidth="3"
             [mode]="percent() === null ? 'indeterminate' : 'determinate'"
             [value]="percent() ?? 0"
-            [attr.aria-label]="'Fetching from ' + label()"
+            [attr.aria-label]="'Progress of ' + fetchLabel()"
           />
           <span class="muted text-sm" data-testid="sender-done">{{
             job().progress?.done ?? 0 | number
@@ -59,8 +59,8 @@ import { JobDto, progressPercent } from '../core/jobs.models';
         type="button"
         (click)="cancelFetch.emit()"
         [disabled]="busy()"
-        [matTooltip]="'Cancel fetch from ' + label()"
-        [attr.aria-label]="'Cancel fetch from ' + label()"
+        [matTooltip]="'Cancel ' + fetchLabel()"
+        [attr.aria-label]="'Cancel ' + fetchLabel()"
         data-testid="sender-cancel"
       >
         <mat-icon aria-hidden="true">close</mat-icon>
@@ -76,12 +76,21 @@ import { JobDto, progressPercent } from '../core/jobs.models';
 })
 export class SenderProgress {
   readonly job = input.required<JobDto>();
-  /** The sender, for labels. */
+  /** The row's sender address, for labels. */
   readonly label = input.required<string>();
+  /** The job is shown on other rows too, so it is a domain fetch; otherwise it may be either. */
+  readonly domainFetch = input(false);
   /** A resume or cancel is waiting for the job's status to change. */
   readonly busy = input(false);
   readonly resumeFetch = output<void>();
   readonly cancelFetch = output<void>();
+
+  /** The job has no target, so a lone row only says what it may cover. */
+  readonly fetchLabel = computed(() =>
+    this.domainFetch()
+      ? `the domain fetch covering ${this.label()}`
+      : `the fetch for ${this.label()} or its domain`,
+  );
 
   readonly percent = computed(() => progressPercent(this.job().progress));
 }

@@ -349,6 +349,42 @@ describe('SendersPage', () => {
     expect((q('sender-cancel') as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('a lone row does not claim the fetch is only for its address', async () => {
+    const { harness, q } = await render(
+      '/senders',
+      paged([sender({ activeFetchJob: job('running') })]),
+    );
+    expect(q('sender-cancel')!.getAttribute('aria-label')).toBe(
+      'Cancel the fetch for news@example.com or its domain',
+    );
+    q('sender-cancel')!.click();
+    await harness.fixture.whenStable();
+    const text = document.querySelector('mat-dialog-container')!.textContent!;
+    expect(text).toContain('Cancel sender fetch?');
+    expect(text).toContain('If it was started for the whole domain');
+  });
+
+  it('a job shared by several rows is named a domain fetch', async () => {
+    const shared = job('running');
+    const { harness, el } = await render(
+      '/senders',
+      paged([
+        sender({ activeFetchJob: shared }),
+        sender({ address: 'shop@example.com', activeFetchJob: shared }),
+      ]),
+    );
+    const cancels = [...el.querySelectorAll('[data-testid="sender-cancel"]')];
+    expect(cancels.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Cancel the domain fetch covering news@example.com',
+      'Cancel the domain fetch covering shop@example.com',
+    ]);
+    (cancels[1] as HTMLButtonElement).click();
+    await harness.fixture.whenStable();
+    const text = document.querySelector('mat-dialog-container')!.textContent!;
+    expect(text).toContain('Cancel domain fetch?');
+    expect(text).toContain('every sender at that domain');
+  });
+
   it('the toolbar input validates like the API and posts the normalised target', async () => {
     const { harness, q, component } = await render('/senders', paged([sender()]));
     const submit = () => q('target-form')!.dispatchEvent(new Event('submit'));
