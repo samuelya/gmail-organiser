@@ -31,6 +31,7 @@ public static class ReviewEndpoints
             DecideGroupAsync(request, DecisionOutcome.Rejected, review, ct));
         group.MapPost("/bulk-approve", BulkApproveAsync);
         group.MapPost("/analyse-individually", AnalyseIndividuallyAsync).RequireAccountMatch();
+        group.MapApplyEndpoints();
         return endpoints;
     }
 

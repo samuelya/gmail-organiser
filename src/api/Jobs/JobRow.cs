@@ -20,6 +20,7 @@ public static class JobQueues
 {
     public const string Fetch = "fetch";
     public const string Analysis = "analysis";
+    public const string Apply = "apply";
 }
 
 /// <summary>A background job (table <c>jobs</c>). Cursor and progress are handler-defined JSON.</summary>

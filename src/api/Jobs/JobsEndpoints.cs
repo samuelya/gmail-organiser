@@ -30,6 +30,10 @@ public static class JobsEndpoints
         {
             JobActionResult.Ok => TypedResults.NoContent(),
             JobActionResult.NotFound => NotFound(),
+            JobActionResult.Refused => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Job has unfinished work",
+                detail: $"The job cannot {verb} now: resume it to finish the step in progress."),
             _ => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Job state does not allow this",
