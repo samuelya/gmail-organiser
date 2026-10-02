@@ -26,7 +26,10 @@
       <p class="section-hint">The local LLM server and the models it runs.</p>
       <div class="flex flex-col gap-6">
         <app-ollama-url-step (saved)="ollamaUrl.set($event)" />
-        <app-models-step [baseUrl]="ollamaUrl()" />
+        <app-models-step
+          [baseUrl]="ollamaUrl()"
+          (saved)="embeddingModel.set($event.embeddingModel)"
+        />
       </div>
     </mat-card-content>
   </mat-card>
@@ -74,6 +77,22 @@
           </button>
         </div>
       </form>
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-analysis">
+    <mat-card-content data-testid="section-analysis">
+      <h2 id="settings-analysis" class="section-title">Analysis</h2>
+      <p class="section-hint">How analysis batches group emails and what the LLM is asked.</p>
+      <app-analysis-settings
+        [settings]="analysis()"
+        [embeddingModel]="embeddingModel()"
+        [saving]="analysisSaving()"
+        [serverErrors]="analysisErrors()"
+        [defaultPrompt]="defaultPrompt()"
+        (changed)="saveAnalysis($event)"
+        (resetPrompt)="loadDefaultPrompt()"
+      />
     </mat-card-content>
   </mat-card>
 </div>

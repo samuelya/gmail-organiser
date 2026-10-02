@@ -1,0 +1,165 @@
+<ng-template #numberField let-f>
+  @let ctl = control(f.key);
+  @let r = range(f.key);
+  <mat-form-field>
+    <mat-label>{{ f.label }}</mat-label>
+    <input
+      matInput
+      type="number"
+      [formControl]="ctl"
+      [min]="r.min"
+      [max]="r.max"
+      [step]="r.step"
+      [attr.data-testid]="f.key"
+    />
+    @if (ctl.hasError('server')) {
+      <mat-error>{{ ctl.getError('server') }}</mat-error>
+    } @else if (ctl.hasError('required')) {
+      <mat-error>{{ f.label }} is required.</mat-error>
+    } @else if (ctl.hasError('min') || ctl.hasError('max')) {
+      <mat-error>Enter a number from {{ r.min }} to {{ r.max }}.</mat-error>
+    } @else if (ctl.hasError('integer')) {
+      <mat-error>Enter a whole number.</mat-error>
+    }
+    <mat-hint>{{ f.hint }}</mat-hint>
+  </mat-form-field>
+</ng-template>
+
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-4" novalidate>
+  <div class="flex flex-col gap-2">
+    @for (f of batchFields; track f.key) {
+      <ng-container *ngTemplateOutlet="numberField; context: { $implicit: f }" />
+    }
+  </div>
+
+  <fieldset class="flex flex-col gap-2">
+    <legend id="analysis-grouping" class="mb-1">Grouping</legend>
+    <mat-radio-group
+      formControlName="analysisGroupingMode"
+      aria-labelledby="analysis-grouping"
+      class="flex flex-col gap-1"
+      data-testid="analysisGroupingMode"
+    >
+      @for (mode of groupingModes; track mode.value) {
+        <div>
+          <mat-radio-button [value]="mode.value" [attr.data-testid]="'grouping-' + mode.value">
+            {{ mode.label }}
+          </mat-radio-button>
+          <p class="help ml-10">{{ mode.help }}</p>
+        </div>
+      }
+    </mat-radio-group>
+    @for (f of groupFields; track f.key) {
+      <ng-container *ngTemplateOutlet="numberField; context: { $implicit: f }" />
+    }
+    <ng-container *ngTemplateOutlet="numberField; context: { $implicit: clusterField() }" />
+  </fieldset>
+
+  <fieldset class="flex flex-col gap-2">
+    <legend class="mb-1">Memory</legend>
+    <mat-slide-toggle
+      formControlName="analysisMemoryShortCircuit"
+      data-testid="analysisMemoryShortCircuit"
+    >
+      Skip the LLM when memory already knows the answer
+    </mat-slide-toggle>
+    <ng-container *ngTemplateOutlet="numberField; context: { $implicit: memoryField }" />
+  </fieldset>
+
+  <fieldset class="flex flex-col gap-1">
+    <legend id="bulk-approve-label" class="mb-1">Bulk-approve threshold</legend>
+    <div class="flex items-center gap-4">
+      <mat-slider
+        class="grow"
+        [min]="limits.bulkApproveThreshold.min"
+        [max]="limits.bulkApproveThreshold.max"
+        [step]="limits.bulkApproveThreshold.step"
+        discrete
+        [displayWith]="formatThreshold"
+      >
+        <input
+          matSliderThumb
+          formControlName="bulkApproveThreshold"
+          aria-labelledby="bulk-approve-label"
+          data-testid="bulkApproveThreshold"
+        />
+      </mat-slider>
+      <span class="w-12 text-right" aria-hidden="true">{{
+        formatThreshold(c.bulkApproveThreshold.value ?? 0)
+      }}</span>
+    </div>
+    <p class="help">Suggestions at or above this confidence can be approved in bulk.</p>
+    @if (c.bulkApproveThreshold.hasError('server')) {
+      <p class="help warn" role="alert">
+        {{ c.bulkApproveThreshold.getError('server') }}
+      </p>
+    }
+  </fieldset>
+
+  <div>
+    <mat-slide-toggle
+      formControlName="autoArchiveOnActionDone"
+      data-testid="autoArchiveOnActionDone"
+    >
+      Archive when the action label is removed
+    </mat-slide-toggle>
+    <p class="help">Takes effect on the next incremental fetch.</p>
+  </div>
+
+  <fieldset class="flex flex-col gap-2">
+    <legend class="mb-1">Prompt template</legend>
+    <mat-form-field>
+      <mat-label>Analysis prompt</mat-label>
+      <textarea
+        matInput
+        class="prompt"
+        rows="12"
+        formControlName="analysisPromptTemplate"
+        [maxlength]="maxPromptLength"
+        data-testid="analysisPromptTemplate"
+      ></textarea>
+      @let prompt = c.analysisPromptTemplate;
+      @if (prompt.hasError('server')) {
+        <mat-error>{{ prompt.getError('server') }}</mat-error>
+      } @else if (prompt.hasError('maxlength')) {
+        <mat-error>Use at most {{ maxPromptLength }} characters.</mat-error>
+      }
+      <mat-hint>Leave empty to use the built-in prompt.</mat-hint>
+    </mat-form-field>
+    @if (prompt.value.trim() && !prompt.value.includes(emailsPlaceholder)) {
+      <p class="help warn" role="alert" data-testid="emails-warning">
+        Without {{ emailsPlaceholder }} the emails have nowhere to go; the API rejects this prompt.
+      </p>
+    }
+    <div>
+      <button
+        mat-stroked-button
+        type="button"
+        (click)="resetPrompt.emit()"
+        [disabled]="!settings() || saving()"
+        data-testid="reset-prompt"
+      >
+        Reset to default
+      </button>
+    </div>
+    <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1" aria-label="Prompt placeholders">
+      @for (p of placeholders; track p.name) {
+        <dt>
+          <code>{{ p.name }}</code>
+        </dt>
+        <dd class="help">{{ p.help }}</dd>
+      }
+    </dl>
+  </fieldset>
+
+  <div>
+    <button
+      mat-flat-button
+      type="submit"
+      [disabled]="!settings() || saving()"
+      data-testid="save-analysis"
+    >
+      Save
+    </button>
+  </div>
+</form>
