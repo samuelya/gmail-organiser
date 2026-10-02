@@ -46,7 +46,11 @@ public sealed class BodyCleanerTests
     [InlineData("<div>Open <b>never closed", "Open never closed")]
     [InlineData("Text <a href=\"x>y\">link</a> after", "Text link after")]
     [InlineData("a < b and c > d", "a < b and c > d")]
-    [InlineData("Before <script>alert(1)", "Before")]
+    [InlineData("Before <script>alert(1)", "Before alert(1)")]
+    [InlineData("<html><head><title>Hidden</title><body><p>Kept</p></body>", "Kept")]
+    [InlineData("<head><meta charset=\"utf-8\">Kept after an unclosed head", "Kept after an unclosed head")]
+    [InlineData("<span class=x title=it's>Don't stop</span> here", "Don't stop here")]
+    [InlineData("<p data-x = 'a>b'>Quoted</p>", "Quoted")]
     [InlineData("Before <p class=\"unterminated", "Before")]
     [InlineData("<<<>>></></p><!--", "<<<>>>")]
     [InlineData("", "")]
@@ -61,6 +65,16 @@ public sealed class BodyCleanerTests
         var cleaned = BodyCleaner.Clean(new string('a', 50) + " " + new string('b', 50), null, 60);
 
         cleaned.ShouldBe(new string('a', 50) + " " + new string('b', 9) + " " + BodyCleaner.TruncatedMarker);
+    }
+
+    [Fact]
+    public void Long_html_is_truncated_after_entities_and_tags()
+    {
+        var html = string.Concat(Enumerable.Repeat("<p>x&amp;y</p>", 10_000));
+
+        var cleaned = BodyCleaner.Clean(null, html, 10);
+
+        cleaned.ShouldBe("x&y\nx&y\nx& " + BodyCleaner.TruncatedMarker);
     }
 
     [Fact]

@@ -1,21 +1,66 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>Turns a batch of emails plus context into the chat messages for one analysis call. No I/O.</summary>
-public sealed class AnalysisPromptBuilder(PromptTemplate template)
+public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
 {
     public const int MaxLabelTreeEntries = 500;
     public const string LabelsOmitted = "[more labels omitted]";
     public const string BodyStart = "<email_body>";
     public const string BodyEnd = "</email_body>";
+    public const string MemoryHeading = "Similar past decisions by the person:";
+
+    /// <summary>
+    /// The answer shape: one object wrapping the per-email array, because Ollama's JSON mode only yields a top-level
+    /// object. OllamaSharp sends the schema as Ollama's <c>format</c>, so the model is constrained to it.
+    /// </summary>
+    private static readonly JsonElement OutputSchema = JsonDocument.Parse("""
+        {
+          "type": "object",
+          "properties": {
+            "suggestions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "topicLabel": { "type": "string" },
+                  "isNewLabel": { "type": "boolean" },
+                  "needsAction": { "type": "boolean" },
+                  "toBeDeleted": { "type": "boolean" },
+                  "unsubscribeSuggested": { "type": "boolean" },
+                  "confidence": { "type": "number" },
+                  "reason": { "type": "string" }
+                },
+                "required": ["id", "topicLabel", "isNewLabel", "needsAction", "toBeDeleted", "unsubscribeSuggested", "confidence", "reason"]
+              }
+            },
+            "filterCriteria": {
+              "type": "object",
+              "properties": {
+                "from": { "type": ["string", "null"] },
+                "listId": { "type": ["string", "null"] },
+                "subjectContains": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "required": ["suggestions"]
+        }
+        """).RootElement.Clone();
 
     public string Version => template.Version;
 
-    /// <summary>JSON mode at temperature 0: the most reliable array output across local models.</summary>
-    public static ChatOptions CreateOptions() => new() { ResponseFormat = ChatResponseFormat.Json, Temperature = 0 };
+    /// <summary>Schema-constrained JSON at temperature 0: the most reliable structured output across local models.</summary>
+    public static ChatOptions CreateOptions() => new()
+    {
+        ResponseFormat = ChatResponseFormat.ForJsonSchema(OutputSchema, "suggestions"),
+        Temperature = 0,
+    };
 
     public IList<ChatMessage> Build(PromptInput input)
     {
@@ -24,7 +69,7 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
         {
             ["labelTree"] = RenderLabelTree(input.LabelTree),
             ["memory"] = RenderMemory(input.Memory),
-            ["attachments"] = input.AttachmentsSection ?? string.Empty,
+            ["attachments"] = DefuseBodyTags(input.AttachmentsSection ?? string.Empty),
             ["emails"] = RenderEmails(input.Emails),
             ["actionLabel"] = OneLine(input.ActionLabel),
             ["deleteLabel"] = OneLine(input.DeleteLabel),
@@ -58,10 +103,10 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
     {
         if (memory.Count == 0)
         {
-            return "none";
+            return MemoryHeading + " none";
         }
 
-        return string.Join('\n', memory.Select(m => string.Create(CultureInfo.InvariantCulture,
+        return MemoryHeading + "\n" + string.Join('\n', memory.Select(m => string.Create(CultureInfo.InvariantCulture,
             $"- sender: {OneLine(m.SenderAddress)} | subject: {OneLine(m.SubjectTemplate ?? "-")} | topicLabel: {OneLine(m.TopicLabel)}"
             + $" | needsAction: {YesNo(m.NeedsAction)} | toBeDeleted: {YesNo(m.ToBeDeleted)} | outcome: {OneLine(m.Outcome)}"
             + $" | similarity: {m.Similarity:0.00}")));
@@ -84,7 +129,7 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
                 .Append(CultureInfo.InvariantCulture, $"has attachment: {YesNo(e.HasAttachment)}\n")
                 .Append(CultureInfo.InvariantCulture, $"subject: {OneLine(e.Subject ?? "-")}\n")
                 .Append(BodyStart).Append('\n')
-                .Append(e.Body.Replace(BodyEnd, "</ email_body>", StringComparison.OrdinalIgnoreCase))
+                .Append(DefuseBodyTags(e.Body))
                 .Append('\n').Append(BodyEnd).Append('\n');
         }
 
@@ -95,5 +140,12 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
 
     /// <summary>Header values stay on one line so they can't start a fake field or email block.</summary>
     private static string OneLine(string value) =>
-        string.Join(' ', value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        DefuseBodyTags(string.Join(' ', value.Split(['\r', '\n', '\v', '\f', '\u0085', '\u2028', '\u2029'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
+
+    /// <summary>Email text can't open or close a body block: every <c>email_body</c> tag variant loses its <c>&lt;</c>.</summary>
+    private static string DefuseBodyTags(string value) => BodyTagRegex().Replace(value, "[$1");
+
+    [GeneratedRegex(@"<(\s*/?\s*email_body)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex BodyTagRegex();
 }

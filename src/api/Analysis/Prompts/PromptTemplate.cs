@@ -37,21 +37,29 @@ public sealed partial class PromptTemplate
     public static string Substitute(string text, IReadOnlyDictionary<string, string> values) =>
         PlaceholderRegex().Replace(text, m => values.TryGetValue(m.Groups[1].Value, out var value) ? value : m.Value);
 
+    /// <summary>Placeholders whose values come from email content (senders, subjects, bodies, attachment names).</summary>
+    public static IReadOnlyList<string> EmailDerivedPlaceholders { get; } = [EmailsPlaceholder, "{{memory}}", "{{attachments}}"];
+
     /// <summary>
-    /// Splits the template at the line holding <c>{{emails}}</c>: the instructions before it become the system
-    /// message and the rest the user message, so email content never sits in the system prompt.
-    /// Without the placeholder the whole template is the system part and the emails are appended to the user part.
+    /// Splits the template at the first line holding an email-derived placeholder: the instructions before it become
+    /// the system message and the rest the user message, so email content never sits in the system prompt.
+    /// Without <c>{{emails}}</c> in the user part the emails are appended to it.
     /// </summary>
     public (string System, string User) Split()
     {
-        var index = Text.IndexOf(EmailsPlaceholder, StringComparison.Ordinal);
+        var index = EmailDerivedPlaceholders
+            .Select(p => Text.IndexOf(p, StringComparison.Ordinal))
+            .Where(i => i >= 0)
+            .DefaultIfEmpty(-1)
+            .Min();
         if (index < 0)
         {
             return (Text, EmailsPlaceholder);
         }
 
         var lineStart = Text.LastIndexOf('\n', index) + 1;
-        return (Text[..lineStart], Text[lineStart..]);
+        var user = Text[lineStart..];
+        return (Text[..lineStart], user.Contains(EmailsPlaceholder, StringComparison.Ordinal) ? user : user + "\n\n" + EmailsPlaceholder);
     }
 
     private static string LoadBuiltIn()

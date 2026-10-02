@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -16,9 +17,10 @@ public static partial class SuggestionOutputParser
 
     private const int MaxIdInError = 64;
 
-    private static readonly JsonDocumentOptions DocumentOptions = new()
+    private static readonly JsonReaderOptions ReaderOptions = new()
     {
         AllowTrailingCommas = true,
+        AllowMultipleValues = true,
         CommentHandling = JsonCommentHandling.Skip,
     };
 
@@ -29,25 +31,22 @@ public static partial class SuggestionOutputParser
         var errors = new List<string>();
         FilterCriteriaOutput? filter = null;
 
-        var json = ExtractJson(raw);
-        if (json is null)
+        var start = string.IsNullOrEmpty(raw) ? -1 : raw.IndexOfAny(['[', '{']);
+        if (start < 0)
         {
             errors.Add("Output contains no JSON array or object.");
             return Finish(valid, errors, filter, expectedIds, []);
         }
 
-        JsonDocument document;
-        try
-        {
-            document = JsonDocument.Parse(json, DocumentOptions);
-        }
-        catch (JsonException)
+        var document = ReadFirstValue(raw![start..]);
+        if (document is null)
         {
             errors.Add("Output is not valid JSON.");
             return Finish(valid, errors, filter, expectedIds, []);
         }
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var answered = new HashSet<string>(StringComparer.Ordinal);
+        var accepted = new HashSet<string>(StringComparer.Ordinal);
         using (document)
         {
             var root = document.RootElement;
@@ -76,40 +75,57 @@ public static partial class SuggestionOutputParser
                 if (!expectedIds.Contains(id))
                 {
                     errors.Add($"Unknown id '{Shorten(id)}'.");
+                    continue;
                 }
-                else if (!seen.Add(id))
+
+                answered.Add(id);
+                if (accepted.Contains(id))
                 {
-                    errors.Add($"Duplicate id '{id}': first answer kept.");
+                    errors.Add($"Duplicate id '{id}': first valid answer kept.");
                 }
                 else if (ReadSuggestion(id, item, errors) is { } suggestion)
                 {
+                    accepted.Add(id);
                     valid.Add(suggestion);
                 }
             }
         }
 
-        return Finish(valid, errors, filter, expectedIds, seen);
+        return Finish(valid, errors, filter, expectedIds, answered);
     }
 
-    /// <summary>Strips code fences and prose: from the first <c>[</c> or <c>{</c> to the last <c>]</c> or <c>}</c>.</summary>
-    private static string? ExtractJson(string? raw)
+    /// <summary>
+    /// Reads one JSON value from the start of <paramref name="json"/> and ignores whatever follows it (code fences,
+    /// trailing prose); null when that value is not valid JSON.
+    /// </summary>
+    private static JsonDocument? ReadFirstValue(string json)
     {
-        if (string.IsNullOrWhiteSpace(raw))
+        var reader = new Utf8JsonReader(Encoding.UTF8.GetBytes(json), ReaderOptions);
+        try
+        {
+            return JsonDocument.ParseValue(ref reader);
+        }
+        catch (JsonException)
         {
             return null;
         }
-
-        var start = raw.IndexOfAny(['[', '{']);
-        var end = raw.LastIndexOfAny([']', '}']);
-        return start < 0 || end < start ? null : raw[start..(end + 1)];
     }
 
-    /// <summary>An array, a bare object for one email, or an object wrapping the array in a single property.</summary>
+    /// <summary>
+    /// <c>{"suggestions": [...]}</c> as asked, an array, a bare object for one email, or an object wrapping the array
+    /// in a single property.
+    /// </summary>
     private static (IEnumerable<JsonElement> Items, bool Wrapped) Items(JsonElement root)
     {
         if (root.ValueKind == JsonValueKind.Array)
         {
             return (root.EnumerateArray(), false);
+        }
+
+        if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("suggestions", out var suggestions)
+            && suggestions.ValueKind == JsonValueKind.Array)
+        {
+            return (suggestions.EnumerateArray(), true);
         }
 
         if (root.ValueKind != JsonValueKind.Object || root.TryGetProperty("id", out _))
@@ -191,13 +207,19 @@ public static partial class SuggestionOutputParser
             return null;
         }
 
+        string[] names = ["from", "listId", "subjectContains"];
+        if (names.All(n => !element.TryGetProperty(n, out var v) || v.ValueKind == JsonValueKind.Null))
+        {
+            return null;
+        }
+
         string? Field(string name)
         {
             var value = ReadString(element, name)?.Trim();
             return value is { Length: > 0 and <= MaxFilterValueLength } && !value.Any(char.IsControl) ? value : null;
         }
 
-        var filter = new FilterCriteriaOutput(Field("from"), Field("listId"), Field("subjectContains"));
+        var filter = new FilterCriteriaOutput(Field(names[0]), Field(names[1]), Field(names[2]));
         if (filter is { From: null, ListId: null, SubjectContains: null })
         {
             errors.Add("'filterCriteria' has no usable field.");
@@ -208,9 +230,9 @@ public static partial class SuggestionOutputParser
     }
 
     private static ParsedSuggestions Finish(List<SuggestionOutput> valid, List<string> errors, FilterCriteriaOutput? filter,
-        IReadOnlySet<string> expectedIds, HashSet<string> seen)
+        IReadOnlySet<string> expectedIds, HashSet<string> answered)
     {
-        errors.AddRange(expectedIds.Where(id => !seen.Contains(id)).Order(StringComparer.Ordinal).Select(id => $"Email '{id}': no answer."));
+        errors.AddRange(expectedIds.Where(id => !answered.Contains(id)).Order(StringComparer.Ordinal).Select(id => $"Email '{id}': no answer."));
         return new ParsedSuggestions(valid, errors, filter);
     }
 

@@ -23,6 +23,27 @@ public sealed class SuggestionOutputParserTests
     }
 
     [Fact]
+    public void Suggestions_object_with_a_top_level_filter_parses()
+    {
+        var raw = $$$"""{"suggestions":{{{Both}}},"filterCriteria":{"from":null,"listId":"list.example.com","subjectContains":null}}""";
+
+        var result = SuggestionOutputParser.Parse(raw, Ids);
+
+        result.Errors.ShouldBeEmpty();
+        result.Valid.Select(v => v.Id).ShouldBe(["m1", "m2"]);
+        result.Filter.ShouldBe(new FilterCriteriaOutput(null, "list.example.com", null));
+    }
+
+    [Fact]
+    public void Trailing_prose_with_brackets_is_ignored()
+    {
+        var result = SuggestionOutputParser.Parse($"{Both}\nConfidence is in [0,1] as {{asked}}.", Ids);
+
+        result.Errors.ShouldBeEmpty();
+        result.Valid.Count.ShouldBe(2);
+    }
+
+    [Fact]
     public void Code_fences_are_stripped()
     {
         var result = SuggestionOutputParser.Parse($"```json\n{Both}\n```", Ids);
@@ -144,6 +165,16 @@ public sealed class SuggestionOutputParserTests
     }
 
     [Fact]
+    public void Duplicate_id_after_an_invalid_answer_is_used()
+    {
+        var result = SuggestionOutputParser.Parse($"[{Item("m1", confidence: "7")},{Item("m1", label: "Other")}]",
+            new HashSet<string> { "m1" });
+
+        result.Valid.ShouldHaveSingleItem().TopicLabel.ShouldBe("Other");
+        result.Errors.ShouldHaveSingleItem().ShouldContain("'confidence'");
+    }
+
+    [Fact]
     public void Duplicate_id_keeps_the_first_answer()
     {
         var result = SuggestionOutputParser.Parse($"[{Item("m1")},{Item("m1", label: "Other")},{Item("m2")}]", Ids);
@@ -186,6 +217,17 @@ public sealed class SuggestionOutputParserTests
 
         result.Errors.ShouldBeEmpty();
         result.Filter.ShouldBe(new FilterCriteriaOutput("news@example.com", null, "Weekly"));
+    }
+
+    [Theory]
+    [InlineData("{\"from\":null,\"listId\":null,\"subjectContains\":null}")]
+    [InlineData("{}")]
+    public void All_null_filter_criteria_is_no_filter(string criteria)
+    {
+        var result = SuggestionOutputParser.Parse($$$"""{"suggestions":{{{Both}}},"filterCriteria":{{{criteria}}}}""", Ids);
+
+        result.Filter.ShouldBeNull();
+        result.Errors.ShouldBeEmpty();
     }
 
     [Fact]

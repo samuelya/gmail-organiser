@@ -21,28 +21,28 @@ public static class BodyCleaner
 
     public static string Clean(string? text, string? html, int maxChars)
     {
-        var raw = !string.IsNullOrWhiteSpace(text) ? text : html is null ? string.Empty : HtmlToText(html);
-        return Truncate(Normalise(raw), Math.Max(0, maxChars));
+        maxChars = Math.Max(0, maxChars);
+        var raw = !string.IsNullOrWhiteSpace(text) ? text : html is null ? string.Empty : HtmlToText(html, maxChars);
+        return Truncate(Normalise(raw, maxChars), maxChars);
     }
 
-    private static string HtmlToText(string html)
+    /// <summary>Converts until more than <paramref name="maxChars"/> visible characters are collected.</summary>
+    private static string HtmlToText(string html, int maxChars)
     {
-        var sb = new StringBuilder(html.Length);
+        var sb = new StringBuilder(Math.Min(html.Length, maxChars + 1));
+        var visible = 0;
         var i = 0;
-        while (i < html.Length)
+        while (i < html.Length && visible <= maxChars)
         {
             var lt = html.IndexOf('<', i);
-            if (lt < 0)
-            {
-                sb.Append(html, i, html.Length - i);
-                break;
-            }
-
-            sb.Append(html, i, lt - i);
-            i = ReadMarkup(html, lt, sb);
+            var end = lt < 0 ? html.Length : lt;
+            var decoded = WebUtility.HtmlDecode(html[i..end]);
+            sb.Append(decoded);
+            visible += decoded.Count(c => !char.IsWhiteSpace(c) && !char.IsControl(c) && !IsInvisible(c));
+            i = lt < 0 ? html.Length : ReadMarkup(html, lt, sb);
         }
 
-        return WebUtility.HtmlDecode(sb.ToString());
+        return sb.ToString();
     }
 
     /// <summary>Consumes the markup at <paramref name="lt"/> and returns the index after it.</summary>
@@ -83,23 +83,45 @@ public static class BodyCleaner
 
         if (!closing && SkippedElements.Contains(name) && html[tagEnd - 1] != '/')
         {
-            var close = html.IndexOf("</" + name, tagEnd + 1, StringComparison.OrdinalIgnoreCase);
-            if (close < 0)
-            {
-                return html.Length;
-            }
-
-            var closeEnd = FindTagEnd(html, close + 2 + name.Length);
-            return closeEnd < 0 ? html.Length : closeEnd + 1;
+            return SkipElement(html, name, tagEnd + 1);
         }
 
         return tagEnd + 1;
     }
 
-    /// <summary>Index of the <c>&gt;</c> closing a tag, skipping quoted attribute values; -1 when unterminated.</summary>
+    /// <summary>
+    /// Index after a skipped element's end tag. A <c>head</c> also ends at <c>&lt;body</c>; without an end, only the
+    /// start tag is dropped, so a missing end tag never swallows the rest of the document.
+    /// </summary>
+    private static int SkipElement(string html, string name, int from)
+    {
+        var close = html.IndexOf("</" + name, from, StringComparison.OrdinalIgnoreCase);
+        if (name.Equals("head", StringComparison.OrdinalIgnoreCase))
+        {
+            var body = html.IndexOf("<body", from, StringComparison.OrdinalIgnoreCase);
+            if (body >= 0 && (close < 0 || body < close))
+            {
+                return body;
+            }
+        }
+
+        if (close < 0)
+        {
+            return from;
+        }
+
+        var closeEnd = FindTagEnd(html, close + 2 + name.Length);
+        return closeEnd < 0 ? html.Length : closeEnd + 1;
+    }
+
+    /// <summary>
+    /// Index of the <c>&gt;</c> closing a tag, skipping attribute values quoted right after <c>=</c>; -1 when
+    /// unterminated. A stray quote elsewhere is just a character.
+    /// </summary>
     private static int FindTagEnd(string html, int from)
     {
         char? quote = null;
+        var afterEquals = false;
         for (var i = from; i < html.Length; i++)
         {
             var c = html[i];
@@ -107,7 +129,7 @@ public static class BodyCleaner
             {
                 quote = c == quote ? null : quote;
             }
-            else if (c is '"' or '\'')
+            else if (afterEquals && c is '"' or '\'')
             {
                 quote = c;
             }
@@ -115,19 +137,31 @@ public static class BodyCleaner
             {
                 return i;
             }
+
+            afterEquals = quote is null && (c == '=' || (afterEquals && char.IsWhiteSpace(c)));
         }
 
         return -1;
     }
 
-    /// <summary>Drops zero-width characters, collapses blanks to single spaces and blank lines to single newlines.</summary>
-    private static string Normalise(string raw)
+    private static bool IsInvisible(char c) => c is '\u200B' or '\u200C' or '\u200D' or '\u2060' or '\uFEFF' or '\u00AD' or '\u034F';
+
+    /// <summary>
+    /// Drops zero-width characters, collapses blanks to single spaces and blank lines to single newlines; stops once
+    /// the result is longer than <paramref name="maxChars"/>.
+    /// </summary>
+    private static string Normalise(string raw, int maxChars)
     {
-        var sb = new StringBuilder(raw.Length);
+        var sb = new StringBuilder(Math.Min(raw.Length, maxChars + 1));
         var pendingSpace = false;
         foreach (var c in raw)
         {
-            if (c is '​' or '‌' or '‍' or '⁠' or '﻿' or '­' or '͏')
+            if (sb.Length > maxChars)
+            {
+                break;
+            }
+
+            if (IsInvisible(c))
             {
                 continue;
             }
