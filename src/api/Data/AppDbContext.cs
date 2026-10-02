@@ -1,5 +1,6 @@
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<MessageRow> Messages => Set<MessageRow>();
     public DbSet<SenderRow> Senders => Set<SenderRow>();
     public DbSet<FetchStateRow> FetchState => Set<FetchStateRow>();
+    public DbSet<JobRow> Jobs => Set<JobRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -84,6 +86,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.MailboxPhase).HasConversion(new SnakeCaseEnumConverter<MailboxPhase>());
             e.HasData(new FetchStateRow { Id = FetchStateRow.SingletonId, UpdatedAt = DateTimeOffset.UnixEpoch });
         });
+
+        JobRow.Configure(modelBuilder);
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>
