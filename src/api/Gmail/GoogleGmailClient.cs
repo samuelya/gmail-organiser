@@ -6,8 +6,6 @@ using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Flows;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Gmail.v1;
-using Google.Apis.Gmail.v1.Data;
-using Google.Apis.Requests;
 using Google.Apis.Services;
 using Google.Apis.Util;
 using Microsoft.Extensions.Options;
@@ -72,7 +70,7 @@ public sealed class GoogleGmailClient(
             foreach (var chunk in ids.Distinct(StringComparer.Ordinal).Chunk(options.Value.BatchSize))
             {
                 all.AddRange(await retry.ExecuteBatchAsync<string, GmailMessageMetadata>(
-                    chunk, (pending, token) => SendMetadataBatchAsync(service, pending, token), ct));
+                    chunk, (pending, token) => GmailMetadataBatch.SendAsync(service, pending, quota, logger, token), ct));
             }
 
             return all;
@@ -81,64 +79,6 @@ public sealed class GoogleGmailClient(
         var byId = fetched.ToDictionary(m => m.Id, StringComparer.Ordinal);
         logger.LogDebug("Fetched metadata for {Fetched} of {Requested} Gmail messages", byId.Count, ids.Count);
         return [.. ids.Distinct(StringComparer.Ordinal).Where(byId.ContainsKey).Select(id => byId[id])];
-    }
-
-    /// <summary>One Gmail batch call: 404s are dropped (deleted meanwhile), rate-limited items are returned for retry.</summary>
-    private async Task<GmailBatchAttempt<string, GmailMessageMetadata>> SendMetadataBatchAsync(
-        GmailService service, IReadOnlyList<string> ids, CancellationToken ct)
-    {
-        var succeeded = new List<GmailMessageMetadata>(ids.Count);
-        var rateLimited = new List<string>();
-        GoogleApiException? failure = null;
-        var batch = new BatchRequest(service);
-        foreach (var id in ids)
-        {
-            await quota.AcquireAsync(GmailQuotaLimiter.MessageCallUnits, ct);
-            var request = service.Users.Messages.Get(Me, id);
-            request.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Metadata;
-            request.MetadataHeaders = new Repeatable<string>(GmailMetadataMapper.MetadataHeaders);
-            batch.Queue<Message>(request, (message, error, _, response) =>
-            {
-                if (error is null)
-                {
-                    succeeded.Add(GmailMetadataMapper.Map(message));
-                }
-                else if (response.StatusCode == HttpStatusCode.NotFound)
-                {
-                    logger.LogDebug("Gmail message {MessageId} no longer exists", id);
-                }
-                else if (GmailRetryPolicy.IsRateLimited(response.StatusCode, error))
-                {
-                    rateLimited.Add(id);
-                }
-                else
-                {
-                    failure ??= new GoogleApiException(service.Name, error.Message) { HttpStatusCode = response.StatusCode, Error = error };
-                }
-            });
-        }
-
-        try
-        {
-            await batch.ExecuteAsync(ct);
-        }
-        catch (GoogleApiException ex) when (GmailRetryPolicy.IsRateLimited(ex))
-        {
-            // The batch call itself was throttled: nothing in it was processed.
-            return new GmailBatchAttempt<string, GmailMessageMetadata>([], ids);
-        }
-
-        if (failure is not null)
-        {
-            throw failure;
-        }
-
-        if (rateLimited.Count > 0)
-        {
-            logger.LogDebug("Gmail rate-limited {Count} of {Total} batch items", rateLimited.Count, ids.Count);
-        }
-
-        return new GmailBatchAttempt<string, GmailMessageMetadata>(succeeded, rateLimited);
     }
 
     /// <summary>Runs <paramref name="call"/> with a fresh service; a revoked or expired grant flags reauth.</summary>

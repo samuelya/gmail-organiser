@@ -116,14 +116,14 @@ public sealed class FakeGmailClient : IGmailClient
         var fetched = await retry.ExecuteBatchAsync<string, GmailMessageMetadata>(unique, async (pending, _) =>
         {
             var succeeded = new List<GmailMessageMetadata>();
-            var rateLimited = new List<string>();
+            var retryItems = new List<string>();
             foreach (var id in pending)
             {
                 if (TakeFailure() is { } failure)
                 {
-                    if (GmailRetryPolicy.IsRateLimited(GmailRetryPolicy.CreateApiException(failure, ReasonFor(failure))))
+                    if (GmailRetryPolicy.IsRetryable(failure, GmailRetryPolicy.CreateApiException(failure, ReasonFor(failure)).Error))
                     {
-                        rateLimited.Add(id);
+                        retryItems.Add(id);
                         continue;
                     }
 
@@ -139,7 +139,7 @@ public sealed class FakeGmailClient : IGmailClient
                 }
             }
 
-            return new GmailBatchAttempt<string, GmailMessageMetadata>(succeeded, rateLimited);
+            return new GmailBatchAttempt<string, GmailMessageMetadata>(succeeded, retryItems);
         }, ct).ConfigureAwait(false);
 
         var byId = fetched.ToDictionary(m => m.Id, StringComparer.Ordinal);

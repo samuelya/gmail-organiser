@@ -230,7 +230,9 @@ public sealed class FakeGmailClientTests
     [Theory]
     [InlineData(HttpStatusCode.TooManyRequests)]
     [InlineData(HttpStatusCode.Forbidden)]
-    public async Task GetMessagesMetadataAsync_retries_only_the_rate_limited_items(HttpStatusCode status)
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task GetMessagesMetadataAsync_retries_rate_limited_and_transient_items(HttpStatusCode status)
     {
         var time = new FakeTimeProvider(Now);
         var client = Client(time, maxAttempts: 8);

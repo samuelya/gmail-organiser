@@ -5,13 +5,14 @@ using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Gmail;
 
-/// <summary>The outcome of one batch attempt: results so far, and the items Gmail rate-limited (to retry).</summary>
-public sealed record GmailBatchAttempt<TItem, TResult>(IReadOnlyList<TResult> Succeeded, IReadOnlyList<TItem> RateLimited);
+/// <summary>The outcome of one batch attempt: results so far, and the items to retry (rate-limited or a transient 5xx).</summary>
+public sealed record GmailBatchAttempt<TItem, TResult>(IReadOnlyList<TResult> Succeeded, IReadOnlyList<TItem> Retry);
 
 /// <summary>
 /// Exponential backoff for Gmail rate limits (HTTP 429, or 403 with reason <c>rateLimitExceeded</c> /
 /// <c>userRateLimitExceeded</c>): 1 s base doubling to a 64 s cap, with equal jitter (half fixed, half random) so a
-/// retry never fires immediately. Shared by every Gmail read; singleton.
+/// retry never fires immediately. Batch items that fail with a transient 5xx are retried the same way. Shared by every
+/// Gmail read; singleton.
 /// </summary>
 public sealed class GmailRetryPolicy(IOptions<GmailOptions> options, TimeProvider time, Random? random = null)
 {
@@ -30,6 +31,15 @@ public sealed class GmailRetryPolicy(IOptions<GmailOptions> options, TimeProvide
 
     public static bool IsRateLimited(Exception ex) =>
         ex is GoogleApiException api && IsRateLimited(api.HttpStatusCode, api.Error);
+
+    /// <summary>A server-side error Gmail asks clients to back off and retry (e.g. 500 <c>backendError</c>).</summary>
+    public static bool IsTransient(HttpStatusCode status) =>
+        status is HttpStatusCode.InternalServerError or HttpStatusCode.BadGateway
+            or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout;
+
+    /// <summary>Whether a failed batch item (or a whole batch call) should be re-sent after a backoff.</summary>
+    public static bool IsRetryable(HttpStatusCode status, RequestError? error) =>
+        IsRateLimited(status, error) || IsTransient(status);
 
     /// <summary>The wait after failed attempt <paramref name="attempt"/> (1-based): between half and all of min(cap, base·2^(n-1)).</summary>
     public TimeSpan GetDelay(int attempt)
@@ -62,8 +72,8 @@ public sealed class GmailRetryPolicy(IOptions<GmailOptions> options, TimeProvide
     }
 
     /// <summary>
-    /// Sends <paramref name="items"/> in one batch, then re-sends only the rate-limited items after a backoff,
-    /// so one 429 does not re-spend the quota of the whole batch.
+    /// Sends <paramref name="items"/> in one batch, then re-sends only the items to retry after a backoff,
+    /// so one 429 or 5xx does not re-spend the quota of the whole batch.
     /// </summary>
     public async Task<IReadOnlyList<TResult>> ExecuteBatchAsync<TItem, TResult>(
         IReadOnlyList<TItem> items,
@@ -76,7 +86,7 @@ public sealed class GmailRetryPolicy(IOptions<GmailOptions> options, TimeProvide
         {
             var outcome = await send(pending, ct).ConfigureAwait(false);
             results.AddRange(outcome.Succeeded);
-            pending = outcome.RateLimited;
+            pending = outcome.Retry;
             if (pending.Count == 0)
             {
                 break;
@@ -85,7 +95,7 @@ public sealed class GmailRetryPolicy(IOptions<GmailOptions> options, TimeProvide
             if (attempt >= MaxAttempts)
             {
                 throw new GmailRateLimitedException(
-                    $"Gmail rate-limited {pending.Count} batch item(s) {attempt} times; try again later.");
+                    $"Gmail rate-limited or failed {pending.Count} batch item(s) {attempt} times; try again later.");
             }
 
             await Task.Delay(GetDelay(attempt), time, ct).ConfigureAwait(false);

@@ -38,6 +38,9 @@ public static class GmailExtensions
             .Validate(
                 o => o.MaxRetryAttempts is >= 1 and <= GmailOptions.MaxRetryAttemptsLimit,
                 $"{GmailOptions.SectionName}:MaxRetryAttempts must be between 1 and {GmailOptions.MaxRetryAttemptsLimit}.")
+            .Validate(
+                o => o.BatchSize * GmailQuotaLimiter.MessageCallUnits <= o.QuotaUnitsPerSecond,
+                $"{GmailOptions.SectionName}:BatchSize times {GmailQuotaLimiter.MessageCallUnits} units must not exceed {GmailOptions.SectionName}:QuotaUnitsPerSecond (a batch is sent as one burst).")
             .ValidateOnStart();
 
         services.TryAddSingleton(TimeProvider.System);

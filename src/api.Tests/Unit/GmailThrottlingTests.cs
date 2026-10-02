@@ -1,5 +1,7 @@
 using System.Net;
 using GmailOrganiser.Gmail;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
@@ -161,6 +163,39 @@ public sealed class GmailThrottlingTests
 
         await DriveAsync(task.ContinueWith(_ => true, Ct, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default));
         (time.GetUtcNow() - Start).ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(1));
+    }
+
+    [Theory]
+    [InlineData(40, 200, true)]
+    [InlineData(50, 250, true)]
+    [InlineData(50, 200, false)]
+    [InlineData(100, 250, false)]
+    public void Options_require_a_full_batch_to_fit_the_per_second_budget(int batchSize, int budget, bool valid)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Gmail:BatchSize"] = batchSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["Gmail:QuotaUnitsPerSecond"] = budget.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        }).Build();
+        using var provider = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddGmail().BuildServiceProvider();
+
+        var read = () => provider.GetRequiredService<IOptions<GmailOptions>>().Value;
+
+        if (valid)
+        {
+            read().BatchSize.ShouldBe(batchSize);
+        }
+        else
+        {
+            Should.Throw<OptionsValidationException>(read).Message.ShouldContain("BatchSize");
+        }
+    }
+
+    [Fact]
+    public void Default_options_fit_a_full_batch_in_the_budget()
+    {
+        var defaults = new GmailOptions();
+        (defaults.BatchSize * GmailQuotaLimiter.MessageCallUnits).ShouldBeLessThanOrEqualTo(defaults.QuotaUnitsPerSecond);
     }
 
     [Fact]

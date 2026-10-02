@@ -17,8 +17,11 @@ public sealed class GmailOptions
     /// <summary>Run the whole app against the in-memory <see cref="Fake.FakeGmailClient"/>, without Google.</summary>
     public bool UseFake { get; set; }
 
-    /// <summary>Requests per Gmail batch call, 1 to <see cref="MaxBatchSize"/>.</summary>
-    public int BatchSize { get; set; } = 50;
+    /// <summary>
+    /// Requests per Gmail batch call, 1 to <see cref="MaxBatchSize"/>. A batch goes out as one burst, so its cost
+    /// (<c>BatchSize × 5</c> units) must fit in <see cref="QuotaUnitsPerSecond"/>.
+    /// </summary>
+    public int BatchSize { get; set; } = 40;
 
     /// <summary>The app's own budget, below Gmail's <see cref="GmailUnitsPerSecondLimit"/>.</summary>
     public int QuotaUnitsPerSecond { get; set; } = 200;
