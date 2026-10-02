@@ -33,31 +33,46 @@ public sealed class WordDocumentAttachmentConverter(TimeSpan? parseTimeout = nul
     {
         using var document = WordprocessingDocument.Open(content, false, OfficeDocument.ReadOnly);
         var main = document.MainDocumentPart ?? throw new InvalidDataException("The document has no main part.");
-        var headings = HeadingLevels(main.StyleDefinitionsPart?.Styles);
+        var styles = main.StyleDefinitionsPart?.Styles;
+        var headings = HeadingLevels(styles);
+        var listStyles = ReadListStyles(styles);
         var markdown = new StringBuilder();
-        foreach (var block in Blocks(main.Document?.Body))
+
+        // The body is streamed block by block, so a huge document costs only the blocks read before the limit.
+        using var reader = OpenXmlReader.Create(main);
+        while (reader.Read())
         {
-            ct.ThrowIfCancellationRequested();
-            var text = block switch
-            {
-                Paragraph paragraph => ParagraphMarkdown(paragraph, headings),
-                Table table => TableMarkdown(table),
-                _ => "",
-            };
-            if (text.Length == 0)
+            if (!reader.IsStartElement || (reader.ElementType != typeof(Paragraph) && reader.ElementType != typeof(Table) && reader.ElementType != typeof(SdtBlock)))
             {
                 continue;
             }
 
-            if (markdown.Length > 0)
+            ct.ThrowIfCancellationRequested();
+            foreach (var block in Blocks(reader.LoadCurrentElement()))
             {
-                markdown.Append("\n\n");
-            }
+                foreach (var text in block switch
+                {
+                    Paragraph paragraph => ParagraphMarkdown(paragraph, headings, listStyles),
+                    Table table => [TableMarkdown(table)],
+                    _ => [],
+                })
+                {
+                    if (text.Length == 0)
+                    {
+                        continue;
+                    }
 
-            markdown.Append(text);
-            if (markdown.Length > maxChars)
-            {
-                break;
+                    if (markdown.Length > 0)
+                    {
+                        markdown.Append("\n\n");
+                    }
+
+                    markdown.Append(text);
+                    if (markdown.Length > maxChars)
+                    {
+                        return markdown.ToString();
+                    }
+                }
             }
         }
 
@@ -65,47 +80,64 @@ public sealed class WordDocumentAttachmentConverter(TimeSpan? parseTimeout = nul
     }
 
     /// <summary>Paragraphs and tables in document order, looking inside block-level content controls.</summary>
-    private static IEnumerable<OpenXmlElement> Blocks(OpenXmlElement? parent)
+    private static IEnumerable<OpenXmlElement> Blocks(OpenXmlElement? element)
     {
-        foreach (var child in parent?.ChildElements ?? [])
+        if (element is SdtBlock sdt)
         {
-            if (child is SdtBlock sdt)
+            foreach (var child in sdt.SdtContentBlock?.ChildElements ?? [])
             {
-                foreach (var inner in Blocks(sdt.SdtContentBlock))
+                foreach (var inner in Blocks(child))
                 {
                     yield return inner;
                 }
             }
-            else if (child is Paragraph or Table)
-            {
-                yield return child;
-            }
+        }
+        else if (element is Paragraph or Table)
+        {
+            yield return element;
         }
     }
 
-    private static string ParagraphMarkdown(Paragraph paragraph, IReadOnlyDictionary<string, int> headings)
+    /// <summary>The paragraph as a heading, list item or plain text, then the paragraphs of its text boxes.</summary>
+    private static List<string> ParagraphMarkdown(Paragraph paragraph, IReadOnlyDictionary<string, int> headings, ListStyles listStyles)
     {
-        var text = ParagraphText(paragraph).Trim();
+        var boxes = new List<string>();
+        var text = ParagraphText(paragraph, boxes).Trim();
+        var properties = paragraph.ParagraphProperties;
+        var style = properties?.ParagraphStyleId?.Val?.Value;
         if (text.Length == 0)
         {
-            return "";
+            // Nothing in the host paragraph itself.
         }
-
-        var properties = paragraph.ParagraphProperties;
-        if (properties?.ParagraphStyleId?.Val?.Value is { } style && headings.TryGetValue(style, out var level))
+        else if (style is not null && headings.TryGetValue(style, out var level))
         {
-            return new string('#', level) + " " + text.ReplaceLineEndings(" ");
+            text = new string('#', level) + " " + text.ReplaceLineEndings(" ");
+        }
+        else if (properties?.NumberingProperties?.NumberingId?.Val?.Value is { } numId ? numId != 0 : listStyles.IsList(style))
+        {
+            // numId 0 switches numbering off; without a numId on the paragraph its style decides.
+            text = "- " + text;
         }
 
-        return properties?.NumberingProperties is not null ? "- " + text : text;
+        return [text, .. boxes];
     }
 
-    private static string ParagraphText(OpenXmlElement paragraph)
+    /// <summary>
+    /// The paragraph's own text. Of an <c>mc:AlternateContent</c> only the first choice (or else the fallback) is read,
+    /// so a text box isn't read twice; text-box paragraphs go to <paramref name="boxes"/>, not into the host's text.
+    /// </summary>
+    private static string ParagraphText(OpenXmlElement paragraph, List<string> boxes)
     {
         var text = new StringBuilder();
-        foreach (var element in paragraph.Descendants())
+        AppendText(paragraph, text, boxes);
+        return text.ToString();
+    }
+
+    private static void AppendText(OpenXmlElement element, StringBuilder text, List<string> boxes)
+    {
+        foreach (var child in element.ChildElements)
         {
-            switch (element)
+            switch (child)
             {
                 case Text t:
                     text.Append(t.Text);
@@ -116,21 +148,56 @@ public sealed class WordDocumentAttachmentConverter(TimeSpan? parseTimeout = nul
                 case Break or CarriageReturn:
                     text.Append('\n');
                     break;
+                case AlternateContent alternate:
+                    if ((alternate.GetFirstChild<AlternateContentChoice>() ?? (OpenXmlElement?)alternate.GetFirstChild<AlternateContentFallback>()) is { } branch)
+                    {
+                        AppendText(branch, text, boxes);
+                    }
+
+                    break;
+                case TextBoxContent box:
+                    foreach (var inner in OwnParagraphs(box))
+                    {
+                        var boxText = ParagraphText(inner, boxes).Trim();
+                        if (boxText.Length > 0)
+                        {
+                            boxes.Add(boxText);
+                        }
+                    }
+
+                    break;
+                default:
+                    AppendText(child, text, boxes);
+                    break;
             }
         }
-
-        return text.ToString();
     }
+
+    /// <summary>Paragraphs of <paramref name="root"/>, its tables included, but not those of a text box inside it.</summary>
+    private static IEnumerable<Paragraph> OwnParagraphs(OpenXmlElement root) =>
+        root.Descendants<Paragraph>().Where(p => !p.Ancestors().TakeWhile(a => a != root).OfType<TextBoxContent>().Any());
 
     private static string TableMarkdown(Table table)
     {
         var rows = table.Elements<TableRow>()
-            .Select(row => (IReadOnlyList<string>)[.. row.Elements<TableCell>().Select(cell =>
-                string.Join(" ", cell.Descendants<Paragraph>().Select(p => ParagraphText(p).Trim()).Where(p => p.Length > 0)))])
+            .Select(row => (IReadOnlyList<string>)[.. row.Elements<TableCell>().Select(CellText)])
             .ToList();
         var markdown = new StringBuilder();
         MarkdownTable.Append(markdown, rows);
         return markdown.ToString().TrimEnd();
+    }
+
+    private static string CellText(TableCell cell)
+    {
+        var parts = new List<string>();
+        foreach (var paragraph in OwnParagraphs(cell))
+        {
+            var boxes = new List<string>();
+            parts.Add(ParagraphText(paragraph, boxes).Trim());
+            parts.AddRange(boxes);
+        }
+
+        return string.Join(" ", parts.Where(p => p.Length > 0));
     }
 
     /// <summary>
@@ -157,5 +224,43 @@ public sealed class WordDocumentAttachmentConverter(TimeSpan? parseTimeout = nul
         }
 
         return levels;
+    }
+
+    /// <summary>
+    /// Paragraph styles that number their paragraphs (such as <c>List Bullet</c> and <c>List Number</c>): a
+    /// <c>numPr</c> with a non-zero <c>numId</c> on the style or the nearest style it is based on that has one.
+    /// </summary>
+    private static ListStyles ReadListStyles(Styles? styles)
+    {
+        var paragraphStyles = styles?.Elements<Style>().Where(s => s.StyleId?.Value is not null && (s.Type?.Value ?? StyleValues.Paragraph) == StyleValues.Paragraph).ToList() ?? [];
+        var byId = paragraphStyles.GroupBy(s => s.StyleId!.Value!, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var listed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var id in byId.Keys)
+        {
+            var current = byId[id];
+            for (var depth = 0; current is not null && depth < 20; depth++)
+            {
+                if (current.StyleParagraphProperties?.NumberingProperties?.NumberingId?.Val?.Value is { } numId)
+                {
+                    if (numId != 0)
+                    {
+                        listed.Add(id);
+                    }
+
+                    break;
+                }
+
+                current = current.BasedOn?.Val?.Value is { } parent ? byId.GetValueOrDefault(parent) : null;
+            }
+        }
+
+        var defaultStyle = paragraphStyles.FirstOrDefault(s => s.Default?.Value == true)?.StyleId?.Value;
+        return new ListStyles(listed, defaultStyle);
+    }
+
+    private sealed record ListStyles(IReadOnlySet<string> Listed, string? DefaultStyle)
+    {
+        /// <summary>Whether a paragraph with this style (none: the default paragraph style) is a list item.</summary>
+        public bool IsList(string? style) => (style ?? DefaultStyle) is { } id && Listed.Contains(id);
     }
 }

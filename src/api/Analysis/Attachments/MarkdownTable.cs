@@ -8,6 +8,9 @@ public static class MarkdownTable
     /// <summary>Columns beyond this are dropped, so a cell far to the right can't blow up every row.</summary>
     public const int MaxColumns = 50;
 
+    /// <summary>The note under a table whose rows were cut off at the row cap.</summary>
+    public static string RowCapNote(int maxRows) => $"_Only the first {maxRows} rows are shown._";
+
     /// <summary>
     /// Appends <paramref name="rows"/> as a table: <c>|</c> escaped, line breaks in a cell flattened to a space, empty
     /// cells left empty, short rows padded and trailing empty columns dropped. Nothing is appended for no rows.

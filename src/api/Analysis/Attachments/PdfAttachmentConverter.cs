@@ -8,17 +8,15 @@ namespace GmailOrganiser.Analysis.Attachments;
 /// <summary>
 /// The PDF text layer as markdown, one block per page separated by <c>---</c> (PdfPig, Apache-2.0). Reading stops once
 /// the text exceeds <see cref="ConversionLimits.MaxChars"/>; the caller truncates. A scanned PDF without a text layer
-/// yields empty markdown, not a failure, so OCR can pick it up later. The parse runs on the thread pool and gives up
-/// after <see cref="DefaultParseTimeout"/> with a <see cref="TimeoutException"/>, so a hostile PDF can't hold up a job.
+/// yields empty markdown, not a failure, so OCR can pick it up later. The parse runs under <see cref="ParseTimeout"/>,
+/// so a hostile PDF can't hold up a job.
 /// </summary>
-/// <param name="parseTimeout">Defaults to <see cref="DefaultParseTimeout"/>; a test seam.</param>
+/// <param name="parseTimeout">Defaults to 30 s; a test seam.</param>
 public sealed class PdfAttachmentConverter(TimeSpan? parseTimeout = null) : IAttachmentConverter
 {
     public const string PageBreak = "\n\n---\n\n";
 
-    public static readonly TimeSpan DefaultParseTimeout = TimeSpan.FromSeconds(30);
-
-    private readonly TimeSpan parseTimeout = parseTimeout ?? DefaultParseTimeout;
+    private readonly TimeSpan parseTimeout = parseTimeout ?? ParseTimeout.Default;
 
     public bool CanConvert(AttachmentType type) => type == AttachmentType.Pdf;
 
@@ -28,18 +26,8 @@ public sealed class PdfAttachmentConverter(TimeSpan? parseTimeout = null) : IAtt
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(limits);
 
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(parseTimeout);
-        try
-        {
-            // WaitAsync returns on timeout even while PdfPig is stuck inside one page; the parse sees the token between pages.
-            var markdown = await Task.Run(() => ReadText(content, limits.MaxChars, timeout.Token), timeout.Token).WaitAsync(timeout.Token);
-            return new ConvertedAttachment(attachment.Filename, AttachmentType.Pdf, markdown, false);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            throw new TimeoutException("Reading the PDF took longer than the parse timeout.");
-        }
+        var markdown = await ParseTimeout.RunAsync(t => ReadText(content, limits.MaxChars, t), parseTimeout, "PDF", ct);
+        return new ConvertedAttachment(attachment.Filename, AttachmentType.Pdf, markdown, false);
     }
 
     private static string ReadText(Stream content, int maxChars, CancellationToken ct)

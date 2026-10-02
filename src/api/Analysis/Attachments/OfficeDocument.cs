@@ -12,4 +12,23 @@ internal static class OfficeDocument
     public const long MaxCharactersInPart = 64L * 1024 * 1024;
 
     public static OpenSettings ReadOnly => new() { MaxCharactersInPart = MaxCharactersInPart, AutoSave = false };
+
+    /// <summary>
+    /// Whether <paramref name="content"/> is plain text rather than a zip package or a legacy binary file: no
+    /// <c>PK</c> signature and no NUL byte in the first 4 KB. The position is left unchanged; an unseekable stream
+    /// counts as not text.
+    /// </summary>
+    public static bool IsPlainText(Stream content)
+    {
+        if (!content.CanSeek)
+        {
+            return false;
+        }
+
+        var start = content.Position;
+        var head = new byte[4096];
+        var read = content.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+        content.Position = start;
+        return read > 0 && !(read >= 2 && head[0] == (byte)'P' && head[1] == (byte)'K') && Array.IndexOf(head, (byte)0, 0, read) < 0;
+    }
 }

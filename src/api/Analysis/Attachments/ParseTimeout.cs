@@ -2,7 +2,8 @@ namespace GmailOrganiser.Analysis.Attachments;
 
 /// <summary>
 /// Runs a synchronous parse on the thread pool and gives up after a timeout with a <see cref="TimeoutException"/>, so a
-/// hostile file can't hold up a job. The parse sees the token between rows, paragraphs or slides.
+/// hostile file can't hold up a job. WaitAsync returns on timeout even while the parser is stuck inside one item; the parse
+/// sees the token between pages, rows, paragraphs or slides.
 /// </summary>
 internal static class ParseTimeout
 {

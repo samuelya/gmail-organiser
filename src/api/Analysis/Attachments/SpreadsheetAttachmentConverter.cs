@@ -9,16 +9,25 @@ namespace GmailOrganiser.Analysis.Attachments;
 
 /// <summary>
 /// An xlsx workbook as markdown: per worksheet a <c>## name</c> heading and a table of its first <c>maxSheetRows</c>
-/// non-empty rows (Open XML SDK, MIT). Worksheets are read row by row, so a large sheet costs only the rows shown.
-/// Numbers are invariant, date-formatted cells become ISO dates. Legacy xls and ods aren't Open XML and throw, which the
-/// caller records as failed. Reading stops once the text exceeds <see cref="ConversionLimits.MaxChars"/>.
+/// non-empty rows (Open XML SDK, MIT). Worksheets and the shared-string table are streamed, so a large sheet costs
+/// only the rows shown and the strings up to the highest one they use. Numbers are invariant, date-formatted cells
+/// become ISO dates (1900 or 1904 date system), time-only cells <c>HH:mm</c>. Legacy xls and ods aren't Open XML and
+/// throw, which the caller records as failed. Plain-text content (a CSV sent as <c>application/vnd.ms-excel</c>) is
+/// read as CSV. Reading stops once the text exceeds <see cref="ConversionLimits.MaxChars"/>.
 /// </summary>
 /// <param name="parseTimeout">Defaults to 30 s; a test seam.</param>
 public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = AttachmentOptions.DefaultMaxSheetRows, TimeSpan? parseTimeout = null)
     : IAttachmentConverter
 {
-    /// <summary>Built-in number formats that show a date (ECMA-376 18.8.30).</summary>
-    private static readonly HashSet<uint> BuiltInDateFormats = [14, 15, 16, 17, 22];
+    /// <summary>
+    /// Built-in number formats that show a date or time (ECMA-376 18.8.30): 14–22 and 45–47, plus the East Asian
+    /// locale formats 27–36 and 50–58.
+    /// </summary>
+    private static readonly HashSet<uint> BuiltInDateFormats =
+        [.. Enumerable.Range(14, 9).Concat(Enumerable.Range(27, 10)).Concat(Enumerable.Range(45, 3)).Concat(Enumerable.Range(50, 9)).Select(i => (uint)i)];
+
+    /// <summary>Days from 1899-12-30 (the 1900 system's OLE epoch) to 1904-01-01 (the 1904 system's day 0).</summary>
+    private const double Date1904Offset = 1462;
 
     private readonly int maxSheetRows = maxSheetRows > 0 ? maxSheetRows : throw new ArgumentOutOfRangeException(nameof(maxSheetRows));
     private readonly TimeSpan parseTimeout = parseTimeout ?? ParseTimeout.Default;
@@ -31,6 +40,12 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(limits);
 
+        if (OfficeDocument.IsPlainText(content))
+        {
+            var csv = await ParseTimeout.RunAsync(t => CsvAttachmentConverter.Read(content, maxSheetRows, limits.MaxChars, t), parseTimeout, "CSV", ct);
+            return new ConvertedAttachment(attachment.Filename, AttachmentType.Csv, csv, false);
+        }
+
         var markdown = await ParseTimeout.RunAsync(t => Read(content, limits.MaxChars, t), parseTimeout, "spreadsheet", ct);
         return new ConvertedAttachment(attachment.Filename, AttachmentType.Spreadsheet, markdown, false);
     }
@@ -39,8 +54,9 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
     {
         using var document = SpreadsheetDocument.Open(content, false, OfficeDocument.ReadOnly);
         var workbook = document.WorkbookPart ?? throw new InvalidDataException("The workbook has no workbook part.");
-        var strings = ReadSharedStrings(workbook.SharedStringTablePart, ct);
-        var dateStyles = DateStyles(workbook.WorkbookStylesPart?.Stylesheet);
+        using var strings = new SharedStrings(workbook.SharedStringTablePart, maxChars, ct);
+        var cells = new CellReader(strings, DateStyles(workbook.WorkbookStylesPart?.Stylesheet),
+            workbook.Workbook?.WorkbookProperties?.Date1904?.Value == true ? Date1904Offset : 0);
         var markdown = new StringBuilder();
 
         foreach (var sheet in workbook.Workbook?.Sheets?.Elements<Sheet>() ?? [])
@@ -50,7 +66,7 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
                 continue;
             }
 
-            var rows = ReadRows(part, strings, dateStyles, maxChars - markdown.Length, ct, out var more);
+            var rows = ReadRows(part, cells, maxChars - markdown.Length, ct, out var more);
             if (rows.Count == 0)
             {
                 continue;
@@ -65,7 +81,7 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
             MarkdownTable.Append(markdown, rows);
             if (more)
             {
-                markdown.Append('\n').Append(CsvAttachmentConverter.RowCapNote(maxSheetRows)).Append('\n');
+                markdown.Append('\n').Append(MarkdownTable.RowCapNote(maxSheetRows)).Append('\n');
             }
 
             if (markdown.Length > maxChars)
@@ -78,7 +94,7 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
     }
 
     private List<IReadOnlyList<string>> ReadRows(
-        WorksheetPart part, IReadOnlyList<string> strings, IReadOnlySet<uint> dateStyles, int maxChars, CancellationToken ct, out bool more)
+        WorksheetPart part, CellReader cellReader, int maxChars, CancellationToken ct, out bool more)
     {
         var rows = new List<IReadOnlyList<string>>();
         var chars = 0;
@@ -110,7 +126,7 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
                 continue;
             }
 
-            var cells = ReadRow(row, strings, dateStyles);
+            var cells = ReadRow(row, cellReader);
             if (cells.Any(c => c.Length > 0))
             {
                 rows.Add(cells);
@@ -121,7 +137,7 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
         return rows;
     }
 
-    private static string[] ReadRow(Row row, IReadOnlyList<string> strings, IReadOnlySet<uint> dateStyles)
+    private static string[] ReadRow(Row row, CellReader cellReader)
     {
         var cells = new List<string>();
         foreach (var cell in row.Elements<Cell>())
@@ -137,55 +153,65 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
                 cells.Add("");
             }
 
-            cells[column] = CellText(cell, strings, dateStyles);
+            cells[column] = cellReader.Text(cell);
         }
 
         return [.. cells];
     }
 
-    private static string CellText(Cell cell, IReadOnlyList<string> strings, IReadOnlySet<uint> dateStyles)
+    /// <summary>Cell values as text, with the workbook's shared strings, date styles and date system.</summary>
+    private sealed class CellReader(SharedStrings strings, IReadOnlySet<uint> dateStyles, double dateOffset)
     {
-        var value = cell.CellValue?.Text ?? "";
-        var type = cell.DataType?.Value;
-        if (type == CellValues.SharedString)
+        public string Text(Cell cell)
         {
-            return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var i) && i < strings.Count ? strings[i] : "";
-        }
+            var value = cell.CellValue?.Text ?? "";
+            var type = cell.DataType?.Value;
+            if (type == CellValues.SharedString)
+            {
+                return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var i) ? strings.Get(i) : "";
+            }
 
-        if (type == CellValues.InlineString)
-        {
-            return cell.InlineString?.InnerText ?? "";
-        }
+            if (type == CellValues.InlineString)
+            {
+                return cell.InlineString?.InnerText ?? "";
+            }
 
-        if (type == CellValues.Boolean)
-        {
-            return value == "1" ? "TRUE" : "FALSE";
-        }
+            if (type == CellValues.Boolean)
+            {
+                return value == "1" ? "TRUE" : "FALSE";
+            }
 
-        if (type is null || type == CellValues.Number)
-        {
-            return FormatNumber(value, cell.StyleIndex?.Value is { } style && dateStyles.Contains(style));
-        }
+            if (type is null || type == CellValues.Number)
+            {
+                return FormatNumber(value, cell.StyleIndex?.Value is { } style && dateStyles.Contains(style));
+            }
 
-        return value;
-    }
-
-    private static string FormatNumber(string value, bool isDate)
-    {
-        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
-        {
             return value;
         }
 
-        if (isDate && number is >= 0 and < 2958466)
+        private string FormatNumber(string value, bool isDate)
         {
-            var date = DateTime.FromOADate(number);
-            return date.TimeOfDay == TimeSpan.Zero
-                ? date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
-                : date.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
-        }
+            if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number))
+            {
+                return value;
+            }
 
-        return number.ToString("G15", CultureInfo.InvariantCulture);
+            if (isDate && number >= 0 && number + dateOffset < 2958466)
+            {
+                // A serial below 1 is a time of day with no date (h:mm and the other time-only formats).
+                if (number < 1)
+                {
+                    return DateTime.FromOADate(number).ToString("HH:mm", CultureInfo.InvariantCulture);
+                }
+
+                var date = DateTime.FromOADate(number + dateOffset);
+                return date.TimeOfDay == TimeSpan.Zero
+                    ? date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+                    : date.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+            }
+
+            return number.ToString("G15", CultureInfo.InvariantCulture);
+        }
     }
 
     /// <summary>Zero-based column of a reference such as <c>C7</c>; null when there is none.</summary>
@@ -207,26 +233,32 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
         return letters == 0 ? null : index - 1;
     }
 
-    private static List<string> ReadSharedStrings(SharedStringTablePart? part, CancellationToken ct)
+    /// <summary>
+    /// The shared-string table, streamed forward only as far as the highest index asked for, so a large table costs
+    /// only the strings the shown rows use. Each string is cut one character past the character limit.
+    /// </summary>
+    private sealed class SharedStrings(SharedStringTablePart? part, int maxChars, CancellationToken ct) : IDisposable
     {
-        var strings = new List<string>();
-        if (part is null)
-        {
-            return strings;
-        }
+        private readonly OpenXmlReader? reader = part is null ? null : OpenXmlReader.Create(part);
+        private readonly List<string> strings = [];
 
-        using var reader = OpenXmlReader.Create(part);
-        while (reader.Read())
+        public string Get(int index)
         {
-            if (reader.ElementType == typeof(SharedStringItem) && reader.IsStartElement)
+            while (strings.Count <= index && reader is not null && reader.Read())
             {
-                ct.ThrowIfCancellationRequested();
-                var item = (SharedStringItem)reader.LoadCurrentElement()!;
-                strings.Add(string.Concat(item.Descendants<Text>().Where(t => t.Parent is not PhoneticRun).Select(t => t.Text)));
+                if (reader.ElementType == typeof(SharedStringItem) && reader.IsStartElement)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var item = (SharedStringItem)reader.LoadCurrentElement()!;
+                    var text = string.Concat(item.Descendants<Text>().Where(t => t.Parent is not PhoneticRun).Select(t => t.Text));
+                    strings.Add(text.Length > maxChars ? text[..(maxChars + 1)] : text);
+                }
             }
+
+            return index < strings.Count ? strings[index] : "";
         }
 
-        return strings;
+        public void Dispose() => reader?.Dispose();
     }
 
     /// <summary>Indexes of the cell formats that show a date: built-in date formats or custom codes with a day or year.</summary>
