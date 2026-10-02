@@ -4,7 +4,7 @@ using GmailOrganiser.Gmail.Fake;
 
 namespace GmailOrganiser.Tests.Fakes;
 
-/// <summary>Records every call to the wrapped <see cref="FakeGmailClient"/> and runs a hook after each metadata call.</summary>
+/// <summary>Records every call to the wrapped <see cref="FakeGmailClient"/> and runs a hook after each metadata or history call.</summary>
 public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 {
     public FakeGmailClient Inner => inner;
@@ -35,6 +35,31 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
         var page = await inner.ListMessageIdsAsync(query, ct);
         return MapPage is { } map ? map(call, page) : page;
+    }
+
+    public ConcurrentQueue<(string StartHistoryId, string? PageToken)> HistoryCalls { get; } = new();
+
+    /// <summary>Runs after the n-th (1-based) history call returned.</summary>
+    public Func<int, Task>? AfterHistory { get; set; }
+
+    /// <summary>Rejects the n-th (1-based) history call's page token when it returns true.</summary>
+    public Func<int, string?, bool>? RejectHistoryPageToken { get; set; }
+
+    public async Task<HistoryPage> ListHistoryAsync(string startHistoryId, string? pageToken, CancellationToken ct)
+    {
+        HistoryCalls.Enqueue((startHistoryId, pageToken));
+        if (RejectHistoryPageToken?.Invoke(HistoryCalls.Count, pageToken) == true)
+        {
+            throw new GmailInvalidPageTokenException("Invalid page token.");
+        }
+
+        var page = await inner.ListHistoryAsync(startHistoryId, pageToken, ct);
+        if (AfterHistory is { } hook)
+        {
+            await hook(HistoryCalls.Count);
+        }
+
+        return page;
     }
 
     public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct) => inner.GetLabelMessagesTotalAsync(labelId, ct);

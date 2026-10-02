@@ -1,11 +1,12 @@
 namespace GmailOrganiser.Fetch;
 
-/// <summary>Where the mailbox fetch is: inbox first, then the rest of All Mail.</summary>
+/// <summary>Where the mailbox fetch is: inbox first, then the rest of All Mail, then (resync only) the stored rows not listed.</summary>
 public enum MailboxPhase
 {
     NotStarted,
     Inbox,
     AllMail,
+    Reconcile,
     Completed,
 }
 

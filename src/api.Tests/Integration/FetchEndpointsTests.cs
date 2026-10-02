@@ -152,21 +152,79 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
-    public async Task Start_after_a_completed_fetch_is_a_409_problem()
+    public async Task Start_after_a_completed_fetch_queues_the_incremental_fetch()
     {
         await using var host = FakeGmailHost();
         await AddMailboxJobAsync(JobStatus.Completed, null, null);
-        await using (var db = postgres.CreateDbContext())
-        {
-            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.MailboxPhase, MailboxPhase.Completed), Ct);
-        }
+        await CompleteMailboxFetchAsync("1000");
 
         var response = await PostStartAsync(host);
 
-        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
-        (await response.Content.ReadFromJsonAsync<ProblemDetails>(Ct)).ShouldNotBeNull().Title.ShouldBe("Mailbox already fetched");
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        var started = (await response.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull();
         await using var check = postgres.CreateDbContext();
-        (await check.Jobs.CountAsync(Ct)).ShouldBe(1);
+        (await check.Jobs.SingleAsync(j => j.Id == started.JobId, Ct)).Type.ShouldBe(FetchJobTypes.Incremental);
+        (await check.Jobs.CountAsync(j => j.Type == MailboxFetchJob.JobType, Ct)).ShouldBe(1);
+        var status = (await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct)).ShouldNotBeNull();
+        var active = status.ActiveJob.ShouldNotBeNull();
+        active.Id.ShouldBe(started.JobId);
+        active.Type.ShouldBe(FetchJobTypes.Incremental);
+    }
+
+    [Fact]
+    public async Task Status_reports_a_failed_incremental_fetch_after_the_completed_mailbox_fetch()
+    {
+        await using var host = FakeGmailHost();
+        await AddMailboxJobAsync(JobStatus.Completed, null, null);
+        await CompleteMailboxFetchAsync("1000");
+        var failed = NewJob(FetchJobTypes.Incremental, JobStatus.Failed, null, "Gmail unavailable");
+        failed.CreatedAt = failed.CreatedAt.AddSeconds(1);
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Jobs.Add(failed);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var status = (await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct)).ShouldNotBeNull();
+
+        status.ActiveJob.ShouldBeNull();
+        var job = status.FailedJob.ShouldNotBeNull();
+        job.Id.ShouldBe(failed.Id);
+        job.Type.ShouldBe(FetchJobTypes.Incremental);
+    }
+
+    [Theory]
+    [InlineData(MailboxPhase.AllMail, "1000")]
+    [InlineData(MailboxPhase.Completed, null)]
+    public async Task Incremental_before_a_completed_mailbox_fetch_is_a_409_problem(MailboxPhase phase, string? lastHistoryId)
+    {
+        await using var host = FakeGmailHost();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.MailboxPhase, phase).SetProperty(r => r.LastHistoryId, lastHistoryId), Ct);
+        }
+
+        var response = await PostStartAsync(host, "/api/fetch/incremental");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadFromJsonAsync<ProblemDetails>(Ct)).ShouldNotBeNull().Detail.ShouldNotBeNull().ShouldContain("run the mailbox fetch first");
+        await using var check = postgres.CreateDbContext();
+        (await check.Jobs.CountAsync(Ct)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Incremental_twice_returns_202_then_200_with_the_same_job()
+    {
+        await using var host = FakeGmailHost();
+        await CompleteMailboxFetchAsync("1000");
+
+        var first = await PostStartAsync(host, "/api/fetch/incremental");
+        var second = await PostStartAsync(host, "/api/fetch/incremental");
+
+        first.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var id = (await first.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
+        (await second.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId.ShouldBe(id);
     }
 
     [Fact]
@@ -221,10 +279,17 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
     private static void RemoveRunner(IServiceCollection services) =>
         services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)));
 
-    private static Task<HttpResponseMessage> PostStartAsync(WebApplicationFactory<Program> host)
+    private async Task CompleteMailboxFetchAsync(string lastHistoryId)
+    {
+        await using var db = postgres.CreateDbContext();
+        await db.FetchState.ExecuteUpdateAsync(
+            s => s.SetProperty(r => r.MailboxPhase, MailboxPhase.Completed).SetProperty(r => r.LastHistoryId, lastHistoryId), Ct);
+    }
+
+    private static Task<HttpResponseMessage> PostStartAsync(WebApplicationFactory<Program> host, string path = "/api/fetch/mailbox/start")
     {
         var client = host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-        return client.PostAsync("/api/fetch/mailbox/start", null, Ct);
+        return client.PostAsync(path, null, Ct);
     }
 }

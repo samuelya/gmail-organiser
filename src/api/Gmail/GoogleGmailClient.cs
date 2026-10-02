@@ -121,6 +121,18 @@ public sealed class GoogleGmailClient(
         }, ct), ct);
     }
 
+    public Task<HistoryPage> ListHistoryAsync(string startHistoryId, string? pageToken, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(startHistoryId);
+        return RunAsync(service => retry.ExecuteAsync(async token =>
+        {
+            await quota.AcquireAsync(GmailQuotaLimiter.HistoryCallUnits, token);
+            var page = await GmailHistoryList.SendAsync(service, startHistoryId, pageToken, token);
+            logger.LogDebug("Listed {Count} Gmail history records", page.Records.Count);
+            return page;
+        }, ct), ct);
+    }
+
     /// <summary>Runs <paramref name="call"/> with a fresh service; a revoked or expired grant flags reauth.</summary>
     private async Task<T> RunAsync<T>(Func<GmailService, Task<T>> call, CancellationToken ct)
     {

@@ -1,6 +1,7 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Senders;
+using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Fetch;
 
@@ -16,12 +17,17 @@ public sealed record FetchChunkResult(int Stored, string? NextPageToken, long? R
 /// <param name="Restarted">Gmail rejected the caller's page token, so the chunk was listed from the first page.</param>
 public sealed record ListedChunk(IReadOnlyList<string> Ids, string? NextPageToken, long? ResultSizeEstimate, bool Restarted = false);
 
+/// <param name="Stored">Messages upserted.</param>
+/// <param name="Deleted">Stored messages newly marked <c>deleted_in_gmail</c>.</param>
+public sealed record RefreshResult(int Stored, int Deleted);
+
 /// <summary>
 /// Query → chunk → upsert → sender stats. Shared by the mailbox fetch, sender fetches (<c>from:</c> queries) and
 /// the incremental fetch (history-touched ids). No LLM involvement.
 /// </summary>
 public sealed partial class MessageFetchPipeline(
-    IGmailClient gmail, MessageUpserter upserter, SenderStatsUpdater senders, AppDbContext db, ILogger<MessageFetchPipeline> logger)
+    IGmailClient gmail, MessageUpserter upserter, SenderStatsUpdater senders, AppDbContext db, TimeProvider time,
+    ILogger<MessageFetchPipeline> logger)
 {
     private const int MaxChunkAttempts = 2;
 
@@ -89,22 +95,74 @@ public sealed partial class MessageFetchPipeline(
     }
 
     /// <summary>Fetches metadata for <paramref name="ids"/>, upserts it and refreshes the affected senders.</summary>
-    public async Task<int> UpsertByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    public async Task<int> UpsertByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
+        (await StoreAsync(ids, refresh: false, ct)).Stored;
+
+    /// <summary>
+    /// Re-reads <paramref name="ids"/> and upserts them, which overwrites their labels. Ids Gmail no longer knows are
+    /// marked deleted; ids not stored yet that are in Spam or Trash are skipped, as the mailbox fetch never lists them.
+    /// </summary>
+    public Task<RefreshResult> RefreshByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
+        StoreAsync(ids, refresh: true, ct);
+
+    private async Task<RefreshResult> StoreAsync(IReadOnlyList<string> ids, bool refresh, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(ids);
-        if (ids.Count == 0)
+        var unique = ids.Distinct(StringComparer.Ordinal).ToList();
+        if (unique.Count == 0)
         {
-            return 0;
+            return new RefreshResult(0, 0);
         }
 
-        var metadata = await gmail.GetMessagesMetadataAsync(ids, ct);
+        var metadata = await gmail.GetMessagesMetadataAsync(unique, ct);
+        List<string> deleted = [];
+        if (refresh)
+        {
+            var known = await db.Messages.Where(m => unique.Contains(m.Id)).Select(m => m.Id).ToHashSetAsync(StringComparer.Ordinal, ct);
+            deleted = await MarkDeletedCoreAsync([.. unique.Except(metadata.Select(m => m.Id), StringComparer.Ordinal)], ct);
+            metadata = [.. metadata.Where(m => known.Contains(m.Id) || !m.LabelIds.Any(IsSpamOrTrash))];
+        }
+
         var rows = await upserter.UpsertAsync(metadata, ct);
-        await senders.UpdateAsync(rows.Select(r => r.FromAddress), ct);
+        await senders.UpdateAsync(rows.Select(r => r.FromAddress).Concat(deleted), ct);
 
         // A long fetch shares one context; without this every chunk's SaveChanges re-scans all earlier chunks.
         db.ChangeTracker.Clear();
-        return rows.Count;
+        return new RefreshResult(rows.Count, deleted.Count);
     }
+
+    /// <summary>Sets <c>deleted_in_gmail</c> on the stored rows of <paramref name="ids"/> (rows are never removed).</summary>
+    /// <returns>How many rows were newly marked.</returns>
+    public async Task<int> MarkDeletedAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        var deleted = await MarkDeletedCoreAsync(ids, ct);
+        await senders.UpdateAsync(deleted, ct);
+        return deleted.Count;
+    }
+
+    /// <returns>The sender address of each row newly marked.</returns>
+    private async Task<List<string>> MarkDeletedCoreAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var marked = db.Messages.Where(m => ids.Contains(m.Id) && !m.DeletedInGmail);
+        var addresses = await marked.Select(m => m.FromAddress).ToListAsync(ct);
+        if (addresses.Count > 0)
+        {
+            var now = time.GetUtcNow();
+            await marked.ExecuteUpdateAsync(set => set.SetProperty(m => m.DeletedInGmail, true).SetProperty(m => m.UpdatedAt, now), ct);
+        }
+
+        return addresses;
+    }
+
+    private static bool IsSpamOrTrash(string labelId) =>
+        labelId.Equals(MailboxFetchJob.SpamLabelId, StringComparison.OrdinalIgnoreCase)
+        || labelId.Equals(MailboxFetchJob.TrashLabelId, StringComparison.OrdinalIgnoreCase);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail rejected the stored page token; listing again from the first page")]
     private static partial void LogPageTokenRejected(ILogger logger, Exception ex);
