@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
@@ -10,6 +11,7 @@ public static class AnalysisExtensions
     public static IServiceCollection AddAnalysis(this IServiceCollection services)
     {
         services.AddAnalysisGrouping();
+        services.AddAttachments();
         services.AddScoped<AnalysisRunService>();
         // The run reads Gmail bodies: refused while the local data belongs to another account.
         services.AddKeyedScoped<IJobRunGuard, FetchAccountJobGuard>(AnalysisRunJob.JobType);

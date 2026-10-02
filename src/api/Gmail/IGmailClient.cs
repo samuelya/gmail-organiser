@@ -48,6 +48,23 @@ public interface IGmailClient
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct);
 
+    /// <summary>
+    /// The body (as <see cref="GetMessageBodyAsync"/>) and the attachments of <paramref name="id"/> from one
+    /// <c>messages.get</c>: named parts, nested multiparts included, in MIME order. Null when Gmail no longer knows the
+    /// message. Never store or log the body or inline attachment bytes.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<GmailMessageContent?> GetMessageContentAsync(string id, CancellationToken ct);
+
+    /// <summary>
+    /// The decoded bytes of one attachment (<c>messages.attachments.get</c>); null when Gmail no longer knows the message
+    /// or attachment. Never store or log the result.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<byte[]?> GetAttachmentContentAsync(string messageId, string attachmentId, CancellationToken ct);
+
     /// <summary>Every system and user label of the mailbox.</summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -127,6 +144,15 @@ public static class GmailLimits
         }
     }
 }
+
+/// <summary>An attachment part of a message; the filename can be personal, so log it at Debug only.</summary>
+/// <param name="AttachmentId">For <see cref="IGmailClient.GetAttachmentContentAsync"/>; null when Gmail sent the bytes inline.</param>
+/// <param name="Size">The decoded size in bytes, as Gmail reports it on the part; null when unknown.</param>
+/// <param name="InlineContent">The decoded bytes Gmail sent inline; null with an attachment id, or when they didn't decode.</param>
+public sealed record GmailAttachment(string? AttachmentId, string Filename, string MimeType, int? Size, byte[]? InlineContent = null);
+
+/// <summary>A message's body and attachment list, read in one call.</summary>
+public sealed record GmailMessageContent(GmailMessageBody Body, IReadOnlyList<GmailAttachment> Attachments);
 
 /// <summary>A message's raw text parts; html-to-text conversion happens later.</summary>
 public sealed record GmailMessageBody(string? Text, string? Html);

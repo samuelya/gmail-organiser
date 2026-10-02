@@ -77,6 +77,22 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return await inner.GetMessageBodyAsync(id, ct);
     }
 
+    public ConcurrentQueue<string> ContentCalls { get; } = new();
+
+    public Task<GmailMessageContent?> GetMessageContentAsync(string id, CancellationToken ct)
+    {
+        ContentCalls.Enqueue(id);
+        return inner.GetMessageContentAsync(id, ct);
+    }
+
+    public ConcurrentQueue<string> AttachmentContentCalls { get; } = new();
+
+    public Task<byte[]?> GetAttachmentContentAsync(string messageId, string attachmentId, CancellationToken ct)
+    {
+        AttachmentContentCalls.Enqueue(attachmentId);
+        return inner.GetAttachmentContentAsync(messageId, attachmentId, ct);
+    }
+
     /// <summary>Runs after the label list is read and before it is returned.</summary>
     public Func<Task>? AfterListLabels { get; set; }
 
