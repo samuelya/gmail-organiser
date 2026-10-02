@@ -77,7 +77,19 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return await inner.GetMessageBodyAsync(id, ct);
     }
 
-    public Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(CancellationToken ct) => inner.ListLabelsAsync(ct);
+    /// <summary>Runs after the label list is read and before it is returned.</summary>
+    public Func<Task>? AfterListLabels { get; set; }
+
+    public async Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(CancellationToken ct)
+    {
+        var labels = await inner.ListLabelsAsync(ct);
+        if (AfterListLabels is { } after)
+        {
+            await after();
+        }
+
+        return labels;
+    }
 
     public Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct) => inner.CreateLabelAsync(name, ct);
 

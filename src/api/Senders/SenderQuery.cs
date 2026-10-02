@@ -79,16 +79,7 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
 
     public async Task<PagedDto<SenderDto>> ExecuteAsync(AppDbContext db, CancellationToken ct)
     {
-        var senders = db.Senders.AsNoTracking();
-        if (Search is not null)
-        {
-            var pattern = $"%{EscapeLike(Search)}%";
-            senders = senders.Where(s =>
-                EF.Functions.ILike(s.Address, pattern, LikeEscape.ToString())
-                || EF.Functions.ILike(s.Domain, pattern, LikeEscape.ToString())
-                || (s.DisplayName != null && EF.Functions.ILike(s.DisplayName, pattern, LikeEscape.ToString())));
-        }
-
+        var senders = Filter(db.Senders.AsNoTracking(), Search);
         var total = await senders.LongCountAsync(ct);
         var rows = await Order(senders).Skip((Page - 1) * PageSize).Take(PageSize).ToListAsync(ct);
         var fetchJobs = rows.Count == 0 ? [] : await ActiveSenderFetchJobsAsync(db, ct);
@@ -98,6 +89,21 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
             fetchJobs.Find(j => j.Target.Equals(s.Address, StringComparison.OrdinalIgnoreCase)
                 || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job));
         return new PagedDto<SenderDto>(items, Page, PageSize, total);
+    }
+
+    /// <summary>Senders whose address, domain or display name contains <paramref name="search"/> (all when null).</summary>
+    public static IQueryable<SenderRow> Filter(IQueryable<SenderRow> senders, string? search)
+    {
+        if (search is null)
+        {
+            return senders;
+        }
+
+        var pattern = $"%{EscapeLike(search)}%";
+        return senders.Where(s =>
+            EF.Functions.ILike(s.Address, pattern, LikeEscape.ToString())
+            || EF.Functions.ILike(s.Domain, pattern, LikeEscape.ToString())
+            || (s.DisplayName != null && EF.Functions.ILike(s.DisplayName, pattern, LikeEscape.ToString())));
     }
 
     /// <summary>Escapes the LIKE wildcards so the search term matches literally.</summary>

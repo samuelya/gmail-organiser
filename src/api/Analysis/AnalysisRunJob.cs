@@ -199,7 +199,8 @@ public sealed partial class AnalysisRunJob(
     /// <summary>
     /// One transaction: the group's suggestion rows (replacing a pending or rejected suggestion of a re-analysed
     /// message), the members' status, the senders' analysed counts, the run counters and the job checkpoint. A member
-    /// approved or applied meanwhile keeps its suggestion and counts as skipped. Returns the pause/cancel signal.
+    /// approved or applied meanwhile (also while this transaction waits for its row locks) keeps its suggestion and
+    /// counts as skipped. Returns the pause/cancel signal.
     /// </summary>
     private async Task<JobSignal> StoreAsync(
         JobContext ctx, AnalysisRunRow run, MessageGroup group, GroupOutcome outcome, AnalysisRunCursor cursor, CancellationToken ct)
@@ -226,6 +227,25 @@ public sealed partial class AnalysisRunJob(
 
         return await ctx.CheckpointAsync(cursor, Progress(run, cursor), async c =>
         {
+            // A review may have decided a member since the check above: re-check under the row locks and skip it.
+            var candidates = rows.Select(r => r.MessageId).ToArray();
+            var lateDecided = (await db.Suggestions
+                    .FromSql($"SELECT * FROM suggestions WHERE message_id = ANY({candidates}) FOR UPDATE")
+                    .AsNoTracking()
+                    .ToListAsync(c))
+                .Where(s => s.Status is SuggestionStatus.Approved or SuggestionStatus.Applied)
+                .Select(s => s.MessageId)
+                .ToHashSet(StringComparer.Ordinal);
+            foreach (var late in rows.Where(r => lateDecided.Contains(r.MessageId)))
+            {
+                run.MessagesCovered--;
+                run.MessagesLlm -= late.Source == SuggestionSource.Llm ? 1 : 0;
+                run.MessagesDerived -= late.Source == SuggestionSource.Derived ? 1 : 0;
+                run.MessagesFromMemory -= late.Source == SuggestionSource.Memory ? 1 : 0;
+                run.SkippedMessages++;
+            }
+
+            rows.RemoveAll(r => lateDecided.Contains(r.MessageId));
             var replaced = rows.Select(r => r.MessageId).ToArray();
             await db.Suggestions
                 .Where(s => replaced.Contains(s.MessageId) && (s.Status == SuggestionStatus.Pending || s.Status == SuggestionStatus.Rejected))

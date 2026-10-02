@@ -61,7 +61,11 @@ public sealed class SuggestionRow
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? DecidedAt { get; set; }
 
-    /// <summary>Sets <see cref="Status"/> and mirrors it onto <paramref name="message"/>; the only writer of both.</summary>
+    /// <summary>
+    /// Sets <see cref="Status"/> and mirrors it onto <paramref name="message"/>; the only writer of both.
+    /// <see cref="DecidedAt"/> is the latest approve or reject (a flip shows when it happened); applying keeps it, and
+    /// the full history is in <c>decisions</c>.
+    /// </summary>
     public void SetStatus(SuggestionStatus status, MessageRow message, DateTimeOffset at)
     {
         if (message.Id != MessageId)
@@ -70,7 +74,12 @@ public sealed class SuggestionRow
         }
 
         Status = status;
-        DecidedAt = status == SuggestionStatus.Pending ? null : DecidedAt ?? at;
+        DecidedAt = status switch
+        {
+            SuggestionStatus.Pending => null,
+            SuggestionStatus.Applied => DecidedAt ?? at,
+            _ => at,
+        };
         message.AnalysisStatus = ToAnalysisStatus(status);
         message.UpdatedAt = at;
     }

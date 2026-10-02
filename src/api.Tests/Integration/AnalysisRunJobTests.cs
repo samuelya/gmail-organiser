@@ -232,6 +232,8 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
     public JobRunner Runner { get; private set; } = null!;
     public CountingGmailClient Gmail { get; private set; } = null!;
 
+    public IServiceProvider Services => host.Services;
+
     /// <summary>Runs on every published job change, before it is recorded.</summary>
     public Func<JobDto, Task>? OnPublish { get; set; }
 
@@ -240,6 +242,7 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         await using (var db = postgres.CreateDbContext())
         {
             await db.Suggestions.ExecuteDeleteAsync();
+            await db.Decisions.ExecuteDeleteAsync();
             await db.AnalysisRuns.ExecuteDeleteAsync();
             await db.Jobs.ExecuteDeleteAsync();
             await db.Messages.ExecuteDeleteAsync();
@@ -301,6 +304,13 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         var client = host.CreateClient();
         client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
         return client.PostAsJsonAsync(path, body, Ct);
+    }
+
+    public Task<HttpResponseMessage> PutAsync(string path, object body)
+    {
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+        return client.PutAsJsonAsync(path, body, Ct);
     }
 
     public Task<HttpResponseMessage> GetAsync(string path) => host.CreateClient().GetAsync(path, Ct);
