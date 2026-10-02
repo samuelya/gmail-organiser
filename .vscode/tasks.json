@@ -2,6 +2,20 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "start-db",
+      "detail": "Starts the dev Postgres on 127.0.0.1:5432 and waits until it is healthy.",
+      "type": "process",
+      "command": "docker",
+      "args": ["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", "up", "-d", "--wait", "db"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "api: prepare",
+      "dependsOn": ["start-db", "build-api"],
+      "problemMatcher": []
+    },
+    {
       "label": "build-api",
       "type": "process",
       "command": "dotnet",
@@ -10,7 +24,16 @@
       "problemMatcher": "$msCompile"
     },
     {
+      "label": "web-install",
+      "detail": "Runs npm ci in src/web when node_modules is missing or older than package-lock.json.",
+      "type": "shell",
+      "command": "[ -d node_modules ] && [ node_modules/.package-lock.json -nt package-lock.json ] || npm ci",
+      "options": { "cwd": "${workspaceFolder}/src/web" },
+      "problemMatcher": []
+    },
+    {
       "label": "npm: start",
+      "dependsOn": ["web-install"],
       "type": "npm",
       "script": "start",
       "path": "src/web",
