@@ -58,6 +58,20 @@ public static class SettingsEndpoints
             EmbeddingModel = request.EmbeddingModel is null ? s.EmbeddingModel : SettingsValidation.NormaliseModelName(request.EmbeddingModel),
             SetupWizardSeen = request.SetupWizardSeen ?? s.SetupWizardSeen,
             FetchChunkSize = request.FetchChunkSize ?? s.FetchChunkSize,
+            AnalysisDefaultCount = request.AnalysisDefaultCount ?? s.AnalysisDefaultCount,
+            AnalysisBodyMaxChars = request.AnalysisBodyMaxChars ?? s.AnalysisBodyMaxChars,
+            AnalysisGroupingMode = request.AnalysisGroupingMode ?? s.AnalysisGroupingMode,
+            AnalysisRepresentativesPerGroup = request.AnalysisRepresentativesPerGroup ?? s.AnalysisRepresentativesPerGroup,
+            AnalysisMinGroupSize = request.AnalysisMinGroupSize ?? s.AnalysisMinGroupSize,
+            AnalysisDerivedConfidencePenalty = request.AnalysisDerivedConfidencePenalty ?? s.AnalysisDerivedConfidencePenalty,
+            AnalysisClusterDistance = request.AnalysisClusterDistance ?? s.AnalysisClusterDistance,
+            AnalysisMemoryShortCircuit = request.AnalysisMemoryShortCircuit ?? s.AnalysisMemoryShortCircuit,
+            AnalysisMemoryMinApprovals = request.AnalysisMemoryMinApprovals ?? s.AnalysisMemoryMinApprovals,
+            BulkApproveThreshold = request.BulkApproveThreshold ?? s.BulkApproveThreshold,
+            AutoArchiveOnActionDone = request.AutoArchiveOnActionDone ?? s.AutoArchiveOnActionDone,
+            AnalysisPromptTemplate = request.AnalysisPromptTemplate is null
+                ? s.AnalysisPromptTemplate
+                : SettingsValidation.NormalisePromptTemplate(request.AnalysisPromptTemplate),
         }, ct);
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings)));
     }

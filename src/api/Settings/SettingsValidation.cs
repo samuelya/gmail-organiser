@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace GmailOrganiser.Settings;
 
 /// <summary>Input checks for the settings endpoints; each returns field errors for a validation ProblemDetails.</summary>
@@ -10,6 +12,23 @@ public static class SettingsValidation
     public const string GoogleClientIdSuffix = ".apps.googleusercontent.com";
     public const int MinFetchChunkSize = 10;
     public const int MaxFetchChunkSize = 5000;
+    public const int MinAnalysisDefaultCount = 1;
+    public const int MaxAnalysisDefaultCount = 1000;
+    public const int MinAnalysisBodyMaxChars = 500;
+    public const int MaxAnalysisBodyMaxChars = 50_000;
+    public const int MinAnalysisRepresentativesPerGroup = 1;
+    public const int MaxAnalysisRepresentativesPerGroup = 10;
+    public const int MinAnalysisMinGroupSize = 2;
+    public const int MaxAnalysisMinGroupSize = 50;
+    public const double MinAnalysisDerivedConfidencePenalty = 0;
+    public const double MaxAnalysisDerivedConfidencePenalty = 0.5;
+    public const double MinAnalysisClusterDistance = 0.02;
+    public const double MaxAnalysisClusterDistance = 0.6;
+    public const int MinAnalysisMemoryMinApprovals = 1;
+    public const int MaxAnalysisMemoryMinApprovals = 20;
+    public const double MinBulkApproveThreshold = 0.5;
+    public const double MaxBulkApproveThreshold = 1.0;
+    public const int MaxAnalysisPromptTemplateLength = 20_000;
 
     public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request)
     {
@@ -24,6 +43,29 @@ public static class SettingsValidation
         if (request.FetchChunkSize is < MinFetchChunkSize or > MaxFetchChunkSize)
         {
             errors["fetchChunkSize"] = [$"Must be between {MinFetchChunkSize} and {MaxFetchChunkSize}."];
+        }
+
+        CheckRange(errors, "analysisDefaultCount", request.AnalysisDefaultCount, MinAnalysisDefaultCount, MaxAnalysisDefaultCount);
+        CheckRange(errors, "analysisBodyMaxChars", request.AnalysisBodyMaxChars, MinAnalysisBodyMaxChars, MaxAnalysisBodyMaxChars);
+        CheckRange(errors, "analysisRepresentativesPerGroup", request.AnalysisRepresentativesPerGroup,
+            MinAnalysisRepresentativesPerGroup, MaxAnalysisRepresentativesPerGroup);
+        CheckRange(errors, "analysisMinGroupSize", request.AnalysisMinGroupSize, MinAnalysisMinGroupSize, MaxAnalysisMinGroupSize);
+        CheckRange(errors, "analysisDerivedConfidencePenalty", request.AnalysisDerivedConfidencePenalty,
+            MinAnalysisDerivedConfidencePenalty, MaxAnalysisDerivedConfidencePenalty);
+        CheckRange(errors, "analysisClusterDistance", request.AnalysisClusterDistance, MinAnalysisClusterDistance, MaxAnalysisClusterDistance);
+        CheckRange(errors, "analysisMemoryMinApprovals", request.AnalysisMemoryMinApprovals,
+            MinAnalysisMemoryMinApprovals, MaxAnalysisMemoryMinApprovals);
+        CheckRange(errors, "bulkApproveThreshold", request.BulkApproveThreshold, MinBulkApproveThreshold, MaxBulkApproveThreshold);
+        if (request.AnalysisGroupingMode is { } mode && !Enum.IsDefined(mode))
+        {
+            errors["analysisGroupingMode"] = ["Must be off, sender_subject or auto."];
+        }
+
+        if (request.AnalysisPromptTemplate is { } template
+            && (template.Trim().Length > MaxAnalysisPromptTemplateLength || template.Any(c => char.IsControl(c) && c is not '\n' and not '\r' and not '\t')))
+        {
+            errors["analysisPromptTemplate"] =
+                [$"Must be at most {MaxAnalysisPromptTemplateLength} characters, without control characters other than newline and tab."];
         }
 
         return errors;
@@ -57,6 +99,25 @@ public static class SettingsValidation
 
     /// <summary>Trims a model name; an empty name clears the setting.</summary>
     public static string? NormaliseModelName(string value) => value.Trim() is { Length: > 0 } name ? name : null;
+
+    /// <summary>Trims a prompt template; a blank template clears the override so the built-in one applies.</summary>
+    public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
+
+    private static void CheckRange(Dictionary<string, string[]> errors, string field, int? value, int min, int max)
+    {
+        if (value is { } v && (v < min || v > max))
+        {
+            errors[field] = [$"Must be between {min} and {max}."];
+        }
+    }
+
+    private static void CheckRange(Dictionary<string, string[]> errors, string field, double? value, double min, double max)
+    {
+        if (value is { } v && (!double.IsFinite(v) || v < min || v > max))
+        {
+            errors[field] = [string.Create(CultureInfo.InvariantCulture, $"Must be a number between {min} and {max}.")];
+        }
+    }
 
     private static void CheckModelName(Dictionary<string, string[]> errors, string field, string? value)
     {
