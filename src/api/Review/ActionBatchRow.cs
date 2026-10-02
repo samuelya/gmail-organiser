@@ -26,6 +26,9 @@ public sealed class ActionBatchRow
 
     /// <summary>Gmail label ids this batch created, recorded right after each create, so undo can tell them apart.</summary>
     public string[] CreatedLabelIds { get; set; } = [];
+
+    /// <summary>Failed re-sends of a pending <see cref="ActionKind.AutoArchive"/> batch.</summary>
+    public int SendFailures { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
     internal static void Configure(ModelBuilder modelBuilder)
@@ -38,6 +41,7 @@ public sealed class ActionBatchRow
             e.Property(r => r.Kind).IsRequired().HasConversion(new SnakeCaseEnumConverter<ActionKind>());
             e.Property(r => r.Description).IsRequired();
             e.Property(r => r.CreatedLabelIds).IsRequired().HasDefaultValueSql("'{}'");
+            e.Property(r => r.SendFailures).HasDefaultValue(0);
             e.HasIndex(r => r.CreatedAt);
         });
     }
