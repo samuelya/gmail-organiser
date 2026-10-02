@@ -34,10 +34,10 @@
         }
       </div>
 
-      @if (loadFailed() && !status()) {
+      @if (loadFailed()) {
         <p class="m-0 flex items-center gap-2" role="alert" data-testid="load-error">
           <mat-icon aria-hidden="true">error</mat-icon>
-          The fetch status could not be loaded.
+          The fetch status could not be {{ status() ? 'refreshed' : 'loaded' }}.
           <button mat-button type="button" (click)="load()">Retry</button>
         </p>
       } @else if (!status()) {
@@ -59,7 +59,7 @@
                 [attr.aria-label]="'Fetch progress, ' + jobLabel(job)"
               />
               <span class="muted text-sm" data-testid="fetch-progress-text">
-                {{ job.status }}
+                {{ statusText(job) }}
                 @if (job.progress; as p) {
                   · {{ p.done | number }}
                   @if (p.total !== null) {
@@ -123,7 +123,7 @@
                   mat-stroked-button
                   type="button"
                   (click)="pause(job)"
-                  [disabled]="busy()"
+                  [disabled]="busy() || pendingAction(job) !== null"
                   data-testid="pause"
                 >
                   <mat-icon aria-hidden="true">pause</mat-icon>
@@ -147,7 +147,7 @@
                   mat-button
                   type="button"
                   (click)="cancel(job)"
-                  [disabled]="busy()"
+                  [disabled]="busy() || pendingAction(job) === 'cancel'"
                   data-testid="cancel"
                 >
                   <mat-icon aria-hidden="true">stop</mat-icon>
@@ -169,14 +169,16 @@
           <div class="flex flex-wrap items-center gap-2">
             <span class="min-w-0 flex-1">
               <span>{{ jobLabel(row.job) }}</span>
-              <span class="muted text-sm"> · {{ row.job.status }}</span>
+              <span class="muted text-sm" data-testid="job-status">
+                · {{ statusText(row.job) }}</span
+              >
             </span>
             @if (row.controls.pause) {
               <button
                 mat-icon-button
                 type="button"
                 (click)="pause(row.job)"
-                [disabled]="busy()"
+                [disabled]="busy() || pendingAction(row.job) !== null"
                 [attr.aria-label]="'Pause ' + jobLabel(row.job)"
                 matTooltip="Pause"
                 data-testid="job-pause"
@@ -202,7 +204,7 @@
                 mat-icon-button
                 type="button"
                 (click)="cancel(row.job)"
-                [disabled]="busy()"
+                [disabled]="busy() || pendingAction(row.job) === 'cancel'"
                 [attr.aria-label]="'Cancel ' + jobLabel(row.job)"
                 matTooltip="Cancel"
                 data-testid="job-cancel"

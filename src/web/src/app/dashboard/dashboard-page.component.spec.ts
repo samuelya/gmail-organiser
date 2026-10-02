@@ -2,10 +2,10 @@ import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter } from '@angular/router';
-import { of } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { isActiveJob, JobDto, JobsConnectionState, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
-import { DashboardPage } from './dashboard-page.component';
+import { DashboardPage, STATUS_REFRESH_MS } from './dashboard-page.component';
 import { FetchStatusDto, fetchJobsKey, fetchView, humanise } from './fetch.models';
 import { FetchService } from './fetch.service';
 
@@ -260,6 +260,109 @@ describe('DashboardPage', () => {
     jobs.reconnects.set(1);
     await fixture.whenStable();
     expect(fetch.getStatus).toHaveBeenCalledTimes(4);
+  });
+
+  it('account mismatch: the Running jobs card offers no Resume for a fetch job', async () => {
+    const { fixture, el } = await render(
+      status({ accountMismatch: true, mailboxPhase: 'inbox', activeJob: job('paused') }),
+    );
+    jobs.held.set([
+      job('paused', { version: 2 }),
+      job('paused', { id: 'j2', queue: 'analysis', type: 'analysis_run' }),
+    ]);
+    await fixture.whenStable();
+    const rows = el.querySelectorAll('[data-testid="job-row"]');
+    expect(rows[0].querySelector('[data-testid="job-resume"]')).toBeNull();
+    expect(rows[1].querySelector('[data-testid="job-resume"]')).not.toBeNull();
+  });
+
+  it('refetches the counts at most every 5 s while a fetch job runs', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const { fixture, q } = await render(status({ activeJob: job('running') }));
+      jobs.held.set([job('running', { version: 2 })]);
+      await fixture.whenStable();
+      const calls = fetch.getStatus.mock.calls.length;
+
+      fetch.getStatus.mockReturnValue(of(status({ activeJob: job('running'), inboxFetched: 40 })));
+      for (let v = 3; v < 6; v++) {
+        jobs.held.set([
+          job('running', { version: v, progress: { done: v * 10, total: 100, message: null } }),
+        ]);
+        await fixture.whenStable();
+      }
+      expect(fetch.getStatus).toHaveBeenCalledTimes(calls);
+
+      vi.advanceTimersByTime(STATUS_REFRESH_MS);
+      await fixture.whenStable();
+      expect(fetch.getStatus).toHaveBeenCalledTimes(calls + 1);
+      expect(q('inbox-fetched')!.textContent).toContain('40');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('an older status response never overwrites a newer one', async () => {
+    const { fixture, q } = await render(status());
+    const first = new Subject<FetchStatusDto>();
+    const second = new Subject<FetchStatusDto>();
+    fetch.getStatus.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    fixture.componentInstance.load();
+    fixture.componentInstance.load();
+
+    second.next(status({ mailboxPhase: 'inbox', activeJob: job('running') }));
+    first.next(status());
+    await fixture.whenStable();
+    expect(q('start')).toBeNull();
+    expect(q('pause')).not.toBeNull();
+  });
+
+  it('a failed refetch shows the error and Retry next to the last status', async () => {
+    const { fixture, q } = await render(status({ inboxFetched: 3 }));
+    fetch.getStatus.mockReturnValue(throwError(() => new Error('offline')));
+    fixture.componentInstance.load();
+    await fixture.whenStable();
+    expect(q('load-error')!.textContent).toContain('could not be refreshed');
+    expect(q('inbox-fetched')!.textContent).toContain('3');
+
+    fetch.getStatus.mockReturnValue(of(status({ inboxFetched: 4 })));
+    q('load-error')!.querySelector('button')!.click();
+    await fixture.whenStable();
+    expect(q('load-error')).toBeNull();
+    expect(q('inbox-fetched')!.textContent).toContain('4');
+  });
+
+  it('shows Pausing… until the job status changes and blocks a repeat click', async () => {
+    const running = job('running');
+    const { fixture, el, q } = await render(status({ mailboxPhase: 'inbox', activeJob: running }));
+    jobs.held.set([running]);
+    await fixture.whenStable();
+
+    q('pause')!.click();
+    await fixture.whenStable();
+    expect(q('fetch-progress-text')!.textContent).toContain('Pausing…');
+    expect(q('job-status')!.textContent).toContain('Pausing…');
+    expect((q('pause') as HTMLButtonElement).disabled).toBe(true);
+    expect((q('job-pause') as HTMLButtonElement).disabled).toBe(true);
+    expect((q('cancel') as HTMLButtonElement).disabled).toBe(false);
+
+    jobs.held.set([job('paused', { version: 2 })]);
+    await fixture.whenStable();
+    expect(q('fetch-progress-text')!.textContent).toContain('paused');
+    expect(el.textContent).not.toContain('Pausing…');
+  });
+
+  it('shows Cancelling… after a confirmed cancel', async () => {
+    const running = job('running', { id: 'j1', queue: 'analysis', type: 'analysis_run' });
+    const { fixture, q } = await render(status());
+    jobs.held.set([running]);
+    await fixture.whenStable();
+    q('job-cancel')!.click();
+    await fixture.whenStable();
+    document.querySelector<HTMLElement>('[data-testid="confirm-ok"]')!.click();
+    await fixture.whenStable();
+    expect(q('job-status')!.textContent).toContain('Cancelling…');
+    expect((q('job-cancel') as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('shows a reconnecting chip while live updates are down', async () => {

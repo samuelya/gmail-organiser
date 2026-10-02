@@ -192,9 +192,8 @@ describe('SettingsPage', () => {
 
     it.each([
       ['', 'The fetch chunk size is required.'],
-      ['50', 'Enter a multiple of 100 from 100 to 5000.'],
-      ['5100', 'Enter a multiple of 100 from 100 to 5000.'],
-      ['250', 'Enter a multiple of 100 from 100 to 5000.'],
+      ['50', 'Enter a number from 100 to 5000.'],
+      ['5100', 'Enter a number from 100 to 5000.'],
     ])('rejects %j without saving', async (value, message) => {
       const { fixture, q } = await render();
       await setChunk(fixture, q('fetch-chunk-size') as HTMLInputElement, value);
@@ -207,13 +206,13 @@ describe('SettingsPage', () => {
 
     it('saves only the chunk size', async () => {
       const { fixture, q } = await render();
-      await setChunk(fixture, q('fetch-chunk-size') as HTMLInputElement, '1200');
+      await setChunk(fixture, q('fetch-chunk-size') as HTMLInputElement, '1250');
       q('save-fetch')!.click();
       await fixture.whenStable();
 
       const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
-      expect(save.request.body).toEqual({ fetchChunkSize: 1200 });
-      save.flush(settings({ fetchChunkSize: 1200 }));
+      expect(save.request.body).toEqual({ fetchChunkSize: 1250 });
+      save.flush(settings({ fetchChunkSize: 1250 }));
       await flushLoads(fixture);
       expect(snackOpen).toHaveBeenCalledWith('Fetch chunk size saved', undefined, {
         duration: 3000,

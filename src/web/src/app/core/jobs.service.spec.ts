@@ -3,7 +3,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { HubConnection } from '@microsoft/signalr';
 import { JobDto, JobStatus } from './jobs.models';
-import { JOBS_HUB_FACTORY, JobsService, reconnectDelay } from './jobs.service';
+import { JOBS_HUB_FACTORY, JobsService, MAX_FINISHED_JOBS, reconnectDelay } from './jobs.service';
 
 /** The parts of `HubConnection` the service uses, driven by the test. */
 class StubHub {
@@ -73,6 +73,19 @@ describe('JobsService', () => {
     TestBed.inject(JobsService);
     expect(hub.start).toHaveBeenCalledTimes(1);
     expect(service.connectionState()).toBe('connected');
+  });
+
+  it('keeps only the latest finished jobs', async () => {
+    await create();
+    hub.snapshot([job('a', 1)]);
+    for (let i = 0; i <= MAX_FINISHED_JOBS; i++) {
+      const at = `2026-01-01T00:${String(i).padStart(2, '0')}:00Z`;
+      hub.changed({ ...job(`f${i}`, 1, 'completed'), updatedAt: at });
+    }
+    expect(service.jobs().length).toBe(MAX_FINISHED_JOBS + 1);
+    expect(service.job('f0')).toBeUndefined();
+    expect(service.job(`f${MAX_FINISHED_JOBS}`)).toBeDefined();
+    expect(service.job('a')).toBeDefined();
   });
 
   it('seeds from the snapshot and applies changes', async () => {

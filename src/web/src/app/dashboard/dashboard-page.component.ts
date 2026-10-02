@@ -9,7 +9,7 @@ import {
   signal,
   untracked,
 } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatChipsModule } from '@angular/material/chips';
@@ -18,13 +18,23 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
-import { filter, Observable, Subscription, switchMap } from 'rxjs';
+import { auditTime, catchError, filter, map, Observable, of, Subject, switchMap } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
-import { JobDto, jobControls, progressPercent } from '../core/jobs.models';
+import { JobDto, JobStatus, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PageHeader } from '../layout/page-header';
-import { FetchStatusDto, fetchJobsKey, fetchView, humanise } from './fetch.models';
+import {
+  dashboardControls,
+  FetchStatusDto,
+  fetchJobsKey,
+  fetchProgressKey,
+  fetchView,
+  humanise,
+} from './fetch.models';
 import { FetchService } from './fetch.service';
+
+/** Counts refetch at most this often while a fetch job runs. */
+export const STATUS_REFRESH_MS = 5000;
 
 /** `/dashboard`: mailbox fetch progress and controls, and the running jobs. */
 @Component({
@@ -76,13 +86,16 @@ export class DashboardPage {
   private readonly fetch = inject(FetchService);
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
-  private loadSub: Subscription | null = null;
+  /** Every status request goes through here; `switchMap` drops an older response. */
+  private readonly refresh = new Subject<void>();
   readonly jobs = inject(JobsService);
 
   readonly status = signal<FetchStatusDto | null>(null);
   readonly loadFailed = signal(false);
   /** A start or job control request is in flight. */
   readonly busy = signal(false);
+  /** Pause or cancel requested per job id, with the status it had; shown until the status changes. */
+  private readonly pending = signal<ReadonlyMap<string, PendingAction>>(new Map());
 
   readonly view = computed(() => {
     const status = this.status();
@@ -91,40 +104,63 @@ export class DashboardPage {
     return fetchView(status, live);
   });
   readonly fetchPercent = computed(() => progressPercent(this.view()?.job?.progress));
-  readonly runningJobs = computed(() =>
-    this.jobs.activeJobs().map((job) => ({
+  readonly runningJobs = computed(() => {
+    const mismatch = this.status()?.accountMismatch ?? false;
+    return this.jobs.activeJobs().map((job) => ({
       job,
-      controls: jobControls(job.status),
+      controls: dashboardControls(job, mismatch),
       percent: progressPercent(job.progress),
-    })),
-  );
+    }));
+  });
   readonly reconnecting = computed(() => {
     const state = this.jobs.connectionState();
     return state === 'reconnecting' || state === 'disconnected';
   });
 
-  /** Status refetches on a fetch job status or step change, or a reconnect; not on progress ticks. */
+  /** Status refetches on a fetch job status or step change, or a reconnect. */
   private readonly refreshKey = computed(
     () => `${fetchJobsKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
   );
 
   constructor() {
-    this.destroyRef.onDestroy(() => this.loadSub?.unsubscribe());
+    this.refresh
+      .pipe(
+        switchMap(() =>
+          this.fetch.getStatus().pipe(
+            map((status) => ({ status })),
+            catchError(() => of({ status: null })),
+          ),
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe(({ status }) => {
+        this.busy.set(false);
+        if (status) this.status.set(status);
+        this.loadFailed.set(!status);
+      });
     effect(() => {
       this.refreshKey();
       untracked(() => this.load());
     });
+    // Counts move with every chunk: refetch at most every 5 s while a fetch job runs.
+    toObservable(computed(() => fetchProgressKey(this.jobs.jobs())))
+      .pipe(
+        filter((key) => key !== ''),
+        auditTime(STATUS_REFRESH_MS),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe(() => this.load());
+    // A pending pause or cancel ends when its job changes status (or goes).
+    effect(() => {
+      const pending = this.pending();
+      if (pending.size === 0) return;
+      const next = new Map([...pending].filter(([id, p]) => this.statusOf(id) === p.status));
+      if (next.size !== pending.size) this.pending.set(next);
+    });
   }
 
   load(): void {
-    this.loadSub?.unsubscribe();
-    this.loadSub = this.fetch.getStatus().subscribe({
-      next: (status) => {
-        this.status.set(status);
-        this.loadFailed.set(false);
-      },
-      error: () => this.loadFailed.set(true),
-    });
+    this.refresh.next();
   }
 
   start(): void {
@@ -132,7 +168,7 @@ export class DashboardPage {
   }
 
   pause(job: JobDto): void {
-    this.run(this.jobs.pause(job.id));
+    this.run(this.jobs.pause(job.id), () => this.markPending(job, 'pause'));
   }
 
   resume(job: JobDto): void {
@@ -142,36 +178,59 @@ export class DashboardPage {
   cancel(job: JobDto): void {
     openConfirm(this.dialog, {
       title: 'Cancel job?',
-      message:
-        "The job stops at its next checkpoint. A cancelled fetch can't be resumed; starting again begins a new fetch.",
+      message: "The job stops at its next checkpoint. A cancelled job can't be resumed.",
       confirm: 'Cancel job',
     })
       .pipe(
         filter((confirmed) => confirmed),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe(() => this.run(this.jobs.cancel(job.id)));
+      .subscribe(() => this.run(this.jobs.cancel(job.id), () => this.markPending(job, 'cancel')));
+  }
+
+  /** `'pause'` or `'cancel'` while that request waits for the job's next checkpoint. */
+  pendingAction(job: JobDto): PendingAction['action'] | null {
+    const pending = this.pending().get(job.id);
+    return pending && pending.status === job.status ? pending.action : null;
+  }
+
+  /** The job's status, or "Pausing…" / "Cancelling…" while a request waits. */
+  statusText(job: JobDto): string {
+    const action = this.pendingAction(job);
+    if (action === 'pause') return 'Pausing…';
+    if (action === 'cancel') return 'Cancelling…';
+    return job.status;
   }
 
   jobLabel(job: JobDto): string {
     return humanise(job.type);
   }
 
-  private run(request: Observable<unknown>): void {
+  private statusOf(id: string): JobStatus | undefined {
+    const shown = this.view()?.job;
+    return (shown?.id === id ? shown : this.jobs.job(id))?.status;
+  }
+
+  private markPending(job: JobDto, action: PendingAction['action']): void {
+    this.pending.update((current) => new Map(current).set(job.id, { action, status: job.status }));
+  }
+
+  /** Sends a request, then reloads the status; `busy` stays set until that status arrives. */
+  private run(request: Observable<unknown>, done?: () => void): void {
     if (this.busy()) return;
     this.busy.set(true);
-    request
-      .pipe(
-        switchMap(() => this.fetch.getStatus()),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe({
-        next: (status) => {
-          this.busy.set(false);
-          this.status.set(status);
-        },
-        // The error interceptor already shows the message.
-        error: () => this.busy.set(false),
-      });
+    request.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: () => {
+        done?.();
+        this.load();
+      },
+      // The error interceptor already shows the message.
+      error: () => this.busy.set(false),
+    });
   }
+}
+
+interface PendingAction {
+  action: 'pause' | 'cancel';
+  status: JobStatus;
 }

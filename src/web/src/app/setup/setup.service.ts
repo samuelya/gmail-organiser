@@ -1,7 +1,7 @@
 import { DOCUMENT } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable, InjectionToken } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, of, shareReplay, tap } from 'rxjs';
 
 /** `GoogleClientDto`: the secret itself is never returned. */
 export interface GoogleClientSettings {
@@ -82,17 +82,24 @@ export const NAVIGATE_TO = new InjectionToken<(url: string) => void>('NAVIGATE_T
 export class SetupService {
   private readonly http = inject(HttpClient);
   private readonly navigateTo = inject(NAVIGATE_TO);
+  /** One `GET /api/settings` shared by every section; replaced by each save's response, dropped on error. */
+  private settings$: Observable<AppSettings> | null = null;
 
   getSettings(): Observable<AppSettings> {
-    return this.http.get<AppSettings>('/api/settings');
+    this.settings$ ??= this.http
+      .get<AppSettings>('/api/settings')
+      .pipe(tap({ error: () => (this.settings$ = null) }), shareReplay(1));
+    return this.settings$;
   }
 
   saveSettings(request: UpdateSettingsRequest): Observable<AppSettings> {
-    return this.http.put<AppSettings>('/api/settings', request);
+    return this.http.put<AppSettings>('/api/settings', request).pipe(tap((s) => this.cache(s)));
   }
 
   saveGoogleClient(request: GoogleClientRequest): Observable<AppSettings> {
-    return this.http.put<AppSettings>('/api/settings/google-client', request);
+    return this.http
+      .put<AppSettings>('/api/settings/google-client', request)
+      .pipe(tap((s) => this.cache(s)));
   }
 
   getSetupStatus(): Observable<SetupStatus> {
@@ -105,6 +112,10 @@ export class SetupService {
 
   disconnectGoogle(): Observable<void> {
     return this.http.post<void>('/api/auth/google/disconnect', null);
+  }
+
+  private cache(settings: AppSettings): void {
+    this.settings$ = of(settings);
   }
 
   /** Leaves the app for Google's consent screen; the API redirects back to `/setup?gmail=…`. */

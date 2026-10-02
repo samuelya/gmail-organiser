@@ -11,6 +11,9 @@ export function reconnectDelay(previousRetryCount: number): number {
   return Math.min(30_000, 1000 * 2 ** Math.min(previousRetryCount, 5));
 }
 
+/** Finished jobs held for pages to see the outcome; older ones are dropped. */
+export const MAX_FINISHED_JOBS = 20;
+
 const retryForever: IRetryPolicy = {
   nextRetryDelayInMilliseconds: (context) => reconnectDelay(context.previousRetryCount),
 };
@@ -46,7 +49,7 @@ export class JobsService {
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private destroyed = false;
 
-  /** Every job held, active or recently finished. */
+  /** Every job held: active ones and the latest finished ones. */
   readonly jobs = computed(() => [...this.byId().values()]);
   /** Queued, running and paused jobs, oldest first. */
   readonly activeJobs = computed(() =>
@@ -134,7 +137,7 @@ export class JobsService {
         if (isActiveJob(job) && !snapshotIds.has(id) && !this.seen.has(id)) next.delete(id);
       }
       for (const job of jobs) merge(next, job);
-      return next;
+      return pruneFinished(next);
     });
     for (const id of snapshotIds) this.seen.add(id);
   }
@@ -144,7 +147,7 @@ export class JobsService {
     this.byId.update((current) => {
       const held = current.get(job.id);
       if (held && held.version >= job.version) return current;
-      return merge(new Map(current), job);
+      return pruneFinished(merge(new Map(current), job));
     });
   }
 }
@@ -152,5 +155,16 @@ export class JobsService {
 function merge(map: Map<string, JobDto>, job: JobDto): Map<string, JobDto> {
   const held = map.get(job.id);
   if (!held || job.version > held.version) map.set(job.id, job);
+  return map;
+}
+
+/** Keeps every active job and the `MAX_FINISHED_JOBS` most recently updated finished ones. */
+function pruneFinished(map: Map<string, JobDto>): Map<string, JobDto> {
+  const finished = [...map.values()].filter((j) => !isActiveJob(j));
+  if (finished.length <= MAX_FINISHED_JOBS) return map;
+  finished
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .slice(MAX_FINISHED_JOBS)
+    .forEach((j) => map.delete(j.id));
   return map;
 }

@@ -20,14 +20,8 @@ import { GoogleClientStep } from '../setup/steps/google-client-step.component';
 import { ModelsStep } from '../setup/steps/models-step.component';
 import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
 
-/** Same bounds and step as the API's `fetchChunkSize` validation. */
+/** Same bounds as the API's `fetchChunkSize` validation; `step` only sets the arrow-key increment. */
 export const FETCH_CHUNK = { min: 100, max: 5000, step: 100 } as const;
-
-/** A whole multiple of `step`. */
-export function stepValidator(step: number) {
-  return (control: { value: number | null }) =>
-    control.value === null || control.value % step === 0 ? null : { step: true };
-}
 
 /**
  * `/settings` (M1): the wizard's step components, one section each. Every step saves only its own
@@ -75,7 +69,6 @@ export class SettingsPage implements OnInit {
         Validators.required,
         Validators.min(FETCH_CHUNK.min),
         Validators.max(FETCH_CHUNK.max),
-        stepValidator(FETCH_CHUNK.step),
       ],
     }),
   });

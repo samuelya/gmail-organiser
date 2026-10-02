@@ -67,6 +67,15 @@ export interface FetchView {
 const NO_CONTROLS: JobControls = { pause: false, resume: false, cancel: false };
 
 /**
+ * A job's controls on the dashboard: an account mismatch blocks resuming a fetch-queue job, which
+ * would carry on reading the newly connected account into the other account's data.
+ */
+export function dashboardControls(job: JobDto, accountMismatch: boolean): JobControls {
+  const controls = jobControls(job.status);
+  return accountMismatch && job.queue === FETCH_QUEUE ? { ...controls, resume: false } : controls;
+}
+
+/**
  * Derives the card from the status and the hub's copy of its active job. The status says which job
  * is active (mailbox or incremental fetch); the hub copy wins when its `version` is newer.
  */
@@ -90,6 +99,15 @@ export function fetchView(status: FetchStatusDto, live: JobDto | undefined): Fet
       : NO_CONTROLS,
     error: active?.error ?? status.failedJob?.error ?? null,
   };
+}
+
+/** `id:done` of every running fetch job; changes on each progress tick. */
+export function fetchProgressKey(jobs: readonly JobDto[]): string {
+  return jobs
+    .filter((j) => j.queue === FETCH_QUEUE && j.status === 'running')
+    .map((j) => `${j.id}:${j.progress?.done ?? 0}`)
+    .sort()
+    .join(',');
 }
 
 /**
