@@ -145,7 +145,7 @@ describe('AnalysisSettingsSection', () => {
     expect(section.changes()).toEqual({});
   });
 
-  it('Reset to default asks the page, and the default prompt fills the textarea', async () => {
+  it('Reset to default clears the override and previews the built-in prompt', async () => {
     await render(analysis({ analysisPromptTemplate: 'Old {{emails}}' }));
     let resets = 0;
     section.resetPrompt.subscribe(() => resets++);
@@ -157,8 +157,26 @@ describe('AnalysisSettingsSection', () => {
       template: 'New {{emails}}',
     });
     await fixture.whenStable();
-    expect(q<HTMLTextAreaElement>('analysisPromptTemplate')!.value).toBe('New {{emails}}');
-    expect(section.changes()).toEqual({ analysisPromptTemplate: 'New {{emails}}' });
+    expect(q<HTMLTextAreaElement>('analysisPromptTemplate')!.value).toBe('');
+    expect(q('default-prompt-preview')!.textContent).toBe('New {{emails}}');
+    expect(section.changes()).toEqual({ analysisPromptTemplate: '' });
+  });
+
+  it('never saves a copy of the built-in prompt as an override', async () => {
+    await render(analysis({ analysisPromptTemplate: 'Old {{emails}}' }));
+    fixture.componentRef.setInput('defaultPrompt', {
+      version: 'test-v1',
+      template: 'New {{emails}}',
+    });
+    await type('analysisPromptTemplate', ' New {{emails}} ');
+    expect(section.changes()).toEqual({ analysisPromptTemplate: '' });
+  });
+
+  it('Reset to default on the built-in prompt changes nothing', async () => {
+    await render(analysis());
+    q('reset-prompt')!.click();
+    await fixture.whenStable();
+    expect(section.changes()).toEqual({});
   });
 
   it('warns and blocks saving a prompt without {{emails}}', async () => {

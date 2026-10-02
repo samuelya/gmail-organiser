@@ -237,7 +237,7 @@ describe('SettingsPage', () => {
   describe('analysis', () => {
     const PROMPT = 'Synthetic instructions.\n\n{{emails}}';
 
-    it('Reset to default loads the built-in prompt into the textarea', async () => {
+    it('Reset to default clears the field and previews the built-in prompt', async () => {
       const { fixture, q } = await render();
       q('reset-prompt')!.click();
       await fixture.whenStable();
@@ -246,7 +246,8 @@ describe('SettingsPage', () => {
         .expectOne({ method: 'GET', url: '/api/analysis/prompt/default' })
         .flush({ version: 'test-v1', template: PROMPT });
       await fixture.whenStable();
-      expect((q('analysisPromptTemplate') as HTMLTextAreaElement).value).toBe(PROMPT);
+      expect((q('analysisPromptTemplate') as HTMLTextAreaElement).value).toBe('');
+      expect(q('default-prompt-preview')!.textContent).toBe(PROMPT);
     });
 
     it('saves only the changed fields and shows server field errors inline', async () => {

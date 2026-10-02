@@ -71,6 +71,15 @@ interface NumberField {
     .prompt {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
+    .preview {
+      white-space: pre-wrap;
+      max-height: 16rem;
+      overflow: auto;
+      margin: 0;
+      padding: 0.5rem;
+      border-radius: 4px;
+      background: var(--mat-sys-surface-container);
+    }
     .warn {
       color: var(--mat-sys-error);
     }
@@ -88,7 +97,7 @@ export class AnalysisSettingsSection {
   readonly saving = input(false);
   /** ValidationProblem `errors` from the last save, keyed by API field name. */
   readonly serverErrors = input<Record<string, string[]> | null>(null);
-  /** Each new value replaces the prompt textarea (the page loads it on `resetPrompt`). */
+  /** The built-in prompt, shown read-only while the field is empty (the page loads it on `resetPrompt`). */
   readonly defaultPrompt = input<PromptTemplateDto | null>(null);
 
   readonly changed = output<AnalysisSettingsUpdate>();
@@ -175,14 +184,13 @@ export class AnalysisSettingsSection {
       const errors = this.serverErrors();
       untracked(() => this.showServerErrors(errors));
     });
-    effect(() => {
-      const prompt = this.defaultPrompt();
-      if (!prompt) return;
-      untracked(() => {
-        this.c.analysisPromptTemplate.setValue(prompt.template);
-        this.c.analysisPromptTemplate.markAsDirty();
-      });
-    });
+  }
+
+  /** Clears the override so the built-in prompt applies; the default text is never saved as custom. */
+  resetToDefault(): void {
+    this.c.analysisPromptTemplate.setValue('');
+    this.c.analysisPromptTemplate.markAsDirty();
+    this.resetPrompt.emit();
   }
 
   save(): void {
@@ -206,7 +214,9 @@ export class AnalysisSettingsSection {
       if (control.disabled) continue;
       const value: unknown = control.value;
       if (key === 'analysisPromptTemplate') {
-        const text = (value as string).trim();
+        let text = (value as string).trim();
+        // A copy of the built-in prompt is not an override: send empty so the API stores null.
+        if (text === this.defaultPrompt()?.template.trim()) text = '';
         if (text !== (saved.analysisPromptTemplate ?? '').trim()) changes[key] = text;
       } else if (value !== saved[key]) {
         changes[key] = value;
