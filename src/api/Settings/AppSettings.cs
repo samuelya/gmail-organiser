@@ -23,7 +23,7 @@ public sealed record AppSettings
     /// <summary>Messages per mailbox fetch chunk (one checkpoint each); see <see cref="SettingsValidation"/> for the range.</summary>
     public int FetchChunkSize { get; init; } = DefaultFetchChunkSize;
 
-    public const int DefaultFetchChunkSize = 1000;
+    public const int DefaultFetchChunkSize = 100;
 
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()

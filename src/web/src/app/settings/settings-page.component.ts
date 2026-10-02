@@ -28,7 +28,7 @@ import { ModelsStep } from '../setup/steps/models-step.component';
 import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
 
 /** Same bounds as the API's `fetchChunkSize` validation; `step` only sets the arrow-key increment. */
-export const FETCH_CHUNK = { min: 100, max: 5000, step: 100 } as const;
+export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
 
 /**
  * `/settings` (M1): the wizard's step components, one section each. Every step saves only its own

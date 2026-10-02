@@ -92,7 +92,7 @@ Will be published as a **public GitHub project**: no personal data, no hardcoded
 ### 6.1 Fetch (background, no LLM)
 Fetching and analysis are **separate processes**. Fetch only stores email metadata; it never calls the LLM.
 
-- **Mailbox fetch:** background job pulls metadata (headers, labels, size, snippet, has-attachment, `List-Unsubscribe`) in chunks of **1000** (configurable), **Inbox first, then All Mail**. Saves its page cursor after every chunk → pause/resume/restart-safe. Progress on the dashboard.
+- **Mailbox fetch:** background job pulls metadata (headers, labels, size, snippet, has-attachment, `List-Unsubscribe`) in chunks of **100** (configurable), **Inbox first, then All Mail**. Saves its page cursor after every chunk → pause/resume/restart-safe. Progress on the dashboard.
 - **Sender fetch:** user enters a sender address or domain (or picks one from the Senders list) → job fetches **all** emails from that sender via Gmail search (`from:`), regardless of where the mailbox fetch has reached.
 - **Incremental fetch:** after the first full pass, new/changed mail is picked up via Gmail `history.list` (also detects labels the user removed in Gmail).
 - Fetching updates a **Senders** table (address, domain, display name, total emails, analysed count, applied count, last seen) so the UI can show per-sender progress.
