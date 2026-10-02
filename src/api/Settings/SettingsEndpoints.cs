@@ -57,6 +57,7 @@ public static class SettingsEndpoints
             ChatModel = request.ChatModel is null ? s.ChatModel : SettingsValidation.NormaliseModelName(request.ChatModel),
             EmbeddingModel = request.EmbeddingModel is null ? s.EmbeddingModel : SettingsValidation.NormaliseModelName(request.EmbeddingModel),
             SetupWizardSeen = request.SetupWizardSeen ?? s.SetupWizardSeen,
+            FetchChunkSize = request.FetchChunkSize ?? s.FetchChunkSize,
         }, ct);
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings)));
     }

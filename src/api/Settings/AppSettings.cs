@@ -20,6 +20,11 @@ public sealed record AppSettings
 
     public bool SetupWizardSeen { get; init; }
 
+    /// <summary>Messages per mailbox fetch chunk (one checkpoint each); see <see cref="SettingsValidation"/> for the range.</summary>
+    public int FetchChunkSize { get; init; } = DefaultFetchChunkSize;
+
+    public const int DefaultFetchChunkSize = 1000;
+
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()
     {

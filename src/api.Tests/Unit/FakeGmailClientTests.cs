@@ -142,7 +142,7 @@ public sealed class FakeGmailClientTests
 
     [Fact]
     public async Task ListMessageIdsAsync_rejects_a_foreign_page_token() =>
-        await Should.ThrowAsync<ArgumentException>(() => Client().ListMessageIdsAsync(new MessageListQuery(null, null, "not-a-token", 10), Ct));
+        await Should.ThrowAsync<GmailInvalidPageTokenException>(() => Client().ListMessageIdsAsync(new MessageListQuery(null, null, "not-a-token", 10), Ct));
 
     [Theory]
     [InlineData("from:alice@example.com")]

@@ -40,7 +40,21 @@ public sealed class GoogleGmailClient(
     {
         ArgumentNullException.ThrowIfNull(query);
         query.EnsureValid();
-        return RunAsync(service => retry.ExecuteAsync(async token =>
+        return RunAsync(async service =>
+        {
+            try
+            {
+                return await ListAsync(service, query, ct);
+            }
+            catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.BadRequest && query.PageToken is not null)
+            {
+                throw new GmailInvalidPageTokenException("Gmail rejected the list page token.", ex);
+            }
+        }, ct);
+    }
+
+    private Task<MessageIdPage> ListAsync(GmailService service, MessageListQuery query, CancellationToken ct) =>
+        retry.ExecuteAsync(async token =>
         {
             await quota.AcquireAsync(GmailQuotaLimiter.MessageCallUnits, token);
             var request = service.Users.Messages.List(Me);
@@ -53,8 +67,7 @@ public sealed class GoogleGmailClient(
             var messages = response.Messages?.Select(m => new MessageRef(m.Id, m.ThreadId ?? "")).ToList() ?? [];
             logger.LogDebug("Listed {Count} Gmail message ids", messages.Count);
             return new MessageIdPage(messages, response.NextPageToken, (long?)response.ResultSizeEstimate);
-        }, ct), ct);
-    }
+        }, ct);
 
     public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {

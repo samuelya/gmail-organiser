@@ -1,5 +1,6 @@
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Auth;
 using GmailOrganiser.Health;
@@ -21,6 +22,7 @@ builder.Services.AddGmail();
 builder.Services.AddLlm();
 builder.Services.AddSetup();
 builder.Services.AddJobs();
+builder.Services.AddFetch();
 
 var app = builder.Build();
 

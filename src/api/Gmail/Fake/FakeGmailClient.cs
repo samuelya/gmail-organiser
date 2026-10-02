@@ -22,7 +22,7 @@ public sealed class FakeGmailClient : IGmailClient
     private readonly FakeTokenStore tokens;
     private readonly GmailRetryPolicy retry;
     private readonly List<FakeMessage> messages;
-    private readonly long historyId = FakeMailboxSeed.HistoryId;
+    private long historyId = FakeMailboxSeed.HistoryId;
     private HttpStatusCode failureStatus;
     private int failuresLeft;
 
@@ -65,6 +65,16 @@ public sealed class FakeGmailClient : IGmailClient
         {
             failureStatus = status;
             failuresLeft = count;
+        }
+    }
+
+    /// <summary>Simulates mailbox activity: the profile reports a higher history ID from now on.</summary>
+    public void AdvanceHistoryId(long by = 1)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(by);
+        lock (gate)
+        {
+            historyId += by;
         }
     }
 
@@ -243,6 +253,6 @@ public sealed class FakeGmailClient : IGmailClient
         {
         }
 
-        throw new ArgumentException("Invalid page token.", nameof(token));
+        throw new GmailInvalidPageTokenException("Invalid page token.");
     }
 }

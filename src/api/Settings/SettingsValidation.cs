@@ -8,6 +8,8 @@ public static class SettingsValidation
     public const int MaxClientIdLength = 256;
     public const int MaxClientSecretLength = 512;
     public const string GoogleClientIdSuffix = ".apps.googleusercontent.com";
+    public const int MinFetchChunkSize = 100;
+    public const int MaxFetchChunkSize = 5000;
 
     public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request)
     {
@@ -19,6 +21,11 @@ public static class SettingsValidation
 
         CheckModelName(errors, "chatModel", request.ChatModel);
         CheckModelName(errors, "embeddingModel", request.EmbeddingModel);
+        if (request.FetchChunkSize is < MinFetchChunkSize or > MaxFetchChunkSize)
+        {
+            errors["fetchChunkSize"] = [$"Must be between {MinFetchChunkSize} and {MaxFetchChunkSize}."];
+        }
+
         return errors;
     }
 
