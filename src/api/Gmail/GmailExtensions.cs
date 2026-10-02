@@ -1,6 +1,7 @@
 using GmailOrganiser.Common;
 using GmailOrganiser.Gmail.Auth;
 using GmailOrganiser.Gmail.Fake;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Gmail;
@@ -28,9 +29,27 @@ public static class GmailExtensions
                     ? useFake
                     : throw new InvalidOperationException($"{GmailOptions.FakeEnvironmentKey} must be 'true' or 'false'.");
             })
+            .Validate(
+                o => o.BatchSize is >= 1 and <= GmailOptions.MaxBatchSize,
+                $"{GmailOptions.SectionName}:BatchSize must be between 1 and {GmailOptions.MaxBatchSize}.")
+            .Validate(
+                o => o.QuotaUnitsPerSecond is >= GmailQuotaLimiter.MessageCallUnits and <= GmailOptions.GmailUnitsPerSecondLimit,
+                $"{GmailOptions.SectionName}:QuotaUnitsPerSecond must be between {GmailQuotaLimiter.MessageCallUnits} and {GmailOptions.GmailUnitsPerSecondLimit}.")
+            .Validate(
+                o => o.MaxRetryAttempts is >= 1 and <= GmailOptions.MaxRetryAttemptsLimit,
+                $"{GmailOptions.SectionName}:MaxRetryAttempts must be between 1 and {GmailOptions.MaxRetryAttemptsLimit}.")
+            .Validate(
+                o => o.BatchSize * GmailQuotaLimiter.MessageCallUnits <= o.QuotaUnitsPerSecond,
+                $"{GmailOptions.SectionName}:BatchSize times {GmailQuotaLimiter.MessageCallUnits} units must not exceed {GmailOptions.SectionName}:QuotaUnitsPerSecond (a batch is sent as one burst).")
             .ValidateOnStart();
 
-        services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), sp.GetRequiredService<TimeProvider>()));
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton(sp => new GmailRetryPolicy(sp.GetRequiredService<IOptions<GmailOptions>>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<GmailQuotaLimiter>();
+        services.AddSingleton(sp => new FakeGmailClient(
+            sp.GetRequiredService<FakeTokenStore>(),
+            FakeGmailClient.Seed(sp.GetRequiredService<TimeProvider>().GetUtcNow()),
+            sp.GetRequiredService<GmailRetryPolicy>()));
         services.AddSingleton<FakeTokenStore>();
         services.AddScoped<GoogleGmailClient>();
         services.AddScoped<TokenStore>();
