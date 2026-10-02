@@ -114,7 +114,7 @@ public sealed record FilterCandidateDto(string From, string? ListId);
 public sealed record ApplyRestResponse(int Created, int ProtectedAdjusted, ActionBatchDto? Batch, FilterCandidateDto FilterCandidate);
 
 /// <param name="LabelsAdded">Gmail label ids the action added; <paramref name="LabelNamesAdded"/> are their current names (the id when unknown).</param>
-/// <param name="Subject">From the stored message, for display; null for a label deletion or a purged message.</param>
+/// <param name="Subject">From the stored message, for display; null when the message is no longer stored.</param>
 public sealed record ActionLogRowDto(
     Guid Id,
     string MessageId,
@@ -128,4 +128,6 @@ public sealed record ActionLogRowDto(
 
 /// <param name="Rows">The batch's log in order, at most <see cref="HistoryQuery.MaxRows"/>.</param>
 /// <param name="Truncated">The batch has more rows than listed.</param>
-public sealed record ActionBatchDetailDto(ActionBatchDto Batch, IReadOnlyList<ActionLogRowDto> Rows, bool Truncated);
+/// <param name="CreatedLabels">Labels the batch created (name is the id when Gmail no longer has it); undo keeps them, the user removes them by hand.</param>
+public sealed record ActionBatchDetailDto(
+    ActionBatchDto Batch, IReadOnlyList<ActionLogRowDto> Rows, bool Truncated, IReadOnlyList<LabelDto> CreatedLabels);

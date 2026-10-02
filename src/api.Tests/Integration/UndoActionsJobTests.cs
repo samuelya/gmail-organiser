@@ -40,7 +40,7 @@ public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture post
     public ValueTask DisposeAsync() => h.DisposeAsync();
 
     [Fact]
-    public async Task Apply_then_undo_restores_every_label_set_and_removes_the_labels_it_created()
+    public async Task Apply_then_undo_restores_every_label_set_and_keeps_the_labels_it_created()
     {
         await SeedAsync(("a00", "Example/Nested/Water", false, false), ("b00", "Fresh/Topic", true, false), ("c00", "Fresh/Topic", false, true));
         await StarAsync("c01");
@@ -72,40 +72,16 @@ public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture post
         (await db.ActionBatches.SingleAsync(b => b.Id == undo.Id, Ct)).MessageCount.ShouldBe(4);
         (await JobAsync(undo)).Status.ShouldBe(JobStatus.Completed);
 
-        // Every label the apply created is unused again, so it is removed, child before parent.
-        var names = (await h.Gmail.Inner.ListLabelsAsync(Ct)).Select(l => l.Name).ToList();
-        names.ShouldNotContain("Fresh");
-        names.ShouldNotContain("Fresh/Topic");
-        names.ShouldNotContain("Example/Nested/Water");
-        names.ShouldContain("Example/Nested");
-        var deleted = await db.ActionLog.Where(l => l.BatchId == undo.Id && l.Note == UndoActionsJob.LabelDeletedNote)
-            .OrderBy(l => l.Id).Select(l => l.LabelsRemoved[0]).ToListAsync(Ct);
-        deleted.IndexOf("Fresh/Topic").ShouldBeLessThan(deleted.IndexOf("Fresh"));
-        h.Gmail.DeleteLabelCalls.Count.ShouldBe(deleted.Count);
+        // Undo never deletes labels: the ones the apply created stay, and History lists them.
+        var labels = (await h.Gmail.Inner.ListLabelsAsync(Ct)).ToDictionary(l => l.Name, l => l.Id);
+        string[] created = ["Example/Nested/Water", "Fresh", "Fresh/Topic", ActionLabel, DeleteLabel];
+        created.ShouldAllBe(name => labels.ContainsKey(name));
 
         var detail = await DetailAsync(apply.Id);
         detail.Batch.UndoneAt.ShouldNotBeNull();
         detail.Batch.CanUndo.ShouldBeFalse();
         detail.Rows.ShouldAllBe(r => r.UndoneByBatchId == undo.Id);
-    }
-
-    [Fact]
-    public async Task A_created_label_a_message_still_carries_is_kept()
-    {
-        await SeedAsync(("a00", "Fresh/Topic", false, false));
-        var apply = await ApplyAndRunAsync();
-        var topic = (await h.Gmail.Inner.ListLabelsAsync(Ct)).Single(l => l.Name == "Fresh/Topic").Id;
-        h.Gmail.Inner.SetLabels("x00", ["INBOX", topic]);
-
-        await UndoAsync(apply.Id);
-        await h.RunNextAsync();
-
-        Labels("a00").ShouldBe(["INBOX", "CATEGORY_UPDATES"], ignoreOrder: true);
-        var names = (await h.Gmail.Inner.ListLabelsAsync(Ct)).Select(l => l.Name).ToList();
-        names.ShouldContain("Fresh/Topic");
-        names.ShouldContain("Fresh");
-        h.Gmail.DeleteLabelCalls.ShouldBeEmpty();
-        (await DetailAsync(apply.Id)).Batch.UndoneAt.ShouldNotBeNull();
+        detail.CreatedLabels.Select(l => (l.Id, l.Name)).ShouldBe(created.Select(n => (labels[n], n)), ignoreOrder: true);
     }
 
     [Fact]

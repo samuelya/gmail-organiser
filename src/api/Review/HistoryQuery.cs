@@ -51,7 +51,8 @@ public sealed class HistoryQuery(AppDbContext db, IJobService jobs, LabelCatalog
                 r.Row.Note,
                 r.Row.UndoneByBatchId);
         }).ToList();
-        return new ActionBatchDetailDto(ActionBatchDto.From(batch), dtos, rows.Count > MaxRows);
+        var created = batch.CreatedLabelIds.Select(l => new LabelDto(l, names.GetValueOrDefault(l, l), "user")).ToList();
+        return new ActionBatchDetailDto(ActionBatchDto.From(batch), dtos, rows.Count > MaxRows, created);
     }
 
     /// <summary>

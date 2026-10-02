@@ -288,30 +288,6 @@ public sealed class FakeGmailClient : IGmailClient
         return await RetryAsync(() => labels.Create(name), ct).ConfigureAwait(false);
     }
 
-    /// <summary>Takes the user label off every message, then removes it; a system label is a 400, an unknown one a no-op.</summary>
-    public async Task DeleteLabelAsync(string labelId, CancellationToken ct)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(labelId);
-        await EnsureConnectedAsync(ct).ConfigureAwait(false);
-        await RetryAsync(() =>
-        {
-            if (FakeLabelStore.SystemLabelIds.Contains(labelId, StringComparer.Ordinal))
-            {
-                throw GmailRetryPolicy.CreateApiException(HttpStatusCode.BadRequest, "invalidArgument");
-            }
-
-            for (var i = 0; i < messages.Count; i++)
-            {
-                if (messages[i].LabelIds.Contains(labelId, StringComparer.Ordinal))
-                {
-                    ReplaceLabels(i, [.. messages[i].LabelIds.Where(l => l != labelId)], recordUnchanged: false);
-                }
-            }
-
-            return labels.Delete(labelId);
-        }, ct).ConfigureAwait(false);
-    }
-
     /// <summary>Updates each known message's labels and records the deltas; unknown ids are skipped, unknown labels are a 400.</summary>
     public async Task BatchModifyAsync(
         IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct)

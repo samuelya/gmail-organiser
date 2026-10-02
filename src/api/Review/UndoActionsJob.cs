@@ -44,7 +44,6 @@ public sealed partial class UndoActionsJob(
     public const string JobType = ReviewJobTypes.Undo;
     public const string Queue = JobQueues.Apply;
     public const string GoneNote = "message gone";
-    public const string LabelDeletedNote = "label deleted";
 
     public string Type => JobType;
 
@@ -98,11 +97,6 @@ public sealed partial class UndoActionsJob(
         }
 
         var complete = !await NotUndone(cursor.UndoOf).AnyAsync(ct);
-        if (complete)
-        {
-            await DeleteCreatedLabelsAsync(cursor, ct);
-        }
-
         await ctx.CompleteAsync(cursor, Progress(cursor, total), async t =>
         {
             if (complete)
@@ -121,9 +115,9 @@ public sealed partial class UndoActionsJob(
     /// <summary>Nothing to follow up: rows not yet undone stay undoable by a new undo.</summary>
     public Task CancelledAsync(string? cursor, CancellationToken ct) => Task.CompletedTask;
 
-    /// <summary>The batch's log rows not yet undone (label deletions have no message and are never undone).</summary>
+    /// <summary>The batch's log rows not yet undone.</summary>
     private IQueryable<ActionLogRow> NotUndone(Guid batchId) =>
-        db.ActionLog.Where(l => l.BatchId == batchId && l.UndoneByBatchId == null && l.MessageId != "");
+        db.ActionLog.Where(l => l.BatchId == batchId && l.UndoneByBatchId == null);
 
     /// <summary>
     /// Chunks of the rows still to undo, in log order. The inverse comes from the stored label ids and keeps only
@@ -343,62 +337,6 @@ public sealed partial class UndoActionsJob(
         await db.ActionLog.Where(l => l.BatchId == undoBatchId && messageIds.Contains(l.MessageId)).ExecuteDeleteAsync(ct);
         await db.ActionLog.Where(l => logIds.Contains(l.Id))
             .ExecuteUpdateAsync(s => s.SetProperty(l => l.UndoneByBatchId, (Guid?)null), ct);
-    }
-
-    /// <summary>
-    /// Deletes the labels the original batch created that nothing carries any more: no stored message, no log row
-    /// not undone and no message in Gmail, and no child label. Deepest first, so a parent can follow its child; the
-    /// log row is written before the delete, and a label already gone is skipped, so a resumed run repeats nothing.
-    /// </summary>
-    private async Task DeleteCreatedLabelsAsync(UndoCursor cursor, CancellationToken ct)
-    {
-        var created = await db.ActionBatches.Where(b => b.Id == cursor.UndoOf).Select(b => b.CreatedLabelIds).SingleAsync(ct);
-        if (created.Length == 0)
-        {
-            return;
-        }
-
-        var labels = (await catalog.RefreshAsync(ct)).ToList();
-        var candidates = labels.Where(l => l.Type == GmailLabelType.User && created.Contains(l.Id, StringComparer.Ordinal))
-            .OrderByDescending(l => l.Name.Count(c => c == '/'))
-            .ToList();
-        foreach (var label in candidates)
-        {
-            var id = label.Id;
-            var logged = db.ActionLog.Where(l => l.BatchId == cursor.BatchId && l.MessageId == "" && l.LabelIdsBefore.Contains(id));
-            if (labels.Exists(l => l.Name.StartsWith(label.Name + "/", StringComparison.OrdinalIgnoreCase))
-                || await db.Messages.AnyAsync(m => !m.DeletedInGmail && m.LabelIds.Contains(id), ct)
-                || await db.ActionLog.AnyAsync(
-                    l => l.UndoneByBatchId == null && l.LabelIdsAfter.Contains(id)
-                        && db.ActionBatches.Any(b => b.Id == l.BatchId && b.Kind != ActionKind.Undo), ct)
-                || await gmail.GetLabelMessagesTotalAsync(id, ct) > 0)
-            {
-                // In use again since an interrupted run logged its delete: the label stays.
-                await logged.ExecuteDeleteAsync(ct);
-                continue;
-            }
-
-            if (!await logged.AnyAsync(ct))
-            {
-                var now = time.GetUtcNow();
-                db.ActionLog.Add(new ActionLogRow
-                {
-                    Id = Guid.CreateVersion7(now),
-                    BatchId = cursor.BatchId,
-                    LabelsRemoved = [label.Name],
-                    LabelIdsBefore = [id],
-                    Note = LabelDeletedNote,
-                    CreatedAt = now,
-                });
-                await db.SaveChangesAsync(ct);
-                db.ChangeTracker.Clear();
-            }
-
-            await gmail.DeleteLabelAsync(id, ct);
-            labels.Remove(label);
-        }
-
-        catalog.Invalidate();
     }
 
     private static int Done(UndoCursor cursor) => cursor.MessagesDone + cursor.Gone;
