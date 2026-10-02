@@ -72,10 +72,17 @@ export function parseConnectResult(
 
       @if (status(); as s) {
         @if (s.connected) {
-          <p class="m-0 flex items-center gap-2" role="status" data-testid="connected-as">
-            <mat-icon aria-hidden="true">check_circle</mat-icon>
-            Connected as {{ s.accountEmail }}
-          </p>
+          @if (success()) {
+            <p class="m-0 flex items-center gap-2" role="status" data-testid="connect-success">
+              <mat-icon aria-hidden="true">check_circle</mat-icon>
+              Gmail connected as {{ s.accountEmail }}.
+            </p>
+          } @else {
+            <p class="m-0 flex items-center gap-2" role="status" data-testid="connected-as">
+              <mat-icon aria-hidden="true">check_circle</mat-icon>
+              Connected as {{ s.accountEmail }}
+            </p>
+          }
           <div class="flex flex-wrap gap-2">
             <button
               mat-stroked-button
@@ -157,6 +164,7 @@ export class ConnectGmailStep implements OnInit {
   readonly status = signal<GoogleAuthStatus | null>(null);
   readonly busy = signal(false);
   private readonly dismissedError = signal(false);
+  private readonly dismissedSuccess = signal(false);
   /** `googleClientConfigured` from the setup status: also true with the fake Gmail, which needs no client. */
   private readonly clientConfiguredByApi = signal<boolean | null>(null);
 
@@ -173,6 +181,14 @@ export class ConnectGmailStep implements OnInit {
       ? connectErrorMessage(result.reason)
       : null;
   });
+
+  /** The callback said connected and the status agrees; shown until the next disconnect. */
+  readonly success = computed(
+    () =>
+      this.result()?.kind === 'connected' &&
+      this.status()?.connected === true &&
+      !this.dismissedSuccess(),
+  );
 
   // Loads in ngOnInit (not the constructor) so the outputs have listeners when the first value arrives.
   ngOnInit(): void {
@@ -218,6 +234,7 @@ export class ConnectGmailStep implements OnInit {
         next: () => {
           this.busy.set(false);
           this.dismissedError.set(true);
+          this.dismissedSuccess.set(true);
           this.load();
         },
         error: () => this.busy.set(false),
