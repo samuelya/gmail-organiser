@@ -87,7 +87,10 @@ export class DashboardPage {
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
   /** Every status request goes through here; `switchMap` drops an older response. */
-  private readonly refresh = new Subject<void>();
+  private readonly refresh = new Subject<number>();
+  private requests = 0;
+  /** The refresh `run()` asked for; only a response to it (or a later one) clears `busy`. */
+  private runRequest: number | null = null;
   readonly jobs = inject(JobsService);
 
   readonly status = signal<FetchStatusDto | null>(null);
@@ -125,16 +128,19 @@ export class DashboardPage {
   constructor() {
     this.refresh
       .pipe(
-        switchMap(() =>
+        switchMap((id) =>
           this.fetch.getStatus().pipe(
-            map((status) => ({ status })),
-            catchError(() => of({ status: null })),
+            map((status) => ({ id, status })),
+            catchError(() => of({ id, status: null })),
           ),
         ),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe(({ status }) => {
-        this.busy.set(false);
+      .subscribe(({ id, status }) => {
+        if (this.runRequest !== null && id >= this.runRequest) {
+          this.runRequest = null;
+          this.busy.set(false);
+        }
         if (status) this.status.set(status);
         this.loadFailed.set(!status);
       });
@@ -160,7 +166,7 @@ export class DashboardPage {
   }
 
   load(): void {
-    this.refresh.next();
+    this.refresh.next(++this.requests);
   }
 
   start(): void {
@@ -222,7 +228,8 @@ export class DashboardPage {
     request.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => {
         done?.();
-        this.load();
+        this.runRequest = ++this.requests;
+        this.refresh.next(this.runRequest);
       },
       // The error interceptor already shows the message.
       error: () => this.busy.set(false),

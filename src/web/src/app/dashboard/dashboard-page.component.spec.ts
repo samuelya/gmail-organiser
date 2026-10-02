@@ -317,6 +317,30 @@ describe('DashboardPage', () => {
     expect(q('pause')).not.toBeNull();
   });
 
+  it('busy holds until the status that follows the request, not an earlier refresh', async () => {
+    const running = job('running');
+    const { fixture, q } = await render(status({ mailboxPhase: 'inbox', activeJob: running }));
+    const earlier = new Subject<FetchStatusDto>();
+    const after = new Subject<FetchStatusDto>();
+    fetch.getStatus.mockReturnValueOnce(earlier).mockReturnValueOnce(after);
+    const pause = new Subject<undefined>();
+    jobs.pause = vi.fn(() => pause);
+
+    fixture.componentInstance.load();
+    q('pause')!.click();
+    earlier.next(status({ mailboxPhase: 'inbox', activeJob: running }));
+    await fixture.whenStable();
+    expect((q('cancel') as HTMLButtonElement).disabled).toBe(true);
+
+    pause.next(undefined);
+    await fixture.whenStable();
+    expect((q('cancel') as HTMLButtonElement).disabled).toBe(true);
+
+    after.next(status({ mailboxPhase: 'inbox', activeJob: running }));
+    await fixture.whenStable();
+    expect((q('cancel') as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('a failed refetch shows the error and Retry next to the last status', async () => {
     const { fixture, q } = await render(status({ inboxFetched: 3 }));
     fetch.getStatus.mockReturnValue(throwError(() => new Error('offline')));

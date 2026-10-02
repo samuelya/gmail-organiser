@@ -56,6 +56,8 @@
             <mat-error>The fetch chunk size is required.</mat-error>
           } @else if (fetchChunkSize.hasError('min') || fetchChunkSize.hasError('max')) {
             <mat-error>Enter a number from {{ chunk.min }} to {{ chunk.max }}.</mat-error>
+          } @else if (fetchChunkSize.hasError('integer')) {
+            <mat-error>Enter a whole number.</mat-error>
           }
           <mat-hint
             >Messages fetched per chunk; a paused fetch resumes after the last full chunk.</mat-hint

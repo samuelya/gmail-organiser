@@ -7,7 +7,14 @@ import {
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import {
+  AbstractControl,
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  ValidationErrors,
+  Validators,
+} from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
@@ -69,6 +76,7 @@ export class SettingsPage implements OnInit {
         Validators.required,
         Validators.min(FETCH_CHUNK.min),
         Validators.max(FETCH_CHUNK.max),
+        wholeNumber,
       ],
     }),
   });
@@ -116,4 +124,10 @@ export class SettingsPage implements OnInit {
         error: () => this.fetchSaving.set(false),
       });
   }
+}
+
+/** `min`/`max` accept 150.5; the API's integer field would reject it with a bare 400. */
+function wholeNumber(control: AbstractControl<number | null>): ValidationErrors | null {
+  const value = control.value;
+  return value === null || Number.isInteger(value) ? null : { integer: true };
 }

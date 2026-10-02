@@ -194,6 +194,7 @@ describe('SettingsPage', () => {
       ['', 'The fetch chunk size is required.'],
       ['50', 'Enter a number from 100 to 5000.'],
       ['5100', 'Enter a number from 100 to 5000.'],
+      ['150.5', 'Enter a whole number.'],
     ])('rejects %j without saving', async (value, message) => {
       const { fixture, q } = await render();
       await setChunk(fixture, q('fetch-chunk-size') as HTMLInputElement, value);
