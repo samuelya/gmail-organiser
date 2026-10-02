@@ -67,6 +67,14 @@ export class ReviewService {
     );
   }
 
+  /** Saves the edited outcome and approves the suggestion; `400` with field errors on an invalid label. */
+  edit(id: string, outcome: ReviewOutcome): Observable<SuggestionDto> {
+    return this.http.put<SuggestionDto>(
+      `/api/review/suggestions/${encodeURIComponent(id)}`,
+      outcome,
+    );
+  }
+
   /** Approves the group's pending members whose outcome is the card's. */
   approveGroup(
     senderAddress: string,
