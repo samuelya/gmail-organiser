@@ -1,5 +1,7 @@
+using System.Data.Common;
 using System.Net;
 using System.Threading.Channels;
+using GmailOrganiser.Data;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Http.Connections;
@@ -8,6 +10,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 
@@ -136,10 +139,46 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
         await publisher.JobChangedAsync(cancelled, Ct);
         (await ReadAsync(changes)).Status.ShouldBe("cancelled");
 
-        // A request thread's late read of the row, and a same-version non-final copy.
+        // A request thread's late read of the row, and a same-version copy.
         await publisher.JobChangedAsync(running, Ct);
         await publisher.JobChangedAsync(cancelled with { Status = "running" }, Ct);
         await AssertNextIsSentinelAsync(publisher, cancelled);
+    }
+
+    [Fact]
+    public async Task A_cancel_committed_while_the_run_finishes_does_not_hide_the_final_state()
+    {
+        // #81: the finish takes its timestamp, then a Cancel with a later clock commits before the finish's UPDATE.
+        Guid jobId = default;
+        var cancelFirst = new BeforeJobFinishInterceptor(async () =>
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            (await WithJobsAsync(s => s.CancelAsync(jobId, Ct))).ShouldBe(JobActionResult.Ok);
+        });
+        host = CountingJobHandler.CreateHost(factory, state).WithWebHostBuilder(b => b.ConfigureTestServices(s => s
+            .AddSingleton<TimeProvider>(clock)
+            .ConfigureDbContext<AppDbContext>(o => o.AddInterceptors(cancelFirst))));
+        await ConnectAsync(ApiFactory.AllowedOrigin);
+        await ReadAsync(snapshots);
+
+        // No handler is registered for this type, so the run goes straight to FinishAsync(failed).
+        jobId = (await WithJobsAsync(s => s.EnqueueAsync("test-unhandled", JobQueues.Fetch, null, Ct))).Id;
+        var runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
+        (await runner.ClaimAsync(Ct)).ShouldBe([jobId]);
+        await runner.RunAsync(jobId, Ct);
+
+        cancelFirst.Fired.ShouldBeTrue();
+        var received = new List<JobDto>();
+        do
+        {
+            received.Add(await ReadAsync(changes));
+        }
+        while (received[^1].Status != "failed");
+
+        received.Select(e => e.Status).ShouldBe(["queued", "running", "running", "failed"]);
+        received.Select(e => e.Version).ShouldBeInOrder(SortDirection.Ascending);
+        received[^1].UpdatedAt.ShouldBeLessThan(received[^2].UpdatedAt);
+        (await WithJobsAsync(s => s.GetAsync(jobId, Ct))).ShouldNotBeNull().ShouldBe(received[^1]);
     }
 
     [Fact]
@@ -250,12 +289,33 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
     private static JobDto Job(string status, long done)
     {
         var now = DateTimeOffset.UtcNow;
-        return new JobDto(Guid.NewGuid(), "test-synthetic", JobQueues.Fetch, status, Progress(done), null, now, now, now, null);
+        return new JobDto(Guid.NewGuid(), "test-synthetic", JobQueues.Fetch, status, Progress(done), null, now, now, now, null, 1);
     }
 
-    /// <summary>The next version of <paramref name="job"/>: every job write moves <c>UpdatedAt</c> forward.</summary>
+    /// <summary>The next version of <paramref name="job"/>: every job write increments <c>Version</c>.</summary>
     private static JobDto Next(JobDto job, string status, long done) =>
-        job with { Status = status, Progress = Progress(done), UpdatedAt = job.UpdatedAt.AddMilliseconds(1) };
+        job with { Status = status, Progress = Progress(done), Version = job.Version + 1 };
+
+    /// <summary>Runs <paramref name="before"/> once, just before the runner's finish <c>UPDATE</c> (the one that sets <c>error</c>).</summary>
+    private sealed class BeforeJobFinishInterceptor(Func<Task> before) : DbCommandInterceptor
+    {
+        private int fired;
+
+        public bool Fired => fired == 1;
+
+        public override async ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("UPDATE jobs", StringComparison.Ordinal)
+                && command.CommandText.Contains("error =", StringComparison.Ordinal)
+                && Interlocked.CompareExchange(ref fired, 1, 0) == 0)
+            {
+                await before();
+            }
+
+            return result;
+        }
+    }
 
     /// <summary>A hub whose broadcasts block until <see cref="Release"/>, like a client that stopped reading.</summary>
     private sealed class StalledHubContext : IHubContext<JobsHub>, IHubClients, IClientProxy

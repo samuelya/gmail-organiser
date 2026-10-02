@@ -1,6 +1,7 @@
 using System.Text.Json;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
 
 namespace GmailOrganiser.Jobs;
 
@@ -37,6 +38,13 @@ public sealed class JobRow
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }
 
+    /// <summary>
+    /// Per-job version: every write sets <c>version = version + 1</c> in its own <c>UPDATE</c>. The row lock
+    /// orders those statements, so a higher version is always the later state (unlike <see cref="UpdatedAt"/>,
+    /// which is taken from the app clock before the write).
+    /// </summary>
+    public long Version { get; set; }
+
     public static readonly JobStatus[] Active = [JobStatus.Queued, JobStatus.Running, JobStatus.Paused];
     public static readonly JobStatus[] Finished = [JobStatus.Completed, JobStatus.Failed, JobStatus.Cancelled];
 
@@ -48,7 +56,7 @@ public sealed class JobRow
     public JobDto ToDto() => new(
         Id, Type, Queue, FormatStatus(Status),
         Progress is null ? null : JsonSerializer.Deserialize<JobProgress>(Progress, Json),
-        Error, CreatedAt, StartedAt, UpdatedAt, FinishedAt);
+        Error, CreatedAt, StartedAt, UpdatedAt, FinishedAt, Version);
 
     public static string FormatStatus(JobStatus status) => SnakeCaseEnumConverter<JobStatus>.ToDb(status);
 
@@ -66,6 +74,7 @@ public sealed class JobRow
             e.Property(r => r.Progress).HasColumnType("jsonb");
             e.Property(r => r.PauseRequested).HasDefaultValue(false);
             e.Property(r => r.CancelRequested).HasDefaultValue(false);
+            e.Property(r => r.Version).HasDefaultValue(0L);
             e.HasIndex(r => new { r.Queue, r.Status, r.CreatedAt });
             e.HasIndex(r => r.Type)
                 .IsUnique()
@@ -73,6 +82,14 @@ public sealed class JobRow
                 .HasFilter("status IN ('queued', 'running', 'paused')");
         });
     }
+}
+
+internal static class JobRowUpdates
+{
+    /// <summary>Every job write ends with this: sets <c>updated_at</c> and increments <c>version</c> in the same <c>UPDATE</c>.</summary>
+    public static UpdateSettersBuilder<JobRow> Touch(this UpdateSettersBuilder<JobRow> s, DateTimeOffset now) => s
+        .SetProperty(j => j.UpdatedAt, now)
+        .SetProperty(j => j.Version, j => j.Version + 1);
 }
 
 public sealed record JobProgress(long Done, long? Total, string? Message);
@@ -87,4 +104,5 @@ public sealed record JobDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset? StartedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? FinishedAt);
+    DateTimeOffset? FinishedAt,
+    long Version);

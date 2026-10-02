@@ -5,9 +5,9 @@ using Microsoft.Extensions.Options;
 namespace GmailOrganiser.Jobs;
 
 /// <summary>
-/// Pushes job changes to <see cref="JobsHub"/> without ever waiting on client I/O. Every job write sets
-/// <see cref="JobDto.UpdatedAt"/> and every published DTO is re-read from the row, so <c>UpdatedAt</c> is the
-/// per-job version: a DTO older than the newest one accepted is dropped, on every path. Status changes go out at
+/// Pushes job changes to <see cref="JobsHub"/> without ever waiting on client I/O. Every job write increments
+/// <see cref="JobDto.Version"/> in its <c>UPDATE</c> and every published DTO is read from the row after that write,
+/// so a DTO's state and version always match: a DTO not newer than the newest one accepted is dropped, on every path. Status changes go out at
 /// once; checkpoints of a job whose status is unchanged are throttled to one per
 /// <see cref="JobsOptions.ProgressInterval"/>, and the latest parked checkpoint is sent when the interval elapses
 /// unless a newer event superseded it. Sends run on one pump per job, in order, so a slow client delays only that
@@ -87,13 +87,8 @@ internal sealed partial class SignalRJobProgressPublisher(
         _stopping.Dispose();
     }
 
-    /// <summary>Older than the newest accepted DTO, or a same-version non-final DTO after the final one.</summary>
-    private static bool IsStale(JobDto? latest, JobDto job) =>
-        latest is not null
-        && (job.UpdatedAt < latest.UpdatedAt
-            || (job.UpdatedAt == latest.UpdatedAt
-                && FinishedStatuses.Contains(latest.Status)
-                && !FinishedStatuses.Contains(job.Status)));
+    /// <summary>Not newer than the newest accepted DTO; an equal version is the same state, already accepted.</summary>
+    private static bool IsStale(JobDto? latest, JobDto job) => latest is not null && job.Version <= latest.Version;
 
     private void Flush(TimerState state)
     {

@@ -9,7 +9,7 @@ namespace GmailOrganiser.Jobs;
 /// Client contract: the connection receives <see cref="ChangedEvent"/> from before the snapshot is read, so a
 /// change can arrive before the snapshot and the snapshot can hold an older state of that job. Merge every
 /// <see cref="JobDto"/> (snapshot item or change) by <see cref="JobDto.Id"/>, keeping the one with the later
-/// <see cref="JobDto.UpdatedAt"/>; never replace the list wholesale with the snapshot. On reconnect, drop held
+/// <see cref="JobDto.Version"/> (not <see cref="JobDto.UpdatedAt"/>, which is display-only); never replace the list wholesale with the snapshot. On reconnect, drop held
 /// active jobs that are neither in the new snapshot nor changed on the new connection.
 /// </para>
 /// </summary>
