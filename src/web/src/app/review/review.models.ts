@@ -103,6 +103,9 @@ export interface BulkApproveResponse {
   skippedIds: string[];
 }
 
+/** `apply_actions`, the job type an apply batch enqueues. */
+export const APPLY_JOB = 'apply_actions';
+
 export interface ActionBatchDto {
   id: string;
   kind: string;

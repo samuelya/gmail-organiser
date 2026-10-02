@@ -316,6 +316,37 @@ describe('ReviewPage', () => {
     expect(q('apply-progress')).toBeNull();
   });
 
+  it('picks up an apply job already running on load and blocks a second apply', async () => {
+    const { api, jobs, q, settle } = await render();
+    jobs.held.set([job('running', { id: 'job-9', type: 'mailbox_fetch' })]);
+    await settle();
+    expect(q('apply-progress')).toBeNull();
+    jobs.held.set([job('paused', { id: 'job-7' })]);
+    await settle();
+    expect(q('apply-message')!.textContent).toContain('Applied 2 of 4 messages');
+    expect((q('apply-approved') as HTMLButtonElement).disabled).toBe(true);
+    q('apply-approved')!.click();
+    await settle();
+    expect(api.apply).not.toHaveBeenCalled();
+    q('apply-cancel')!.click();
+    await settle();
+    dialogButton('confirm-ok').click();
+    await settle();
+    expect(jobs.cancel).toHaveBeenCalledWith('job-7');
+    jobs.held.set([job('cancelled', { id: 'job-7', version: 2 })]);
+    await settle();
+    expect(q('apply-progress')).toBeNull();
+    expect((q('apply-approved') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('picks up an apply job from the snapshot after a reconnect', async () => {
+    const { jobs, q, settle } = await render();
+    jobs.reconnects.set(1);
+    jobs.held.set([job('queued', { id: 'job-8' })]);
+    await settle();
+    expect(q('apply-progress')).not.toBeNull();
+  });
+
   it('applies to the rest of the sender after confirming the pattern', async () => {
     const { api, q, settle } = await render({
       topicLabel: 'Topic/Alpha',

@@ -29,6 +29,7 @@ import { SettingsService } from '../settings/settings.service';
 import { openBulkApprove } from './bulk-approve-dialog.component';
 import { GroupCard } from './group-card.component';
 import {
+  APPLY_JOB,
   canApplyRest,
   DEFAULT_FLAG_LABELS,
   GROUP_PAGE_SIZE,
@@ -125,6 +126,8 @@ export class ReviewPage {
   /** The apply batch's job, from the hub or (after a reconnect) from the API, whichever is newer. */
   readonly applyJobId = signal<string | null>(null);
   private readonly fetchedJob = signal<JobDto | null>(null);
+  /** Apply jobs already reported; the hub may still hold one as active until its next snapshot. */
+  private readonly finishedJobIds = new Set<string>();
   readonly applyJob = computed(() => {
     const id = this.applyJobId();
     if (!id) return null;
@@ -194,6 +197,14 @@ export class ReviewPage {
       )
       .subscribe((pattern) => this.pattern.set(pattern));
 
+    // An apply job started elsewhere or before this page opened (the hub's snapshot, also after a
+    // reconnect): follow it, so its progress and Cancel show and no second batch can be queued.
+    effect(() => {
+      const active = this.jobs
+        .activeJobs()
+        .find((j) => j.type === APPLY_JOB && !this.finishedJobIds.has(j.id));
+      if (active && !this.applyJobId()) untracked(() => this.track(active.id));
+    });
     // The apply job finished: show its outcome and re-fetch.
     effect(() => {
       const job = this.applyJob();
@@ -386,6 +397,7 @@ export class ReviewPage {
   }
 
   private finishApply(job: JobDto): void {
+    this.finishedJobIds.add(job.id);
     this.applyJobId.set(null);
     this.fetchedJob.set(null);
     this.refresh();
