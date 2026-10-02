@@ -1,10 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
-using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
@@ -18,7 +16,7 @@ namespace GmailOrganiser.Tests.Integration;
 
 /// <summary>Apply, then undo, over the harness mailbox (every message starts in INBOX) with synthetic labels.</summary>
 [Collection(PostgresCollection.Name)]
-public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed partial class UndoActionsJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
 {
     private const string ActionLabel = "Synthetic Action";
     private const string DeleteLabel = "Synthetic Delete";
@@ -289,90 +287,6 @@ public sealed class UndoActionsJobTests(ApiFactory factory, PostgresFixture post
         detail.Truncated.ShouldBeTrue();
         detail.Rows[0].LabelsRemoved.ShouldBe(["INBOX"]);
         detail.Rows[0].LabelNamesRemoved.ShouldBe(["INBOX"]);
-    }
-
-    [Fact]
-    public async Task A_resent_chunk_refused_three_times_is_finalised_and_can_be_cancelled_and_undone()
-    {
-        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 2;
-        await SeedAsync([.. Enumerable.Range(0, 4).Select(i => ($"a{i:D2}", "Example", false, false))]);
-        string[] ids = ["a00", "a01", "a02", "a03"];
-        var before = ids.ToDictionary(id => id, id => (string[])[.. Labels(id)]);
-        using var stop = new CancellationTokenSource();
-        var refuse = true;
-        h.Gmail.BeforeBatchModify = (call, _) => call switch
-        {
-            1 => Task.CompletedTask,
-            2 => Stop(stop),
-            _ when refuse => throw GmailRetryPolicy.CreateApiException(HttpStatusCode.BadRequest, "invalidArgument"),
-            _ => Task.CompletedTask,
-        };
-        var response = await h.PostAsync("/api/review/apply", new ApplyRequest());
-        var apply = (await response.Content.ReadFromJsonAsync<ActionBatchDto>(Ct)).ShouldNotBeNull();
-        await h.RunNextAsync(stop.Token);
-        (await h.Runner.RecoverAsync(Ct)).ShouldBe(1);
-
-        for (var failures = 1; failures <= ApplyActionsJob.MaxSendFailures; failures++)
-        {
-            await h.RunNextAsync();
-            var job = await ApplyJobAsync(apply);
-            job.Status.ShouldBe(JobStatus.Failed);
-            var pending = JsonSerializer.Deserialize<ApplyCursor>(job.Cursor!, JsonSerializerOptions.Web)!.Pending;
-            if (failures < ApplyActionsJob.MaxSendFailures)
-            {
-                // Still pending: only a resume may finish it.
-                pending.ShouldNotBeNull();
-                await using var db = postgres.CreateDbContext();
-                (await db.ActionBatches.SingleAsync(b => b.Id == apply.Id, Ct)).SendFailures.ShouldBe(failures);
-                await using var scope = h.Services.CreateAsyncScope();
-                (await scope.ServiceProvider.GetRequiredService<IJobService>().ResumeAsync(job.Id, Ct)).ShouldBe(JobActionResult.Ok);
-            }
-            else
-            {
-                pending.ShouldBeNull();
-                job.Error.ShouldNotBeNull().ShouldContain("may or may not have applied it");
-            }
-        }
-
-        // Finalised as possibly applied: Gmail never changed a02 and a03, but they are stored and logged as applied.
-        await using (var db = postgres.CreateDbContext())
-        {
-            var stored = await db.ActionBatches.SingleAsync(b => b.Id == apply.Id, Ct);
-            (stored.Description, stored.MessageCount, stored.SendFailures).ShouldBe(($"{apply.Description} (partial: 4 of 4)", 4, 0));
-            (await db.ActionLog.CountAsync(l => l.BatchId == apply.Id, Ct)).ShouldBe(4);
-            (await db.Suggestions.CountAsync(s => s.Status == SuggestionStatus.Applied, Ct)).ShouldBe(4);
-            (await db.Messages.SingleAsync(m => m.Id == "a02", Ct)).LabelIds.ShouldNotContain("INBOX");
-        }
-
-        Labels("a02").ShouldContain("INBOX");
-        await using (var scope = h.Services.CreateAsyncScope())
-        {
-            (await scope.ServiceProvider.GetRequiredService<IAccountGuard>().RefusesConnectAsync("other@example.com", Ct)).ShouldBeFalse();
-        }
-
-        (await h.PostAsync($"/api/jobs/{apply.JobId}/cancel", new { })).StatusCode.ShouldBe(HttpStatusCode.NoContent);
-        (await ApplyJobAsync(apply)).Status.ShouldBe(JobStatus.Cancelled);
-
-        refuse = false;
-        var undo = await UndoAsync(apply.Id);
-        await h.RunNextAsync();
-
-        (await JobAsync(undo)).Status.ShouldBe(JobStatus.Completed);
-        foreach (var id in ids)
-        {
-            Labels(id).ShouldBe(before[id], ignoreOrder: true);
-        }
-
-        await using var after = postgres.CreateDbContext();
-        await StoredLabelsMatchGmailAsync(after, 4);
-        (await after.Suggestions.CountAsync(s => s.Status == SuggestionStatus.Approved, Ct)).ShouldBe(4);
-        (await after.Senders.SumAsync(s => s.AppliedCount, Ct)).ShouldBe(0);
-    }
-
-    private async Task<JobRow> ApplyJobAsync(ActionBatchDto batch)
-    {
-        await using var db = postgres.CreateDbContext();
-        return await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == batch.JobId, Ct);
     }
 
     private static Task Stop(CancellationTokenSource stop)

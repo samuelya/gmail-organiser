@@ -1,3 +1,4 @@
+using System.Net;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
@@ -11,15 +12,16 @@ public sealed partial class ApplyActionsJob
     public const string NotFoundReason = LabelChunks.NotFoundReason;
     public const string RefusedReason = LabelChunks.RefusedReason;
 
-    /// <summary>Failed re-sends of a pending chunk after which it is finalised as possibly applied (as auto-archive does).</summary>
+    /// <summary>Refused re-sends of a pending chunk after which it is finalised from what Gmail shows.</summary>
     public const int MaxSendFailures = ActionDoneScanner.MaxSendFailures;
 
     /// <summary>
     /// Sends the pending chunk, then stores its result and clears it. Ids Gmail refuses one by one are skipped and
     /// their log rows removed. A failure leaves the chunk pending (its undo log kept) unless this run sent it for the
     /// first time and Gmail certainly changed nothing: then the chunk is reverted. A resent chunk is never reverted:
-    /// its failures are counted, and the <see cref="MaxSendFailures"/>th stores it as applied (undoable from History)
-    /// and fails the job, so it can be cancelled, resumed or undone instead of blocking the account.
+    /// Gmail's definitive refusals of it are counted, and the <see cref="MaxSendFailures"/>th finalises it from what
+    /// Gmail shows (<see cref="ReconcileAsync"/>) and fails the job, so it can be cancelled, resumed or undone instead
+    /// of blocking the account.
     /// </summary>
     /// <param name="resent">The chunk was pending when the run started, so an earlier send may have reached Gmail.</param>
     /// <returns>The new cursor, the checkpoint's signal and the total without the skipped messages.</returns>
@@ -28,6 +30,8 @@ public sealed partial class ApplyActionsJob
     {
         var refused = new Dictionary<string, string>(StringComparer.Ordinal);
         Exception? finalised = null;
+        Dictionary<string, string[]>? real = null;
+        string[] unchanged = [];
         if (cursor.Pending is { MessageIds.Length: > 0 } chunk && chunk.Add.Length + chunk.Remove.Length > 0)
         {
             var sent = new SendState();
@@ -41,24 +45,27 @@ public sealed partial class ApplyActionsJob
                 await RevertAsync(ctx, cursor, total);
                 throw;
             }
-            catch (Exception ex) when (resent && ex is not JobRefusedException && !ct.IsCancellationRequested)
+            catch (GoogleApiException ex) when (resent && IsDefinitiveRefusal(ex))
             {
-                if (await CountResendFailureAsync(cursor.BatchId) < MaxSendFailures)
+                if (!await CountResendFailureAsync(cursor.BatchId))
                 {
                     throw;
                 }
 
-                // Gmail may or may not have applied it: stored as applied, so the undo log can revert it either way.
-                LogChunkFinalised(logger, chunk.MessageIds.Length, MaxSendFailures, ex);
+                // Gmail may or may not have applied it: what it shows now decides each message. A failed re-read
+                // throws here, leaving the chunk pending and this attempt uncounted.
                 cursor = ctx.ReadCursor<ApplyCursor>() ?? cursor;
                 refused.Clear();
+                (real, unchanged) = await ReconcileAsync(cursor.Pending!, refused, ct);
+                LogChunkFinalised(logger, chunk.MessageIds.Length, MaxSendFailures, unchanged.Length, ex);
                 finalised = ex;
             }
         }
 
         var pending = cursor.Pending!;
         var skips = await SkipsAsync(cursor.BatchId, refused, ct);
-        var applied = pending.MessageIds.Where(id => !refused.ContainsKey(id)).ToArray();
+        var applied = pending.MessageIds.Where(id => !refused.ContainsKey(id) && !unchanged.Contains(id)).ToArray();
+        string[] stored = [.. applied, .. unchanged];
         var done = cursor with
         {
             Pending = null,
@@ -66,19 +73,19 @@ public sealed partial class ApplyActionsJob
             MessagesDone = cursor.MessagesDone + applied.Length,
             Skipped = skips.Count == 0 ? cursor.Skipped : [.. cursor.Skipped ?? [], .. skips],
         };
-        total -= refused.Count;
+        total -= refused.Count + unchanged.Length;
         var signal = await ctx.CheckpointAsync(done, Progress(done, total), async t =>
         {
             var now = time.GetUtcNow();
-            await RevertRowsAsync(cursor.BatchId, [.. refused.Keys], t);
+            await RevertRowsAsync(cursor.BatchId, [.. refused.Keys, .. unchanged], t);
             var gone = refused.Where(r => r.Value == NotFoundReason).Select(r => r.Key).ToArray();
             await db.Messages.Where(m => gone.Contains(m.Id))
                 .ExecuteUpdateAsync(s => s.SetProperty(m => m.DeletedInGmail, true).SetProperty(m => m.UpdatedAt, now), t);
 
-            var messages = await db.Messages.Where(m => applied.Contains(m.Id)).ToListAsync(t);
+            var messages = await db.Messages.Where(m => stored.Contains(m.Id)).ToListAsync(t);
             foreach (var message in messages)
             {
-                message.LabelIds = After(message.LabelIds, pending.Add, pending.Remove);
+                message.LabelIds = real?.GetValueOrDefault(message.Id) ?? After(message.LabelIds, pending.Add, pending.Remove);
                 message.UpdatedAt = now;
             }
 
@@ -96,19 +103,58 @@ public sealed partial class ApplyActionsJob
         if (finalised is not null)
         {
             throw new JobRefusedException(
-                $"Resending an interrupted chunk of {applied.Length} messages failed {MaxSendFailures} times. Gmail may or may not "
-                + "have applied it, so it is recorded as applied. Resume to apply the rest, or cancel and undo the batch from History.");
+                $"Resending an interrupted chunk of {pending.MessageIds.Length} messages failed {MaxSendFailures} times. "
+                + $"{applied.Length} that Gmail shows as changed are recorded as applied; {unchanged.Length} are approved again. "
+                + "Resume to apply the rest, or cancel and undo the batch from History.");
         }
 
         return (done, signal, total);
     }
 
-    /// <summary>Counts a failed re-send of the batch's pending chunk and returns the count so far.</summary>
-    private async Task<int> CountResendFailureAsync(Guid batchId)
+    /// <summary>
+    /// A 4xx other than a rate limit: Gmail refused the call, so another identical re-send would be refused too.
+    /// Rate limits, server errors, timeouts and a lost connection are retried by resuming and never counted.
+    /// </summary>
+    private static bool IsDefinitiveRefusal(GoogleApiException ex) =>
+        ex.HttpStatusCode is >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError
+            and not HttpStatusCode.TooManyRequests;
+
+    /// <summary>
+    /// Counts a refused re-send of the batch's pending chunk. False while under <see cref="MaxSendFailures"/>; true
+    /// (uncounted, as the store resets the count) when this attempt is the one that finalises the chunk.
+    /// </summary>
+    private async Task<bool> CountResendFailureAsync(Guid batchId)
     {
+        var failures = await db.ActionBatches.Where(b => b.Id == batchId).Select(b => b.SendFailures).SingleAsync(CancellationToken.None);
+        if (failures + 1 >= MaxSendFailures)
+        {
+            return true;
+        }
+
         await db.ActionBatches.Where(b => b.Id == batchId)
             .ExecuteUpdateAsync(s => s.SetProperty(b => b.SendFailures, b => b.SendFailures + 1), CancellationToken.None);
-        return await db.ActionBatches.Where(b => b.Id == batchId).Select(b => b.SendFailures).SingleAsync(CancellationToken.None);
+        return false;
+    }
+
+    /// <summary>
+    /// Re-reads a chunk being finalised. Messages gone from Gmail go to <paramref name="refused"/> as not found; of
+    /// the rest, those without the planned change are returned as unchanged (Gmail never applied them).
+    /// </summary>
+    /// <returns>Each remaining message's labels in Gmail, and the unchanged ids.</returns>
+    private async Task<(Dictionary<string, string[]> Labels, string[] Unchanged)> ReconcileAsync(
+        ApplyChunk chunk, Dictionary<string, string> refused, CancellationToken ct)
+    {
+        var metadata = await gmail.GetMessagesMetadataAsync(chunk.MessageIds, ct);
+        var labels = metadata.ToDictionary(m => m.Id, m => m.LabelIds.ToArray(), StringComparer.Ordinal);
+        foreach (var id in chunk.MessageIds.Where(id => !labels.ContainsKey(id)))
+        {
+            refused[id] = NotFoundReason;
+        }
+
+        string[] unchanged = [.. labels
+            .Where(l => !chunk.Add.All(l.Value.Contains) || chunk.Remove.Any(l.Value.Contains))
+            .Select(l => l.Key)];
+        return (labels, unchanged);
     }
 
     /// <summary>
@@ -257,8 +303,8 @@ public sealed partial class ApplyActionsJob
     [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail refused a chunk of {Count} messages before changing any; the chunk was reverted.")]
     private static partial void LogChunkReverted(ILogger logger, int count, Exception exception);
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "A resent chunk of {Count} messages failed {Failures} times; it is finalised as possibly applied.")]
-    private static partial void LogChunkFinalised(ILogger logger, int count, int failures, Exception exception);
+    [LoggerMessage(Level = LogLevel.Error, Message = "A resent chunk of {Count} messages failed {Failures} times; it is finalised from Gmail, {Unchanged} unchanged.")]
+    private static partial void LogChunkFinalised(ILogger logger, int count, int failures, int unchanged, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail refused {Refused} of {Count} messages in a chunk; they are skipped.")]
     private static partial void LogIdsRefused(ILogger logger, int refused, int count);
