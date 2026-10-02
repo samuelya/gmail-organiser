@@ -65,6 +65,14 @@ public interface IGmailClient
     Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct);
 
     /// <summary>
+    /// Deletes the user label <paramref name="labelId"/> (Gmail takes it off every message that has it). A label Gmail
+    /// no longer knows is not an error. Callers check the label is unused and write the action (undo) log.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task DeleteLabelAsync(string labelId, CancellationToken ct);
+
+    /// <summary>
     /// Adds and removes labels on up to <see cref="GmailLimits.BatchModifyMaxIds"/> messages in one call; callers chunk.
     /// Idempotent, so a chunk can be re-sent after a lost response. A thin I/O seam: callers write the action (undo) log.
     /// </summary>

@@ -33,6 +33,10 @@ public sealed class FakeLabelStore
 
     public bool Exists(string id) => labels.Exists(l => string.Equals(l.Id, id, StringComparison.Ordinal));
 
+    /// <summary>Removes the user label <paramref name="id"/>; false when no user label has it.</summary>
+    public bool Delete(string id) =>
+        labels.RemoveAll(l => l.Type == GmailLabelType.User && string.Equals(l.Id, id, StringComparison.Ordinal)) > 0;
+
     /// <summary>
     /// Creates a user label, or returns the user label that already has <paramref name="name"/> (Gmail's 409). Reserved
     /// names are refused as Gmail refuses them.

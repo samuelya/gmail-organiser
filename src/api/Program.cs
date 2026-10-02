@@ -61,6 +61,7 @@ app.MapSendersEndpoints();
 app.MapAnalysisEndpoints();
 app.MapReviewEndpoints();
 app.MapLabelsEndpoints();
+app.MapHistoryEndpoints();
 app.MapHub<JobsHub>(JobsHub.Path);
 
 // Hosted services start before the server listens: DatabaseMigrator applies the migrations first.

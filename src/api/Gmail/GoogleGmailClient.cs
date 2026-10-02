@@ -292,6 +292,28 @@ public sealed class GoogleGmailClient(
         }, ct);
     }
 
+    public Task DeleteLabelAsync(string labelId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(labelId);
+        return RunAsync(async service =>
+        {
+            try
+            {
+                await retry.ExecuteAsync(async token =>
+                {
+                    await quota.AcquireAsync(GmailQuotaLimiter.LabelDeleteUnits, token);
+                    return await service.Users.Labels.Delete(Me, labelId).ExecuteAsync(token);
+                }, ct);
+            }
+            catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound)
+            {
+                // Already gone: deleted earlier (a resumed run) or by the user.
+            }
+
+            return true;
+        }, ct);
+    }
+
     private static GmailLabel ToLabel(Label label) =>
         new(label.Id, label.Name ?? "", string.Equals(label.Type, "system", StringComparison.OrdinalIgnoreCase) ? GmailLabelType.System : GmailLabelType.User);
 
