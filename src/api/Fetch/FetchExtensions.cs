@@ -11,6 +11,8 @@ public static class FetchExtensions
         services.AddScoped<MessageUpserter>();
         services.AddScoped<SenderStatsUpdater>();
         services.AddScoped<MessageFetchPipeline>();
+        services.AddScoped<IAccountGuard, AccountGuard>();
+        services.AddKeyedScoped<IJobStartGuard, FetchAccountJobGuard>(JobQueues.Fetch);
         services.AddKeyedScoped<IJobHandler, MailboxFetchJob>(MailboxFetchJob.JobType);
         return services;
     }

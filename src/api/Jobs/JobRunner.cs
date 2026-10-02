@@ -182,6 +182,31 @@ public sealed partial class JobRunner(
             return;
         }
 
+        // A guard failure is a run failure like a handler's: recorded on the job, not left running.
+        string? refused;
+        try
+        {
+            refused = services.GetKeyedService<IJobStartGuard>(job.Queue) is { } guard ? await guard.RefuseReasonAsync(ct) : null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            LogInterrupted(logger);
+            return;
+        }
+        catch (Exception ex)
+        {
+            LogHandlerFailed(logger, ex);
+            await FinishAsync(db, notifier, jobId, JobStatus.Failed, ex.Message);
+            return;
+        }
+
+        if (refused is not null)
+        {
+            LogRefused(logger);
+            await FinishAsync(db, notifier, jobId, JobStatus.Failed, refused);
+            return;
+        }
+
         var context = new JobContext(job.Id, job.Cursor, db, time, notifier);
         try
         {
@@ -253,6 +278,9 @@ public sealed partial class JobRunner(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job starting")]
     private static partial void LogStarting(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Job refused by its queue's start guard")]
+    private static partial void LogRefused(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job ended as {Status}")]
     private static partial void LogFinished(ILogger logger, string status);

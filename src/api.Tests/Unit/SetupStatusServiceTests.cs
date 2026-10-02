@@ -1,3 +1,4 @@
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Llm;
@@ -19,6 +20,7 @@ public sealed class SetupStatusServiceTests
     private readonly InMemorySettingsStore settings = new();
     private readonly FakeTokenStore tokens;
     private readonly StubCatalog ollama = new();
+    private readonly StubAccountGuard accountGuard = new();
     private SettingsEnvOptions env = new();
     private bool useFakeGmail;
 
@@ -40,7 +42,8 @@ public sealed class SetupStatusServiceTests
             ChatModelSelected: false,
             EmbeddingModelSelected: false,
             WizardSeen: false,
-            Complete: false));
+            Complete: false,
+            AccountMismatch: false));
     }
 
     [Fact]
@@ -167,15 +170,31 @@ public sealed class SetupStatusServiceTests
         await Should.ThrowAsync<OperationCanceledException>(() => status);
     }
 
+    [Fact]
+    public async Task Account_mismatch_comes_from_the_account_guard()
+    {
+        accountGuard.Result = new AccountCheck(AccountCheckStatus.Mismatch, "o***@example.com");
+
+        (await Create().GetAsync(Ct)).AccountMismatch.ShouldBeTrue();
+    }
+
     private SetupStatusService Create() => new(
         settings,
         tokens,
+        accountGuard,
         ollama,
         new GoogleClientService(
             settings, new EphemeralDataProtectionProvider(), Options.Create(env), NullLogger<GoogleClientService>.Instance),
         Options.Create(new GmailOptions { UseFake = useFakeGmail }),
         time,
         NullLogger<SetupStatusService>.Instance);
+
+    private sealed class StubAccountGuard : IAccountGuard
+    {
+        public AccountCheck Result { get; set; } = new(AccountCheckStatus.Ok);
+
+        public Task<AccountCheck> CheckAsync(CancellationToken ct = default) => Task.FromResult(Result);
+    }
 
     private sealed class StubCatalog : IOllamaCatalog
     {
