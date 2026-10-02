@@ -2,14 +2,16 @@ namespace GmailOrganiser.Gmail.Fake;
 
 public sealed partial class FakeGmailClient
 {
-    public async Task<IReadOnlyList<GmailAttachment>> GetAttachmentsAsync(string messageId, CancellationToken ct)
+    public async Task<GmailMessageContent?> GetMessageContentAsync(string id, CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
-        return await RetryAsync<IReadOnlyList<GmailAttachment>>(() =>
-            messages.Find(m => m.Id == messageId) is { } m
-                ? [.. m.Attachments.Select(a => new GmailAttachment(a.AttachmentId, a.Filename, a.MimeType, a.Size))]
-                : [], ct).ConfigureAwait(false);
+        return await RetryAsync(() =>
+            messages.Find(m => m.Id == id) is { } m
+                ? new GmailMessageContent(
+                    new GmailMessageBody(m.BodyText, m.BodyHtml),
+                    [.. m.Attachments.Select(a => new GmailAttachment(a.AttachmentId, a.Filename, a.MimeType, a.Size))])
+                : null, ct).ConfigureAwait(false);
     }
 
     public async Task<byte[]?> GetAttachmentContentAsync(string messageId, string attachmentId, CancellationToken ct)

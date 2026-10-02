@@ -3,9 +3,11 @@ using GmailOrganiser.Gmail;
 namespace GmailOrganiser.Analysis.Attachments;
 
 /// <summary>
-/// Reads a message's attachments from Gmail and converts the enabled, supported ones within <see cref="ConversionLimits"/>.
-/// Size and the per-message cap are checked before download, so skipped attachments cost no quota. The markdown lives
-/// only in the returned digest: never stored, never logged (filenames at Debug only).
+/// Converts a message's enabled, supported attachments within <see cref="ConversionLimits"/>. The caller passes the list
+/// from <see cref="IGmailClient.GetMessageContentAsync"/>, which also carries the body, so a message costs one
+/// <c>messages.get</c>. Size (when Gmail reports it) and the per-message cap are checked before download, so skipped
+/// attachments cost no quota. The markdown lives only in the returned digest: never stored, never logged (filenames at
+/// Debug only).
 /// </summary>
 public sealed class AttachmentConversionService(
     IGmailClient gmail,
@@ -14,16 +16,23 @@ public sealed class AttachmentConversionService(
 {
     private readonly IReadOnlyList<IAttachmentConverter> converters = [.. converters];
 
+    /// <remarks>
+    /// Any other failure of one attachment's download or conversion, timeouts included, is recorded as
+    /// <see cref="SkipReason.Failed"/> and the rest still convert.
+    /// </remarks>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     public async Task<AttachmentDigest> ConvertAllAsync(
-        string messageId, IReadOnlySet<AttachmentType> enabledTypes, ConversionLimits limits, CancellationToken ct)
+        string messageId,
+        IReadOnlyList<GmailAttachment> attachments,
+        IReadOnlySet<AttachmentType> enabledTypes,
+        ConversionLimits limits,
+        CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
+        ArgumentNullException.ThrowIfNull(attachments);
         ArgumentNullException.ThrowIfNull(enabledTypes);
         ArgumentNullException.ThrowIfNull(limits);
-
-        var attachments = await gmail.GetAttachmentsAsync(messageId, ct);
         if (attachments.Count == 0)
         {
             return AttachmentDigest.Empty;
@@ -45,17 +54,16 @@ public sealed class AttachmentConversionService(
             if (reason is null)
             {
                 downloads++;
-                if (await ConvertAsync(messageId, attachment, type, converter!, limits, ct) is { } result)
+                (var result, reason) = await ConvertAsync(messageId, attachment, type, converter!, limits, ct);
+                if (result is not null)
                 {
                     converted.Add(result);
                     continue;
                 }
-
-                reason = SkipReason.Failed;
             }
 
             logger.LogDebug("Skipped attachment {Filename} ({Type}): {Reason}", attachment.Filename, type, reason);
-            skipped.Add(new SkippedAttachment(attachment.Filename, type, reason.Value));
+            skipped.Add(new SkippedAttachment(attachment.Filename, type, reason!.Value));
         }
 
         logger.LogInformation(
@@ -63,29 +71,39 @@ public sealed class AttachmentConversionService(
         return new AttachmentDigest(converted, skipped);
     }
 
-    /// <summary>Downloads and converts one attachment; null when either fails. Gmail connection and quota errors propagate.</summary>
-    private async Task<ConvertedAttachment?> ConvertAsync(
+    /// <summary>
+    /// Reads (inline bytes or one download) and converts one attachment, or says why not. An unknown size is checked
+    /// after the download. Gmail connection and quota errors and cancellation of <paramref name="ct"/> propagate.
+    /// </summary>
+    private async Task<(ConvertedAttachment? Result, SkipReason? Reason)> ConvertAsync(
         string messageId, GmailAttachment attachment, AttachmentType type, IAttachmentConverter converter, ConversionLimits limits, CancellationToken ct)
     {
-        var content = await gmail.GetAttachmentContentAsync(messageId, attachment.AttachmentId, ct);
-        if (content is null || content.Length > limits.MaxBytes)
-        {
-            logger.LogWarning("An attachment was gone or larger than its reported size; skipped");
-            return null;
-        }
-
         try
         {
+            var content = attachment.InlineContent
+                ?? (attachment.AttachmentId is { } attachmentId ? await gmail.GetAttachmentContentAsync(messageId, attachmentId, ct) : null);
+            if (content is null)
+            {
+                logger.LogWarning("An attachment was gone or unreadable; skipped");
+                return (null, SkipReason.Failed);
+            }
+
+            if (content.Length > limits.MaxBytes)
+            {
+                logger.LogWarning("An attachment of unknown or understated size was larger than the limit; skipped");
+                return (null, SkipReason.TooLarge);
+            }
+
             using var stream = new MemoryStream(content, writable: false);
             var result = await converter.ConvertAsync(attachment, stream, limits, ct);
             var (markdown, truncated) = limits.Truncate(result.Markdown);
-            return result with { AttachmentType = type, Markdown = markdown, Truncated = result.Truncated || truncated };
+            return (result with { AttachmentType = type, Markdown = markdown, Truncated = result.Truncated || truncated }, null);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not (GmailNotConnectedException or GmailRateLimitedException) && !ct.IsCancellationRequested)
         {
-            // The exception type only: messages of document parsers can quote content.
-            logger.LogWarning("An attachment converter failed with {ExceptionType}", ex.GetType().Name);
-            return null;
+            // The exception type only: messages of document parsers and Gmail errors can quote content or IDs.
+            logger.LogWarning("Reading or converting an attachment failed with {ExceptionType}", ex.GetType().Name);
+            return (null, SkipReason.Failed);
         }
     }
 }

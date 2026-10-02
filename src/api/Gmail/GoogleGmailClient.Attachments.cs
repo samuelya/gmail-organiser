@@ -8,31 +8,34 @@ namespace GmailOrganiser.Gmail;
 
 public sealed partial class GoogleGmailClient
 {
-    public Task<IReadOnlyList<GmailAttachment>> GetAttachmentsAsync(string messageId, CancellationToken ct)
+    public Task<GmailMessageContent?> GetMessageContentAsync(string id, CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
-        return RunAsync(service => retry.ExecuteAsync<IReadOnlyList<GmailAttachment>>(async token =>
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        return RunAsync(service => retry.ExecuteAsync(async token =>
         {
             await quota.AcquireAsync(GmailQuotaLimiter.MessageCallUnits, token);
-            var request = service.Users.Messages.Get(Me, messageId);
+            var request = service.Users.Messages.Get(Me, id);
             request.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Full;
             try
             {
-                var attachments = ReadAttachments(await request.ExecuteAsync(token));
-                logger.LogDebug("Listed {Count} attachments of a Gmail message", attachments.Count);
-                return attachments;
+                var message = await request.ExecuteAsync(token);
+                var content = new GmailMessageContent(ReadBody(message), ReadAttachments(message));
+                logger.LogDebug("Read a Gmail message with {Count} attachments", content.Attachments.Count);
+                return content;
             }
             catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound)
             {
-                logger.LogDebug("Gmail no longer has the message whose attachments were requested");
-                return [];
+                logger.LogDebug("Gmail no longer has the message whose content was requested");
+                return null;
             }
         }, ct), ct);
     }
 
     /// <summary>
-    /// Parts with a filename and a <c>body.attachmentId</c>, depth-first through <c>payload.parts</c> in MIME order. An
-    /// attachment's own children (an attached message's parts) are not listed separately.
+    /// Named leaf parts, depth-first through <c>payload.parts</c> in MIME order: by <c>body.attachmentId</c>, or with
+    /// their inline <c>body.data</c> decoded when Gmail sent no id (neither when the data doesn't decode). A named
+    /// multipart is descended into. An attached message (<c>message/rfc822</c>) is never descended into, as in
+    /// <see cref="ReadBody"/>: listed once when named, skipped when not, so its inner files never count as this message's.
     /// </summary>
     public static IReadOnlyList<GmailAttachment> ReadAttachments(Message message)
     {
@@ -47,13 +50,14 @@ public sealed partial class GoogleGmailClient
         while (stack.Count > 0)
         {
             var part = stack.Pop();
-            if (!string.IsNullOrEmpty(part.Filename) && part.Body?.AttachmentId is { Length: > 0 } attachmentId)
+            var isMessage = IsMimeType(part, "message/rfc822");
+            if (!string.IsNullOrEmpty(part.Filename) && (isMessage || part.Parts is not { Count: > 0 }))
             {
-                attachments.Add(new GmailAttachment(attachmentId, part.Filename, part.MimeType ?? "", part.Body.Size ?? 0));
+                attachments.Add(ToAttachment(part, part.Filename));
                 continue;
             }
 
-            if (part.Parts is { Count: > 0 } children)
+            if (!isMessage && part.Parts is { Count: > 0 } children)
             {
                 for (var i = children.Count - 1; i >= 0; i--)
                 {
@@ -63,6 +67,27 @@ public sealed partial class GoogleGmailClient
         }
 
         return attachments;
+    }
+
+    private static GmailAttachment ToAttachment(MessagePart part, string filename)
+    {
+        var mimeType = part.MimeType ?? "";
+        if (part.Body?.AttachmentId is { Length: > 0 } attachmentId)
+        {
+            return new GmailAttachment(attachmentId, filename, mimeType, part.Body.Size);
+        }
+
+        byte[]? inline;
+        try
+        {
+            inline = part.Body?.Data is { } data ? Base64Url.DecodeFromChars(data) : [];
+        }
+        catch (FormatException)
+        {
+            inline = null;
+        }
+
+        return new GmailAttachment(null, filename, mimeType, part.Body?.Size ?? inline?.Length, inline);
     }
 
     public Task<byte[]?> GetAttachmentContentAsync(string messageId, string attachmentId, CancellationToken ct)

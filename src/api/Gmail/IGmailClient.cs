@@ -49,12 +49,13 @@ public interface IGmailClient
     Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct);
 
     /// <summary>
-    /// The attachments of <paramref name="messageId"/> (<c>messages.get</c>, parts with a filename and an attachment id,
-    /// nested multiparts included), in MIME order. Empty when Gmail no longer knows the message.
+    /// The body (as <see cref="GetMessageBodyAsync"/>) and the attachments of <paramref name="id"/> from one
+    /// <c>messages.get</c>: named parts, nested multiparts included, in MIME order. Null when Gmail no longer knows the
+    /// message. Never store or log the body or inline attachment bytes.
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
-    Task<IReadOnlyList<GmailAttachment>> GetAttachmentsAsync(string messageId, CancellationToken ct);
+    Task<GmailMessageContent?> GetMessageContentAsync(string id, CancellationToken ct);
 
     /// <summary>
     /// The decoded bytes of one attachment (<c>messages.attachments.get</c>); null when Gmail no longer knows the message
@@ -145,8 +146,13 @@ public static class GmailLimits
 }
 
 /// <summary>An attachment part of a message; the filename can be personal, so log it at Debug only.</summary>
-/// <param name="Size">The decoded size in bytes, as Gmail reports it on the part.</param>
-public sealed record GmailAttachment(string AttachmentId, string Filename, string MimeType, int Size);
+/// <param name="AttachmentId">For <see cref="IGmailClient.GetAttachmentContentAsync"/>; null when Gmail sent the bytes inline.</param>
+/// <param name="Size">The decoded size in bytes, as Gmail reports it on the part; null when unknown.</param>
+/// <param name="InlineContent">The decoded bytes Gmail sent inline; null with an attachment id, or when they didn't decode.</param>
+public sealed record GmailAttachment(string? AttachmentId, string Filename, string MimeType, int? Size, byte[]? InlineContent = null);
+
+/// <summary>A message's body and attachment list, read in one call.</summary>
+public sealed record GmailMessageContent(GmailMessageBody Body, IReadOnlyList<GmailAttachment> Attachments);
 
 /// <summary>A message's raw text parts; html-to-text conversion happens later.</summary>
 public sealed record GmailMessageBody(string? Text, string? Html);

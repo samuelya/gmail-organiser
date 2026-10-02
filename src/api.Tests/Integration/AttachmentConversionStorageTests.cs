@@ -28,8 +28,9 @@ public sealed class AttachmentConversionStorageTests(ApiFactory factory, Postgre
         var service = scope.ServiceProvider.GetRequiredService<AttachmentConversionService>();
         var message = fake.Messages.First(m => m.Attachments.Any(a => a.Filename.StartsWith("invoice", StringComparison.Ordinal)));
 
+        var content = (await fake.GetMessageContentAsync(message.Id, Ct)).ShouldNotBeNull();
         var digest = await service.ConvertAllAsync(
-            message.Id, new HashSet<AttachmentType> { AttachmentType.Pdf }, ConversionLimits.Default, Ct);
+            message.Id, content.Attachments, new HashSet<AttachmentType> { AttachmentType.Pdf }, ConversionLimits.Default, Ct);
 
         digest.Skipped.ShouldBeEmpty();
         digest.Converted.Single().Markdown.ShouldContain(PdfText);

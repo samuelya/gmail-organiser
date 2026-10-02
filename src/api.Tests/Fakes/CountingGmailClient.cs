@@ -77,12 +77,12 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return await inner.GetMessageBodyAsync(id, ct);
     }
 
-    public ConcurrentQueue<string> AttachmentListCalls { get; } = new();
+    public ConcurrentQueue<string> ContentCalls { get; } = new();
 
-    public Task<IReadOnlyList<GmailAttachment>> GetAttachmentsAsync(string messageId, CancellationToken ct)
+    public Task<GmailMessageContent?> GetMessageContentAsync(string id, CancellationToken ct)
     {
-        AttachmentListCalls.Enqueue(messageId);
-        return inner.GetAttachmentsAsync(messageId, ct);
+        ContentCalls.Enqueue(id);
+        return inner.GetMessageContentAsync(id, ct);
     }
 
     public ConcurrentQueue<string> AttachmentContentCalls { get; } = new();

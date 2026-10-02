@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Gmail;
@@ -60,22 +61,75 @@ public sealed class AttachmentConversionTests
     }
 
     [Fact]
-    public async Task Pdf_text_is_truncated_to_the_character_limit_with_a_marker()
+    public async Task Pdf_stops_reading_past_the_character_limit_and_the_service_truncates_once()
     {
         var pdf = SyntheticPdf.CreatePages([.. Enumerable.Range(1, 20).Select(i => $"Synthetic statement line {i} for example.com")]);
+        var limits = Limits with { MaxChars = 100 };
 
-        var result = await ConvertPdfAsync(pdf, Limits with { MaxChars = 100 });
+        var raw = await ConvertPdfAsync(pdf, limits);
+        var gmail = Gmail(Att("statement.pdf", "application/pdf", pdf));
+        var digest = await ConvertAllAsync(gmail, PdfOnly, limits);
 
+        raw.Markdown.ShouldNotContain("line 20");
+        var result = digest.Converted.Single();
         result.Truncated.ShouldBeTrue();
         result.Markdown.ShouldStartWith("Synthetic statement line 1 for example.com");
         result.Markdown.ShouldEndWith("\n" + ConversionLimits.TruncatedMarker);
-        result.Markdown.Length.ShouldBeLessThanOrEqualTo(100 + 1 + ConversionLimits.TruncatedMarker.Length);
+        result.Markdown.Split(ConversionLimits.TruncatedMarker).Length.ShouldBe(2);
+        result.Markdown.Length.ShouldBeLessThanOrEqualTo(100);
+    }
+
+    [Fact]
+    public void Truncate_after_a_page_break_stays_within_the_limit_and_is_idempotent()
+    {
+        var limits = Limits with { MaxChars = 50 };
+        var text = new string('a', 36) + PdfAttachmentConverter.PageBreak + new string('b', 100);
+
+        var (once, truncated) = limits.Truncate(text);
+
+        truncated.ShouldBeTrue();
+        once.ShouldBe(new string('a', 36) + "\n" + ConversionLimits.TruncatedMarker);
+        once.Length.ShouldBeLessThanOrEqualTo(50);
+        limits.Truncate(once).ShouldBe((once, false));
+    }
+
+    [Fact]
+    public void Truncate_never_splits_a_surrogate_pair()
+    {
+        var limits = Limits with { MaxChars = 20 };
+
+        var (markdown, _) = limits.Truncate("1234567\U0001F600" + new string('x', 30));
+
+        markdown.ShouldBe("1234567\n" + ConversionLimits.TruncatedMarker);
+    }
+
+    [Fact]
+    public void Truncate_below_the_marker_length_yields_the_marker_alone()
+    {
+        var limits = Limits with { MaxChars = 5 };
+
+        limits.Truncate("abcdefgh").ShouldBe((ConversionLimits.TruncatedMarker, true));
+        limits.Truncate(ConversionLimits.TruncatedMarker).Markdown.ShouldBe(ConversionLimits.TruncatedMarker);
     }
 
     [Fact]
     public async Task Pdf_that_is_not_a_pdf_throws()
     {
         await Should.ThrowAsync<Exception>(() => ConvertPdfAsync(Encoding.ASCII.GetBytes("not a pdf at all"), Limits));
+    }
+
+    [Fact]
+    public async Task Pdf_parse_past_the_timeout_throws_a_timeout_and_the_service_records_failed()
+    {
+        var pdf = SyntheticPdf.CreatePages([.. Enumerable.Range(1, 20).Select(i => $"Synthetic page {i}")]);
+        using var stream = new MemoryStream(pdf);
+
+        await Should.ThrowAsync<TimeoutException>(() => new PdfAttachmentConverter(TimeSpan.Zero).ConvertAsync(
+            new GmailAttachment("att-1", "slow.pdf", "application/pdf", pdf.Length), stream, Limits, Ct));
+
+        var gmail = Gmail(Att("slow.pdf", "application/pdf", pdf));
+        var digest = await ConvertAllAsync(gmail, PdfOnly, Limits, new PdfAttachmentConverter(TimeSpan.Zero));
+        digest.Skipped.ShouldBe([new SkippedAttachment("slow.pdf", AttachmentType.Pdf, SkipReason.Failed)]);
     }
 
     [Fact]
@@ -88,7 +142,7 @@ public sealed class AttachmentConversionTests
             Pdf("b.pdf", "Synthetic beta text"));
         var enabled = new HashSet<AttachmentType> { AttachmentType.Pdf, AttachmentType.Image };
 
-        var digest = await Service(gmail).ConvertAllAsync(MessageId, enabled, Limits, Ct);
+        var digest = await ConvertAllAsync(gmail, enabled, Limits);
 
         digest.Converted.Select(c => (c.Filename, c.AttachmentType)).ShouldBe([("a.pdf", AttachmentType.Pdf), ("b.pdf", AttachmentType.Pdf)]);
         digest.Converted[0].Markdown.ShouldContain("Synthetic alpha text");
@@ -105,11 +159,11 @@ public sealed class AttachmentConversionTests
     {
         var gmail = Gmail(Pdf("big.pdf", "Synthetic big text", minimumSize: 4096), Pdf("small.pdf", "Synthetic small text"));
 
-        var digest = await Service(gmail).ConvertAllAsync(MessageId, PdfOnly, Limits with { MaxBytes = 2048 }, Ct);
+        var digest = await ConvertAllAsync(gmail, PdfOnly, Limits with { MaxBytes = 2048 });
 
         digest.Skipped.ShouldBe([new SkippedAttachment("big.pdf", AttachmentType.Pdf, SkipReason.TooLarge)]);
         digest.Converted.Single().Filename.ShouldBe("small.pdf");
-        gmail.AttachmentListCalls.Count.ShouldBe(1);
+        gmail.ContentCalls.Count.ShouldBe(1);
         gmail.AttachmentContentCalls.ShouldBe(["att-2"]);
     }
 
@@ -118,7 +172,7 @@ public sealed class AttachmentConversionTests
     {
         var gmail = Gmail(Pdf("1.pdf", "One"), Att("x.zip", "application/zip", [1]), Pdf("2.pdf", "Two"), Pdf("3.pdf", "Three"));
 
-        var digest = await Service(gmail).ConvertAllAsync(MessageId, PdfOnly, Limits with { MaxPerMessage = 2 }, Ct);
+        var digest = await ConvertAllAsync(gmail, PdfOnly, Limits with { MaxPerMessage = 2 });
 
         digest.Converted.Select(c => c.Filename).ShouldBe(["1.pdf", "2.pdf"]);
         digest.Skipped.ShouldBe(
@@ -134,22 +188,87 @@ public sealed class AttachmentConversionTests
     {
         var gmail = Gmail(Att("broken.pdf", "application/pdf", Encoding.ASCII.GetBytes("not a pdf")), Pdf("ok.pdf", "Synthetic ok text"));
 
-        var digest = await Service(gmail).ConvertAllAsync(MessageId, PdfOnly, Limits, Ct);
+        var digest = await ConvertAllAsync(gmail, PdfOnly, Limits);
 
         digest.Skipped.ShouldBe([new SkippedAttachment("broken.pdf", AttachmentType.Pdf, SkipReason.Failed)]);
         digest.Converted.Single().Markdown.ShouldContain("Synthetic ok text");
     }
 
     [Fact]
+    public async Task Service_records_a_failed_download_as_failed_and_converts_the_others()
+    {
+        var gmail = Gmail(Pdf("1.pdf", "Synthetic one"), Pdf("2.pdf", "Synthetic two"), Pdf("3.pdf", "Synthetic three"));
+        var attachments = await AttachmentsAsync(gmail);
+        var service = Service(gmail);
+
+        var first = await service.ConvertAllAsync(MessageId, attachments[..1], PdfOnly, Limits, Ct);
+        gmail.Inner.FailNext(HttpStatusCode.ServiceUnavailable, 1);
+        var rest = await service.ConvertAllAsync(MessageId, attachments[1..], PdfOnly, Limits, Ct);
+
+        first.Converted.Single().Filename.ShouldBe("1.pdf");
+        rest.Skipped.ShouldBe([new SkippedAttachment("2.pdf", AttachmentType.Pdf, SkipReason.Failed)]);
+        rest.Converted.Single().Filename.ShouldBe("3.pdf");
+    }
+
+    [Fact]
+    public async Task Service_lets_a_lost_connection_and_cancellation_propagate()
+    {
+        var gmail = Gmail(Pdf("1.pdf", "Synthetic one"));
+        var attachments = await AttachmentsAsync(gmail);
+
+        gmail.Inner.FailNext(HttpStatusCode.Unauthorized, 1);
+        await Should.ThrowAsync<GmailNotConnectedException>(() => Service(gmail).ConvertAllAsync(MessageId, attachments, PdfOnly, Limits, Ct));
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(() => Service(gmail).ConvertAllAsync(MessageId, attachments, PdfOnly, Limits, cancelled.Token));
+    }
+
+    [Fact]
+    public async Task Service_records_a_converter_timeout_as_failed()
+    {
+        var gmail = Gmail(Att("notes.txt", "text/plain", [1]));
+        var throwing = new EchoConverter(() => throw new TaskCanceledException("A converter's own timeout"));
+
+        var digest = await ConvertAllAsync(gmail, new HashSet<AttachmentType> { AttachmentType.PlainText }, Limits, throwing);
+
+        digest.Skipped.ShouldBe([new SkippedAttachment("notes.txt", AttachmentType.PlainText, SkipReason.Failed)]);
+    }
+
+    [Fact]
+    public async Task Service_converts_inline_content_without_a_download()
+    {
+        var gmail = Gmail();
+        var pdf = SyntheticPdf.Create("Synthetic title", "Synthetic inline text");
+        GmailAttachment[] attachments = [new(null, "inline.pdf", "application/pdf", pdf.Length, pdf)];
+
+        var digest = await Service(gmail).ConvertAllAsync(MessageId, attachments, PdfOnly, Limits, Ct);
+
+        digest.Converted.Single().Markdown.ShouldContain("Synthetic inline text");
+        gmail.AttachmentContentCalls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Service_checks_an_unknown_size_after_the_download()
+    {
+        var gmail = Gmail(Pdf("big.pdf", "Synthetic big text", minimumSize: 4096));
+        var attachments = (await AttachmentsAsync(gmail)).Select(a => a with { Size = null }).ToArray();
+
+        var digest = await Service(gmail).ConvertAllAsync(MessageId, attachments, PdfOnly, Limits with { MaxBytes = 2048 }, Ct);
+
+        digest.Skipped.ShouldBe([new SkippedAttachment("big.pdf", AttachmentType.Pdf, SkipReason.TooLarge)]);
+        gmail.AttachmentContentCalls.ShouldBe(["att-1"]);
+    }
+
+    [Fact]
     public async Task Service_truncates_whatever_a_converter_returns()
     {
         var gmail = Gmail(Att("notes.txt", "text/plain", [1]));
-        var service = new AttachmentConversionService(gmail, [new EchoConverter(new string('x', 50))], NullLogger<AttachmentConversionService>.Instance);
+        var echo = new EchoConverter(() => new string('x', 50));
 
-        var digest = await service.ConvertAllAsync(
-            MessageId, new HashSet<AttachmentType> { AttachmentType.PlainText }, Limits with { MaxChars = 10 }, Ct);
+        var digest = await ConvertAllAsync(gmail, new HashSet<AttachmentType> { AttachmentType.PlainText }, Limits with { MaxChars = 20 }, echo);
 
-        digest.Converted.Single().ShouldBe(new ConvertedAttachment("notes.txt", AttachmentType.PlainText, "xxxxxxxxxx\n[truncated]", true));
+        digest.Converted.Single().ShouldBe(new ConvertedAttachment("notes.txt", AttachmentType.PlainText, "xxxxxxxx\n[truncated]", true));
     }
 
     [Fact]
@@ -157,7 +276,7 @@ public sealed class AttachmentConversionTests
     {
         var gmail = Gmail();
 
-        (await Service(gmail).ConvertAllAsync(MessageId, PdfOnly, Limits, Ct)).ShouldBe(AttachmentDigest.Empty);
+        (await ConvertAllAsync(gmail, PdfOnly, Limits)).ShouldBe(AttachmentDigest.Empty);
         gmail.AttachmentContentCalls.ShouldBeEmpty();
     }
 
@@ -168,8 +287,16 @@ public sealed class AttachmentConversionTests
             new GmailAttachment("att-1", "invoice.pdf", "application/pdf", pdf.Length), stream, limits, Ct);
     }
 
-    private static AttachmentConversionService Service(IGmailClient gmail) =>
-        new(gmail, [new PdfAttachmentConverter()], NullLogger<AttachmentConversionService>.Instance);
+    private static AttachmentConversionService Service(IGmailClient gmail, IAttachmentConverter? converter = null) =>
+        new(gmail, [converter ?? new PdfAttachmentConverter()], NullLogger<AttachmentConversionService>.Instance);
+
+    private static async Task<GmailAttachment[]> AttachmentsAsync(IGmailClient gmail) =>
+        [.. (await gmail.GetMessageContentAsync(MessageId, Ct)).ShouldNotBeNull().Attachments];
+
+    /// <summary>One <c>messages.get</c> for the list, as the analysis does, then the service.</summary>
+    private static async Task<AttachmentDigest> ConvertAllAsync(
+        IGmailClient gmail, IReadOnlySet<AttachmentType> enabled, ConversionLimits limits, IAttachmentConverter? converter = null) =>
+        await Service(gmail, converter).ConvertAllAsync(MessageId, await AttachmentsAsync(gmail), enabled, limits, Ct);
 
     private static CountingGmailClient Gmail(params (string Filename, string MimeType, byte[] Content)[] attachments)
     {
@@ -184,11 +311,11 @@ public sealed class AttachmentConversionTests
 
     private static (string, string, byte[]) Att(string filename, string mimeType, byte[] content) => (filename, mimeType, content);
 
-    private sealed class EchoConverter(string markdown) : IAttachmentConverter
+    private sealed class EchoConverter(Func<string> markdown) : IAttachmentConverter
     {
         public bool CanConvert(AttachmentType type) => type == AttachmentType.PlainText;
 
         public Task<ConvertedAttachment> ConvertAsync(GmailAttachment attachment, Stream content, ConversionLimits limits, CancellationToken ct) =>
-            Task.FromResult(new ConvertedAttachment(attachment.Filename, AttachmentType.Other, markdown, false));
+            Task.FromResult(new ConvertedAttachment(attachment.Filename, AttachmentType.Other, markdown(), false));
     }
 }
