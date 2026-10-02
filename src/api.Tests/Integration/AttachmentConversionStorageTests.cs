@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -30,7 +31,7 @@ public sealed class AttachmentConversionStorageTests(ApiFactory factory, Postgre
 
         var content = (await fake.GetMessageContentAsync(message.Id, Ct)).ShouldNotBeNull();
         var digest = await service.ConvertAllAsync(
-            message.Id, content.Attachments, new HashSet<AttachmentType> { AttachmentType.Pdf }, ConversionLimits.Default, Ct);
+            message.Id, content.Attachments, new HashSet<AttachmentType> { AttachmentType.Pdf }, new AttachmentSettings().ToLimits(), Ct);
 
         digest.Skipped.ShouldBeEmpty();
         digest.Converted.Single().Markdown.ShouldContain(PdfText);

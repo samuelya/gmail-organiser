@@ -48,13 +48,7 @@ public sealed class SettingsStore(
 
         var before = JsonSerializer.SerializeToNode(Effective(stored), Json)!.AsObject();
         var after = JsonSerializer.SerializeToNode(change(Effective(stored)), Json)!.AsObject();
-        foreach (var (name, value) in after)
-        {
-            if (!JsonNode.DeepEquals(value, before[name]))
-            {
-                stored[name] = value?.DeepClone();
-            }
-        }
+        StoreChanges(stored, before, after);
 
         row.Document = stored.ToJsonString(Json);
         row.UpdatedAt = time.GetUtcNow();
@@ -63,34 +57,106 @@ public sealed class SettingsStore(
         return Effective(stored);
     }
 
+    /// <summary>
+    /// The write side of <see cref="Overlay"/>: stores only the leaf values that changed, recursing into nested blocks,
+    /// so values the user never changed keep following the defaults. Lists of <c>{"type": …}</c> entries are stored per type.
+    /// </summary>
+    private static void StoreChanges(JsonObject stored, JsonObject before, JsonObject after)
+    {
+        foreach (var (name, value) in after)
+        {
+            var previous = before[name];
+            if (JsonNode.DeepEquals(value, previous))
+            {
+                continue;
+            }
+
+            if (value is JsonObject block && previous is JsonObject previousBlock)
+            {
+                if (stored[name] is not JsonObject storedBlock)
+                {
+                    stored[name] = storedBlock = [];
+                }
+
+                StoreChanges(storedBlock, previousBlock, block);
+            }
+            else if (value is JsonArray list && previous is JsonArray previousList && TypeKeys(list) is { } keys
+                && TypeKeys(previousList) is { } previousKeys)
+            {
+                if (stored[name] is not JsonArray entries)
+                {
+                    stored[name] = entries = [];
+                }
+
+                foreach (var (type, entry) in keys.Where(k => !JsonNode.DeepEquals(k.Value, previousKeys.GetValueOrDefault(k.Key))))
+                {
+                    // The reader takes the first entry per type, so the new entry replaces any saved one.
+                    entries.RemoveAll(e => e is JsonObject o && o["type"] is JsonValue t
+                        && t.GetValueKind() == JsonValueKind.String && t.GetValue<string>() == type);
+                    entries.Add(entry.DeepClone());
+                }
+            }
+            else
+            {
+                stored[name] = value?.DeepClone();
+            }
+        }
+    }
+
+    /// <summary>The entries of a list keyed by a string <c>type</c>, or <c>null</c> if it isn't such a list.</summary>
+    private static Dictionary<string, JsonNode>? TypeKeys(JsonArray list)
+    {
+        var keys = new Dictionary<string, JsonNode>();
+        foreach (var entry in list)
+        {
+            if (entry is not JsonObject o || o["type"] is not JsonValue type || type.GetValueKind() != JsonValueKind.String
+                || !keys.TryAdd(type.GetValue<string>(), o))
+            {
+                return null;
+            }
+        }
+
+        return keys;
+    }
+
     private AppSettings Effective(JsonObject stored)
     {
         var defaults = AppSettings.Defaults(env.Value);
         var merged = JsonSerializer.SerializeToNode(defaults, Json)!.AsObject();
 
-        // Apply saved values one by one, so a single unreadable value falls back to its default.
+        Overlay(merged, merged, stored, "");
+        var settings = TryDeserialize(merged) ?? defaults;
+        var envClientId = env.Value.GoogleClientId;
+        return string.IsNullOrWhiteSpace(envClientId) ? settings : settings with { GoogleClientId = envClientId.Trim() };
+    }
+
+    /// <summary>
+    /// Applies saved values one by one onto <paramref name="target"/> (a node of <paramref name="root"/>), recursing into
+    /// nested blocks, so a single unreadable value falls back to its default and a block missing a value keeps the default.
+    /// </summary>
+    private void Overlay(JsonObject root, JsonObject target, JsonObject stored, string path)
+    {
         foreach (var (name, value) in stored)
         {
-            if (!merged.ContainsKey(name) || (value is null && merged[name] is not null))
+            if (!target.ContainsKey(name) || (value is null && target[name] is not null))
             {
                 continue; // unknown property, or null for a setting that must have a value
             }
 
-            var candidate = merged.DeepClone().AsObject();
-            candidate[name] = value?.DeepClone();
-            if (TryDeserialize(candidate) is not null)
+            if (value is JsonObject block && target[name] is JsonObject defaults)
             {
-                merged = candidate;
+                Overlay(root, defaults, block, $"{path}{name}.");
+                continue;
             }
-            else
+
+            var previous = target[name]?.DeepClone();
+            target[name] = value?.DeepClone();
+            if (TryDeserialize(root) is null)
             {
-                logger.LogWarning("Saved setting {Setting} is unreadable; using its default", name);
+                target[name] = previous;
+                logger.LogWarning("Saved setting {Setting} is unreadable; using its default", path + name);
             }
         }
-
-        var settings = TryDeserialize(merged) ?? defaults;
-        var envClientId = env.Value.GoogleClientId;
-        return string.IsNullOrWhiteSpace(envClientId) ? settings : settings with { GoogleClientId = envClientId.Trim() };
     }
 
     private static AppSettings? TryDeserialize(JsonObject node)

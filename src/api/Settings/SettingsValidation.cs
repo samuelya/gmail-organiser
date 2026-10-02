@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text.Json;
+using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Analysis.Prompts;
 
 namespace GmailOrganiser.Settings;
@@ -31,6 +33,12 @@ public static class SettingsValidation
     public const double MinBulkApproveThreshold = 0.5;
     public const double MaxBulkApproveThreshold = 1.0;
     public const int MaxAnalysisPromptTemplateLength = 20_000;
+    public const int MinAttachmentMaxBytes = 64 * 1024;
+    public const int MaxAttachmentMaxBytes = 25 * 1024 * 1024;
+    public const int MinAttachmentMaxChars = 500;
+    public const int MaxAttachmentMaxChars = 50_000;
+    public const int MinAttachmentMaxPerMessage = 1;
+    public const int MaxAttachmentMaxPerMessage = 20;
 
     public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request)
     {
@@ -75,6 +83,11 @@ public static class SettingsValidation
             errors["analysisPromptTemplate"] = [$"Must contain the {PromptTemplate.EmailsPlaceholder} placeholder."];
         }
 
+        if (request.Attachments is { } attachments)
+        {
+            ValidateAttachments(errors, attachments);
+        }
+
         return errors;
     }
 
@@ -109,6 +122,38 @@ public static class SettingsValidation
 
     /// <summary>Trims a prompt template; a blank template clears the override so the built-in one applies.</summary>
     public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
+
+    private static void ValidateAttachments(Dictionary<string, string[]> errors, UpdateAttachmentSettingsRequest request)
+    {
+        CheckRange(errors, "attachments.maxBytes", request.MaxBytes, MinAttachmentMaxBytes, MaxAttachmentMaxBytes);
+        CheckRange(errors, "attachments.maxImageBytes", request.MaxImageBytes, MinAttachmentMaxBytes, MaxAttachmentMaxBytes);
+        CheckRange(errors, "attachments.maxChars", request.MaxChars, MinAttachmentMaxChars, MaxAttachmentMaxChars);
+        CheckRange(errors, "attachments.maxPerMessage", request.MaxPerMessage, MinAttachmentMaxPerMessage, MaxAttachmentMaxPerMessage);
+
+        var seen = new HashSet<AttachmentType>();
+        for (var i = 0; i < (request.Types?.Count ?? 0); i++)
+        {
+            var entry = request.Types![i];
+            var field = $"attachments.types[{i}]";
+            if (entry is null || !AttachmentTypeJsonConverter.TryParse(entry.Type, out var type))
+            {
+                var names = string.Join(", ", Enum.GetValues<AttachmentType>().Select(t => JsonNamingPolicy.SnakeCaseLower.ConvertName(t.ToString())));
+                errors[$"{field}.type"] = [$"Unknown attachment type; must be one of {names}."];
+            }
+            else if (!seen.Add(type.Value))
+            {
+                errors[$"{field}.type"] = ["Each attachment type may be listed once."];
+            }
+            else if (entry.Enabled is null)
+            {
+                errors[$"{field}.enabled"] = ["Required."];
+            }
+            else if (type == AttachmentType.Archive && entry.Enabled.Value)
+            {
+                errors[$"{field}.enabled"] = ["Archive attachments (zip, 7z, rar, tar, gz) are never read and cannot be enabled."];
+            }
+        }
+    }
 
     private static void CheckRange(Dictionary<string, string[]> errors, string field, int? value, int min, int max)
     {

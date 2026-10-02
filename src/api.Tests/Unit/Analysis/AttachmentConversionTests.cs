@@ -3,6 +3,7 @@ using System.Text;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -12,7 +13,7 @@ namespace GmailOrganiser.Tests.Unit.Analysis;
 public sealed class AttachmentConversionTests
 {
     private const string MessageId = "msg-att-0001";
-    private static readonly ConversionLimits Limits = ConversionLimits.Default;
+    private static readonly ConversionLimits Limits = new AttachmentSettings().ToLimits();
     private static readonly IReadOnlySet<AttachmentType> PdfOnly = new HashSet<AttachmentType> { AttachmentType.Pdf };
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -152,6 +153,21 @@ public sealed class AttachmentConversionTests
             new SkippedAttachment("files.zip", AttachmentType.Archive, SkipReason.Disabled),
         ]);
         gmail.AttachmentContentCalls.ShouldBe(["att-1", "att-4"]);
+    }
+
+    [Fact]
+    public async Task Service_applies_the_image_limit_to_images_only()
+    {
+        var gmail = Gmail(Att("scan.png", "image/png", new byte[4096]), Pdf("big.pdf", "Synthetic big text", minimumSize: 4096));
+        var service = new AttachmentConversionService(
+            gmail, [new PdfAttachmentConverter(), new EchoConverter(() => "Synthetic image text", AttachmentType.Image)],
+            NullLogger<AttachmentConversionService>.Instance);
+
+        var digest = await service.ConvertAllAsync(MessageId, await AttachmentsAsync(gmail),
+            new HashSet<AttachmentType> { AttachmentType.Pdf, AttachmentType.Image }, Limits with { MaxImageBytes = 2048 }, Ct);
+
+        digest.Skipped.ShouldBe([new SkippedAttachment("scan.png", AttachmentType.Image, SkipReason.TooLarge)]);
+        digest.Converted.Single().Filename.ShouldBe("big.pdf");
     }
 
     [Fact]
@@ -311,9 +327,9 @@ public sealed class AttachmentConversionTests
 
     private static (string, string, byte[]) Att(string filename, string mimeType, byte[] content) => (filename, mimeType, content);
 
-    private sealed class EchoConverter(Func<string> markdown) : IAttachmentConverter
+    private sealed class EchoConverter(Func<string> markdown, AttachmentType handles = AttachmentType.PlainText) : IAttachmentConverter
     {
-        public bool CanConvert(AttachmentType type) => type == AttachmentType.PlainText;
+        public bool CanConvert(AttachmentType type) => type == handles;
 
         public Task<ConvertedAttachment> ConvertAsync(GmailAttachment attachment, Stream content, ConversionLimits limits, CancellationToken ct) =>
             Task.FromResult(new ConvertedAttachment(attachment.Filename, AttachmentType.Other, markdown(), false));
