@@ -92,6 +92,7 @@ public sealed class FakeGmailClient : IGmailClient
         ArgumentNullException.ThrowIfNull(query);
         query.EnsureValid();
         var matches = FakeGmailQuery.Parse(query.Query);
+        var includeSpamTrash = query.LabelIds?.Any(IsSpamOrTrash) == true || FakeGmailQuery.NamesSpamOrTrash(query.Query);
         var offset = DecodePageToken(query.PageToken);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
@@ -105,7 +106,7 @@ public sealed class FakeGmailClient : IGmailClient
             lock (gate)
             {
                 var hits = messages
-                    .Where(m => !m.LabelIds.Any(IsSpamOrTrash))
+                    .Where(m => includeSpamTrash || !m.LabelIds.Any(IsSpamOrTrash))
                     .Where(m => query.LabelIds is null || query.LabelIds.All(l => m.LabelIds.Contains(l, StringComparer.OrdinalIgnoreCase)))
                     .Where(matches)
                     .OrderByDescending(m => m.Date)
@@ -228,7 +229,7 @@ public sealed class FakeGmailClient : IGmailClient
         }
     }
 
-    /// <summary>Like Gmail with <c>includeSpamTrash=false</c>, listings skip Spam and Trash.</summary>
+    /// <summary>Like Gmail with <c>includeSpamTrash=false</c>, listings skip Spam and Trash unless they name them.</summary>
     private static bool IsSpamOrTrash(string labelId) =>
         labelId.Equals("SPAM", StringComparison.OrdinalIgnoreCase) || labelId.Equals("TRASH", StringComparison.OrdinalIgnoreCase);
 

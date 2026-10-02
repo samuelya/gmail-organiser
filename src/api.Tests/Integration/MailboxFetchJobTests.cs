@@ -213,6 +213,45 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         (await db.FetchState.SingleAsync(Ct)).MailboxPhase.ShouldBe(MailboxPhase.Completed);
     }
 
+    [Fact]
+    public async Task A_failed_job_completion_leaves_the_fetch_at_its_last_checkpoint()
+    {
+        var job = await EnqueueAsync();
+        await using var db = postgres.CreateDbContext();
+        await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(f => f.LastHistoryId, (string?)null), Ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE FUNCTION test_fail_completion() RETURNS trigger LANGUAGE plpgsql AS
+            $$ BEGIN RAISE EXCEPTION 'synthetic completion failure'; END $$;
+            CREATE TRIGGER test_fail_completion BEFORE UPDATE ON jobs FOR EACH ROW
+            WHEN (NEW.cursor->>'phase' = 'Completed') EXECUTE FUNCTION test_fail_completion();
+            """, Ct);
+        try
+        {
+            await RunNextAsync();
+        }
+        finally
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "DROP TRIGGER test_fail_completion ON jobs; DROP FUNCTION test_fail_completion();", Ct);
+        }
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("failed");
+        var state = await db.FetchState.AsNoTracking().SingleAsync(Ct);
+        state.MailboxPhase.ShouldBe(MailboxPhase.AllMail);
+        state.CompletedAt.ShouldBeNull();
+        state.LastHistoryId.ShouldBeNull();
+        (await db.FetchRunMessages.CountAsync(Ct)).ShouldBe(InboxCount);
+
+        // Re-running from the stored cursor repeats only the last chunk and still skips the Inbox ids.
+        await db.Database.ExecuteSqlAsync($"UPDATE jobs SET status = 'queued', error = NULL, finished_at = NULL WHERE id = {job.Id}", Ct);
+        await RunNextAsync();
+
+        (await GetJobAsync(job.Id)).Status.ShouldBe("completed");
+        (await db.FetchState.AsNoTracking().SingleAsync(Ct)).CompletedAt.ShouldNotBeNull();
+        var inboxIds = InboxIds();
+        gmail.MetadataCalls.SelectMany(c => c).Where(inboxIds.Contains).ShouldBeUnique();
+    }
+
     /// <summary>All Mail skips the Inbox messages this run already stored, also across a pause.</summary>
     private void AssertEachMessageFetchedOnce()
     {

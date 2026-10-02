@@ -56,10 +56,13 @@ public sealed partial class MailboxFetchJob(
             cursor = next;
             if (cursor.Phase == MailboxPhase.Completed)
             {
-                await ctx.CompleteAsync(cursor, progress, ct);
+                // One transaction: a failure before the commit leaves fetch_state, the run's ids and the job cursor
+                // at the last All Mail checkpoint, so the re-run repeats only the final chunk.
+                await ctx.CompleteAsync(cursor, progress, c => SaveStateAsync(cursor, c), ct);
                 return;
             }
 
+            await SaveStateAsync(cursor, ct);
             if (await ctx.CheckpointAsync(cursor, progress, ct) != JobSignal.Continue)
             {
                 return;
@@ -133,7 +136,6 @@ public sealed partial class MailboxFetchJob(
             cursor = cursor with { Phase = inbox ? MailboxPhase.AllMail : MailboxPhase.Completed };
         }
 
-        await SaveStateAsync(cursor, ct);
         return (cursor, progress);
     }
 

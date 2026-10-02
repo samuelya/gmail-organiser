@@ -195,6 +195,28 @@ public sealed class FakeGmailClientTests
         page.Messages.ShouldAllBe(m => byId[m.Id].LabelIds.Contains("INBOX") && byId[m.Id].LabelIds.Contains("CATEGORY_UPDATES"));
     }
 
+    [Theory]
+    [InlineData(null, null, "a")]
+    [InlineData("SPAM", null, "s")]
+    [InlineData("TRASH", null, "t")]
+    [InlineData(null, "in:spam", "s")]
+    [InlineData(null, "in:trash", "t")]
+    [InlineData(null, "label:TRASH", "t")]
+    public async Task ListMessageIdsAsync_skips_spam_and_trash_unless_the_request_names_them(
+        string? labelId, string? query, string expected)
+    {
+        var client = new FakeGmailClient(new FakeTokenStore(TimeProvider.System),
+        [
+            new FakeMessage("a", "a", "a@example.com", "Synthetic", Now, ["INBOX"]),
+            new FakeMessage("s", "s", "s@example.com", "Synthetic", Now, ["SPAM"]),
+            new FakeMessage("t", "t", "t@example.com", "Synthetic", Now, ["TRASH"]),
+        ]);
+
+        var page = await client.ListMessageIdsAsync(new MessageListQuery(query, labelId is null ? null : [labelId], null, 10), Ct);
+
+        page.Messages.Select(m => m.Id).ShouldBe([expected]);
+    }
+
     [Fact]
     public async Task GetMessagesMetadataAsync_returns_request_order_and_omits_unknown_ids()
     {

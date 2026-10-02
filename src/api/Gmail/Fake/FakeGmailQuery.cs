@@ -2,7 +2,7 @@ namespace GmailOrganiser.Gmail.Fake;
 
 /// <summary>
 /// The subset of Gmail search the fake understands: <c>from:&lt;address&gt;</c>, <c>from:@&lt;domain&gt;</c> (subdomains
-/// included), <c>in:inbox</c>, <c>label:&lt;id&gt;</c> and <c>has:attachment</c>, combined with AND. Anything else throws.
+/// included), <c>in:inbox</c>, <c>in:spam</c>, <c>in:trash</c>, <c>label:&lt;id&gt;</c> and <c>has:attachment</c>, combined with AND. Anything else throws.
 /// </summary>
 public static class FakeGmailQuery
 {
@@ -13,6 +13,12 @@ public static class FakeGmailQuery
         return m => predicates.TrueForAll(p => p(m));
     }
 
+    /// <summary>Whether the query names Spam or Trash, which Gmail then lists even with <c>includeSpamTrash=false</c>.</summary>
+    public static bool NamesSpamOrTrash(string? query) =>
+        (query ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => t.ToLowerInvariant())
+            .Any(t => t is "in:spam" or "in:trash" or "label:spam" or "label:trash");
+
     private static Func<FakeMessage, bool> ParseTerm(string term)
     {
         var colon = term.IndexOf(':', StringComparison.Ordinal);
@@ -21,6 +27,8 @@ public static class FakeGmailQuery
         return (key, value.ToLowerInvariant()) switch
         {
             ("in", "inbox") => m => HasLabel(m, "INBOX"),
+            ("in", "spam") => m => HasLabel(m, "SPAM"),
+            ("in", "trash") => m => HasLabel(m, "TRASH"),
             ("has", "attachment") => m => m.HasAttachment,
             ("label", { Length: > 0 }) => m => HasLabel(m, value),
             ("from", ['@', .. var domain]) when domain.Length > 0 => m => FromDomain(m, domain),
