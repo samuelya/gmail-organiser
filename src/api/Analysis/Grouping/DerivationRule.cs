@@ -19,13 +19,16 @@ public sealed record Agreed(
     bool UnsubscribeSuggested,
     double Confidence) : Derivation;
 
-/// <summary>Representatives disagree or too few are valid: every remaining member goes to the LLM individually.</summary>
+/// <summary>Representatives disagree or one has no valid output: every remaining member goes to the LLM individually.</summary>
 public sealed record Mixed : Derivation
 {
     public static readonly Mixed Instance = new();
 }
 
-/// <summary>Epic #22 safety rule: derive only when at least two valid representatives agree on all decision fields.</summary>
+/// <summary>
+/// Epic #22 safety rule: derive only when every representative (at least two) has a valid output and all agree on
+/// all decision fields. One invalid representative makes the group mixed rather than deriving from a partial sample.
+/// </summary>
 public static class DerivationRule
 {
     public const int MinValidRepresentatives = 2;
@@ -36,7 +39,7 @@ public static class DerivationRule
             .OfType<RepresentativeOutput>()
             .Where(o => !string.IsNullOrWhiteSpace(o.TopicLabel) && double.IsFinite(o.Confidence))
             .ToList();
-        if (valid.Count < MinValidRepresentatives)
+        if (valid.Count < MinValidRepresentatives || valid.Count < representativeOutputs.Count)
         {
             return Mixed.Instance;
         }

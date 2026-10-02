@@ -150,6 +150,26 @@ public sealed class AnalysisRunJobTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
+    public async Task Group_with_an_invalid_representative_is_mixed_and_derives_nothing()
+    {
+        // The model never answers the last shop representative, not even on the retry.
+        h.Chat.Respond = (ids, _, _, _) => Task.FromResult(ids.Count > 1 && ids[0].StartsWith('a')
+            ? AnalysisRunHarness.Agree([.. ids.Take(ids.Count - 1)])
+            : AnalysisRunHarness.Agree(ids));
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        done.Status.ShouldBe("completed");
+        (done.LlmCalls, done.MixedGroups, done.FailedMessages).ShouldBe((11, 1, 1));
+        (done.MessagesCovered, done.MessagesLlm, done.MessagesDerived).ShouldBe((19, 15, 4));
+        await using var db = postgres.CreateDbContext();
+        (await db.Suggestions.Where(s => s.MessageId.StartsWith("a")).ToListAsync(Ct))
+            .ShouldAllBe(s => s.Source == SuggestionSource.Llm);
+    }
+
+    [Fact]
     public async Task Invalid_output_is_retried_once_then_recorded_as_failed_and_the_run_continues()
     {
         h.Chat.Respond = (ids, _, _, _) =>
