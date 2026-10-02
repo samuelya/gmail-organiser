@@ -103,7 +103,7 @@ export class DashboardPage {
     return state === 'reconnecting' || state === 'disconnected';
   });
 
-  /** Status refetches on a fetch job's status change or a reconnect, not on progress ticks. */
+  /** Status refetches on a fetch job status or step change, or a reconnect; not on progress ticks. */
   private readonly refreshKey = computed(
     () => `${fetchJobsKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
   );

@@ -85,11 +85,14 @@ export function fetchView(status: FetchStatusDto, live: JobDto | undefined): Fet
   };
 }
 
-/** Changes only when a fetch job appears, goes or changes status; progress ticks leave it equal. */
+/**
+ * Changes when a fetch job appears, goes, changes status or moves to another step (its progress
+ * message, e.g. Inbox to All mail); `done` ticks leave it equal.
+ */
 export function fetchJobsKey(jobs: readonly JobDto[]): string {
   return jobs
     .filter((j) => j.queue === FETCH_QUEUE)
-    .map((j) => `${j.id}:${j.status}`)
+    .map((j) => `${j.id}:${j.status}:${j.progress?.message ?? ''}`)
     .sort()
     .join(',');
 }

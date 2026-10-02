@@ -105,6 +105,8 @@ describe('fetchView', () => {
     const b = fetchJobsKey([job('running', { progress: { done: 99, total: 100, message: null } })]);
     expect(a).toBe(b);
     expect(fetchJobsKey([job('paused')])).not.toBe(a);
+    const nextStep = { done: 0, total: 100, message: 'Next step' };
+    expect(fetchJobsKey([job('running', { progress: nextStep })])).not.toBe(a);
   });
 });
 
@@ -231,7 +233,7 @@ describe('DashboardPage', () => {
     expect(jobs.pause).toHaveBeenCalledWith('j1');
   });
 
-  it('refetches the status on a fetch job status change and on reconnect, not on progress', async () => {
+  it('refetches the status on a fetch job status change and on reconnect, not on progress ticks', async () => {
     const { fixture } = await render(status({ activeJob: job('running') }));
     expect(fetch.getStatus).toHaveBeenCalledTimes(1);
 

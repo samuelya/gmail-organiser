@@ -48,18 +48,16 @@
         @if (view(); as v) {
           @if (v.job; as job) {
             <div class="flex flex-col gap-1" data-testid="fetch-progress">
-              @if (fetchPercent() !== null) {
-                <mat-progress-bar
-                  mode="determinate"
-                  [value]="fetchPercent()"
-                  [attr.aria-label]="'Fetch progress, ' + jobLabel(job)"
-                />
-              } @else {
-                <mat-progress-bar
-                  mode="indeterminate"
-                  [attr.aria-label]="'Fetch progress, ' + jobLabel(job)"
-                />
-              }
+              <!-- Indeterminate only while the job moves and its total is unknown. -->
+              <mat-progress-bar
+                [mode]="
+                  fetchPercent() === null && job.status !== 'paused'
+                    ? 'indeterminate'
+                    : 'determinate'
+                "
+                [value]="fetchPercent() ?? 0"
+                [attr.aria-label]="'Fetch progress, ' + jobLabel(job)"
+              />
               <span class="muted text-sm" data-testid="fetch-progress-text">
                 {{ job.status }}
                 @if (job.progress; as p) {
