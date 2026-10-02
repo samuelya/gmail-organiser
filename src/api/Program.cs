@@ -1,5 +1,5 @@
-using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
