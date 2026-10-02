@@ -1,7 +1,7 @@
 import { JobControls, jobControls, JobDto, newerJob } from '../core/jobs.models';
 
-/** Mailbox fetch phase as the API writes it. */
-export type MailboxPhase = 'not_started' | 'inbox' | 'all_mail' | 'completed';
+/** Mailbox fetch phase as the API writes it; open, so a phase added later (e.g. `reconcile`) still shows. */
+export type MailboxPhase = 'not_started' | 'inbox' | 'all_mail' | 'completed' | (string & {});
 
 /** `FetchStatusDto` from `GET /api/fetch/status`. */
 export interface FetchStatusDto {
@@ -33,15 +33,22 @@ export interface StartFetchResponse {
 /** Jobs on this queue change the fetch status. */
 export const FETCH_QUEUE = 'fetch';
 
-const PHASE_LABELS: Record<MailboxPhase, string> = {
+const PHASE_LABELS: Record<string, string> = {
   not_started: 'Not started',
   inbox: 'Inbox',
   all_mail: 'All mail',
   completed: 'Completed',
 };
 
+/** Known phases read as written in the design; any other `snake_case` phase is humanised. */
 export function phaseLabel(phase: MailboxPhase): string {
-  return PHASE_LABELS[phase] ?? phase;
+  return PHASE_LABELS[phase] ?? humanise(phase);
+}
+
+/** `snake_case` → "Snake case", for API values the web has no label for. */
+export function humanise(value: string): string {
+  const words = value.replaceAll('_', ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /** What the "Mailbox fetch" card shows and allows. */

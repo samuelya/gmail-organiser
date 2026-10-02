@@ -6,7 +6,7 @@ import { of } from 'rxjs';
 import { isActiveJob, JobDto, JobsConnectionState, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { DashboardPage } from './dashboard-page.component';
-import { FetchStatusDto, fetchJobsKey, fetchView } from './fetch.models';
+import { FetchStatusDto, fetchJobsKey, fetchView, humanise } from './fetch.models';
 import { FetchService } from './fetch.service';
 
 const job = (status: JobStatus, over: Partial<JobDto> = {}): JobDto => ({
@@ -78,6 +78,14 @@ describe('fetchView', () => {
     const v = fetchView(status({ mailboxPhase: 'inbox', activeJob: job(jobStatus) }), undefined);
     expect(v.startLabel).toBeNull();
     expect(v.controls).toEqual(controls);
+  });
+
+  it('an unknown phase and job type are humanised, not dropped', () => {
+    const active = job('running', { type: 'incremental_fetch' });
+    const v = fetchView(status({ mailboxPhase: 'reconcile', activeJob: active }), undefined);
+    expect(v.phase).toBe('Reconcile');
+    expect(v.job!.type).toBe('incremental_fetch');
+    expect(humanise('incremental_fetch')).toBe('Incremental fetch');
   });
 
   it('a failed job offers Resume fetch through Start and shows its error', () => {

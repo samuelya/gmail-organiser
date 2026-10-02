@@ -168,7 +168,7 @@
         <div class="flex flex-col gap-1" data-testid="job-row">
           <div class="flex flex-wrap items-center gap-2">
             <span class="min-w-0 flex-1">
-              <span class="capitalize">{{ jobLabel(row.job) }}</span>
+              <span>{{ jobLabel(row.job) }}</span>
               <span class="muted text-sm"> · {{ row.job.status }}</span>
             </span>
             @if (row.controls.pause) {

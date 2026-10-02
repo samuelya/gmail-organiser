@@ -23,7 +23,7 @@ import { openConfirm } from '../core/confirm-dialog';
 import { JobDto, jobControls, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PageHeader } from '../layout/page-header';
-import { FetchStatusDto, fetchJobsKey, fetchView } from './fetch.models';
+import { FetchStatusDto, fetchJobsKey, fetchView, humanise } from './fetch.models';
 import { FetchService } from './fetch.service';
 
 /** `/dashboard`: mailbox fetch progress and controls, and the running jobs. */
@@ -154,7 +154,7 @@ export class DashboardPage {
   }
 
   jobLabel(job: JobDto): string {
-    return job.type.replaceAll('_', ' ');
+    return humanise(job.type);
   }
 
   private run(request: Observable<unknown>): void {
