@@ -43,6 +43,12 @@ public sealed class DecisionRow
     /// </summary>
     public Vector? Embedding { get; set; }
     public string? EmbeddingModel { get; set; }
+
+    /// <summary>
+    /// When the embedder last rejected this decision on its own while other decisions embedded; the background pass
+    /// skips it until <see cref="DecisionEmbeddingService.FailedRetryInterval"/> has passed.
+    /// </summary>
+    public DateTimeOffset? EmbeddingFailedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
     internal static void Configure(ModelBuilder modelBuilder)
