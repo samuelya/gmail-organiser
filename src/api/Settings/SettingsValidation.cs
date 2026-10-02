@@ -1,4 +1,5 @@
 using System.Globalization;
+using GmailOrganiser.Analysis.Prompts;
 
 namespace GmailOrganiser.Settings;
 
@@ -66,6 +67,11 @@ public static class SettingsValidation
         {
             errors["analysisPromptTemplate"] =
                 [$"Must be at most {MaxAnalysisPromptTemplateLength} characters, without control characters other than newline and tab."];
+        }
+        else if (request.AnalysisPromptTemplate is { } custom && NormalisePromptTemplate(custom) is not null
+                 && !custom.Contains(PromptTemplate.EmailsPlaceholder, StringComparison.Ordinal))
+        {
+            errors["analysisPromptTemplate"] = [$"Must contain the {PromptTemplate.EmailsPlaceholder} placeholder."];
         }
 
         return errors;

@@ -90,7 +90,7 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
             AnalysisDefaultCount: 50, AnalysisBodyMaxChars: 8000, AnalysisGroupingMode: AnalysisGroupingMode.SenderSubject,
             AnalysisRepresentativesPerGroup: 2, AnalysisMinGroupSize: 5, AnalysisDerivedConfidencePenalty: 0.2,
             AnalysisClusterDistance: 0.3, AnalysisMemoryShortCircuit: false, AnalysisMemoryMinApprovals: 7,
-            BulkApproveThreshold: 0.95, AutoArchiveOnActionDone: true, AnalysisPromptTemplate: "  Classify:\n\t{{message}}  "));
+            BulkApproveThreshold: 0.95, AutoArchiveOnActionDone: true, AnalysisPromptTemplate: "  Classify:\n\t{{emails}}  "));
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, "chat-model-a", null, null));
 
@@ -106,7 +106,7 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
         settings.AnalysisMemoryMinApprovals.ShouldBe(7);
         settings.BulkApproveThreshold.ShouldBe(0.95);
         settings.AutoArchiveOnActionDone.ShouldBeTrue();
-        settings.AnalysisPromptTemplate.ShouldBe("Classify:\n\t{{message}}");
+        settings.AnalysisPromptTemplate.ShouldBe("Classify:\n\t{{emails}}");
     }
 
     [Fact]
@@ -183,9 +183,9 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
     [InlineData("  \n\t ")]
     public async Task Blank_prompt_template_clears_the_override(string blank)
     {
-        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, AnalysisPromptTemplate: "Custom prompt"));
+        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, AnalysisPromptTemplate: "Custom prompt {{emails}}"));
         await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null));
-        (await GetAsync(factory)).AnalysisPromptTemplate.ShouldBe("Custom prompt");
+        (await GetAsync(factory)).AnalysisPromptTemplate.ShouldBe("Custom prompt {{emails}}");
 
         var response = await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, AnalysisPromptTemplate: blank));
 
@@ -196,7 +196,7 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
     [Fact]
     public async Task Prompt_template_at_max_length_is_accepted()
     {
-        var template = new string('p', SettingsValidation.MaxAnalysisPromptTemplateLength);
+        var template = "{{emails}}" + new string('p', SettingsValidation.MaxAnalysisPromptTemplateLength - "{{emails}}".Length);
 
         var response = await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, AnalysisPromptTemplate: template));
 
@@ -209,6 +209,7 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
         new string('p', SettingsValidation.MaxAnalysisPromptTemplateLength + 1),
         "Classify\u0000this",
         "Classify\u001bthis",
+        "Classify without the emails placeholder",
     };
 
     [Theory]
