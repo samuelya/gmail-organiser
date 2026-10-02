@@ -10,8 +10,11 @@ GitHub Actions, `.github/workflows/`. Every workflow has `permissions: contents:
 | CI | `ci.yml` | every PR, push to `main` | `api` | setup-dotnet from `global.json`, restore (NuGet cache), `dotnet format --verify-no-changes`, `dotnet build -warnaserror`, `dotnet test` (Testcontainers uses the runner's Docker) |
 | CI | `ci.yml` | every PR, push to `main` | `web` | in `src/web`: setup-node from `.nvmrc` (npm cache), `npm ci`, `npm run lint`, `npm test`, `npm run build` |
 | Images | `images.yml` | PR / push to `main` that changes `src/*/Dockerfile*`, `src/web/.dockerignore`, `src/web/nginx.conf`, `global.json`, `Directory.Build.props`, `src/api/**/*.csproj`, `src/web/package*.json`, `src/web/angular.json`, `docker-compose*.yml` or `images.yml` | `images` | `docker build` of the api and web images, no push |
+| Publish | `publish.yml` | push of a `v*.*.*` tag, or manual run (`workflow_dispatch`) | `publish api`, `publish web` (not required) | Builds linux/amd64 + linux/arm64 and pushes `ghcr.io/<owner>/gmail-organiser-{api,web}`. Job has `packages: write` (GITHUB_TOKEN). Tags: `vX.Y.Z` gives `X.Y.Z`, `X.Y`, `latest`; a pre-release `vX.Y.Z-rc.N` gives only `X.Y.Z-rc.N`; a manual run gives `sha-<short>` and `<branch>`, never `latest` |
 
 A new push to a PR cancels that PR's previous run.
+
+Release: `git tag vX.Y.Z && git push origin vX.Y.Z` on `main`; Publish pushes both images. GHCR packages start private.
 
 ## Required checks
 

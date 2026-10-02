@@ -2,6 +2,7 @@ name: Publish
 
 # Publishes the api and web images to GHCR for linux/amd64 and linux/arm64.
 # Release: git tag vX.Y.Z && git push origin vX.Y.Z  ->  X.Y.Z, X.Y, latest.
+# Pre-release tag vX.Y.Z-rc.N                         ->  X.Y.Z-rc.N only.
 # Manual run (workflow_dispatch)                     ->  sha-<short>, <branch>.
 # The SDK/node build stages cross-build on the runner's arch; QEMU only runs
 # the tiny per-arch runtime stages.
@@ -65,11 +66,11 @@ jobs:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ${{ steps.name.outputs.ref }}
-          flavor: latest=false
+          # auto: latest only for a stable semver tag; never for vX.Y.Z-rc.N or manual runs.
+          flavor: latest=auto
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
             type=sha,format=short,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=ref,event=branch,enable=${{ github.event_name == 'workflow_dispatch' }}
 
