@@ -1,4 +1,5 @@
 using GmailOrganiser.Common;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Settings;
 using Microsoft.Extensions.Options;
 
@@ -11,6 +12,9 @@ public enum ConnectOutcome
     MissingScopes,
     AccessDenied,
     ExchangeFailed,
+
+    /// <summary>A different account while a Gmail-reading job is active (<see cref="IAccountGuard.RefusesConnectAsync"/>).</summary>
+    FetchActive,
 }
 
 public static class ConnectOutcomeExtensions
@@ -22,17 +26,20 @@ public static class ConnectOutcomeExtensions
         ConnectOutcome.MissingScopes => "missing_scopes",
         ConnectOutcome.AccessDenied => "access_denied",
         ConnectOutcome.ExchangeFailed => "exchange_failed",
+        ConnectOutcome.FetchActive => "fetch_active",
         _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, null),
     };
 }
 
 /// <summary>
 /// Completes and removes the Gmail connection. Nothing is stored unless the code exchange succeeded, all scopes were
-/// granted and the account email is known. Never logs codes, tokens or the client secret.
+/// granted and the account email is known, and never for another account while a fetch is active. Never logs codes,
+/// tokens or the client secret.
 /// </summary>
 public sealed class GmailConnector(
     IGoogleOAuthClient oauth,
     ITokenStore tokens,
+    IAccountGuard accountGuard,
     GoogleClientService googleClient,
     IOptions<AppOptions> app,
     IOptions<GmailOptions> gmail,
@@ -94,6 +101,13 @@ public sealed class GmailConnector(
             logger.LogWarning("Google code exchange failed: {ExceptionType} {GoogleError}",
                 ex.GetType().Name, (ex as GoogleOAuthException)?.Error);
             return ConnectOutcome.ExchangeFailed;
+        }
+
+        // The Gmail client reads the token on every call, so a switch now would merge another account's mail mid-run.
+        if (await accountGuard.RefusesConnectAsync(accountEmail, ct))
+        {
+            logger.LogWarning("Google connection refused: a different account while a fetch job is active");
+            return ConnectOutcome.FetchActive;
         }
 
         await tokens.SaveAsync(accountEmail, result.RefreshToken, result.Scopes, ct);

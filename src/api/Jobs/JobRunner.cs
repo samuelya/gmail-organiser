@@ -182,40 +182,24 @@ public sealed partial class JobRunner(
             return;
         }
 
-        // A guard failure is a run failure like a handler's: recorded on the job, not left running.
-        string? refused;
+        // The guard runs before the handler and at every checkpoint, so a job queued or paused before the condition
+        // changed is refused too; a guard's own failure is recorded like the handler's.
+        var context = new JobContext(job.Id, job.Cursor, db, time, notifier, services.GetKeyedService<IJobRunGuard>(job.Type));
         try
         {
-            refused = services.GetKeyedService<IJobStartGuard>(job.Queue) is { } guard ? await guard.RefuseReasonAsync(ct) : null;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            LogInterrupted(logger);
-            return;
-        }
-        catch (Exception ex)
-        {
-            LogHandlerFailed(logger, ex);
-            await FinishAsync(db, notifier, jobId, JobStatus.Failed, ex.Message);
-            return;
-        }
-
-        if (refused is not null)
-        {
-            LogRefused(logger);
-            await FinishAsync(db, notifier, jobId, JobStatus.Failed, refused);
-            return;
-        }
-
-        var context = new JobContext(job.Id, job.Cursor, db, time, notifier);
-        try
-        {
+            await context.EnsureAllowedAsync(ct);
             LogStarting(logger);
             await handler.RunAsync(context, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             LogInterrupted(logger);
+            return;
+        }
+        catch (JobRefusedException ex)
+        {
+            LogRefused(logger);
+            await FinishAsync(db, notifier, jobId, JobStatus.Failed, ex.Message);
             return;
         }
         catch (Exception ex)
@@ -279,7 +263,7 @@ public sealed partial class JobRunner(
     [LoggerMessage(Level = LogLevel.Information, Message = "Job starting")]
     private static partial void LogStarting(ILogger logger);
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Job refused by its queue's start guard")]
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Job refused by its run guard")]
     private static partial void LogRefused(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job ended as {Status}")]

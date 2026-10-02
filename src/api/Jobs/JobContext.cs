@@ -17,15 +17,17 @@ public sealed class JobContext
     private readonly AppDbContext db;
     private readonly TimeProvider time;
     private readonly JobNotifier notifier;
+    private readonly IJobRunGuard? guard;
     private string? cursor;
 
-    internal JobContext(Guid jobId, string? cursor, AppDbContext db, TimeProvider time, JobNotifier notifier)
+    internal JobContext(Guid jobId, string? cursor, AppDbContext db, TimeProvider time, JobNotifier notifier, IJobRunGuard? guard = null)
     {
         JobId = jobId;
         this.cursor = cursor;
         this.db = db;
         this.time = time;
         this.notifier = notifier;
+        this.guard = guard;
     }
 
     public Guid JobId { get; }
@@ -36,12 +38,23 @@ public sealed class JobContext
     /// <summary>The cursor from the last checkpoint (or enqueue), or default when there is none.</summary>
     public T? ReadCursor<T>() => cursor is null ? default : JsonSerializer.Deserialize<T>(cursor, JobRow.Json);
 
+    /// <summary>Throws <see cref="JobRefusedException"/> when the job type's <see cref="IJobRunGuard"/> refuses the run.</summary>
+    internal async Task EnsureAllowedAsync(CancellationToken ct)
+    {
+        if (guard is not null && await guard.RefuseReasonAsync(ct) is { } reason)
+        {
+            throw new JobRefusedException(reason);
+        }
+    }
+
     /// <summary>
     /// Persists cursor and progress in one <c>UPDATE</c> and returns whether the user asked to pause or cancel.
-    /// Call only after the unit of work the cursor points past is complete.
+    /// Call only after the unit of work the cursor points past is complete. Asks the job type's <see cref="IJobRunGuard"/>
+    /// first: a refusal throws <see cref="JobRefusedException"/> and leaves the cursor at the previous checkpoint.
     /// </summary>
     public async Task<JobSignal> CheckpointAsync<T>(T cursor, JobProgress progress, CancellationToken ct)
     {
+        await EnsureAllowedAsync(ct);
         var cursorJson = JsonSerializer.Serialize(cursor, JobRow.Json);
         var progressJson = JsonSerializer.Serialize(progress, JobRow.Json);
         var now = time.GetUtcNow();
@@ -63,11 +76,12 @@ public sealed class JobContext
     /// <summary>
     /// Persists the final cursor and progress once all work is done. A pause or cancel requested meanwhile is
     /// ignored: the job ends completed, because it is. <paramref name="finalWrites"/> run in the same transaction, so
-    /// the handler's own completion state is never committed without the final cursor.
+    /// the handler's own completion state is never committed without the final cursor. Guarded like a checkpoint.
     /// </summary>
     public async Task CompleteAsync<T>(T cursor, JobProgress progress, Func<CancellationToken, Task> finalWrites, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(finalWrites);
+        await EnsureAllowedAsync(ct);
         var cursorJson = JsonSerializer.Serialize(cursor, JobRow.Json);
         var progressJson = JsonSerializer.Serialize(progress, JobRow.Json);
         var now = time.GetUtcNow();

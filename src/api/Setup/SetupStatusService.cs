@@ -39,7 +39,7 @@ public sealed class SetupStatusService(
     {
         var current = await settings.GetAsync(ct);
         var token = await tokens.GetAsync(ct);
-        var accountMismatch = (await accountGuard.CheckAsync(ct)).IsMismatch;
+        var accountMismatch = (await accountGuard.CheckAsync(token, ct)).IsMismatch;
         var ollamaReachable = await PingOllamaAsync(ct);
 
         // With the fake Gmail no Google client is needed to connect, so the wizard step counts as done.

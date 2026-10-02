@@ -58,7 +58,7 @@ public static class FetchEndpoints
         return created ? TypedResults.Accepted($"/api/jobs/{job.Id}", response) : TypedResults.Ok(response);
     }
 
-    private static async Task<Ok<FetchStatusDto>> GetStatusAsync(AppDbContext db, IAccountGuard guard, CancellationToken ct)
+    private static async Task<Ok<FetchStatusDto>> GetStatusAsync(AppDbContext db, ITokenStore tokens, CancellationToken ct)
     {
         var counts = await db.FetchState.AsNoTracking()
             .Where(s => s.Id == FetchStateRow.SingletonId)
@@ -71,11 +71,10 @@ public static class FetchEndpoints
             .SingleAsync(ct);
         var state = counts.State;
         var latest = await LatestMailboxJobAsync(db, ct);
-        var check = await guard.CheckAsync(ct);
+        var check = AccountGuard.Compare(state.AccountEmail, (await tokens.GetAsync(ct))?.AccountEmail);
 
-        // While mismatched only the masked local account is shown.
         return TypedResults.Ok(new FetchStatusDto(
-            check.IsMismatch ? null : state.AccountEmail,
+            state.AccountEmail,
             SnakeCaseEnumConverter<MailboxPhase>.ToDb(state.MailboxPhase),
             state.InboxFetched,
             state.AllMailFetched,

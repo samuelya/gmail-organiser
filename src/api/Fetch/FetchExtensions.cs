@@ -12,7 +12,12 @@ public static class FetchExtensions
         services.AddScoped<SenderStatsUpdater>();
         services.AddScoped<MessageFetchPipeline>();
         services.AddScoped<IAccountGuard, AccountGuard>();
-        services.AddKeyedScoped<IJobStartGuard, FetchAccountJobGuard>(JobQueues.Fetch);
+        services.AddScoped<LocalAccountClaim>();
+        foreach (var type in FetchJobTypes.ReadsGmail)
+        {
+            services.AddKeyedScoped<IJobRunGuard, FetchAccountJobGuard>(type);
+        }
+
         services.AddKeyedScoped<IJobHandler, MailboxFetchJob>(MailboxFetchJob.JobType);
         return services;
     }

@@ -189,13 +189,6 @@ public sealed class SetupStatusServiceTests
         time,
         NullLogger<SetupStatusService>.Instance);
 
-    private sealed class StubAccountGuard : IAccountGuard
-    {
-        public AccountCheck Result { get; set; } = new(AccountCheckStatus.Ok);
-
-        public Task<AccountCheck> CheckAsync(CancellationToken ct = default) => Task.FromResult(Result);
-    }
-
     private sealed class StubCatalog : IOllamaCatalog
     {
         public bool Fails { get; set; }

@@ -7,4 +7,11 @@ public static class FetchJobTypes
 
     /// <summary>The per-sender fetch; its cursor's <c>target</c> is a sender address or a domain.</summary>
     public const string Sender = "sender_fetch";
+
+    /// <summary>
+    /// The job types that read Gmail into the local data: each gets <see cref="FetchAccountJobGuard"/> and calls
+    /// <see cref="LocalAccountClaim"/>, and a connect to another account is refused while one is active. Add the
+    /// incremental fetch (#60) here.
+    /// </summary>
+    public static readonly string[] ReadsGmail = [Mailbox, Sender];
 }
