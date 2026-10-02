@@ -33,7 +33,7 @@ Run `/team-up` at the start of an implementation session; `/eco-review` every tw
 | `tester` | `claude-sonnet-5-5` (Opus for escalated, security or data PRs) | PR verification, `type:bug` issues | fixes code, merges |
 | lead (this session) | `claude-opus-5-5`; `/model` Fable only for an escalation or design decision | orchestration, `/code-review`, merges on the owner's say-so | codes in an agent's worktree |
 
-Definitions: `.claude/agents/custom/`. The guard hook `.claude/hooks/guard-bash.sh` blocks the mechanical rules (global installs, `sudo`, reading `.env`, deleting Docker volumes, agents' `docker compose` without a project name, `git stash`, pushes to `main`, `--no-verify`, merges/closes, `gh issue|pr view` without `--json`, coders waiting on CI, CI watch/poll loops, long `tail`/`sleep`). A blocked call is not a failure: do what the message says.
+Definitions: `.claude/agents/custom/`. The guard hook `.claude/hooks/guard-bash.sh` blocks the mechanical rules (global installs, `sudo`, reading `.env`, deleting Docker volumes, agents' `docker compose` without a project name, `git stash`, pushes to `main`, `--no-verify`, merges/closes, `gh issue|pr view` without `--json`, coders waiting on CI, CI watch/poll loops, long `tail`/`sleep`, `gh pr create` over 15 files without `FILE_CAP_OK=1`). A blocked call is not a failure: do what the message says.
 
 **Pipeline:** owner picks an issue → coder in its own worktree (`.claude/worktrees/gmo-<issue>`, branch `feat/<issue>-<slug>`) → PR `Closes #n` → `/code-review` (effort scaled to risk) → fresh coder fixes findings → lead `scripts/gh/wait-ci.sh <pr>` (red: `ci-failures.sh <pr> --post`, fresh coder) → tester on green CI → fresh coder fixes → owner merges.
 
@@ -59,7 +59,7 @@ Cost = context × turns. Keep both small.
 - **Design check before coding** for platform semantics: Gmail `historyId`/sync, batch limits and quota, filter criteria, OAuth refresh-token expiry, EF Core migrations, pgvector, job resumability, SignalR, MCP transport, Claude Code headless. Post three sentences on the issue: the approach, and why it works in the failure case. Measure rather than argue.
 - **Short messages:** agent → lead at most 5 lines; detail goes in the issue or PR. The owner sees the feature working before polish rounds. Bundle disjoint small bugs into one PR.
 - **No rediscovery:** anything two agents had to work out goes into the docs they read, not lead memory.
-- **Lead starts fresh** (`/clear`) after each merge; state is on GitHub.
+- **Lead starts fresh** (`/clear`) after each merge; state is on GitHub. `.claude/hooks/lead-fresh.sh` says when a merge happened since the session began.
 
 ## Build & Test
 

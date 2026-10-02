@@ -30,6 +30,17 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lead-fresh.sh",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
