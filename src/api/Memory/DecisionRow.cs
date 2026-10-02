@@ -20,7 +20,15 @@ public sealed class DecisionRow
     public Guid Id { get; set; }
     public string? MessageId { get; set; }
     public string SenderAddress { get; set; } = "";
+
+    /// <summary>Normalised like <see cref="Analysis.Grouping.GroupKey"/> does.</summary>
     public string? ListId { get; set; }
+
+    /// <summary>
+    /// The message's <see cref="Analysis.Grouping.GroupKey"/> (list or sender and category, plus subject template): the
+    /// scope a memory pattern covers.
+    /// </summary>
+    public string? ScopeKey { get; set; }
     public string? SubjectTemplate { get; set; }
     public string TopicLabel { get; set; } = "";
     public bool NeedsAction { get; set; }
@@ -51,6 +59,8 @@ public sealed class DecisionRow
             e.Property(r => r.Embedding).HasColumnType("vector");
             e.HasIndex(r => new { r.SenderAddress, r.Outcome, r.CreatedAt });
             e.HasIndex(r => new { r.EmbeddingModel, r.SenderAddress });
+            e.HasIndex(r => new { r.ScopeKey, r.CreatedAt });
+            e.HasIndex(r => new { r.ListId, r.CreatedAt });
         });
     }
 }

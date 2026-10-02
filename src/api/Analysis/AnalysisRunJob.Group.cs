@@ -4,6 +4,7 @@ using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Memory;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Analysis;
@@ -16,6 +17,9 @@ internal sealed record GroupOutcome(
     int LlmCalls,
     bool Mixed);
 
+/// <summary>A group's looked-ahead memory: its short-circuit result, or the vectors of its representatives.</summary>
+internal sealed record PreparedGroup(ShortCircuitResult? Covered, MessageVectors? Vectors);
+
 public sealed partial class AnalysisRunJob
 {
     public const string RetryInstruction = "Return only the JSON array.";
@@ -23,13 +27,36 @@ public sealed partial class AnalysisRunJob
     /// <summary>Representative bodies fetched at once; the Gmail quota limiter still paces the calls.</summary>
     public const int MaxConcurrentBodyFetches = 4;
 
+    /// <summary>Groups looked ahead at once: one memory lookup and one embedding call for their representatives.</summary>
+    public const int MemoryLookaheadGroups = 32;
+
+    /// <summary>
+    /// Looks ahead over the next groups not yet prepared (at most <see cref="MemoryLookaheadGroups"/>): the memory
+    /// short-circuit for all of them in one lookup, then the vectors of the model-bound representatives in one call.
+    /// </summary>
+    private async Task PrepareAsync(
+        RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
+    {
+        var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
+        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree), ct);
+        var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
+        var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
+        for (var i = 0; i < batch.Count; i++)
+        {
+            prepared[batch[i]] = new PreparedGroup(covered[i], vectors);
+        }
+    }
+
+    private static IEnumerable<MessageRow> Representatives(MessageGroup group) =>
+        group.RepresentativeIds.Select(id => group.Members.First(m => m.Id == id));
+
     /// <summary>
     /// Short-circuit, else one model call about the representatives (plus one retry when some answers are invalid).
     /// Nothing is written here. Bodies live only in this call's locals.
     /// </summary>
-    private async Task<GroupOutcome> AnalyseGroupAsync(RunContext context, MessageGroup group, CancellationToken ct)
+    private async Task<GroupOutcome> AnalyseGroupAsync(RunContext context, MessageGroup group, PreparedGroup ready, CancellationToken ct)
     {
-        if (await shortCircuit.TryAsync(group, ct) is { } covered)
+        if (ready.Covered is { } covered)
         {
             return FromMemory(context, group, covered);
         }
@@ -57,7 +84,8 @@ public sealed partial class AnalysisRunJob
 
         var (outputs, filter, calls) = emails.Count == 0
             ? ([], null, 0)
-            : await AskModelAsync(context, emails, ct);
+            : await AskModelAsync(
+                context, emails, await memory.FindSimilarAsync(representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, ct), ct);
         if (outputs.Count == 0)
         {
             // Nothing usable: the members stay not analysed rather than costing one call each against a failing model.
@@ -111,11 +139,11 @@ public sealed partial class AnalysisRunJob
     /// ids are the expected ids without a valid answer, never derived from the error count.
     /// </summary>
     private async Task<(Dictionary<string, SuggestionOutput> Outputs, FilterCriteriaOutput? Filter, int Calls)> AskModelAsync(
-        RunContext context, IReadOnlyList<EmailForPrompt> emails, CancellationToken ct)
+        RunContext context, IReadOnlyList<EmailForPrompt> emails, IReadOnlyList<MemoryHint> hints, CancellationToken ct)
     {
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
         var messages = context.Builder.Build(new PromptInput(
-            emails, context.LabelTree, [], null, context.Settings.ActionLabelName, context.Settings.DeleteLabelName));
+            emails, context.LabelTree, hints, null, context.Settings.ActionLabelName, context.Settings.DeleteLabelName));
 
         var first = SuggestionOutputParser.Parse(await ChatAsync(context, messages, ct), expected);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
@@ -156,18 +184,23 @@ public sealed partial class AnalysisRunJob
         }
     }
 
+    /// <summary>Stores the covered members as memory suggestions; the rest (protected mail) go to the model one by one.</summary>
     private GroupOutcome FromMemory(RunContext context, MessageGroup group, ShortCircuitResult covered)
     {
-        var ids = covered.Suggestions.Select(s => s.Id).ToList();
-        if (ids.Count != group.Members.Count || !ids.ToHashSet(StringComparer.Ordinal).SetEquals(group.Members.Select(m => m.Id)))
+        var members = group.Members.ToDictionary(m => m.Id, StringComparer.Ordinal);
+        var ids = covered.Suggestions.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+        if (ids.Count == 0 || ids.Count != covered.Suggestions.Count || !ids.IsSubsetOf(members.Keys))
         {
-            throw new InvalidOperationException("A short-circuit result must cover every member of its group exactly once.");
+            throw new InvalidOperationException("A short-circuit result must cover members of its group at most once each.");
         }
 
-        var members = group.Members.ToDictionary(m => m.Id, StringComparer.Ordinal);
         var groupKey = group.Individual ? null : group.Key;
         return new GroupOutcome(
-            [.. covered.Suggestions.Select(s => Row(context, members[s.Id], SuggestionSource.Memory, s, groupKey, null))], [], [], 0, Mixed: false);
+            [.. covered.Suggestions.Select(s => Row(context, members[s.Id], SuggestionSource.Memory, s, groupKey, null))],
+            [],
+            [.. group.Members.Where(m => !ids.Contains(m.Id)).Select(AnalysisGrouper.Single)],
+            0,
+            Mixed: false);
     }
 
     private static SuggestionRow Row(

@@ -8,6 +8,7 @@ using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Memory;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
@@ -229,6 +230,12 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     public ScriptedChatClient Chat { get; } = new();
+
+    /// <summary>The embedding generator the host hands out; none (a failing factory) by default.</summary>
+    public FakeEmbeddingGenerator? Embeddings { get; init; }
+
+    /// <summary>Extra test services, applied last.</summary>
+    public Action<IServiceCollection>? ConfigureServices { get; init; }
     public JobRunner Runner { get; private set; } = null!;
     public CountingGmailClient Gmail { get; private set; } = null!;
 
@@ -277,9 +284,12 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
             services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), Seed()));
             services.AddSingleton(sp => new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>()));
             services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
-            services.AddScoped<ILlmClientFactory>(_ => new ScriptedLlmFactory(Chat));
+            services.AddScoped<ILlmClientFactory>(_ => new ScriptedLlmFactory(Chat, Embeddings));
             services.AddSingleton<IJobProgressPublisher>(new RecordingPublisher(this));
+            // Tests drive the job runner and the decision embedding themselves.
             services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)));
+            services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(DecisionEmbeddingService)));
+            ConfigureServices?.Invoke(services);
         }));
         Runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
         Gmail = host.Services.GetRequiredService<CountingGmailClient>();
@@ -448,15 +458,15 @@ internal sealed class ScriptedChatClient : IChatClient
     }
 }
 
-internal sealed class ScriptedLlmFactory(IChatClient chat) : ILlmClientFactory
+internal sealed class ScriptedLlmFactory(IChatClient chat, IEmbeddingGenerator<string, Embedding<float>>? embed = null) : ILlmClientFactory
 {
     public Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default) => Task.FromResult(chat);
 
     public Task<IEmbeddingGenerator<string, Embedding<float>>> CreateEmbeddingGeneratorAsync(CancellationToken ct = default) =>
-        throw new NotSupportedException();
+        Task.FromResult(embed ?? throw new NotSupportedException());
 
     public IChatClient CreateChatClient(Uri baseUrl, string model) => chat;
 
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) =>
-        throw new NotSupportedException();
+        embed ?? throw new NotSupportedException();
 }

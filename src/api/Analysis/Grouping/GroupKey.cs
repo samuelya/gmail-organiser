@@ -12,14 +12,18 @@ public static class GroupKey
     public static string For(MessageRow m)
     {
         var template = SubjectNormaliser.Template(m.Subject);
-        if (!string.IsNullOrWhiteSpace(m.ListId))
+        if (NormaliseListId(m.ListId) is { } listId)
         {
-            return $"{ListPrefix}{m.ListId.Trim().ToLowerInvariant()}|{template}";
+            return $"{ListPrefix}{listId}|{template}";
         }
 
         var category = m.Category is { } c ? SnakeCaseEnumConverter<MessageCategory>.ToDb(c) : "-";
         return $"{FromPrefix}{m.FromAddress}|{category}|{template}";
     }
+
+    /// <summary>The List-Id as keys compare it: trimmed and lower case; null when blank.</summary>
+    public static string? NormaliseListId(string? listId) =>
+        string.IsNullOrWhiteSpace(listId) ? null : listId.Trim().ToLowerInvariant();
 
     public static bool IsList(string key) => key.StartsWith(ListPrefix, StringComparison.Ordinal);
 }

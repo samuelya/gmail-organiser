@@ -29,7 +29,8 @@ public static partial class AnalysisPreviewEndpoint
 
     /// <summary>Candidates and grouping for a scope and count, without any model call; 400 on an invalid request.</summary>
     private static async Task<Results<Ok<GroupingPreviewDto>, ValidationProblem>> PreviewAsync(
-        AnalysisPreviewRequest request, AppDbContext db, ISettingsStore settingsStore, AnalysisGrouper grouper, CancellationToken ct)
+        AnalysisPreviewRequest request, AppDbContext db, ISettingsStore settingsStore, AnalysisGrouper grouper,
+        IAnalysisShortCircuit shortCircuit, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         var settings = await settingsStore.GetAsync(ct);
@@ -48,13 +49,19 @@ public static partial class AnalysisPreviewEndpoint
             .ToHashSet(StringComparer.Ordinal);
         var groups = await grouper.GroupAsync(candidates, GroupingSettings.From(settings), allowlisted, ct);
 
+        // The run's own memory lookup, in one query for all groups: a covered group costs one call per member memory
+        // left out (protected mail), and derives nothing. Label names do not change the counts.
+        var covered = await shortCircuit.TryAsync(groups, new ShortCircuitContext(settings, allowlisted, []), ct);
+        var modelGroups = groups.Where((_, i) => covered[i] is null).ToList();
+        var fromMemory = covered.Sum(c => c?.Suggestions.Count ?? 0);
+
         return TypedResults.Ok(new GroupingPreviewDto(
             Messages: candidates.Count,
             Skipped: AnalysisCandidates.Skipped(s, count, candidates.Count),
             Groups: groups.Count,
-            EstimatedLlmCalls: groups.Count,
-            EstimatedDerived: groups.Where(g => !g.Individual).Sum(g => g.Members.Count - g.RepresentativeIds.Count),
-            EstimatedFromMemory: 0,
+            EstimatedLlmCalls: modelGroups.Count + groups.Where((_, i) => covered[i] is not null).Sum(g => g.Members.Count) - fromMemory,
+            EstimatedDerived: modelGroups.Where(g => !g.Individual).Sum(g => g.Members.Count - g.RepresentativeIds.Count),
+            EstimatedFromMemory: fromMemory,
             EmbeddingsAvailable: !string.IsNullOrWhiteSpace(settings.EmbeddingModel),
             LargestGroups: groups
                 .OrderByDescending(g => g.Members.Count)
