@@ -73,7 +73,7 @@ public sealed class ReviewMemoryTests : IClassFixture<ApiFactory>, IAsyncLifetim
     {
         queue.Failure = new InvalidOperationException("synthetic post-commit failure");
 
-        var response = await h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(0, IncludeDerived: true));
+        var response = await h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(SettingsValidation.MinBulkApproveThreshold, IncludeDerived: true));
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var result = (await response.Content.ReadFromJsonAsync<BulkApproveResponse>(Ct)).ShouldNotBeNull();
