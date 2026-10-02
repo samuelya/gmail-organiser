@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Settings;
@@ -22,14 +23,19 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
     private const string Alice = "alice@d1.example.com";
     private const string Bob = "bob@d1.example.com";
     private const string Carol = "carol@d2.example.com";
+    private const string Dave = "dave@d4.example.com";
     private const int AliceCount = 150;
     private const int BobCount = 60;
     private const int CarolCount = 30;
+
+    // More than one Gmail page (500), so a chunk of 1000 spans two pages.
+    private const int DaveCount = 600;
     private const int ChunkSize = SettingsValidation.MinFetchChunkSize;
     private static readonly DateTimeOffset Newest = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     private readonly ConcurrentQueue<JobDto> published = new();
     private WebApplicationFactory<Program> host = null!;
+    private CountingGmailClient gmail = null!;
     private JobRunner runner = null!;
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -48,10 +54,13 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
         {
             services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), Seed()));
+            services.AddSingleton(sp => new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>()));
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
             services.AddSingleton<IJobProgressPublisher>(new RecordingPublisher(published));
             services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)));
         }));
         runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
+        gmail = host.Services.GetRequiredService<CountingGmailClient>();
         await using var scope = host.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { FetchChunkSize = ChunkSize }, Ct);
     }
@@ -119,7 +128,31 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
-    public async Task Same_target_twice_returns_the_existing_job_and_another_target_is_a_409()
+    public async Task Total_is_the_first_pages_estimate_even_when_a_chunk_spans_two_pages()
+    {
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { FetchChunkSize = 1000 }, Ct);
+        }
+
+        // Gmail's estimate drifts between pages; the cursor must keep page one's.
+        gmail.MapPage = (call, page) => page with { ResultSizeEstimate = 1000 + call };
+        var jobId = await StartAsync("@d4.example.com");
+
+        await RunNextAsync(jobId);
+
+        gmail.ListCalls.Count.ShouldBe(2);
+        await using var db = postgres.CreateDbContext();
+        var job = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == jobId, Ct);
+        job.Status.ShouldBe(JobStatus.Completed);
+        var cursor = JsonDocument.Parse(job.Cursor.ShouldNotBeNull()).RootElement;
+        cursor.GetProperty("total").GetInt64().ShouldBe(1001);
+        cursor.GetProperty("fetched").GetInt32().ShouldBe(DaveCount);
+        cursor.TryGetProperty("query", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Same_target_twice_returns_the_existing_job_and_another_target_queues_its_own()
     {
         var first = await PostAsync(host, Carol);
         var second = await PostAsync(host, "CAROL@d2.example.com");
@@ -128,12 +161,42 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         first.StatusCode.ShouldBe(HttpStatusCode.Accepted);
         first.Headers.Location?.OriginalString.ShouldStartWith("/api/jobs/");
         second.StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await second.Content.ReadFromJsonAsync<StartFetchResponse>(Ct))
-            .ShouldBe(await first.Content.ReadFromJsonAsync<StartFetchResponse>(Ct));
-        other.StatusCode.ShouldBe(HttpStatusCode.Conflict);
-        (await other.Content.ReadFromJsonAsync<ProblemDetails>(Ct)).ShouldNotBeNull().Title.ShouldBe("Sender fetch already running");
+        var firstId = (await first.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
+        (await second.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId.ShouldBe(firstId);
+        other.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        var otherId = (await other.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
+        otherId.ShouldNotBe(firstId);
+
+        // Both run, one after the other, on the fetch queue.
+        await RunNextAsync(firstId);
+        await RunNextAsync(otherId);
         await using var db = postgres.CreateDbContext();
-        (await db.Jobs.CountAsync(Ct)).ShouldBe(1);
+        var jobs = await db.Jobs.AsNoTracking().OrderBy(j => j.CreatedAt).ToListAsync(Ct);
+        jobs.Select(j => (j.DedupKey, j.Status)).ShouldBe([(Carol, JobStatus.Completed), (Bob, JobStatus.Completed)]);
+        (await db.Messages.CountAsync(Ct)).ShouldBe(CarolCount + BobCount);
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Paused)]
+    [InlineData(JobStatus.Failed)]
+    public async Task Same_target_with_a_paused_or_failed_job_resumes_it_from_its_checkpoint(JobStatus status)
+    {
+        var jobId = await StartAsync(Alice);
+        const string checkpoint = """{"target":"alice@d1.example.com","kind":"address","pageToken":"100","fetched":100,"total":150}""";
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Jobs.Where(j => j.Id == jobId).ExecuteUpdateAsync(
+                s => s.SetProperty(j => j.Status, status).SetProperty(j => j.Cursor, checkpoint), Ct);
+        }
+
+        var again = await PostAsync(host, Alice);
+
+        again.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await again.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId.ShouldBe(jobId);
+        await using var check = postgres.CreateDbContext();
+        var job = (await check.Jobs.AsNoTracking().ToListAsync(Ct)).ShouldHaveSingleItem();
+        job.Status.ShouldBe(JobStatus.Queued);
+        JsonDocument.Parse(job.Cursor.ShouldNotBeNull()).RootElement.GetProperty("pageToken").GetString().ShouldBe("100");
     }
 
     [Fact]
@@ -152,7 +215,11 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    [InlineData("@d1.example.com")]
+    [InlineData("@@d1.example.com")]
+    [InlineData("@alice@d1.example.com")]
+    [InlineData("com")]
+    [InlineData("@com")]
+    [InlineData("alice@localhost")]
     [InlineData("alice@")]
     [InlineData("alice@@d1.example.com")]
     [InlineData("alice@d1.example.com OR from:bob")]
@@ -179,15 +246,18 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
     }
 
     [Theory]
-    [InlineData("first.last+tag@sub.d1.example.com", "address")]
-    [InlineData("o'brien@example.com", "address")]
-    [InlineData("xn--bcher-kva.example.com", "domain")]
-    public async Task Valid_targets_are_accepted_with_their_kind(string target, string kind)
+    [InlineData("first.last+tag@sub.d1.example.com", "first.last+tag@sub.d1.example.com", "address")]
+    [InlineData("o'brien@example.com", "o'brien@example.com", "address")]
+    [InlineData("xn--bcher-kva.example.com", "xn--bcher-kva.example.com", "domain")]
+    [InlineData(" @D1.Example.com", "d1.example.com", "domain")]
+    public async Task Valid_targets_are_accepted_with_their_kind(string input, string target, string kind)
     {
-        var jobId = await StartAsync(target);
+        var jobId = await StartAsync(input);
 
         await using var db = postgres.CreateDbContext();
-        var cursor = JsonDocument.Parse((await db.Jobs.SingleAsync(j => j.Id == jobId, Ct)).Cursor.ShouldNotBeNull()).RootElement;
+        var job = await db.Jobs.SingleAsync(j => j.Id == jobId, Ct);
+        job.DedupKey.ShouldBe(target);
+        var cursor = JsonDocument.Parse(job.Cursor.ShouldNotBeNull()).RootElement;
         cursor.GetProperty("target").GetString().ShouldBe(target);
         cursor.GetProperty("kind").GetString().ShouldBe(kind);
     }
@@ -232,12 +302,13 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         return client.PostAsJsonAsync("/api/fetch/sender", new SenderFetchRequest(target), Ct);
     }
 
-    /// <summary>Two senders sharing <c>d1.example.com</c> and one at <c>d2.example.com</c>, interleaved by date.</summary>
+    /// <summary>Two senders sharing <c>d1.example.com</c> and one at <c>d2.example.com</c>, interleaved by date; one large sender at <c>d4.example.com</c>.</summary>
     private static List<FakeMessage> Seed() =>
     [
         .. Enumerable.Range(0, AliceCount).Select(i => Message($"a{i:D4}", $"Alice <{Alice}>", i * 3)),
         .. Enumerable.Range(0, BobCount).Select(i => Message($"b{i:D4}", Bob, (i * 3) + 1)),
         .. Enumerable.Range(0, CarolCount).Select(i => Message($"c{i:D4}", $"Carol <{Carol}>", (i * 3) + 2)),
+        .. Enumerable.Range(0, DaveCount).Select(i => Message($"d{i:D4}", Dave, 1000 + i)),
     ];
 
     private static FakeMessage Message(string id, string from, int minutesAgo) =>

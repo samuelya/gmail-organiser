@@ -31,7 +31,8 @@ public static partial class SenderFetchTarget
             return false;
         }
 
-        if (target[0] == '@')
+        // Gmail's own domain form; "@local@domain" stays invalid.
+        if (target[0] == '@' && target.IndexOf('@', 1) < 0)
         {
             target = target[1..];
         }
