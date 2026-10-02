@@ -207,6 +207,14 @@ describe('SendersPage', () => {
     expect(api.list.mock.calls.length).toBe(calls);
   });
 
+  it('finished jobs never seen active here (e.g. in the hub snapshot) do not refetch', async () => {
+    const { harness } = await render('/senders', paged([sender()]));
+    const calls = api.list.mock.calls.length;
+    jobs.held.set([job('completed', { id: 'old', version: 9 })]);
+    await harness.fixture.whenStable();
+    expect(api.list.mock.calls.length).toBe(calls);
+  });
+
   it('cancel asks first, then cancels the job', async () => {
     const { harness, q } = await render(
       '/senders',
@@ -236,6 +244,7 @@ describe('SendersPage', () => {
     await harness.fixture.whenStable();
     expect(api.fetchFromSender).toHaveBeenCalledWith('example.org');
     expect(component.target.value).toBe('');
+    expect(q('target-error')).toBeNull();
   });
 
   it('empty states: no senders yet links to the Dashboard; no search matches', async () => {
@@ -266,15 +275,13 @@ describe('SendersPage API errors', () => {
 
     component.target.setValue('example.com');
     component.submitTarget();
-    http
-      .expectOne('/api/fetch/sender')
-      .flush(
-        {
-          title: 'Gmail not connected',
-          detail: 'Connect Gmail in Setup before fetching a sender.',
-        },
-        { status: 409, statusText: 'Conflict' },
-      );
+    http.expectOne('/api/fetch/sender').flush(
+      {
+        title: 'Gmail not connected',
+        detail: 'Connect Gmail in Setup before fetching a sender.',
+      },
+      { status: 409, statusText: 'Conflict' },
+    );
     expect(open).toHaveBeenCalledWith(
       expect.stringContaining('Connect Gmail in Setup before fetching a sender.'),
       'Dismiss',

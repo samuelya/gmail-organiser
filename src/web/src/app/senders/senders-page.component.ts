@@ -8,12 +8,14 @@ import {
   inject,
   signal,
   untracked,
+  viewChild,
 } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
   FormControl,
   FormGroup,
+  FormGroupDirective,
   ReactiveFormsModule,
   Validators,
 } from '@angular/forms';
@@ -126,6 +128,10 @@ export class SendersPage {
     }),
   });
   readonly target = this.targetForm.controls.target;
+  /** Resetting through the directive also clears its submitted state, so no error shows after a fetch. */
+  private readonly targetFormDirective = viewChild(FormGroupDirective);
+  /** Sender fetch jobs seen active here; only their finishing moves the counts on this page. */
+  private readonly watched = signal<ReadonlySet<string>>(new Set());
 
   /** Each row with the live state of its active fetch job (`null` once it finished). */
   readonly rows = computed(() =>
@@ -144,7 +150,7 @@ export class SendersPage {
   private readonly refreshKey = computed(() => {
     const finished = this.jobs
       .jobs()
-      .filter((j) => j.type === SENDER_FETCH_JOB && !isActiveJob(j))
+      .filter((j) => j.type === SENDER_FETCH_JOB && !isActiveJob(j) && this.watched().has(j.id))
       .map((j) => `${j.id}:${j.status}`)
       .sort()
       .join(',');
@@ -167,6 +173,14 @@ export class SendersPage {
         this.loadFailed.set(!page);
         if (page) this.result.set(page);
       });
+    effect(() => {
+      const ids = [
+        ...(this.result()?.items ?? []).flatMap((s) => s.activeFetchJob?.id ?? []),
+        ...this.jobs.activeJobs().flatMap((j) => (j.type === SENDER_FETCH_JOB ? j.id : [])),
+      ];
+      const watched = untracked(this.watched);
+      if (ids.some((id) => !watched.has(id))) this.watched.set(new Set([...watched, ...ids]));
+    });
     effect(() => {
       const query = this.query();
       this.refreshKey();
@@ -226,7 +240,7 @@ export class SendersPage {
       this.target.markAsTouched();
       return;
     }
-    this.startFetch(target, () => this.targetForm.reset());
+    this.startFetch(target, () => this.targetFormDirective()?.resetForm());
   }
 
   cancel(job: JobDto, label: string): void {
