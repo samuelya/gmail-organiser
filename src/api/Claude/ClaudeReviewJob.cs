@@ -110,14 +110,15 @@ public sealed class ClaudeReviewJob(
     }
 
     /// <summary>
-    /// Whether another review job failed after <paramref name="jobId"/> was enqueued: the job then belongs to a send or
-    /// retry made before the failure (a follow-up, or one queued behind a running job) and must not start the CLI.
+    /// Whether another review job failed after <paramref name="jobId"/> was last queued: the job then belongs to a send,
+    /// retry or resume made before the failure (a follow-up, or one queued behind a running job) and must not start the
+    /// CLI. A resume after the failure is an explicit retry, so it counts from <see cref="JobRow.QueuedAt"/>.
     /// </summary>
     public static async Task<bool> EnqueuedBeforeFailureAsync(AppDbContext db, Guid jobId, CancellationToken ct)
     {
-        var createdAt = await db.Jobs.AsNoTracking().Where(j => j.Id == jobId).Select(j => j.CreatedAt).SingleAsync(ct);
+        var queuedAt = await db.Jobs.AsNoTracking().Where(j => j.Id == jobId).Select(j => j.QueuedAt).SingleAsync(ct);
         return await db.Jobs.AnyAsync(
-            j => j.Type == JobType && j.Id != jobId && j.Status == JobStatus.Failed && j.FinishedAt > createdAt, ct);
+            j => j.Type == JobType && j.Id != jobId && j.Status == JobStatus.Failed && j.FinishedAt > queuedAt, ct);
     }
 
     private async Task<ClaudeRunResult> RunBatchAsync(AppSettings s, int count, CancellationToken ct)

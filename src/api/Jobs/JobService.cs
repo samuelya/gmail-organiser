@@ -76,6 +76,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
                 Status = JobStatus.Queued,
                 Cursor = initialCursor is null ? null : JsonSerializer.Serialize(initialCursor, initialCursor.GetType(), JobRow.Json),
                 CreatedAt = now,
+                QueuedAt = now,
                 UpdatedAt = now,
             };
             db.Jobs.Add(row);
@@ -111,6 +112,7 @@ internal sealed class JobService(AppDbContext db, TimeProvider time, JobNotifier
     {
         JobStatus.Paused or JobStatus.Failed => q => q
             .SetProperty(j => j.Status, JobStatus.Queued)
+            .SetProperty(j => j.QueuedAt, now)
             .SetProperty(j => j.Error, (string?)null)
             .SetProperty(j => j.PauseRequested, false)
             .SetProperty(j => j.CancelRequested, false)
