@@ -27,6 +27,9 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
 
     private const char LikeEscape = '\\';
 
+    /// <summary>Only senders with this <c>allowlisted</c> flag; null for all. Stub rows (never fetched) are included.</summary>
+    public bool? Allowlisted { get; init; }
+
     /// <summary>Parses the query string values; <paramref name="errors"/> holds the field errors when it returns null.</summary>
     public static SenderQuery? Parse(
         string? search, int? page, int? pageSize, string? sort, string? dir, out Dictionary<string, string[]> errors)
@@ -80,16 +83,26 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
     public async Task<PagedDto<SenderDto>> ExecuteAsync(AppDbContext db, CancellationToken ct)
     {
         var senders = Filter(db.Senders.AsNoTracking(), Search);
+        if (Allowlisted is { } allowlisted)
+        {
+            senders = senders.Where(s => s.Allowlisted == allowlisted);
+        }
+
         var total = await senders.LongCountAsync(ct);
         var rows = await Order(senders).Skip((Page - 1) * PageSize).Take(PageSize).ToListAsync(ct);
         var fetchJobs = rows.Count == 0 ? [] : await ActiveSenderFetchJobsAsync(db, ct);
 
-        var items = rows.ConvertAll(s => new SenderDto(
-            s.Address, s.Domain, s.DisplayName, s.TotalCount, s.AnalysedCount, s.AppliedCount, s.LastSeenAt, s.Allowlisted,
-            fetchJobs.Find(j => j.Target.Equals(s.Address, StringComparison.OrdinalIgnoreCase)
-                || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job));
-        return new PagedDto<SenderDto>(items, Page, PageSize, total);
+        return new PagedDto<SenderDto>(rows.ConvertAll(s => ToDto(s, fetchJobs)), Page, PageSize, total);
     }
+
+    /// <summary>One sender with its active fetch job.</summary>
+    public static async Task<SenderDto> ToDtoAsync(SenderRow sender, AppDbContext db, CancellationToken ct) =>
+        ToDto(sender, await ActiveSenderFetchJobsAsync(db, ct));
+
+    private static SenderDto ToDto(SenderRow s, List<(string Target, JobDto Job)> fetchJobs) => new(
+        s.Address, s.Domain, s.DisplayName, s.TotalCount, s.AnalysedCount, s.AppliedCount, s.LastSeenAt, s.Allowlisted,
+        fetchJobs.Find(j => j.Target.Equals(s.Address, StringComparison.OrdinalIgnoreCase)
+            || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job);
 
     /// <summary>Senders whose address, domain or display name contains <paramref name="search"/> (all when null).</summary>
     public static IQueryable<SenderRow> Filter(IQueryable<SenderRow> senders, string? search)

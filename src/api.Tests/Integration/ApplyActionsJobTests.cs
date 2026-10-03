@@ -6,6 +6,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
@@ -366,6 +367,33 @@ public sealed class ApplyActionsJobTests(ApiFactory factory, PostgresFixture pos
         log.Note.ShouldBe("protected: starred");
         log.LabelsAdded.ShouldNotContain(DeleteLabel);
         (await JobAsync(batch)).Status.ShouldBe(JobStatus.Completed);
+    }
+
+    [Fact]
+    public async Task A_sender_allowlisted_after_review_never_gets_the_delete_label()
+    {
+        await SeedAsync(("a00", "Example", false, true, SuggestionStatus.Approved));
+        (await h.PutAsync($"/api/senders/{AnalysisRunHarness.Shop}/allowlist", new AllowlistRequest(true))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        h.Gmail.CreateLabelCalls.ShouldBeEmpty();
+        h.Gmail.BatchModifyCalls.ShouldBeEmpty();
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Suggestions.SingleAsync(s => s.MessageId == "a00", Ct)).Status.ShouldBe(SuggestionStatus.Approved);
+        }
+
+        var batch = await ApplyAsync(new ApplyRequest());
+        await h.RunNextAsync();
+
+        var deleteId = (await h.Gmail.Inner.ListLabelsAsync(Ct)).SingleOrDefault(l => l.Name == DeleteLabel)?.Id;
+        if (deleteId is not null)
+        {
+            Labels("a00").ShouldNotContain(deleteId);
+        }
+
+        await using var check = postgres.CreateDbContext();
+        var log = await check.ActionLog.SingleAsync(l => l.BatchId == batch.Id && l.MessageId == "a00", Ct);
+        log.Note.ShouldBe("protected: allowlisted sender");
+        log.LabelsAdded.ShouldNotContain(DeleteLabel);
     }
 
     private static Task Stop(CancellationTokenSource stop)

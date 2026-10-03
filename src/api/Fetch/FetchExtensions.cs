@@ -10,6 +10,7 @@ public static class FetchExtensions
     {
         services.AddScoped<MessageUpserter>();
         services.AddScoped<SenderStatsUpdater>();
+        services.AddScoped<SenderAllowlist>();
         services.AddScoped<MessageFetchPipeline>();
         services.AddScoped<IAccountGuard, AccountGuard>();
         services.AddScoped<LocalAccountClaim>();

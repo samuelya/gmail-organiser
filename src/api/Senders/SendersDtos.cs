@@ -13,3 +13,6 @@ public sealed record SenderDto(
     DateTimeOffset? LastSeenAt,
     bool Allowlisted,
     JobDto? ActiveFetchJob);
+
+/// <param name="Allowlisted">Required; nullable only so a missing value is a 400 rather than <c>false</c>.</param>
+public sealed record AllowlistRequest(bool? Allowlisted);
