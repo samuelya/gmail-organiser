@@ -53,4 +53,37 @@ describe('ClaudeService', () => {
     const req = backend.expectOne(`/api/claude/reviews/item%2F1/${action}`);
     expect(req.request.method).toBe('POST');
   });
+
+  describe('copyReviewPrompt', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    function stubClipboardWrite(write: () => Promise<void>): void {
+      vi.stubGlobal('ClipboardItem', class {});
+      vi.stubGlobal('navigator', { clipboard: { write } });
+    }
+
+    it('reports copy_failed when the browser refuses the write before the prompt loads', async () => {
+      stubClipboardWrite(() => Promise.reject(new DOMException('denied', 'NotAllowedError')));
+      const result = service.copyReviewPrompt();
+      await Promise.resolve();
+      backend.expectOne('/api/claude/prompts/review-pending').flush('Review the pending items.');
+      expect(await result).toBe('copy_failed');
+    });
+
+    it('reports load_failed when the prompt request fails', async () => {
+      stubClipboardWrite(() => Promise.reject(new DOMException('denied', 'NotAllowedError')));
+      const result = service.copyReviewPrompt();
+      backend
+        .expectOne('/api/claude/prompts/review-pending')
+        .flush('error', { status: 500, statusText: 'Server Error' });
+      expect(await result).toBe('load_failed');
+    });
+
+    it('reports copied when the write succeeds', async () => {
+      stubClipboardWrite(() => Promise.resolve());
+      const result = service.copyReviewPrompt();
+      backend.expectOne('/api/claude/prompts/review-pending').flush('Review the pending items.');
+      expect(await result).toBe('copied');
+    });
+  });
 });

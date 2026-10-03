@@ -69,14 +69,20 @@ export class ClaudeService {
    * loading, so the browser keeps the user gesture; copying after the response fails in Safari and Firefox.
    */
   copyReviewPrompt(): Promise<CopyPromptResult> {
-    let loaded = false;
-    const prompt = firstValueFrom(this.getReviewPrompt()).then((text) => {
-      loaded = true;
-      return text;
-    });
+    const prompt = firstValueFrom(this.getReviewPrompt());
+    // The write can reject before the prompt loads, so a failure waits for the request to settle.
+    let loadFailed = false;
+    const loadSettled = prompt.then(
+      () => undefined,
+      () => {
+        loadFailed = true;
+      },
+    );
     let write: Promise<void>;
     if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
       const blob = prompt.then((text) => new Blob([text], { type: 'text/plain' }));
+      // A refused write may never read the blob; loadSettled reports a failed load instead.
+      blob.catch(() => undefined);
       write = navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
     } else {
       write = prompt.then((text) => {
@@ -85,7 +91,7 @@ export class ClaudeService {
     }
     return write.then(
       () => 'copied',
-      () => (loaded ? 'copy_failed' : 'load_failed'),
+      () => loadSettled.then((): CopyPromptResult => (loadFailed ? 'load_failed' : 'copy_failed')),
     );
   }
 
