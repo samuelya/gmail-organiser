@@ -43,6 +43,7 @@ services:
       Attachments__ImageTimeout: ${Attachments__ImageTimeout:-}
       Attachments__MaxOcrPages: ${Attachments__MaxOcrPages:-3}
       Attachments__OcrLanguages: ${Attachments__OcrLanguages:-eng}
+      Attachments__OcrMemoryLimitMb: ${Attachments__OcrMemoryLimitMb:-1024}
       Attachments__MaxSheetRows: ${Attachments__MaxSheetRows:-200}
       Attachments__MaxTotalChars: ${Attachments__MaxTotalChars:-12000}
     extra_hosts:

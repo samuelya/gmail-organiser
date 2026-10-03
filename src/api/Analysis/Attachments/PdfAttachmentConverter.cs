@@ -12,7 +12,7 @@ namespace GmailOrganiser.Analysis.Attachments;
 /// without a text layer is read as images when <see cref="ConversionLimits.Images"/> is set: the largest embedded image of
 /// each of the first <c>maxOcrPages</c> pages goes through <paramref name="scanReader"/> (JPEG as stored, JPEG 2000 as
 /// stored for OCR, other encodings via PdfPig's PNG export; CCITT/JBIG2 scans PdfPig can't decode stay unread). An image
-/// over <see cref="MaxScanPixels"/> is never decoded, and a decoded one over <see cref="ConversionLimits.MaxImageBytes"/>
+/// over <see cref="ImageHeader.MaxPixels"/> is never decoded, and a decoded one over <see cref="ConversionLimits.MaxImageBytes"/>
 /// is not read. A page that can't be read is noted and the others are kept; without an OCR engine, or with no page
 /// image at all, it yields empty markdown, not a failure. The parse runs under <see cref="ParseTimeout"/>, so a hostile
 /// PDF can't hold up a job; each page image then has its own image timeout.
@@ -24,9 +24,6 @@ public sealed class PdfAttachmentConverter(
     : IAttachmentConverter
 {
     public const string PageBreak = "\n\n---\n\n";
-
-    /// <summary>Declared width × height of a page image above which it is not decoded (an A4 page at 600 dpi is 35 MP).</summary>
-    public const long MaxScanPixels = 40_000_000;
 
     private readonly TimeSpan parseTimeout = parseTimeout ?? ParseTimeout.Default;
 
@@ -158,12 +155,12 @@ public sealed class PdfAttachmentConverter(
 
     /// <summary>
     /// JPEG (and JPEG 2000 for OCR) as stored; anything else PdfPig can decode becomes PNG. <c>null</c> when it can't be
-    /// decoded, its declared size is over <see cref="MaxScanPixels"/> (checked before decoding), or the result is over
+    /// decoded, its declared size is over <see cref="ImageHeader.MaxPixels"/> (checked before decoding), or the result is over
     /// <paramref name="maxBytes"/>.
     /// </summary>
     private static byte[]? ScanBytes(IPdfImage image, bool vision, long maxBytes)
     {
-        if ((long)image.WidthInSamples * image.HeightInSamples is <= 0 or > MaxScanPixels)
+        if ((long)image.WidthInSamples * image.HeightInSamples is <= 0 or > ImageHeader.MaxPixels)
         {
             return null;
         }
