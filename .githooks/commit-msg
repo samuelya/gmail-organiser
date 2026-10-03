@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Strips Co-Authored-By trailers from the commit message (CLAUDE.md: never add one). Removing the
+# line here, instead of rejecting the commit, saves the amend and force-push round trip.
+set -uo pipefail
+msg="$1"
+grep -qi '^co-authored-by:' "$msg" || exit 0
+tmp=$(mktemp)
+grep -vi '^co-authored-by:' "$msg" > "$tmp"
+# Drop the trailing blank lines the removed trailer leaves behind.
+sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' "$tmp" > "$msg"
+rm -f "$tmp"
+exit 0

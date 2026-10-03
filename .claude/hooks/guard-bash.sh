@@ -35,14 +35,16 @@ has '\bnpm (install|i|add)\b.*(-g\b|--global\b)|\bcorepack (enable|prepare)\b|\b
 has '\b(cat|less|more|head|tail|grep|sed|awk|source)\b[^|;&]*(^|[ /])\.env(\.[a-z]+)?\b' && ! has '\.env\.example\b' \
   && block "reading .env; use .env.example for the variable names."
 has '\bdocker (compose|volume)\b.*(\bdown\b.*(-v\b|--volumes\b)|\bvolume (rm|prune)\b)|\bdocker volume (rm|prune)\b|\bdocker system prune\b' \
-  && block "deleting Docker volumes wipes the owner's local data; ask the owner."
+  && block "deleting Docker volumes wipes the owner's local data; ask the owner. Leftover gmo-* test volumes: the lead runs scripts/gh/clean-test-volumes.sh."
 if [[ -n "$agent" ]] && has '\bdocker compose\b.*\b(up|down|restart|stop)\b' && ! has 'COMPOSE_PROJECT_NAME=|\bdocker compose\b[^|;&]*(-p|--project-name)\b'; then
   block "docker compose without a project name targets the owner's running stack; use Testcontainers, or COMPOSE_PROJECT_NAME=gmo-<issue> with free ports."
 fi
 
 # Git safety: shared stash stack, protected main, hooks.
 has '\bgit stash\b' && block "git stash is shared across worktrees; make a temporary WIP commit instead."
-has '\bgit push\b.*(--force\b|-f\b|--force-with-lease\b).*\bmain\b|\bgit push\b.*\bmain\b.*(--force\b|-f\b)' && block "force-push to main."
+# Only a push whose refspec is main ('main', 'HEAD:main', '+main'); 'origin/main' later in a
+# rebase-then-push command is not a push to main.
+has '\bgit push\b[^|;&]*(--force\b|-f\b|--force-with-lease\b)[^|;&]*([ :+])main\b|\bgit push\b[^|;&]*[ :+]main\b[^|;&]*(--force\b|-f\b)' && block "force-push to main."
 has '\bgit push\b.*\borigin\b +(HEAD:)?main\b|\bgit push\b +origin +main\b' && block "direct push to main; open a PR."
 has '\bgit (commit|push|merge)\b.*--no-verify\b' && block "--no-verify skips hooks (including the private-terms check)."
 has '\bgit config\b.*\bcore\.hooksPath\b' && [[ -n "$agent" ]] && block "core.hooksPath is shared config; ask the lead."
