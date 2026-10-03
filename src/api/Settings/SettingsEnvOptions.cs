@@ -19,4 +19,12 @@ public sealed class SettingsEnvOptions
     /// <summary>A Google client value in <c>.env</c> locks both Google client fields in the UI.</summary>
     public bool GoogleClientLockedByEnv =>
         !string.IsNullOrWhiteSpace(GoogleClientId) || !string.IsNullOrWhiteSpace(GoogleClientSecret);
+
+    /// <summary>
+    /// Whether <see cref="ClaudeCodeOAuthTokenKey"/> is non-empty. Set from configuration in
+    /// <see cref="SettingsEndpoints.AddSettings"/>; the token itself is never bound, stored, returned or logged.
+    /// </summary>
+    public bool ClaudeCodeOAuthTokenSet { get; set; }
+
+    public const string ClaudeCodeOAuthTokenKey = "CLAUDE_CODE_OAUTH_TOKEN";
 }
