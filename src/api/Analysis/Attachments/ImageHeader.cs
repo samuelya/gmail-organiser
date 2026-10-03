@@ -12,6 +12,12 @@ public static class ImageHeader
     /// <summary>Declared width × height above which an image or PDF page image is not decoded (an A4 page at 600 dpi is 35 MP).</summary>
     public const long MaxPixels = 40_000_000;
 
+    /// <summary>
+    /// More components (samples per pixel) than grey, RGB, RGBA or CMYK: decoders that allocate a buffer per component would
+    /// multiply the capped canvas by this count.
+    /// </summary>
+    private const int MaxComponents = 4;
+
     /// <summary>More TIFF pages than any scan in a mail; Tesseract would read every one.</summary>
     private const int MaxTiffPages = 1000;
 
@@ -41,20 +47,32 @@ public static class ImageHeader
             ? Area(BinaryPrimitives.ReadUInt32BigEndian(s[16..]), BinaryPrimitives.ReadUInt32BigEndian(s[20..]))
             : null;
 
-    /// <summary>The first frame header (SOF0–SOF15) before the scan starts; segments such as EXIF thumbnails are skipped.</summary>
+    /// <summary>
+    /// The first frame header (SOF0–SOF15) before the scan starts; segments such as EXIF thumbnails are skipped. Stray
+    /// bytes before a marker and 0xFF fill bytes are skipped too, as libjpeg does (it only warns about them).
+    /// </summary>
     private static long? Jpeg(ReadOnlySpan<byte> s)
     {
         var i = 2;
-        while (i + 1 < s.Length)
+        while (i < s.Length)
         {
-            if (s[i] != 0xFF)
+            if (s[i++] != 0xFF)
+            {
+                continue;
+            }
+
+            while (i < s.Length && s[i] == 0xFF)
+            {
+                i++;
+            }
+
+            if (i >= s.Length)
             {
                 return null;
             }
 
-            var marker = s[i + 1];
-            i += marker == 0xFF ? 1 : 2;
-            if (marker is 0xFF or 0x01 or 0xD8 or (>= 0xD0 and <= 0xD7))
+            var marker = s[i++];
+            if (marker is 0x00 or 0x01 or 0xD8 or (>= 0xD0 and <= 0xD7))
             {
                 continue;
             }
@@ -151,7 +169,10 @@ public static class ImageHeader
         static int UInt24(ReadOnlySpan<byte> b) => b[0] | b[1] << 8 | b[2] << 16;
     }
 
-    /// <summary>The largest page: Tesseract reads a multi-page TIFF one page at a time.</summary>
+    /// <summary>
+    /// The largest page: Tesseract reads a multi-page TIFF one page at a time. A page with more than
+    /// <see cref="MaxComponents"/> samples per pixel declares nothing.
+    /// </summary>
     private static long? Tiff(ReadOnlySpan<byte> s)
     {
         var little = s[0] == 0x49;
@@ -173,7 +194,7 @@ public static class ImageHeader
                 return null;
             }
 
-            uint width = 0, height = 0;
+            uint width = 0, height = 0, samples = 1;
             for (var entry = start + 2; entry < end; entry += 12)
             {
                 var value = U16(s, entry + 2, little) switch
@@ -182,15 +203,16 @@ public static class ImageHeader
                     4 => U32(s, entry + 8, little),
                     _ => 0u,
                 };
-                (width, height) = U16(s, entry, little) switch
+                (width, height, samples) = U16(s, entry, little) switch
                 {
-                    256 => (value, height),
-                    257 => (width, value),
-                    _ => (width, height),
+                    256 => (value, height, samples),
+                    257 => (width, value, samples),
+                    277 => (width, height, value),
+                    _ => (width, height, samples),
                 };
             }
 
-            if (width == 0 || height == 0)
+            if (width == 0 || height == 0 || samples is 0 or > MaxComponents)
             {
                 return null;
             }
@@ -229,7 +251,8 @@ public static class ImageHeader
 
     /// <summary>
     /// The codestream's SIZ marker, which OpenJPEG decodes from (not the <c>jp2h</c> box, which could disagree): a raw
-    /// codestream as PDFs embed it, or the <c>jp2c</c> box of a JP2 file.
+    /// codestream as PDFs embed it, or the <c>jp2c</c> box of a JP2 file. OpenJPEG allocates a full canvas per component,
+    /// so a codestream with more than <see cref="MaxComponents"/> components declares nothing.
     /// </summary>
     private static long? Jp2(ReadOnlySpan<byte> s)
     {
@@ -268,8 +291,14 @@ public static class ImageHeader
             }
         }
 
-        // SOC, SIZ, Lsiz, Rsiz, then Xsiz, Ysiz, XOsiz, YOsiz.
-        if (i + 24 > s.Length || s[(i + 2)..(i + 4)] is not [0xFF, 0x51])
+        // SOC, SIZ, Lsiz, Rsiz, then Xsiz, Ysiz, XOsiz, YOsiz, XTsiz, YTsiz, XTOsiz, YTOsiz, Csiz.
+        if (i + 42 > s.Length || s[(i + 2)..(i + 4)] is not [0xFF, 0x51])
+        {
+            return null;
+        }
+
+        var components = BinaryPrimitives.ReadUInt16BigEndian(s[(i + 40)..]);
+        if (components is 0 or > MaxComponents)
         {
             return null;
         }

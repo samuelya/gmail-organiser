@@ -48,6 +48,23 @@ public sealed class ImageHeaderTests
         ImageHeader.DeclaredPixels(Gif(4_000, 4_000, frames: 2)).ShouldBe(48_000_000);
     }
 
+    [Fact]
+    public void Jpeg_skips_stray_and_fill_bytes_before_a_marker_as_libjpeg_does()
+    {
+        var jpeg = Jpeg(420, 130);
+        var frame = Array.IndexOf(jpeg, (byte)0xC0) - 1;
+        byte[] padded = [.. jpeg[..frame], 0x00, 0x12, 0x34, 0xFF, 0xFF, 0xFF, .. jpeg[frame..]];
+
+        ImageHeader.DeclaredPixels(padded).ShouldBe(420 * 130);
+    }
+
+    [Fact]
+    public void Up_to_four_components_are_read()
+    {
+        ImageHeader.DeclaredPixels(Jp2(100, 100, boxed: true, components: 4)).ShouldBe(10_000);
+        ImageHeader.DeclaredPixels(Tiff(100, 100, samples: 4)).ShouldBe(10_000);
+    }
+
     public static TheoryData<string, byte[]> Unreadable => new()
     {
         { "unknown", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] },
@@ -59,6 +76,9 @@ public sealed class ImageHeaderTests
         { "tiff-ifd-loop", TiffLoop() },
         { "tiff-no-ifd", [0x49, 0x49, 0x2A, 0x00, 0, 0, 0, 0] },
         { "bmp-truncated", Bmp(10, 10)[..20] },
+        { "jp2-1000-components", Jp2(6_000, 6_000, boxed: false, components: 1_000) },
+        { "jp2-no-components", Jp2(10, 10, boxed: true, components: 0) },
+        { "tiff-5-samples", Tiff(6_000, 6_000, samples: 5) },
         { "jp2-without-codestream", [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A, 0, 0, 0, 0] },
     };
 
@@ -90,16 +110,16 @@ public sealed class ImageHeaderTests
         return [.. "GIF89a"u8, .. Le16(width), .. Le16(height), 0, 0, 0, .. Enumerable.Repeat(frame, frames).SelectMany(f => f), 0x3B];
     }
 
-    public static byte[] Tiff(uint width, uint height) =>
-        [0x49, 0x49, 0x2A, 0x00, .. Le32(8), 0x02, 0x00, .. TiffEntry(256, width), .. TiffEntry(257, height), .. Le32(0)];
+    public static byte[] Tiff(uint width, uint height, uint samples = 3) =>
+        [0x49, 0x49, 0x2A, 0x00, .. Le32(8), 0x03, 0x00, .. TiffEntry(256, width), .. TiffEntry(257, height), .. TiffEntry(277, samples), .. Le32(0)];
 
     public static byte[] Bmp(int width, int height) =>
         [.. "BM"u8, .. new byte[12], .. Le32(40), .. Le32((uint)width), .. Le32((uint)height), .. new byte[28]];
 
     /// <summary>A raw codestream (SOC, SIZ) as PDFs embed it, or wrapped in a JP2 signature box and a <c>jp2c</c> box.</summary>
-    public static byte[] Jp2(uint width, uint height, bool boxed)
+    public static byte[] Jp2(uint width, uint height, bool boxed, ushort components = 3)
     {
-        byte[] codestream = [0xFF, 0x4F, 0xFF, 0x51, 0, 41, 0, 0, .. Be32(width), .. Be32(height), .. new byte[16]];
+        byte[] codestream = [0xFF, 0x4F, 0xFF, 0x51, 0, 41, 0, 0, .. Be32(width), .. Be32(height), .. new byte[24], .. Be16(components)];
         return boxed
             ? [0, 0, 0, 12, .. "jP  "u8, 0x0D, 0x0A, 0x87, 0x0A, .. Be32((uint)codestream.Length + 8), .. "jp2c"u8, .. codestream]
             : codestream;
