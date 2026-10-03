@@ -5,7 +5,8 @@ namespace GmailOrganiser.Mcp;
 
 /// <summary>
 /// The MCP server at <see cref="Path"/> (DESIGN §6.7): Streamable HTTP in stateless mode, so a dropped connection or a
-/// restart loses nothing; guarded by <see cref="McpTokenMiddleware"/>. Review tools only.
+/// restart loses nothing; guarded by <see cref="McpTokenMiddleware"/>. Review tools only: the one write,
+/// <c>submit_review</c>, stores a verdict and never touches Gmail.
 /// </summary>
 public static class McpExtensions
 {
@@ -25,7 +26,9 @@ public static class McpExtensions
             Version = typeof(McpExtensions).Assembly.GetName().Version?.ToString() ?? "0.0.0",
         })
             .WithHttpTransport(o => o.Stateless = true)
-            .WithTools<ReviewTools>();
+            .WithTools<ReviewTools>()
+            .WithTools<SubmitTools>()
+            .WithPrompts<ReviewPrompts>();
         return services;
     }
 

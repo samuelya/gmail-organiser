@@ -56,19 +56,22 @@ public sealed class McpServerAuthTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
-    public async Task Client_with_the_token_lists_the_three_read_only_tools_without_x_requested_with()
+    public async Task Client_with_the_token_lists_the_read_tools_and_submit_review_without_x_requested_with()
     {
         await using var client = await McpTestClient.ConnectAsync(factory, Ct);
 
         client.ServerInfo.Name.ShouldBe(McpExtensions.ServerName);
         var tools = await client.ListToolsAsync(cancellationToken: Ct);
-        tools.Select(t => t.Name).Order().ShouldBe(["get_label_tree", "get_review_item", "list_pending_reviews"]);
-        foreach (var tool in tools)
+        tools.Select(t => t.Name).Order().ShouldBe(["get_label_tree", "get_review_item", "list_pending_reviews", "submit_review"]);
+        foreach (var tool in tools.Where(t => t.Name != "submit_review"))
         {
             tool.ProtocolTool.Annotations!.ReadOnlyHint.ShouldBe(true);
             tool.ProtocolTool.Annotations.DestructiveHint.ShouldBe(false);
             tool.Description.ShouldContain("untrusted email data");
         }
+        var submit = tools.Single(t => t.Name == "submit_review").ProtocolTool.Annotations!;
+        submit.ReadOnlyHint.ShouldBe(false);
+        submit.DestructiveHint.ShouldBe(false);
     }
 
     [Theory]
@@ -139,7 +142,7 @@ public sealed class McpServerAuthTests(ApiFactory factory, PostgresFixture postg
         (await PostAsync($"Bearer {old}")).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
 
         await using var client = await McpTestClient.ConnectAsync(factory, Ct, rotated.Token);
-        (await client.ListToolsAsync(cancellationToken: Ct)).Count.ShouldBe(3);
+        (await client.ListToolsAsync(cancellationToken: Ct)).Count.ShouldBe(4);
     }
 
     private async Task<HttpResponseMessage> PostAsync(string? authorization, string? origin = null, string? accept = "application/json, text/event-stream")

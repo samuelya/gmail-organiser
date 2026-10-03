@@ -50,6 +50,9 @@ public enum ReviewVerdictResult
     /// <summary>Cancelled or unavailable: nobody is waiting for the verdict.</summary>
     Closed,
     Invalid,
+
+    /// <summary>The target's suggestions are no longer pending: the user decided them after sending it to Claude.</summary>
+    AlreadyDecided,
 }
 
 /// <summary>
@@ -228,7 +231,8 @@ public sealed class ExternalReviewService(
     }
 
     /// <summary>
-    /// Stores Claude's verdict: <c>Queued|Running → Reviewed</c>. The reasoning is truncated, not rejected; an
+    /// Stores Claude's verdict: <c>Queued|Running → Reviewed</c> while the target is still pending (otherwise
+    /// <c>→ Cancelled</c> and <see cref="ReviewVerdictResult.AlreadyDecided"/>). The reasoning is truncated, not rejected; an
     /// <c>alternative</c> needs a valid label path (missing flags count as false). For <c>agree</c> the outcome shown
     /// now (the pending suggestion's, or the group card's) is stored as the one Claude agreed with.
     /// </summary>
@@ -250,6 +254,16 @@ public sealed class ExternalReviewService(
                 return (ReviewVerdictResult.AlreadyReviewed, null);
             case ExternalReviewStatus.Cancelled or ExternalReviewStatus.Unavailable:
                 return (ReviewVerdictResult.Closed, null);
+        }
+
+        if (!await PendingMembers(row).AnyAsync(ct))
+        {
+            // The user decided meanwhile: nobody waits for this verdict, so the item is closed rather than left open.
+            row.Status = ExternalReviewStatus.Cancelled;
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            await NotifyAsync(await query.ToDtosAsync([row], ct), ct);
+            return (ReviewVerdictResult.AlreadyDecided, null);
         }
 
         var outcome = verdict.Verdict switch
