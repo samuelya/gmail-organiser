@@ -54,6 +54,9 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
     {
         using var document = SpreadsheetDocument.Open(content, false, OfficeDocument.ReadOnly);
         var workbook = document.WorkbookPart ?? throw new InvalidDataException("The workbook has no workbook part.");
+        OfficeDocument.CheckDepth(workbook, ct);
+        OfficeDocument.CheckDepth(workbook.WorkbookStylesPart, ct);
+        OfficeDocument.CheckDepth(workbook.SharedStringTablePart, ct);
         using var strings = new SharedStrings(workbook.SharedStringTablePart, maxChars, ct);
         var cells = new CellReader(strings, DateStyles(workbook.WorkbookStylesPart?.Stylesheet),
             workbook.Workbook?.WorkbookProperties?.Date1904?.Value == true ? Date1904Offset : 0);
@@ -66,6 +69,7 @@ public sealed class SpreadsheetAttachmentConverter(int maxSheetRows = Attachment
                 continue;
             }
 
+            OfficeDocument.CheckDepth(part, ct);
             var rows = ReadRows(part, cells, maxChars - markdown.Length, ct, out var more);
             if (rows.Count == 0)
             {

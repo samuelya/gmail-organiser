@@ -32,6 +32,7 @@ public sealed class PresentationAttachmentConverter(TimeSpan? parseTimeout = nul
     {
         using var document = PresentationDocument.Open(content, false, OfficeDocument.ReadOnly);
         var presentation = document.PresentationPart ?? throw new InvalidDataException("The presentation has no presentation part.");
+        OfficeDocument.CheckDepth(presentation, ct);
         var slideIds = presentation.Presentation?.SlideIdList?.Elements<DocumentFormat.OpenXml.Presentation.SlideId>() ?? [];
         var markdown = new StringBuilder();
         var number = 0;
@@ -44,6 +45,7 @@ public sealed class PresentationAttachmentConverter(TimeSpan? parseTimeout = nul
                 continue;
             }
 
+            OfficeDocument.CheckDepth(slide, ct);
             var lines = slide.Slide?.Descendants<Drawing.Paragraph>()
                 .Select(p => string.Concat(p.Descendants<Drawing.Text>().Select(t => t.Text)).Trim())
                 .Where(line => line.Length > 0)

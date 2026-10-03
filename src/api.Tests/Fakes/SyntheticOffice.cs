@@ -148,6 +148,20 @@ public static class SyntheticOffice
         Feed(document.WorkbookPart!.SharedStringTablePart!, sst);
     });
 
+    /// <summary>A copy of an xlsx whose first worksheet is the given raw XML.</summary>
+    public static byte[] WithWorksheetXml(byte[] xlsx, string worksheet) => Edit(xlsx, stream =>
+    {
+        using var document = SpreadsheetDocument.Open(stream, true);
+        Feed(document.WorkbookPart!.WorksheetParts.First(), worksheet);
+    });
+
+    /// <summary>A copy of a pptx whose first slide is the given raw XML.</summary>
+    public static byte[] WithSlideXml(byte[] pptx, string slide) => Edit(pptx, stream =>
+    {
+        using var document = PresentationDocument.Open(stream, true);
+        Feed(document.PresentationPart!.SlideParts.First(), slide);
+    });
+
     private static byte[] Edit(byte[] file, Action<Stream> edit)
     {
         using var stream = new MemoryStream();

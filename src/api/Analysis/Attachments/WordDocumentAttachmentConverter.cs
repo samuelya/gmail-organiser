@@ -33,6 +33,8 @@ public sealed class WordDocumentAttachmentConverter(TimeSpan? parseTimeout = nul
     {
         using var document = WordprocessingDocument.Open(content, false, OfficeDocument.ReadOnly);
         var main = document.MainDocumentPart ?? throw new InvalidDataException("The document has no main part.");
+        OfficeDocument.CheckDepth(main.StyleDefinitionsPart, ct);
+        OfficeDocument.CheckDepth(main, ct);
         var styles = main.StyleDefinitionsPart?.Styles;
         var headings = HeadingLevels(styles);
         var listStyles = ReadListStyles(styles);

@@ -282,6 +282,53 @@ public sealed class OfficeAttachmentConverterTests
     public async Task OpenXml_converters_throw_on_a_corrupt_file(IAttachmentConverter converter) =>
         await Should.ThrowAsync<Exception>(() => ConvertAsync(converter, Encoding.ASCII.GetBytes("PK not really a zip"), "broken"));
 
+    private const string SheetNs = "xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"";
+    private const string SlideNs = "xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"";
+
+    /// <summary>
+    /// Thousands of nesting levels in any part the converters load. Without the depth check the SDK overflows the
+    /// stack and the test host dies, so a plain exception here proves the process survives.
+    /// </summary>
+    public static TheoryData<IAttachmentConverter, byte[]> DeeplyNestedFiles => new()
+    {
+        { new WordDocumentAttachmentConverter(), DocxXml(Nest("<w:tbl><w:tr><w:tc>", "<w:p/>", "</w:tc></w:tr></w:tbl>", 8000)) },
+        { new WordDocumentAttachmentConverter(), DocxXml("<w:p/>", $"<w:style w:styleId=\"Deep\">{Nest("<w:rPr>", "", "</w:rPr>", 20000)}</w:style>") },
+        { new SpreadsheetAttachmentConverter(), WithSharedStringsXml(Xlsx(("Data", [[new XCell("a")]])), $"<sst {SheetNs}><si>{Nest("<r>", "<t>a</t>", "</r>", 20000)}</si></sst>") },
+        { new SpreadsheetAttachmentConverter(), WithWorksheetXml(Xlsx(("Data", [[new XCell(Number: 1)]])), $"<worksheet {SheetNs}><sheetData><row r=\"1\">{Nest("<c>", "", "</c>", 20000)}</row></sheetData></worksheet>") },
+        { new PresentationAttachmentConverter(), WithSlideXml(Pptx(["a"]), $"<p:sld {SlideNs}><p:cSld><p:spTree>{Nest("<p:grpSp>", "", "</p:grpSp>", 20000)}</p:spTree></p:cSld></p:sld>") },
+    };
+
+    [Theory]
+    [MemberData(nameof(DeeplyNestedFiles))]
+    public async Task OpenXml_converters_reject_deep_nesting_without_overflowing_the_stack(IAttachmentConverter converter, byte[] file) =>
+        await Should.ThrowAsync<InvalidDataException>(() => ConvertAsync(converter, file, "deep"));
+
+    [Fact]
+    public async Task Docx_reads_tables_nested_well_below_the_depth_limit()
+    {
+        var docx = DocxXml(Nest("<w:tbl><w:tr><w:tc>", "<w:p><w:r><w:t>inner</w:t></w:r></w:p>", "</w:tc></w:tr></w:tbl>", 20));
+
+        var markdown = await ConvertAsync(new WordDocumentAttachmentConverter(), docx, "nested.docx");
+
+        markdown.ShouldContain("inner");
+    }
+
+    [Fact]
+    public async Task Service_records_a_deeply_nested_docx_as_failed_and_still_converts_the_rest()
+    {
+        var gmail = Gmail(
+            ("deep.docx", DocxMime, DocxXml(Nest("<w:tbl><w:tr><w:tc>", "<w:p/>", "</w:tc></w:tr></w:tbl>", 8000))),
+            ("ok.docx", DocxMime, Docx("Synthetic", "Part", ["Body text"], "item", [["x"]])));
+
+        var digest = await ConvertAllAsync(gmail, Limits);
+
+        digest.Skipped.ShouldBe([new SkippedAttachment("deep.docx", AttachmentType.WordDocument, SkipReason.Failed)]);
+        digest.Converted.Single().Filename.ShouldBe("ok.docx");
+    }
+
+    private static string Nest(string open, string inner, string close, int levels) =>
+        string.Concat(Enumerable.Repeat(open, levels)) + inner + string.Concat(Enumerable.Repeat(close, levels));
+
     [Fact]
     public async Task OpenXml_parse_past_the_timeout_throws_a_timeout()
     {
