@@ -20,7 +20,8 @@ public sealed record GroupingSettings(
     int RepresentativesPerGroup,
     int MinGroupSize,
     double DerivedConfidencePenalty,
-    double ClusterDistance)
+    double ClusterDistance,
+    ProtectionSettings Protection)
 {
     /// <summary>k is at least <see cref="DerivationRule.MinValidRepresentatives"/>, or no group could ever be derived.</summary>
     public static GroupingSettings From(AppSettings s) => new(
@@ -28,7 +29,8 @@ public sealed record GroupingSettings(
         Math.Max(s.AnalysisRepresentativesPerGroup, DerivationRule.MinValidRepresentatives),
         s.AnalysisMinGroupSize,
         s.AnalysisDerivedConfidencePenalty,
-        s.AnalysisClusterDistance);
+        s.AnalysisClusterDistance,
+        s.Protection);
 }
 
 /// <summary>Partitions a run's candidates into groups (epic #22 option A, refined by <see cref="IGroupRefiner"/>).</summary>
@@ -68,7 +70,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
             // Protected members are never derived: beyond the k newest they go to the model one by one, so a group of
             // protected mail never becomes one oversized prompt.
             var overflow = keyedGroup.Members
-                .Where(m => MessageProtection.IsProtected(m, allowlistedSenders))
+                .Where(m => MessageProtection.IsProtected(m, allowlistedSenders, settings.Protection))
                 .Skip(settings.RepresentativesPerGroup)
                 .ToHashSet();
             result.AddRange(overflow.Select(Single));
@@ -84,7 +86,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
 
             result.Add(group with
             {
-                RepresentativeIds = RepresentativePicker.Pick(group, settings.RepresentativesPerGroup, allowlistedSenders),
+                RepresentativeIds = RepresentativePicker.Pick(group, settings.RepresentativesPerGroup, allowlistedSenders, settings.Protection),
             });
         }
 

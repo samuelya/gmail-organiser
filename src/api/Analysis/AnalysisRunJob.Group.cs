@@ -149,7 +149,7 @@ public sealed partial class AnalysisRunJob
             $"Same as {outputs.Count} analysed emails of this group");
         foreach (var m in others)
         {
-            if (agreed.ToBeDeleted && MessageProtection.IsProtected(m, context.Allowlisted))
+            if (agreed.ToBeDeleted && MessageProtection.IsProtected(m, context.Allowlisted, context.Settings.Protection))
             {
                 individual.Add(AnalysisGrouper.Single(m));
             }

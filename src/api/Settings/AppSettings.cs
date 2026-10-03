@@ -60,6 +60,9 @@ public sealed record AppSettings
     /// <summary>Attachment types and limits for the analysis (#68); see <see cref="AttachmentSettings"/>.</summary>
     public AttachmentSettings Attachments { get; init; } = new();
 
+    /// <summary>The protection rule toggles (#176); see <see cref="ProtectionSettings"/>.</summary>
+    public ProtectionSettings Protection { get; init; } = new();
+
     // Claude review (epic #23); ranges are in SettingsValidation.
     public ClaudeReviewerMode ClaudeReviewerMode { get; init; } = DefaultClaudeReviewerMode;
 

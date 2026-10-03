@@ -10,6 +10,7 @@ public sealed class GroupingTests
     private static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private static readonly IReadOnlySet<string> NoAllowlist = new HashSet<string>();
     private static readonly GroupingSettings Defaults = GroupingSettings.From(new AppSettings());
+    private static readonly ProtectionSettings AllRules = new();
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -149,8 +150,8 @@ public sealed class GroupingTests
     {
         var members = Enumerable.Range(0, 10).Select(i => Msg(i, subject: i == 4 ? "Order 1 shipped with a long note" : "Order 1 shipped")).ToList();
 
-        RepresentativePicker.Pick(GroupOf(members), 3, NoAllowlist).ShouldBe(["m009", "m000", "m004"]);
-        RepresentativePicker.Pick(GroupOf(members), 5, NoAllowlist).ShouldBe(["m009", "m000", "m004", "m002", "m006"]);
+        RepresentativePicker.Pick(GroupOf(members), 3, NoAllowlist, AllRules).ShouldBe(["m009", "m000", "m004"]);
+        RepresentativePicker.Pick(GroupOf(members), 5, NoAllowlist, AllRules).ShouldBe(["m009", "m000", "m004", "m002", "m006"]);
     }
 
     [Fact]
@@ -159,7 +160,7 @@ public sealed class GroupingTests
         var members = Enumerable.Range(0, 7).Select(i => Msg(i)).ToList();
 
         // All subjects equal: no distinct longest subject, so the third pick is the middle of the timeline.
-        RepresentativePicker.Pick(GroupOf(members), 3, NoAllowlist).ShouldBe(["m006", "m000", "m003"]);
+        RepresentativePicker.Pick(GroupOf(members), 3, NoAllowlist, AllRules).ShouldBe(["m006", "m000", "m003"]);
     }
 
     [Fact]
@@ -172,7 +173,7 @@ public sealed class GroupingTests
         members[7].FromAddress = "trusted@example.com";
         var allowlist = new HashSet<string> { "trusted@example.com" };
 
-        var picked = RepresentativePicker.Pick(GroupOf(members), 3, allowlist);
+        var picked = RepresentativePicker.Pick(GroupOf(members), 3, allowlist, AllRules);
 
         picked.ShouldBe(["m002", "m003", "m005", "m007"]);
     }
@@ -183,7 +184,7 @@ public sealed class GroupingTests
         var members = Enumerable.Range(0, 10).Select(i => Msg(i)).ToList();
         members[5].HasAttachment = true;
 
-        RepresentativePicker.Pick(GroupOf(members), 3, NoAllowlist).ShouldBe(["m005", "m009", "m000"]);
+        RepresentativePicker.Pick(GroupOf(members), 3, NoAllowlist, AllRules).ShouldBe(["m005", "m009", "m000"]);
     }
 
     [Fact]
@@ -191,7 +192,7 @@ public sealed class GroupingTests
     {
         var members = Enumerable.Range(0, 3).Select(i => Msg(i)).ToList();
 
-        RepresentativePicker.Pick(GroupOf(members), 10, NoAllowlist).Count.ShouldBe(3);
+        RepresentativePicker.Pick(GroupOf(members), 10, NoAllowlist, AllRules).Count.ShouldBe(3);
     }
 
     [Theory]
@@ -205,7 +206,7 @@ public sealed class GroupingTests
         m.HasAttachment = attachment;
         m.LabelIds = starred ? ["INBOX", "STARRED"] : ["INBOX"];
 
-        MessageProtection.IsProtected(m, allowlisted).ShouldBe(expected);
+        MessageProtection.IsProtected(m, allowlisted, AllRules).ShouldBe(expected);
     }
 
     private static RepresentativeOutput Out(string label = "Shopping", bool action = false, bool delete = true, double confidence = 0.9, bool unsubscribe = false) =>

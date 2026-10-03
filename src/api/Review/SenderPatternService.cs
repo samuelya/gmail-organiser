@@ -3,6 +3,7 @@ using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Senders;
+using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -25,7 +26,7 @@ public enum ApplyRestStatus
 /// the pattern itself, so it only ever reflects the user's own approvals.
 /// </summary>
 public sealed class SenderPatternService(
-    AppDbContext db, ApplyService apply, SenderStatsUpdater stats, TimeProvider time)
+    AppDbContext db, ApplyService apply, SenderStatsUpdater stats, ISettingsStore settingsStore, TimeProvider time)
 {
     public const string Reason = "Applied the approved pattern of this sender";
 
@@ -86,13 +87,14 @@ public sealed class SenderPatternService(
         }
 
         var allowlisted = await db.Senders.AnyAsync(s => s.Address == address && s.Allowlisted, ct);
+        var rules = (await settingsStore.GetAsync(ct)).Protection;
         var now = time.GetUtcNow();
         var ids = new Guid[messages.Count];
         var protectedAdjusted = 0;
         for (var i = 0; i < messages.Count; i++)
         {
             var message = messages[i];
-            var isProtected = MessageProtection.IsProtected(message, allowlisted);
+            var isProtected = MessageProtection.IsProtected(message, allowlisted, rules);
             protectedAdjusted += toBeDeleted && isProtected ? 1 : 0;
             var suggestion = new SuggestionRow
             {

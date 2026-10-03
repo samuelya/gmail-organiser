@@ -186,10 +186,11 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
         && ((settings.ClaudeSuggestLowConfidence && confidence < settings.ClaudeSuggestThreshold)
             || (settings.ClaudeSuggestNewLabels && isNewLabel));
 
-    public static SuggestionDto ToDto(SuggestionRow s, MessageRow m, bool senderAllowlisted) => ToDto(s, m, senderAllowlisted, null, false);
+    public static SuggestionDto ToDto(SuggestionRow s, MessageRow m, bool senderAllowlisted, ProtectionSettings rules) =>
+        ToDto(s, m, senderAllowlisted, rules, null, false);
 
     public static SuggestionDto ToDto(
-        SuggestionRow s, MessageRow m, bool senderAllowlisted, ExternalReviewDto? claudeReview, bool suggestedForClaude) => new(
+        SuggestionRow s, MessageRow m, bool senderAllowlisted, ProtectionSettings rules, ExternalReviewDto? claudeReview, bool suggestedForClaude) => new(
         s.Id,
         s.MessageId,
         m.Subject,
@@ -205,7 +206,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
         s.Reason,
         SnakeCaseEnumConverter<SuggestionStatus>.ToDb(s.Status),
         s.Edited,
-        MessageProtection.IsProtected(m, senderAllowlisted),
+        MessageProtection.IsProtected(m, senderAllowlisted, rules),
         claudeReview,
         suggestedForClaude);
 
@@ -289,7 +290,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
             stats.ConfidenceMax,
             representative.S.Reason,
             [.. members.Select(x => ToDto(
-                x.S, x.M, allowlisted, claude.Suggestions.GetValueOrDefault(x.S.Id), IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))],
+                x.S, x.M, allowlisted, settings.Protection, claude.Suggestions.GetValueOrDefault(x.S.Id), IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))],
             members.Count < stats.Size,
             key is null ? null : claude.Groups.GetValueOrDefault(key),
             IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0));

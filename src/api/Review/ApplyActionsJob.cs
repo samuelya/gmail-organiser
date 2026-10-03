@@ -177,7 +177,7 @@ public sealed partial class ApplyActionsJob(
             paths.Add(SettingLabel(settings.ActionLabelName, nameof(AppSettings.ActionLabelName)));
         }
 
-        if (valid.Any(r => r.Suggestion.ToBeDeleted && !MessageProtection.IsProtected(r.Message, allowlisted)))
+        if (valid.Any(r => r.Suggestion.ToBeDeleted && !MessageProtection.IsProtected(r.Message, allowlisted, settings.Protection)))
         {
             paths.Add(SettingLabel(settings.DeleteLabelName, nameof(AppSettings.DeleteLabelName)));
         }

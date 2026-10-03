@@ -38,7 +38,7 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
 
     private static ShortCircuitResult? Cover(MessageGroup group, MemoryPattern pattern, ShortCircuitContext context)
     {
-        var covered = group.Members.Where(m => !MessageProtection.IsProtected(m, context.Allowlisted)).ToList();
+        var covered = group.Members.Where(m => !MessageProtection.IsProtected(m, context.Allowlisted, context.Settings.Protection)).ToList();
         if (covered.Count == 0)
         {
             return null;

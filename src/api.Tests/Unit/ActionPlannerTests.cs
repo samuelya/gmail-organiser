@@ -88,8 +88,24 @@ public sealed class ActionPlannerTests
     public void Label_paths_with_a_reserved_level_are_refused(string path, bool valid) =>
         LabelResolver.IsValid(path).ShouldBe(valid);
 
-    private static ActionPlan Plan(SuggestionRow suggestion, MessageRow message, bool allowlisted = false) =>
-        ActionPlanner.Plan(suggestion, message, Ids, Settings, allowlisted);
+    [Fact]
+    public void A_rule_switched_off_lets_the_delete_label_through_but_the_allowlist_never_does()
+    {
+        var off = Settings with { Protection = new ProtectionSettings(Attachments: false, Starred: false, Important: false) };
+        var message = Message("INBOX", "STARRED", "IMPORTANT");
+        message.HasAttachment = true;
+
+        var plan = Plan(Suggestion(toBeDeleted: true), message, settings: off);
+        var allowlisted = Plan(Suggestion(toBeDeleted: true), message, allowlisted: true, settings: off);
+
+        plan.Add.ShouldBe(["L1", "L3"]);
+        plan.Note.ShouldBeNull();
+        allowlisted.Add.ShouldBe(["L1"]);
+        allowlisted.Note.ShouldBe("protected: allowlisted sender");
+    }
+
+    private static ActionPlan Plan(SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null) =>
+        ActionPlanner.Plan(suggestion, message, Ids, settings ?? Settings, allowlisted);
 
     private static SuggestionRow Suggestion(string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false) => new()
     {
