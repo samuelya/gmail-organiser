@@ -65,9 +65,10 @@ public static class FakeMailboxSeed
                 LabelIds: labels,
                 To: "User <user@example.com>",
                 ListId: sender.ListId,
+                // RFC 2606 .invalid never resolves: even a real sender could not reach a public host from the seed.
                 ListUnsubscribe: sender.Unsubscribe switch
                 {
-                    UnsubscribeKind.OneClick or UnsubscribeKind.Link => $"<https://example.com/unsubscribe/{number:D4}>",
+                    UnsubscribeKind.OneClick or UnsubscribeKind.Link => $"<https://unsubscribe.invalid/{number:D4}>",
                     UnsubscribeKind.Mailto => $"<mailto:unsubscribe@example.com?subject=unsubscribe%20{number:D4}>",
                     _ => null,
                 },
