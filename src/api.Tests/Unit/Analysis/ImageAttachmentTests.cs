@@ -171,7 +171,7 @@ public sealed class ImageAttachmentTests
             Att("c.webp", "image/webp", ImageHeaderTests.WebPLossless(16_384, 16_384)),
         ];
 
-        var byOcr = await ConvertAllAsync([.. bombs, Att("d.gif", "image/gif", ImageHeaderTests.Gif(4_000, 4_000, frames: 2))], Limits(Ocr), ocr);
+        var byOcr = await ConvertAllAsync([.. bombs, Att("d.gif", "image/gif", ImageHeaderTests.Gif(4_000, 4_000, frames: 3))], Limits(Ocr), ocr);
         var byVision = await ConvertAllAsync(bombs, Limits(Vision), ocr, llm);
 
         byOcr.Skipped.Select(s => s.SkipReason).ShouldBe(Enumerable.Repeat(SkipReason.TooLarge, 4));
@@ -271,6 +271,33 @@ public sealed class ImageAttachmentTests
     }
 
     [Fact]
+    public async Task Missing_ocr_engine_leaves_a_scanned_pdf_unread_even_when_its_pages_fail_the_header_check()
+    {
+        var engine = Tesseract(path: "tesseract-not-installed-example");
+        // The PDF dict says 100 x 100, the JPEG header 20000 x 20000: with an engine this page would be unreadable.
+        var pdf = SyntheticImage.PdfWithImage(100, 100, "DCTDecode", ImageHeaderTests.Jpeg(20_000, 20_000));
+
+        var digest = await ConvertAllAsync([Att("scan.pdf", "application/pdf", pdf)], Limits(Ocr), engine);
+
+        digest.Converted.Single().Markdown.ShouldBeEmpty();
+        digest.Skipped.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Missing_ocr_engine_takes_precedence_over_the_header_check_in_ocr_mode_only()
+    {
+        var unavailable = new StubOcr(available: false);
+        var bomb = ImageHeaderTests.Png(30_000, 30_000);
+
+        await Should.ThrowAsync<OcrUnavailableException>(() => Reader(unavailable).ReadAsync(bomb, Ocr, Ct));
+        await Should.ThrowAsync<OcrUnavailableException>(() => Reader(unavailable).ReadAsync(Png()[..20], Ocr, Ct));
+        var skipped = await Should.ThrowAsync<AttachmentSkippedException>(() => Reader(unavailable).ReadAsync(bomb, Vision, Ct));
+
+        skipped.Reason.ShouldBe(SkipReason.TooLarge);
+        unavailable.Images.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task A_scanned_page_that_fails_is_noted_and_the_other_pages_are_kept()
     {
         var calls = 0;
@@ -364,6 +391,26 @@ public sealed class ImageAttachmentTests
         digest.Converted.Single().Markdown.ShouldContain("billing@example.com");
     }
 
+    /// <summary>
+    /// The OS bound behind the header check: a 39.7 MP RGB PNG passes the 40 MP cap, yet under a 256 MiB address-space
+    /// limit Leptonica can't allocate its canvas (measured: fails at 384 MiB, reads at 512 MiB), so Tesseract exits
+    /// non-zero and the image is a failed attachment, while the next image reads normally in a fresh process.
+    /// </summary>
+    [Fact]
+    public async Task Tesseract_under_the_memory_limit_fails_an_image_the_header_check_let_through_and_keeps_reading()
+    {
+        Assert.SkipUnless(TesseractInstalled.Value && OperatingSystem.IsLinux(), "Needs Tesseract and prlimit (Linux: CI and the api image).");
+        var engine = Tesseract(memoryLimitMb: 256);
+        var big = SyntheticImage.BlankPng(6_300, 6_300);
+        ImageHeader.DeclaredPixels(big).ShouldBe(6_300L * 6_300);
+
+        var digest = await ConvertAllAsync([Att("big.png", "image/png", big), Att("small.png", "image/png", Png())], Limits(Ocr), engine);
+
+        digest.Skipped.ShouldBe([new SkippedAttachment("big.png", AttachmentType.Image, SkipReason.Failed)]);
+        digest.Converted.Single().Markdown.ShouldContain("billing@example.com");
+        (await Should.ThrowAsync<InvalidOperationException>(() => engine.ReadTextAsync(big, Ct))).Message.ShouldContain("exited with code");
+    }
+
     private static readonly Lazy<bool> TesseractInstalled = new(() =>
     {
         try
@@ -380,8 +427,8 @@ public sealed class ImageAttachmentTests
 
     private static byte[] Png() => SyntheticImage.Png;
 
-    private static TesseractOcrEngine Tesseract(string path = "tesseract") =>
-        new(Options.Create(new AttachmentOptions { TesseractPath = path }), NullLogger<TesseractOcrEngine>.Instance);
+    private static TesseractOcrEngine Tesseract(string path = "tesseract", int memoryLimitMb = AttachmentOptions.DefaultOcrMemoryLimitMb) =>
+        new(Options.Create(new AttachmentOptions { TesseractPath = path, OcrMemoryLimitMb = memoryLimitMb }), NullLogger<TesseractOcrEngine>.Instance);
 
     private static ImageTextReader Reader(IOcrEngine ocr, FakeLlmClientFactory? llm = null, TimeSpan? timeout = null) =>
         new(ocr, new OllamaVisionClient(llm ?? new FakeLlmClientFactory()),
@@ -425,10 +472,21 @@ public sealed class ImageAttachmentTests
 
     private static (string, string, byte[]) Att(string filename, string mimeType, byte[] content) => (filename, mimeType, content);
 
-    /// <summary>Records each image and answers with <paramref name="answer"/>, or never answers when <paramref name="hang"/> is set.</summary>
-    private sealed class StubOcr(Func<byte[], string>? answer = null, bool hang = false) : IOcrEngine
+    /// <summary>
+    /// Records each image and answers with <paramref name="answer"/>, or never answers when <paramref name="hang"/> is set;
+    /// not installed when <paramref name="available"/> is false.
+    /// </summary>
+    private sealed class StubOcr(Func<byte[], string>? answer = null, bool hang = false, bool available = true) : IOcrEngine
     {
         public List<byte[]> Images { get; } = [];
+
+        public void EnsureAvailable()
+        {
+            if (!available)
+            {
+                throw new OcrUnavailableException("The stub OCR engine is not installed.");
+            }
+        }
 
         public async Task<string> ReadTextAsync(ReadOnlyMemory<byte> image, CancellationToken ct)
         {

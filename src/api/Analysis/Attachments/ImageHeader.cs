@@ -27,14 +27,18 @@ public static class ImageHeader
     /// </summary>
     private const int MaxWebPFrameDepth = 8;
 
+    /// <summary>Sniffs the media type first; <see cref="DeclaredPixels(string?, ReadOnlySpan{byte})"/> when the caller has it.</summary>
+    public static long? DeclaredPixels(ReadOnlySpan<byte> image) => DeclaredPixels(ImageTextReader.MediaType(image), image);
+
     /// <summary>
-    /// The declared pixels: the largest page of a TIFF, the canvas plus every frame of a GIF (giflib decodes them all),
+    /// The declared pixels: the largest page (or tile) of a TIFF, every frame of a GIF together (giflib decodes them all),
     /// width × height otherwise. <c>null</c> when the format is unknown or the header is truncated, malformed or declares
     /// no pixels.
     /// </summary>
-    public static long? DeclaredPixels(ReadOnlySpan<byte> image)
+    /// <param name="mediaType"><see cref="ImageTextReader.MediaType"/> of <paramref name="image"/>.</param>
+    public static long? DeclaredPixels(string? mediaType, ReadOnlySpan<byte> image)
     {
-        var pixels = ImageTextReader.MediaType(image) switch
+        var pixels = mediaType switch
         {
             "image/png" => Png(image),
             "image/jpeg" => Jpeg(image),
@@ -68,9 +72,11 @@ public static class ImageHeader
     }
 
     /// <summary>
-    /// The largest frame header (SOF0–SOF15) up to EOI: libjpeg rejects a second one, other decoders may use either.
-    /// Segments such as EXIF thumbnails are skipped by length; stray bytes, 0xFF fill bytes and entropy-coded data are
-    /// skipped byte by byte, as libjpeg does when it looks for the next marker.
+    /// The largest frame header (SOF0–SOF15) up to EOI: libjpeg rejects a second one, other decoders may use either. A
+    /// frame with more than <see cref="MaxComponents"/> components declares nothing (libjpeg allocates coefficient arrays
+    /// per component before Leptonica rejects the image). Segments such as EXIF thumbnails are skipped by length; stray
+    /// bytes, 0xFF fill bytes and entropy-coded data are skipped byte by byte, as libjpeg does when it looks for the next
+    /// marker.
     /// </summary>
     private static long? Jpeg(ReadOnlySpan<byte> s)
     {
@@ -112,7 +118,8 @@ public static class ImageHeader
             int length = BinaryPrimitives.ReadUInt16BigEndian(s[i..]);
             if (marker is >= 0xC0 and <= 0xCF and not (0xC4 or 0xC8 or 0xCC))
             {
-                if (i + 7 > s.Length)
+                // Length, precision, height, width, component count.
+                if (i + 8 > s.Length || s[i + 7] is 0 or > MaxComponents)
                 {
                     return null;
                 }
@@ -131,6 +138,10 @@ public static class ImageHeader
         return largest;
     }
 
+    /// <summary>
+    /// Every frame added up, not the logical-screen canvas: giflib's <c>DGifSlurp</c> allocates each frame's raster and
+    /// nothing for the screen, so a single-frame GIF counts once.
+    /// </summary>
     private static long? Gif(ReadOnlySpan<byte> s)
     {
         if (s.Length < 13)
@@ -138,7 +149,7 @@ public static class ImageHeader
             return null;
         }
 
-        long pixels = (long)BinaryPrimitives.ReadUInt16LittleEndian(s[6..]) * BinaryPrimitives.ReadUInt16LittleEndian(s[8..]);
+        long pixels = 0;
         var i = 13 + ColorTableSize(s[10]);
         while (i < s.Length && s[i] != 0x3B)
         {
@@ -239,8 +250,9 @@ public static class ImageHeader
     }
 
     /// <summary>
-    /// The largest page: Tesseract reads a multi-page TIFF one page at a time. A page with more than
-    /// <see cref="MaxComponents"/> samples per pixel, or repeating a size or samples tag, declares nothing.
+    /// The largest page, or a page's tile when that is larger (libtiff sizes its tile buffer from TileWidth × TileLength,
+    /// not from the image): Tesseract reads a multi-page TIFF one page at a time. A page with more than
+    /// <see cref="MaxComponents"/> samples per pixel, or repeating a size, tile or samples tag, declares nothing.
     /// </summary>
     private static long? Tiff(ReadOnlySpan<byte> s)
     {
@@ -263,37 +275,39 @@ public static class ImageHeader
                 return null;
             }
 
-            uint width = 0, height = 0, samples = 1;
+            uint width = 0, height = 0, samples = 1, tileWidth = 0, tileHeight = 0;
             var seen = 0;
             for (var entry = start + 2; entry < end; entry += 12)
             {
-                // libtiff uses the first of a repeated tag, a parser could use the last: an IFD repeating one declares nothing.
-                var tag = U16(s, entry, little) switch
-                {
-                    256 => 1,
-                    257 => 2,
-                    277 => 4,
-                    _ => 0,
-                };
-                if ((seen & tag) != 0)
-                {
-                    return null;
-                }
-
-                seen |= tag;
+                // SHORT or LONG, one value, stored inline.
                 var value = U16(s, entry + 2, little) switch
                 {
                     3 => U16(s, entry + 8, little),
                     4 => U32(s, entry + 8, little),
                     _ => 0u,
                 };
-                (width, height, samples) = U16(s, entry, little) switch
+
+                // libtiff uses the first of a repeated tag, a parser could use the last: an IFD repeating one declares nothing.
+                switch (U16(s, entry, little))
                 {
-                    256 => (value, height, samples),
-                    257 => (width, value, samples),
-                    277 => (width, height, value),
-                    _ => (width, height, samples),
-                };
+                    case 256 when First(1):
+                        width = value;
+                        break;
+                    case 257 when First(2):
+                        height = value;
+                        break;
+                    case 277 when First(4):
+                        samples = value;
+                        break;
+                    case 322 when First(8):
+                        tileWidth = value;
+                        break;
+                    case 323 when First(16):
+                        tileHeight = value;
+                        break;
+                    case 256 or 257 or 277 or 322 or 323:
+                        return null;
+                }
             }
 
             if (width == 0 || height == 0 || samples is 0 or > MaxComponents)
@@ -301,8 +315,15 @@ public static class ImageHeader
                 return null;
             }
 
-            largest = Math.Max(largest, Area(width, height));
+            largest = Math.Max(largest, Math.Max(Area(width, height), Area(tileWidth, tileHeight)));
             offset = U32(s, end, little);
+
+            bool First(int bit)
+            {
+                var first = (seen & bit) == 0;
+                seen |= bit;
+                return first;
+            }
         }
 
         return largest;

@@ -18,7 +18,7 @@ public sealed class ImageHeaderTests
         { "webp-vp8", WebPLossy(16_383, 16_383), 16_383L * 16_383 },
         { "webp-vp8l", WebPLossless(16_384, 16_384), 16_384L * 16_384 },
         { "webp-vp8x", WebPExtended(100_000, 100_000), 10_000_000_000 },
-        { "gif", Gif(65_535, 65_535), 65_535L * 65_535 * 2 },
+        { "gif", Gif(65_535, 65_535), 65_535L * 65_535 },
         { "tiff", Tiff(100_000, 100_000), 10_000_000_000 },
         { "bmp-top-down", Bmp(20_000, -20_000), 400_000_000 },
         { "jp2-codestream", Jp2(20_000, 20_000, boxed: false), 400_000_000 },
@@ -42,10 +42,11 @@ public sealed class ImageHeaderTests
     }
 
     [Fact]
-    public void Gif_counts_the_canvas_and_every_frame_because_giflib_decodes_them_all()
+    public void Gif_counts_every_frame_but_not_the_canvas_because_giflib_allocates_frames_only()
     {
-        // 16 MP canvas and two 16 MP frames: each under the cap, together over it.
-        ImageHeader.DeclaredPixels(Gif(4_000, 4_000, frames: 2)).ShouldBe(48_000_000);
+        // Three 16 MP frames: each under the cap, together over it; a single 20 MP frame is not counted twice.
+        ImageHeader.DeclaredPixels(Gif(4_000, 4_000, frames: 3)).ShouldBe(48_000_000);
+        ImageHeader.DeclaredPixels(Gif(4_500, 4_500)).ShouldBe(20_250_000);
     }
 
     [Fact]
@@ -63,6 +64,7 @@ public sealed class ImageHeaderTests
     {
         ImageHeader.DeclaredPixels(Jp2(100, 100, boxed: true, components: 4)).ShouldBe(10_000);
         ImageHeader.DeclaredPixels(Tiff(100, 100, samples: 4)).ShouldBe(10_000);
+        ImageHeader.DeclaredPixels(Jpeg(100, 100, components: 4)).ShouldBe(10_000);
     }
 
     /// <summary>Two headers that could disagree: the larger counts, whichever comes first, since decoders differ on which they use.</summary>
@@ -75,7 +77,9 @@ public sealed class ImageHeaderTests
         { "webp-animation-frame", [.. WebPExtended(10, 10), .. WebPFrame(20_000, 20_000, WebPLossy(10, 10)[12..])], 400_000_000 },
         { "webp-animation-nested-vp8", [.. WebPExtended(10, 10), .. WebPFrame(10, 10, WebPLossy(16_000, 16_000)[12..])], 256_000_000 },
         { "webp-frames-nested-to-the-limit", [.. WebPExtended(10, 10), .. WebPNestedFrames(8, WebPLossy(16_000, 16_000)[12..])], 256_000_000 },
-        { "gif-frame-larger-than-canvas", GifFrameOverCanvas(), 100 + (20_000L * 20_000) },
+        { "gif-frame-larger-than-canvas", GifFrameOverCanvas(), 20_000L * 20_000 },
+        { "tiff-tiles-larger-than-the-image", TiffIfd(TiffEntry(256, 16), TiffEntry(257, 16), TiffEntry(322, 65_520), TiffEntry(323, 65_520)), 65_520L * 65_520 },
+        { "tiff-tiles-smaller-than-the-image", TiffIfd(TiffEntry(256, 20_000), TiffEntry(257, 20_000), TiffEntry(322, 256), TiffEntry(323, 256)), 400_000_000 },
         { "jp2-big-ihdr", Jp2(10, 10, boxed: true, ihdrWidth: 20_000, ihdrHeight: 20_000), 400_000_000 },
         { "jp2-big-siz", Jp2(20_000, 20_000, boxed: true, ihdrWidth: 10, ihdrHeight: 10), 400_000_000 },
         { "jp2-big-ihdr-first", Jp2TwoIhdr(20_000, 10), 400_000_000 },
@@ -105,6 +109,9 @@ public sealed class ImageHeaderTests
         { "jp2-1000-components", Jp2(6_000, 6_000, boxed: false, components: 1_000) },
         { "jp2-no-components", Jp2(10, 10, boxed: true, components: 0) },
         { "tiff-5-samples", Tiff(6_000, 6_000, samples: 5) },
+        { "tiff-repeated-tile-width", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(322, 16), TiffEntry(322, 65_520)) },
+        { "jpeg-10-components", Jpeg(6_000, 6_000, components: 10) },
+        { "jpeg-no-components", Jpeg(10, 10, components: 0) },
         { "tiff-repeated-size-big-first", TiffIfd(TiffEntry(256, 20_000), TiffEntry(257, 20_000), TiffEntry(256, 10), TiffEntry(257, 10)) },
         { "tiff-repeated-size-small-first", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(256, 20_000), TiffEntry(257, 20_000)) },
         { "tiff-repeated-samples", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(277, 5), TiffEntry(277, 1)) },
@@ -123,10 +130,11 @@ public sealed class ImageHeaderTests
     public static byte[] Png(uint width, uint height) =>
         [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, .. "IHDR"u8, .. Be32(width), .. Be32(height), 8, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    /// <summary>SOI, a JFIF APP0 segment, then a baseline frame header.</summary>
-    public static byte[] Jpeg(ushort width, ushort height) =>
+    /// <summary>SOI, a JFIF APP0 segment, then a baseline frame header with <paramref name="components"/> components.</summary>
+    public static byte[] Jpeg(ushort width, ushort height, byte components = 1) =>
         [0xFF, 0xD8, 0xFF, 0xE0, 0, 16, .. "JFIF\0"u8, 1, 1, 0, 0, 1, 0, 1, 0, 0,
-         0xFF, 0xC0, 0, 11, 8, .. Be16(height), .. Be16(width), 1, 1, 0x11, 0, 0xFF, 0xD9];
+         0xFF, 0xC0, .. Be16((ushort)(8 + (3 * components))), 8, .. Be16(height), .. Be16(width), components,
+         .. Enumerable.Range(1, components).SelectMany(id => (byte[])[(byte)id, 0x11, 0]), 0xFF, 0xD9];
 
     public static byte[] WebPLossy(ushort width, ushort height) =>
         WebP("VP8 ", [0, 0, 0, 0x9D, 0x01, 0x2A, .. Le16(width), .. Le16(height)]);

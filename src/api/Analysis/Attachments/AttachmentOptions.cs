@@ -30,6 +30,15 @@ public sealed class AttachmentOptions
     /// <summary>Tesseract languages, e.g. <c>eng+deu</c>; each needs its traineddata installed (the image has <c>eng</c>).</summary>
     public string OcrLanguages { get; set; } = "eng";
 
+    public const int DefaultOcrMemoryLimitMb = 1024;
+
+    /// <summary>
+    /// Address-space limit (MiB) for each Tesseract process, applied with <c>prlimit</c> on Linux: an image whose decoder
+    /// asks for more fails on its own, whatever its header said. An A4 page at 600 dpi needs about half the default.
+    /// </summary>
+    [Range(256, 65_536)]
+    public int OcrMemoryLimitMb { get; set; } = DefaultOcrMemoryLimitMb;
+
     /// <param name="modelTimeout"><see cref="Llm.LlmOptions.ModelTimeout"/>.</param>
     public TimeSpan ImageTimeoutFor(ImageMode mode, TimeSpan modelTimeout) =>
         ImageTimeout is { } set && set > TimeSpan.Zero ? set

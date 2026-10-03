@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Text;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Writer;
@@ -38,6 +40,56 @@ public static class SyntheticImage
         }
 
         return builder.Build();
+    }
+
+    /// <summary>
+    /// A valid RGB PNG of <paramref name="width"/> × <paramref name="height"/> black pixels: a few hundred KB however large,
+    /// since the rows deflate to almost nothing, while its decoder allocates the whole canvas. Not a header-only stub:
+    /// Leptonica reads it to the end when it has the memory.
+    /// </summary>
+    public static byte[] BlankPng(int width, int height)
+    {
+        using var idat = new MemoryStream();
+        using (var zlib = new ZLibStream(idat, CompressionLevel.Fastest, leaveOpen: true))
+        {
+            var row = new byte[1 + (3 * width)];
+            for (var y = 0; y < height; y++)
+            {
+                zlib.Write(row);
+            }
+        }
+
+        byte[] ihdr = [.. Be32((uint)width), .. Be32((uint)height), 8, 2, 0, 0, 0];
+        return [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, .. Chunk("IHDR", ihdr), .. Chunk("IDAT", idat.ToArray()), .. Chunk("IEND", [])];
+
+        static byte[] Chunk(string type, byte[] data)
+        {
+            byte[] typed = [.. Encoding.ASCII.GetBytes(type), .. data];
+            return [.. Be32((uint)data.Length), .. typed, .. Be32(Crc32(typed))];
+        }
+
+        static byte[] Be32(uint value)
+        {
+            var bytes = new byte[4];
+            BinaryPrimitives.WriteUInt32BigEndian(bytes, value);
+            return bytes;
+        }
+
+        // libpng rejects a critical chunk whose CRC is wrong, so the chunks carry real ones.
+        static uint Crc32(ReadOnlySpan<byte> bytes)
+        {
+            var crc = 0xFFFFFFFFu;
+            foreach (var b in bytes)
+            {
+                crc ^= b;
+                for (var bit = 0; bit < 8; bit++)
+                {
+                    crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+                }
+            }
+
+            return ~crc;
+        }
     }
 
     /// <summary>
