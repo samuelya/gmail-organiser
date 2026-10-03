@@ -288,15 +288,20 @@ public sealed class ExternalReviewService(
         return (ReviewVerdictResult.Ok, null);
     }
 
-    /// <summary><c>Queued → Running</c> for one reviewer run; returns how many items it took.</summary>
+    /// <summary><c>Queued → Running</c> for one reviewer run while the target is still pending (as <c>list_pending_reviews</c>
+    /// shows); the rest were decided meanwhile and become <c>Cancelled</c>. Returns how many items it took.</summary>
     public async Task<int> MarkRunningAsync(IReadOnlyCollection<Guid> ids, Guid batchId, CancellationToken ct)
     {
         var now = time.GetUtcNow();
-        var changed = await db.ExternalReviews.Where(r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Queued)
+        var queued = db.ExternalReviews.Where(r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Queued);
+        var changed = await queued.Where(r => db.Suggestions.Any(s => s.Status == SuggestionStatus.Pending
+                && (r.TargetType == ExternalReviewTarget.Suggestion ? s.Id == r.SuggestionId
+                    : s.SenderAddress == r.SenderAddress && s.GroupKey == r.GroupKey)))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.Status, ExternalReviewStatus.Running)
-                .SetProperty(r => r.BatchId, batchId)
-                .SetProperty(r => r.StartedAt, now), ct);
+                .SetProperty(r => r.BatchId, batchId).SetProperty(r => r.StartedAt, now), ct);
+        var cancelled = await queued.ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, ExternalReviewStatus.Cancelled), ct);
+        await NotifyChangedAsync(cancelled, r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Cancelled, ct);
         return await NotifyChangedAsync(changed, r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Running && r.BatchId == batchId, ct);
     }
 
@@ -313,6 +318,17 @@ public sealed class ExternalReviewService(
                 .SetProperty(r => r.Status, ExternalReviewStatus.Unavailable)
                 .SetProperty(r => r.Error, message), ct);
         return await NotifyChangedAsync(changed, r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Unavailable, ct);
+    }
+
+    /// <summary>Credits the batch's reviewed items to <paramref name="reviewer"/>, and to <paramref name="model"/> when known.</summary>
+    public async Task<int> SetBatchReviewerAsync(Guid batchId, string reviewer, string? model, CancellationToken ct)
+    {
+        model = string.IsNullOrWhiteSpace(model) ? null : Truncate(model.Trim(), MaxModelLength);
+        var changed = await db.ExternalReviews.Where(r => r.BatchId == batchId && r.Status == ExternalReviewStatus.Reviewed)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.Reviewer, reviewer)
+                .SetProperty(r => r.ReviewerModel, r => model ?? r.ReviewerModel), ct);
+        return await NotifyChangedAsync(changed, r => r.BatchId == batchId && r.Status == ExternalReviewStatus.Reviewed, ct);
     }
 
     /// <summary>The outcome the target shows now (what Claude reviewed); null when nothing is pending.</summary>

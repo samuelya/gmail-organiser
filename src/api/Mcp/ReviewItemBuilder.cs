@@ -52,8 +52,9 @@ public sealed class ReviewItemBuilder(
     public const int MaxSimilarDecisions = 10;
 
     /// <summary>
-    /// Running items when any exist, else queued ones; oldest first, at most <paramref name="limit"/> (clamped). Items
-    /// whose suggestions the user decided after sending them are skipped: <c>submit_review</c> refuses them.
+    /// Running items while a run is in progress, else queued ones; oldest first, at most <paramref name="limit"/> (clamped).
+    /// Items whose suggestions the user decided after sending them are skipped: <c>submit_review</c> refuses them. A run
+    /// whose items were all decided lists none, so Claude never reviews items outside the batch it was started for.
     /// </summary>
     public async Task<PendingReviewsDto> ListPendingAsync(int limit, CancellationToken ct)
     {
@@ -62,7 +63,7 @@ public sealed class ReviewItemBuilder(
             && (r.TargetType == ExternalReviewTarget.Suggestion
                 ? s.Id == r.SuggestionId
                 : s.SenderAddress == r.SenderAddress && s.GroupKey == r.GroupKey)));
-        var status = await open.AnyAsync(r => r.Status == ExternalReviewStatus.Running, ct)
+        var status = await db.ExternalReviews.AnyAsync(r => r.Status == ExternalReviewStatus.Running, ct)
             ? ExternalReviewStatus.Running
             : ExternalReviewStatus.Queued;
         var rows = await open

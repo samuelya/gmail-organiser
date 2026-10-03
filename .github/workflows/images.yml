@@ -50,5 +50,10 @@ jobs:
       - name: Build api image
         run: docker build -f src/api/Dockerfile -t gmail-organiser-api:ci .
 
+      - name: Build api image with the Claude Code CLI
+        run: |
+          docker build -f src/api/Dockerfile --build-arg WITH_CLAUDE=true -t gmail-organiser-api:ci-claude .
+          docker run --rm --entrypoint bash gmail-organiser-api:ci-claude -c 'claude --version && touch "$HOME/.probe"'
+
       - name: Build web image
         run: docker build -f src/web/Dockerfile -t gmail-organiser-web:ci src/web

@@ -207,8 +207,10 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
                 .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, ExternalReviewStatus.Running), Ct);
         }
 
+        // The run's only item was decided: the list stays on the run (empty) rather than offering the queued group.
         var list = McpTestClient.Structured(await McpTestClient.CallAsync(client, "list_pending_reviews", Ct));
-        list.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()).ShouldBe([groupItem]);
+        list.GetProperty("status").GetString().ShouldBe("running");
+        list.GetProperty("items").GetArrayLength().ShouldBe(0);
 
         Failed(await SubmitAsync(new() { ["id"] = singleItem.ToString(), ["verdict"] = "agree", ["reasoning"] = "Synthetic reasoning." }),
             "cancelled", "already decided");
