@@ -12,12 +12,17 @@ namespace GmailOrganiser.Jobs;
 /// <see cref="JobDto.Version"/> (not <see cref="JobDto.UpdatedAt"/>, which is display-only); never replace the list wholesale with the snapshot. On reconnect, drop held
 /// active jobs that are neither in the new snapshot nor changed on the new connection.
 /// </para>
+/// <para>
+/// The hub also carries <see cref="ExternalReviewChangedEvent"/> (a Claude review <c>ExternalReviewDto</c>) after every
+/// committed item status or resolution change; there is no snapshot for it, the review page reads the items over HTTP.
+/// </para>
 /// </summary>
 public sealed class JobsHub(IJobService jobs) : Hub
 {
     public const string Path = "/hubs/jobs";
     public const string SnapshotEvent = "jobsSnapshot";
     public const string ChangedEvent = "jobChanged";
+    public const string ExternalReviewChangedEvent = "externalReviewChanged";
 
     public override async Task OnConnectedAsync()
     {

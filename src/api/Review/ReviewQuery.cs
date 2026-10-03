@@ -1,15 +1,17 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Claude;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Senders;
+using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Review;
 
 /// <summary>The review sender list and one sender's suggestions grouped by <see cref="SuggestionRow.GroupKey"/>.</summary>
-public sealed class ReviewQuery(AppDbContext db)
+public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
 {
     /// <summary>Most members listed for one group.</summary>
     public const int MaxMembers = 500;
@@ -107,6 +109,7 @@ public sealed class ReviewQuery(AppDbContext db)
                 Memory = g.Count(s => s.Source == SuggestionSource.Memory),
                 ConfidenceMin = g.Min(s => s.Confidence),
                 ConfidenceMax = g.Max(s => s.Confidence),
+                NewLabels = g.Count(s => s.IsNewLabel),
             });
         var totalGroups = await stats.LongCountAsync(ct);
         var pageStats = await stats.OrderByDescending(g => g.Size).ThenBy(g => g.Key)
@@ -121,6 +124,7 @@ public sealed class ReviewQuery(AppDbContext db)
             .ToLookup(o => o.Key, StringComparer.Ordinal);
 
         var groups = new List<ReviewGroupDto>(pageStats.Count);
+        var loaded = new List<(GroupStats Stats, List<(SuggestionRow S, MessageRow M)> Members)>(pageStats.Count);
         var budget = MaxResponseMembers;
         foreach (var g in pageStats)
         {
@@ -135,7 +139,13 @@ public sealed class ReviewQuery(AppDbContext db)
                 .Take(take)
                 .ToListAsync(ct);
             budget -= members.Count;
-            groups.Add(ToGroup(g, outcomes[key], [.. members.Select(r => (r.Suggestion, r.Message))], allowlisted));
+            loaded.Add((g, [.. members.Select(r => (r.Suggestion, r.Message))]));
+        }
+
+        var claude = await ClaudeLookupAsync(address, loaded, ct);
+        foreach (var (g, members) in loaded)
+        {
+            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlisted, claude));
         }
 
         return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
@@ -167,7 +177,19 @@ public sealed class ReviewQuery(AppDbContext db)
         (string.IsNullOrWhiteSpace(subject) ? AnalysisGrouper.NoSubjectDisplay : subject)
         + (groupKey is not null && GroupKey.IsList(groupKey) ? AnalysisGrouper.ListDisplaySuffix : "");
 
-    public static SuggestionDto ToDto(SuggestionRow s, MessageRow m, bool senderAllowlisted) => new(
+    /// <summary>
+    /// Worth a Claude review: the reviewer is on and the suggestion is below the threshold (when that rule is on) or
+    /// proposes a new label (when that rule is on).
+    /// </summary>
+    public static bool IsSuggestedForClaude(AppSettings settings, double confidence, bool isNewLabel) =>
+        settings.ClaudeReviewerMode != ClaudeReviewerMode.Off
+        && ((settings.ClaudeSuggestLowConfidence && confidence < settings.ClaudeSuggestThreshold)
+            || (settings.ClaudeSuggestNewLabels && isNewLabel));
+
+    public static SuggestionDto ToDto(SuggestionRow s, MessageRow m, bool senderAllowlisted) => ToDto(s, m, senderAllowlisted, null, false);
+
+    public static SuggestionDto ToDto(
+        SuggestionRow s, MessageRow m, bool senderAllowlisted, ExternalReviewDto? claudeReview, bool suggestedForClaude) => new(
         s.Id,
         s.MessageId,
         m.Subject,
@@ -183,14 +205,55 @@ public sealed class ReviewQuery(AppDbContext db)
         s.Reason,
         SnakeCaseEnumConverter<SuggestionStatus>.ToDb(s.Status),
         s.Edited,
-        MessageProtection.IsProtected(m, senderAllowlisted));
+        MessageProtection.IsProtected(m, senderAllowlisted),
+        claudeReview,
+        suggestedForClaude);
+
+    /// <summary>
+    /// The newest not-cancelled Claude review item per listed suggestion and per group of the page: one query per
+    /// target type. A suggestion item is titled from the page (the member's subject); a group item as the
+    /// <c>externalReviewChanged</c> event titles it (<see cref="ExternalReviewQuery.ToDtosAsync"/>: newest member over
+    /// all statuses, not only the listed tab), so the title doesn't change when an event replaces the item.
+    /// </summary>
+    private async Task<ClaudeLookup> ClaudeLookupAsync(
+        string address, List<(GroupStats Stats, List<(SuggestionRow S, MessageRow M)> Members)> groups, CancellationToken ct)
+    {
+        var settings = await settingsStore.GetAsync(ct);
+        var subjects = groups.SelectMany(g => g.Members).ToDictionary(x => x.S.Id, x => x.M.Subject);
+        var ids = subjects.Keys.ToList();
+        var keys = groups.Select(g => g.Members[0].S.GroupKey).OfType<string>().ToList();
+        var items = db.ExternalReviews.AsNoTracking()
+            .Where(r => r.SenderAddress == address && r.Status != ExternalReviewStatus.Cancelled);
+        var suggestionItems = await items
+            .Where(r => r.TargetType == ExternalReviewTarget.Suggestion && ids.Contains(r.SuggestionId!.Value))
+            .ToListAsync(ct);
+        var groupItems = keys.Count == 0
+            ? []
+            : await items.Where(r => r.TargetType == ExternalReviewTarget.Group && keys.Contains(r.GroupKey!)).ToListAsync(ct);
+        var newestGroupItems = Newest(groupItems, r => r.GroupKey!).ToList();
+        var groupDtos = newestGroupItems.Count == 0
+            ? []
+            : await new ExternalReviewQuery(db).ToDtosAsync(newestGroupItems, ct);
+        return new ClaudeLookup(
+            settings,
+            Newest(suggestionItems, r => r.SuggestionId!.Value)
+                .ToDictionary(r => r.SuggestionId!.Value, r => ExternalReviewQuery.ToDto(r, GroupDisplay(subjects[r.SuggestionId!.Value], null))),
+            groupDtos.ToDictionary(d => d.GroupKey!, StringComparer.Ordinal));
+
+        static IEnumerable<ExternalReviewRow> Newest<TKey>(IEnumerable<ExternalReviewRow> rows, Func<ExternalReviewRow, TKey> key) =>
+            rows.GroupBy(key).Select(g => g.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id).First());
+    }
 
     /// <summary>
     /// The group shows its most common outcome (over all members), with the reason of a listed model-analysed member
     /// that has it when there is one; <c>Mixed</c> when members disagree. Members are newest first.
     /// </summary>
     private static ReviewGroupDto ToGroup(
-        GroupStats stats, IEnumerable<OutcomeCount> outcomes, IReadOnlyList<(SuggestionRow S, MessageRow M)> members, bool allowlisted)
+        GroupStats stats,
+        IEnumerable<OutcomeCount> outcomes,
+        IReadOnlyList<(SuggestionRow S, MessageRow M)> members,
+        bool allowlisted,
+        ClaudeLookup claude)
     {
         var all = outcomes.ToList();
         var shared = Shown(all);
@@ -209,9 +272,11 @@ public sealed class ReviewQuery(AppDbContext db)
 
         var newest = members[0];
         var key = newest.S.GroupKey;
+        var display = GroupDisplay(newest.M.Subject, key);
+        var settings = claude.Settings;
         return new ReviewGroupDto(
             key,
-            GroupDisplay(newest.M.Subject, key),
+            display,
             stats.Size,
             stats.Llm,
             stats.Derived,
@@ -223,8 +288,11 @@ public sealed class ReviewQuery(AppDbContext db)
             stats.ConfidenceMin,
             stats.ConfidenceMax,
             representative.S.Reason,
-            [.. members.Select(x => ToDto(x.S, x.M, allowlisted))],
-            members.Count < stats.Size);
+            [.. members.Select(x => ToDto(
+                x.S, x.M, allowlisted, claude.Suggestions.GetValueOrDefault(x.S.Id), IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))],
+            members.Count < stats.Size,
+            key is null ? null : claude.Groups.GetValueOrDefault(key),
+            IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0));
     }
 
     /// <summary>The card's outcome: the most common, then one with a model answer, then by label and flags.</summary>
@@ -259,7 +327,11 @@ public sealed class ReviewQuery(AppDbContext db)
         public int Memory { get; init; }
         public double ConfidenceMin { get; init; }
         public double ConfidenceMax { get; init; }
+        public int NewLabels { get; init; }
     }
+
+    private sealed record ClaudeLookup(
+        AppSettings Settings, Dictionary<Guid, ExternalReviewDto> Suggestions, Dictionary<string, ExternalReviewDto> Groups);
 
     private sealed record OutcomeCount(string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count, bool HasLlm);
 }

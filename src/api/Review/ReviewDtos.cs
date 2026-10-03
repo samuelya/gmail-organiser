@@ -1,3 +1,5 @@
+using GmailOrganiser.Claude;
+
 namespace GmailOrganiser.Review;
 
 public sealed record ReviewSenderDto(
@@ -11,6 +13,8 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="GroupKey">Null for a message analysed on its own.</param>
 /// <param name="Mixed">Members disagree on label, needs-action or to-be-deleted (after edits).</param>
 /// <param name="Truncated">Not every member is listed (<see cref="ReviewQuery.MaxMembers"/>, <see cref="ReviewQuery.MaxResponseMembers"/>); the aggregates count them all.</param>
+/// <param name="ClaudeReview">The newest not-cancelled Claude review item for the group.</param>
+/// <param name="SuggestedForClaude">Any member, listed or not, is worth a Claude review (<see cref="ReviewQuery.IsSuggestedForClaude"/>).</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -26,8 +30,12 @@ public sealed record ReviewGroupDto(
     double ConfidenceMax,
     string Reason,
     IReadOnlyList<SuggestionDto> Members,
-    bool Truncated);
+    bool Truncated,
+    ExternalReviewDto? ClaudeReview = null,
+    bool SuggestedForClaude = false);
 
+/// <param name="ClaudeReview">The newest not-cancelled Claude review item for this suggestion alone (not its group's).</param>
+/// <param name="SuggestedForClaude">Worth a Claude review by the settings (<see cref="ReviewQuery.IsSuggestedForClaude"/>); a UI hint only.</param>
 public sealed record SuggestionDto(
     Guid Id,
     string MessageId,
@@ -44,7 +52,9 @@ public sealed record SuggestionDto(
     string Reason,
     string Status,
     bool Edited,
-    bool Protected);
+    bool Protected,
+    ExternalReviewDto? ClaudeReview = null,
+    bool SuggestedForClaude = false);
 
 public sealed record LabelDto(string Id, string Name, string Type);
 

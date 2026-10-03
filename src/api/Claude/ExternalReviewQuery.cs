@@ -119,7 +119,8 @@ public sealed class ExternalReviewQuery(AppDbContext db)
         })];
     }
 
-    private static ExternalReviewDto ToDto(ExternalReviewRow r, string? groupDisplay) => new(
+    /// <param name="groupDisplay">The title, as <see cref="ToDtosAsync"/> computes it.</param>
+    public static ExternalReviewDto ToDto(ExternalReviewRow r, string? groupDisplay) => new(
         r.Id,
         SnakeCaseEnumConverter<ExternalReviewTarget>.ToDb(r.TargetType),
         r.SuggestionId,
