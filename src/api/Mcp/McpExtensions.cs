@@ -28,6 +28,7 @@ public static class McpExtensions
             .WithHttpTransport(o => o.Stateless = true)
             .WithTools<ReviewTools>()
             .WithTools<SubmitTools>()
+            .WithRequestFilters(f => f.AddCallToolFilter(SubmitTools.ArgumentFilter))
             .WithPrompts<ReviewPrompts>();
         return services;
     }

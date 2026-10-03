@@ -7,6 +7,7 @@ using GmailOrganiser.Review;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -21,6 +22,7 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
 {
     private readonly PostgresFixture postgres;
     private readonly CapturingNotifier notifier = new();
+    private readonly CapturingLoggerProvider logs = new();
     private readonly AnalysisRunHarness h;
     private McpClient client = null!;
     private Guid groupItem;
@@ -32,7 +34,7 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
         this.postgres = postgres;
         h = new(factory, postgres)
         {
-            ConfigureServices = s => s.AddSingleton<IExternalReviewNotifier>(notifier),
+            ConfigureServices = s => s.AddSingleton<IExternalReviewNotifier>(notifier).AddSingleton<ILoggerProvider>(logs),
         };
     }
 
@@ -61,6 +63,7 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
         singleItem = await CreateAsync(new([c00], null, null));
         client = await McpTestClient.ConnectAsync(h.Host, Ct);
         notifier.Items.Clear();
+        logs.Entries.Clear();
     }
 
     public async ValueTask DisposeAsync()
@@ -243,6 +246,34 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
         }
     }
 
+    [Theory]
+    [InlineData("""{"verdict":"agree"}""", "Missing required argument 'reasoning'")]
+    [InlineData("""{"reasoning":"Synthetic reasoning."}""", "Missing required argument 'verdict'")]
+    [InlineData("""{"verdict":"agree","reasoning":null}""", "Missing required argument 'reasoning'")]
+    [InlineData("""{"verdict":"agree","reasoning":"Synthetic reasoning.","filter_criteria":{"from":"a"}}""", "Argument 'filter_criteria' must be a string")]
+    [InlineData("""{"verdict":"agree","reasoning":"Synthetic reasoning.","needs_action":"yes"}""", "Argument 'needs_action' must be a boolean")]
+    [InlineData("""{"verdict":"agree","reasoning":7}""", "Argument 'reasoning' must be a string")]
+    public async Task Missing_or_mistyped_argument_is_ok_false_with_a_reason_and_a_warning_without_values(string arguments, string reason)
+    {
+        var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(arguments)!;
+        args["id"] = singleItem.ToString();
+
+        Failed(await SubmitAsync(args), "queued", reason);
+
+        (await RowAsync(singleItem)).Verdict.ShouldBeNull();
+        var warning = logs.Entries.Where(e => e.Category == typeof(SubmitTools).FullName).ShouldHaveSingleItem();
+        warning.Level.ShouldBe(LogLevel.Warning);
+        warning.Exception.ShouldBeNull();
+        warning.Message.ShouldContain(reason);
+        warning.Message.ShouldNotContain("Synthetic");
+        logs.Entries.ShouldNotContain(e => e.Level >= LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task Mistyped_or_missing_id_is_ok_false_without_status() =>
+        Failed(await SubmitAsync(new() { ["id"] = 123, ["verdict"] = "agree", ["reasoning"] = "Synthetic reasoning." }),
+            null, "Argument 'id' must be a string");
+
     private Task<CallToolResult> SubmitAsync(Dictionary<string, object?> arguments) =>
         McpTestClient.CallAsync(client, "submit_review", Ct, arguments);
 
@@ -278,6 +309,30 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
         response.EnsureSuccessStatusCode();
         var created = JsonSerializer.Deserialize<CreateExternalReviewsResponse>(await response.Content.ReadAsStringAsync(Ct), JsonSerializerOptions.Web)!;
         return created.Items.Single().Id;
+    }
+
+    private sealed record LogEntry(string Category, LogLevel Level, string Message, Exception? Exception);
+
+    private sealed class CapturingLoggerProvider : ILoggerProvider
+    {
+        public ConcurrentQueue<LogEntry> Entries { get; } = new();
+
+        public ILogger CreateLogger(string categoryName) => new Logger(categoryName, Entries);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger(string category, ConcurrentQueue<LogEntry> entries) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                entries.Enqueue(new(category, logLevel, formatter(state, exception), exception));
+        }
     }
 
     /// <summary>Sends nothing; keeps every published item in order.</summary>

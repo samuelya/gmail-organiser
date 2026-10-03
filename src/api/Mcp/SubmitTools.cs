@@ -3,6 +3,7 @@ using System.Text.Json;
 using GmailOrganiser.Claude;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -24,9 +25,95 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
     public const string Reviewer = "mcp";
     public const int MaxPlainFilterCriteriaLength = 500;
 
+    private const string ToolName = "submit_review";
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    [McpServerTool(Name = "submit_review", Title = "Submit a review verdict", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
+    /// <summary>The tool's arguments and their JSON types, required ones first; must match <see cref="SubmitReview"/>.</summary>
+    private static readonly (string Name, JsonValueKind Kind, bool Required)[] Arguments =
+    [
+        ("id", JsonValueKind.String, true),
+        ("verdict", JsonValueKind.String, true),
+        ("reasoning", JsonValueKind.String, true),
+        ("topic_label", JsonValueKind.String, false),
+        ("needs_action", JsonValueKind.True, false),
+        ("to_be_deleted", JsonValueKind.True, false),
+        ("filter_criteria", JsonValueKind.String, false),
+        ("model", JsonValueKind.String, false),
+    ];
+
+    /// <summary>
+    /// A call-tool filter that checks <c>submit_review</c>'s arguments before the SDK binds them: a missing or mistyped
+    /// argument would otherwise throw in the binding and reach the client as a reason-less error (#186).
+    /// </summary>
+    public static McpRequestHandler<CallToolRequestParams, CallToolResult> ArgumentFilter(
+        McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
+        async (context, ct) =>
+        {
+            if (context.Params?.Name != ToolName || CheckArguments(context.Params.Arguments) is not { } reason)
+            {
+                return await next(context, ct);
+            }
+
+            var tools = ActivatorUtilities.CreateInstance<SubmitTools>(context.Services!);
+            return await tools.RejectArgumentsAsync(context.Params.Arguments, reason, ct);
+        };
+
+    /// <summary>Why the arguments don't fit the tool's input schema, or null when they do. Never quotes a value.</summary>
+    internal static string? CheckArguments(IDictionary<string, JsonElement>? arguments)
+    {
+        foreach (var (name, kind, required) in Arguments)
+        {
+            if (arguments is null || !arguments.TryGetValue(name, out var value) || value.ValueKind == JsonValueKind.Null)
+            {
+                if (required)
+                {
+                    return $"Missing required argument '{name}'.";
+                }
+
+                continue;
+            }
+
+            var fits = kind == JsonValueKind.True
+                ? value.ValueKind is JsonValueKind.True or JsonValueKind.False
+                : value.ValueKind == kind;
+            if (!fits)
+            {
+                return $"Argument '{name}' must be {(kind == JsonValueKind.True ? "a boolean" : "a string")}.";
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<CallToolResult> RejectArgumentsAsync(IDictionary<string, JsonElement>? arguments, string reason, CancellationToken ct)
+    {
+        logger.LogWarning("MCP tool submit_review rejected its arguments: {Reason}", reason);
+        var id = arguments?.TryGetValue("id", out var value) == true && value.ValueKind == JsonValueKind.String
+            && Guid.TryParse(value.GetString(), out var guid)
+            ? guid
+            : (Guid?)null;
+        SubmitReviewResultDto result = new(false, null, reason);
+        if (id is { } known)
+        {
+            try
+            {
+                result = await ResultAsync(known, false, reason, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("MCP tool submit_review could not look up the item status ({Error})", ex.GetType().Name);
+            }
+        }
+
+        return ToCallToolResult(result);
+    }
+
+    [McpServerTool(Name = ToolName, Title = "Submit a review verdict", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Submits your verdict on one review item from list_pending_reviews, once per item. 'agree' keeps the local "
         + "suggestion; 'alternative' proposes topic_label (a full label path, levels separated by '/') with the "
         + "needs_action and to_be_deleted flags; 'needs_human' leaves it to the user. Nothing is applied until the user "
@@ -58,6 +145,11 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
             result = new(false, null, "submit_review failed; see the API log.");
         }
 
+        return ToCallToolResult(result);
+    }
+
+    private static CallToolResult ToCallToolResult(SubmitReviewResultDto result)
+    {
         var json = JsonSerializer.SerializeToElement(result, Json);
         return new CallToolResult
         {
