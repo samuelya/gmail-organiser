@@ -81,12 +81,30 @@ public sealed class SenderAllowlistTests(ApiFactory factory, PostgresFixture pos
     [InlineData("local@")]
     [InlineData("with%20space@example.com")]
     [InlineData("tab%09@example.com")]
+    [InlineData("%22quoted%22@example.com")]
+    [InlineData("a@example.com,b@example.com")]
+    [InlineData("a@example.com;b@example.com")]
+    [InlineData("group:a@example.com")]
+    [InlineData("Shop%20%3Cshop@example.com%3E")]
+    [InlineData("%3C%3Cshop@example.com%3E%3E")]
+    [InlineData("%3Cshop@example.com")]
+    [InlineData("%3C%3E")]
     public async Task An_invalid_address_is_a_400_on_address(string address)
     {
         var response = await PutAsync(address, new AllowlistRequest(true));
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<ValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors.Keys.ShouldBe(["address"]);
+    }
+
+    [Fact]
+    public async Task An_address_in_angle_brackets_is_stored_without_them_like_fetch()
+    {
+        var dto = await PutOkAsync(Uri.EscapeDataString(" < Shop@Example.com > "), true);
+
+        dto.Address.ShouldBe("shop@example.com");
+        await using var db = postgres.CreateDbContext();
+        (await db.Senders.CountAsync(s => s.Address.Contains("<"), Ct)).ShouldBe(0);
     }
 
     [Fact]

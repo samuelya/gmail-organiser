@@ -1,3 +1,4 @@
+using System.Buffers;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using Microsoft.EntityFrameworkCore;
@@ -14,18 +15,28 @@ public sealed class SenderAllowlist(AppDbContext db, TimeProvider time)
     /// <summary>RFC 5321 caps a forward path at 256 octets; 320 (64 + @ + 255) is the common upper bound.</summary>
     public const int MaxAddressLength = 320;
 
+    /// <summary>RFC 5322 specials: a fetched address never contains them once its angle brackets are stripped.</summary>
+    private static readonly SearchValues<char> Specials = SearchValues.Create("<>()[]\\\",;:");
+
     /// <summary>
-    /// The address as fetch stores it (<see cref="GmailMetadataMapper.ParseFrom"/>: trimmed, lower-case), or null with
-    /// <paramref name="error"/> when it is not a single <c>local@domain</c> without whitespace.
+    /// The address as fetch stores it (<see cref="GmailMetadataMapper.ParseFrom"/>: one surrounding <c>&lt;…&gt;</c>
+    /// stripped, trimmed, lower-case), or null with <paramref name="error"/> when it is not a single plain
+    /// <c>local@domain</c>: no whitespace, quoted local part, list separator or other RFC 5322 special.
     /// </summary>
     public static string? Normalise(string? address, out string? error)
     {
         var value = address?.Trim().ToLowerInvariant() ?? "";
+        if (value.Length >= 2 && value[0] == '<' && value[^1] == '>')
+        {
+            value = value[1..^1].Trim();
+        }
+
         var at = value.IndexOf('@');
         error = value.Length is 0 or > MaxAddressLength
                 || at <= 0 || at == value.Length - 1 || value.IndexOf('@', at + 1) >= 0
+                || value.AsSpan().ContainsAny(Specials)
                 || value.Any(c => char.IsWhiteSpace(c) || char.IsControl(c))
-            ? $"Must be one address (local@domain) of at most {MaxAddressLength} characters, without whitespace."
+            ? $"Must be one plain address (local@domain) of at most {MaxAddressLength} characters, without whitespace, quotes or any of <>()[]\\,;:."
             : null;
         return error is null ? value : null;
     }
