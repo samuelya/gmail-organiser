@@ -65,6 +65,27 @@ public sealed class ImageHeaderTests
         ImageHeader.DeclaredPixels(Tiff(100, 100, samples: 4)).ShouldBe(10_000);
     }
 
+    /// <summary>Two headers that could disagree: the larger counts, whichever comes first, since decoders differ on which they use.</summary>
+    public static TheoryData<string, byte[], long> Ambiguous => new()
+    {
+        { "jpeg-big-sof-first", JpegTwoFrames(60_000, 10), 3_600_000_000 },
+        { "jpeg-big-sof-second", JpegTwoFrames(10, 60_000), 3_600_000_000 },
+        { "webp-small-canvas-big-vp8", [.. WebPExtended(10, 10), .. WebPLossy(16_000, 16_000)[12..]], 256_000_000 },
+        { "webp-big-canvas-small-vp8", [.. WebPExtended(16_000, 16_000), .. WebPLossy(10, 10)[12..]], 256_000_000 },
+        { "webp-animation-frame", [.. WebPExtended(10, 10), .. WebPFrame(20_000, 20_000, WebPLossy(10, 10)[12..])], 400_000_000 },
+        { "webp-animation-nested-vp8", [.. WebPExtended(10, 10), .. WebPFrame(10, 10, WebPLossy(16_000, 16_000)[12..])], 256_000_000 },
+        { "gif-frame-larger-than-canvas", GifFrameOverCanvas(), 100 + (20_000L * 20_000) },
+        { "jp2-big-ihdr", Jp2(10, 10, boxed: true, ihdrWidth: 20_000, ihdrHeight: 20_000), 400_000_000 },
+        { "jp2-big-siz", Jp2(20_000, 20_000, boxed: true, ihdrWidth: 10, ihdrHeight: 10), 400_000_000 },
+        { "jp2-second-siz", [.. Jp2(10, 10, boxed: false), .. Jp2(20_000, 20_000, boxed: false)[2..]], 400_000_000 },
+        { "bmp-os2-16-bit", [.. "BM"u8, .. new byte[12], .. Le32(12), .. Le16(20_000), .. Le16(20_000), 1, 0, 24, 0], 400_000_000 },
+    };
+
+    [Theory]
+    [MemberData(nameof(Ambiguous))]
+    public void Repeated_or_conflicting_headers_count_the_largest(string what, byte[] image, long pixels) =>
+        ImageHeader.DeclaredPixels(image).ShouldBe(pixels, what);
+
     public static TheoryData<string, byte[]> Unreadable => new()
     {
         { "unknown", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] },
@@ -79,6 +100,13 @@ public sealed class ImageHeaderTests
         { "jp2-1000-components", Jp2(6_000, 6_000, boxed: false, components: 1_000) },
         { "jp2-no-components", Jp2(10, 10, boxed: true, components: 0) },
         { "tiff-5-samples", Tiff(6_000, 6_000, samples: 5) },
+        { "tiff-repeated-size-big-first", TiffIfd(TiffEntry(256, 20_000), TiffEntry(257, 20_000), TiffEntry(256, 10), TiffEntry(257, 10)) },
+        { "tiff-repeated-size-small-first", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(256, 20_000), TiffEntry(257, 20_000)) },
+        { "tiff-repeated-samples", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(277, 5), TiffEntry(277, 1)) },
+        { "png-second-ihdr", [.. Png(10, 10), .. Png(30_000, 30_000)[8..]] },
+        { "bmp-unknown-header-size", [.. Bmp(10, 10)[..14], .. Le32(20), .. Bmp(10, 10)[18..]] },
+        { "jp2-ihdr-5-components", Jp2(10, 10, boxed: true, ihdrWidth: 10, ihdrHeight: 10, ihdrComponents: 5) },
+        { "jpeg-scan-before-frame-after-fill", [0xFF, 0xD8, 0xFF, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xC0, 0, 11, 8, 0, 10, 0, 10, 1, 1, 0x11, 0] },
         { "jp2-without-codestream", [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A, 0, 0, 0, 0] },
     };
 
@@ -116,14 +144,39 @@ public sealed class ImageHeaderTests
     public static byte[] Bmp(int width, int height) =>
         [.. "BM"u8, .. new byte[12], .. Le32(40), .. Le32((uint)width), .. Le32((uint)height), .. new byte[28]];
 
-    /// <summary>A raw codestream (SOC, SIZ) as PDFs embed it, or wrapped in a JP2 signature box and a <c>jp2c</c> box.</summary>
-    public static byte[] Jp2(uint width, uint height, bool boxed, ushort components = 3)
+    /// <summary>
+    /// A raw codestream (SOC, SIZ) as PDFs embed it, or wrapped in a JP2 signature box, an optional <c>jp2h</c> box holding
+    /// an <c>ihdr</c> box, and a <c>jp2c</c> box.
+    /// </summary>
+    public static byte[] Jp2(
+        uint width, uint height, bool boxed, ushort components = 3, uint ihdrWidth = 0, uint ihdrHeight = 0, ushort ihdrComponents = 3)
     {
-        byte[] codestream = [0xFF, 0x4F, 0xFF, 0x51, 0, 41, 0, 0, .. Be32(width), .. Be32(height), .. new byte[24], .. Be16(components)];
+        byte[] codestream = [0xFF, 0x4F, 0xFF, 0x51, 0, 38, 0, 0, .. Be32(width), .. Be32(height), .. new byte[24], .. Be16(components)];
+        byte[] header = ihdrWidth == 0
+            ? []
+            : [0, 0, 0, 30, .. "jp2h"u8, 0, 0, 0, 22, .. "ihdr"u8, .. Be32(ihdrHeight), .. Be32(ihdrWidth), .. Be16(ihdrComponents), 8, 7, 0, 0];
         return boxed
-            ? [0, 0, 0, 12, .. "jP  "u8, 0x0D, 0x0A, 0x87, 0x0A, .. Be32((uint)codestream.Length + 8), .. "jp2c"u8, .. codestream]
+            ? [0, 0, 0, 12, .. "jP  "u8, 0x0D, 0x0A, 0x87, 0x0A, .. header, .. Be32((uint)codestream.Length + 8), .. "jp2c"u8, .. codestream]
             : codestream;
     }
+
+    /// <summary>SOI, then a small and a large baseline frame header in the given order, then EOI.</summary>
+    private static byte[] JpegTwoFrames(ushort first, ushort second) =>
+        [0xFF, 0xD8, 0xFF, 0xC0, 0, 11, 8, .. Be16(first), .. Be16(first), 1, 1, 0x11, 0,
+         0xFF, 0xC0, 0, 11, 8, .. Be16(second), .. Be16(second), 1, 1, 0x11, 0, 0xFF, 0xD9];
+
+    /// <summary>An ANMF chunk: offset, size, duration and flags, then the frame's own chunks.</summary>
+    private static byte[] WebPFrame(uint width, uint height, byte[] frame) =>
+        [.. "ANMF"u8, .. Le32((uint)frame.Length + 16), 0, 0, 0, 0, 0, 0, .. Le32(width - 1)[..3], .. Le32(height - 1)[..3], 0, 0, 0, 0, .. frame];
+
+    private static byte[] GifFrameOverCanvas()
+    {
+        byte[] frame = [0x2C, 0, 0, 0, 0, .. Le16(20_000), .. Le16(20_000), 0, 2, 0];
+        return [.. "GIF89a"u8, .. Le16(10), .. Le16(10), 0, 0, 0, .. frame, 0x3B];
+    }
+
+    private static byte[] TiffIfd(params byte[][] entries) =>
+        [0x49, 0x49, 0x2A, 0x00, .. Le32(8), (byte)entries.Length, 0x00, .. entries.SelectMany(e => e), .. Le32(0)];
 
     private static byte[] TiffLoop() =>
         [0x49, 0x49, 0x2A, 0x00, .. Le32(8), 0x02, 0x00, .. TiffEntry(256, 10), .. TiffEntry(257, 10), .. Le32(8)];

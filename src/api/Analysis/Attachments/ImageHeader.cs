@@ -42,17 +42,33 @@ public static class ImageHeader
         return pixels > 0 ? pixels : null;
     }
 
-    private static long? Png(ReadOnlySpan<byte> s) =>
-        s.Length >= 24 && s[12..16].SequenceEqual("IHDR"u8)
-            ? Area(BinaryPrimitives.ReadUInt32BigEndian(s[16..]), BinaryPrimitives.ReadUInt32BigEndian(s[20..]))
-            : null;
+    /// <summary>The first chunk's IHDR; a second IHDR anywhere declares nothing (libpng rejects it, others may not).</summary>
+    private static long? Png(ReadOnlySpan<byte> s)
+    {
+        if (s.Length < 24 || !s[12..16].SequenceEqual("IHDR"u8))
+        {
+            return null;
+        }
+
+        for (long i = 8 + 12 + BinaryPrimitives.ReadUInt32BigEndian(s[8..]); i + 8 <= s.Length; i += 12 + BinaryPrimitives.ReadUInt32BigEndian(s[(int)i..]))
+        {
+            if (s[(int)(i + 4)..(int)(i + 8)].SequenceEqual("IHDR"u8))
+            {
+                return null;
+            }
+        }
+
+        return Area(BinaryPrimitives.ReadUInt32BigEndian(s[16..]), BinaryPrimitives.ReadUInt32BigEndian(s[20..]));
+    }
 
     /// <summary>
-    /// The first frame header (SOF0–SOF15) before the scan starts; segments such as EXIF thumbnails are skipped. Stray
-    /// bytes before a marker and 0xFF fill bytes are skipped too, as libjpeg does (it only warns about them).
+    /// The largest frame header (SOF0–SOF15) up to EOI: libjpeg rejects a second one, other decoders may use either.
+    /// Segments such as EXIF thumbnails are skipped by length; stray bytes, 0xFF fill bytes and entropy-coded data are
+    /// skipped byte by byte, as libjpeg does when it looks for the next marker.
     /// </summary>
     private static long? Jpeg(ReadOnlySpan<byte> s)
     {
+        long largest = 0;
         var i = 2;
         while (i < s.Length)
         {
@@ -68,7 +84,7 @@ public static class ImageHeader
 
             if (i >= s.Length)
             {
-                return null;
+                break;
             }
 
             var marker = s[i++];
@@ -77,17 +93,25 @@ public static class ImageHeader
                 continue;
             }
 
-            if (marker is 0xD9 or 0xDA || i + 2 > s.Length)
+            if (marker is 0xDA && largest == 0)
             {
                 return null;
+            }
+
+            if (marker is 0xD9 || i + 2 > s.Length)
+            {
+                break;
             }
 
             int length = BinaryPrimitives.ReadUInt16BigEndian(s[i..]);
             if (marker is >= 0xC0 and <= 0xCF and not (0xC4 or 0xC8 or 0xCC))
             {
-                return i + 7 <= s.Length
-                    ? (long)BinaryPrimitives.ReadUInt16BigEndian(s[(i + 3)..]) * BinaryPrimitives.ReadUInt16BigEndian(s[(i + 5)..])
-                    : null;
+                if (i + 7 > s.Length)
+                {
+                    return null;
+                }
+
+                largest = Math.Max(largest, (long)BinaryPrimitives.ReadUInt16BigEndian(s[(i + 3)..]) * BinaryPrimitives.ReadUInt16BigEndian(s[(i + 5)..]));
             }
 
             if (length < 2)
@@ -98,7 +122,7 @@ public static class ImageHeader
             i += length;
         }
 
-        return null;
+        return largest;
     }
 
     private static long? Gif(ReadOnlySpan<byte> s)
@@ -142,36 +166,69 @@ public static class ImageHeader
         }
     }
 
-    private static long? WebP(ReadOnlySpan<byte> s)
+    /// <summary>
+    /// The largest of the VP8X canvas, every VP8/VP8L frame and every animation frame: libwebp rejects a frame that
+    /// doesn't fit the canvas, but a decoder that ignores VP8X allocates the frame's own size.
+    /// </summary>
+    private static long? WebP(ReadOnlySpan<byte> s) =>
+        s.Length >= 16 && (s[12..16].SequenceEqual("VP8 "u8) || s[12..16].SequenceEqual("VP8L"u8) || s[12..16].SequenceEqual("VP8X"u8))
+            ? WebPChunks(s[12..])
+            : null;
+
+    private static long? WebPChunks(ReadOnlySpan<byte> s)
     {
-        if (s.Length < 30)
+        long largest = 0;
+        for (var i = 0; i + 8 <= s.Length;)
         {
-            return null;
+            var chunk = s[i..(i + 4)];
+            var size = BinaryPrimitives.ReadUInt32LittleEndian(s[(i + 4)..]);
+            var data = s[(i + 8)..];
+            long? pixels = 0;
+            if (chunk.SequenceEqual("VP8 "u8))
+            {
+                pixels = data is [_, _, _, 0x9D, 0x01, 0x2A, _, _, _, _, ..]
+                    ? (long)(BinaryPrimitives.ReadUInt16LittleEndian(data[6..]) & 0x3FFF) * (BinaryPrimitives.ReadUInt16LittleEndian(data[8..]) & 0x3FFF)
+                    : null;
+            }
+            else if (chunk.SequenceEqual("VP8L"u8))
+            {
+                pixels = data is [0x2F, _, _, _, _, ..]
+                    ? (long)((BinaryPrimitives.ReadUInt32LittleEndian(data[1..]) & 0x3FFF) + 1) * (((BinaryPrimitives.ReadUInt32LittleEndian(data[1..]) >> 14) & 0x3FFF) + 1)
+                    : null;
+            }
+            else if (chunk.SequenceEqual("VP8X"u8))
+            {
+                pixels = data.Length >= 10 ? (long)(UInt24(data[4..]) + 1) * (UInt24(data[7..]) + 1) : null;
+            }
+            else if (chunk.SequenceEqual("ANMF"u8))
+            {
+                // X, Y, width - 1, height - 1, duration (24 bits each), flags, then the frame's own chunks.
+                var frames = data.Length >= 16 && size >= 16 ? WebPChunks(data[16..(int)Math.Min(size, (uint)data.Length)]) : null;
+                pixels = frames is { } nested ? Math.Max((long)(UInt24(data[6..]) + 1) * (UInt24(data[9..]) + 1), nested) : null;
+            }
+
+            if (pixels is null)
+            {
+                return null;
+            }
+
+            largest = Math.Max(largest, pixels.Value);
+            if (size > data.Length)
+            {
+                break;
+            }
+
+            i += 8 + (int)size + (int)(size & 1);
         }
 
-        var chunk = s[12..16];
-        if (chunk.SequenceEqual("VP8 "u8))
-        {
-            return s[23..] is [0x9D, 0x01, 0x2A, ..]
-                ? (long)(BinaryPrimitives.ReadUInt16LittleEndian(s[26..]) & 0x3FFF) * (BinaryPrimitives.ReadUInt16LittleEndian(s[28..]) & 0x3FFF)
-                : null;
-        }
-
-        if (chunk.SequenceEqual("VP8L"u8))
-        {
-            var bits = BinaryPrimitives.ReadUInt32LittleEndian(s[21..]);
-            return s[20] == 0x2F ? (long)((bits & 0x3FFF) + 1) * (((bits >> 14) & 0x3FFF) + 1) : null;
-        }
-
-        // VP8X: the canvas; libwebp rejects a still image whose frame doesn't match it, and no frame of an animation exceeds it.
-        return chunk.SequenceEqual("VP8X"u8) ? (long)(UInt24(s[24..]) + 1) * (UInt24(s[27..]) + 1) : null;
+        return largest;
 
         static int UInt24(ReadOnlySpan<byte> b) => b[0] | b[1] << 8 | b[2] << 16;
     }
 
     /// <summary>
     /// The largest page: Tesseract reads a multi-page TIFF one page at a time. A page with more than
-    /// <see cref="MaxComponents"/> samples per pixel declares nothing.
+    /// <see cref="MaxComponents"/> samples per pixel, or repeating a size or samples tag, declares nothing.
     /// </summary>
     private static long? Tiff(ReadOnlySpan<byte> s)
     {
@@ -195,8 +252,23 @@ public static class ImageHeader
             }
 
             uint width = 0, height = 0, samples = 1;
+            var seen = 0;
             for (var entry = start + 2; entry < end; entry += 12)
             {
+                // libtiff uses the first of a repeated tag, a parser could use the last: an IFD repeating one declares nothing.
+                var tag = U16(s, entry, little) switch
+                {
+                    256 => 1,
+                    257 => 2,
+                    277 => 4,
+                    _ => 0,
+                };
+                if ((seen & tag) != 0)
+                {
+                    return null;
+                }
+
+                seen |= tag;
                 var value = U16(s, entry + 2, little) switch
                 {
                     3 => U16(s, entry + 8, little),
@@ -231,7 +303,10 @@ public static class ImageHeader
             : little ? BinaryPrimitives.ReadUInt32LittleEndian(s[at..]) : BinaryPrimitives.ReadUInt32BigEndian(s[at..]);
     }
 
-    /// <summary>A negative height is a top-down bitmap; the 12-byte OS/2 header has 16-bit sizes.</summary>
+    /// <summary>
+    /// A negative height is a top-down bitmap; the 12-byte OS/2 header has 16-bit sizes, every other known header 32-bit
+    /// ones. An unknown header size declares nothing, since a decoder could read its sizes either way.
+    /// </summary>
     private static long? Bmp(ReadOnlySpan<byte> s)
     {
         if (s.Length < 26)
@@ -239,9 +314,14 @@ public static class ImageHeader
             return null;
         }
 
-        if (BinaryPrimitives.ReadUInt32LittleEndian(s[14..]) == 12)
+        switch (BinaryPrimitives.ReadUInt32LittleEndian(s[14..]))
         {
-            return (long)BinaryPrimitives.ReadUInt16LittleEndian(s[18..]) * BinaryPrimitives.ReadUInt16LittleEndian(s[20..]);
+            case 12:
+                return (long)BinaryPrimitives.ReadUInt16LittleEndian(s[18..]) * BinaryPrimitives.ReadUInt16LittleEndian(s[20..]);
+            case 16 or 40 or 52 or 56 or 64 or 108 or 124:
+                break;
+            default:
+                return null;
         }
 
         long width = BinaryPrimitives.ReadInt32LittleEndian(s[18..]);
@@ -250,12 +330,13 @@ public static class ImageHeader
     }
 
     /// <summary>
-    /// The codestream's SIZ marker, which OpenJPEG decodes from (not the <c>jp2h</c> box, which could disagree): a raw
-    /// codestream as PDFs embed it, or the <c>jp2c</c> box of a JP2 file. OpenJPEG allocates a full canvas per component,
-    /// so a codestream with more than <see cref="MaxComponents"/> components declares nothing.
+    /// The largest of the codestream's SIZ markers, which OpenJPEG decodes from, and the <c>ihdr</c> boxes in <c>jp2h</c>,
+    /// which could disagree: a raw codestream as PDFs embed it, or the <c>jp2c</c> box of a JP2 file. OpenJPEG allocates a
+    /// full canvas per component, so more than <see cref="MaxComponents"/> components anywhere declares nothing.
     /// </summary>
     private static long? Jp2(ReadOnlySpan<byte> s)
     {
+        long largest = 0;
         var i = 0;
         while (s[i..] is not [0xFF, 0x4F, ..])
         {
@@ -277,7 +358,19 @@ public static class ImageHeader
                 header = 16;
             }
 
-            if (s[(i + 4)..(i + 8)].SequenceEqual("jp2c"u8))
+            var box = s[(i + 4)..(i + 8)];
+            if (box.SequenceEqual("ihdr"u8))
+            {
+                // Height, width, components.
+                if (i + header + 10 > s.Length || BinaryPrimitives.ReadUInt16BigEndian(s[(i + header + 8)..]) is 0 or > MaxComponents)
+                {
+                    return null;
+                }
+
+                largest = Area(BinaryPrimitives.ReadUInt32BigEndian(s[(i + header + 4)..]), BinaryPrimitives.ReadUInt32BigEndian(s[(i + header)..]));
+            }
+
+            if (box.SequenceEqual("jp2c"u8) || box.SequenceEqual("jp2h"u8))
             {
                 i += header;
             }
@@ -291,23 +384,41 @@ public static class ImageHeader
             }
         }
 
-        // SOC, SIZ, Lsiz, Rsiz, then Xsiz, Ysiz, XOsiz, YOsiz, XTsiz, YTsiz, XTOsiz, YTOsiz, Csiz.
-        if (i + 42 > s.Length || s[(i + 2)..(i + 4)] is not [0xFF, 0x51])
+        // SOC, then SIZ first; any further SIZ in the main header (up to the first tile, SOT) counts too.
+        if (i + 4 > s.Length || s[(i + 2)..(i + 4)] is not [0xFF, 0x51])
         {
             return null;
         }
 
-        var components = BinaryPrimitives.ReadUInt16BigEndian(s[(i + 40)..]);
-        if (components is 0 or > MaxComponents)
+        for (i += 2; i + 4 <= s.Length && s[i] == 0xFF && s[i + 1] is not (0x90 or 0xD9); i += 2 + BinaryPrimitives.ReadUInt16BigEndian(s[(i + 2)..]))
         {
-            return null;
+            if (s[i + 1] == 0x51)
+            {
+                if (Siz(s[i..]) is not { } pixels)
+                {
+                    return null;
+                }
+
+                largest = Math.Max(largest, pixels);
+            }
         }
 
-        var x = BinaryPrimitives.ReadUInt32BigEndian(s[(i + 8)..]);
-        var y = BinaryPrimitives.ReadUInt32BigEndian(s[(i + 12)..]);
-        var xOffset = BinaryPrimitives.ReadUInt32BigEndian(s[(i + 16)..]);
-        var yOffset = BinaryPrimitives.ReadUInt32BigEndian(s[(i + 20)..]);
-        return x > xOffset && y > yOffset ? Area(x - xOffset, y - yOffset) : null;
+        return largest;
+
+        // SIZ, Lsiz, Rsiz, then Xsiz, Ysiz, XOsiz, YOsiz, XTsiz, YTsiz, XTOsiz, YTOsiz, Csiz.
+        static long? Siz(ReadOnlySpan<byte> s)
+        {
+            if (s.Length < 40 || BinaryPrimitives.ReadUInt16BigEndian(s[38..]) is 0 or > MaxComponents)
+            {
+                return null;
+            }
+
+            var x = BinaryPrimitives.ReadUInt32BigEndian(s[6..]);
+            var y = BinaryPrimitives.ReadUInt32BigEndian(s[10..]);
+            var xOffset = BinaryPrimitives.ReadUInt32BigEndian(s[14..]);
+            var yOffset = BinaryPrimitives.ReadUInt32BigEndian(s[18..]);
+            return x > xOffset && y > yOffset ? Area(x - xOffset, y - yOffset) : null;
+        }
     }
 
     /// <summary>Two 32-bit sides can't overflow 64 bits unsigned; saturates instead of turning negative.</summary>
