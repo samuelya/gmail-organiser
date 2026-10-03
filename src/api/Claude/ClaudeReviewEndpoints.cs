@@ -76,7 +76,9 @@ public static class ClaudeReviewEndpoints
             (CreateExternalReviewsResult.RunNotFound, _) => TypedResults.NotFound(),
             _ => TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
-                ["request"] = [$"At most {max} items after expanding the run."],
+                ["request"] = [request.RunId is null
+                    ? $"At most {max} suggestions and groups in total."
+                    : $"At most {max} suggestions and groups in total, counting the run's."],
             }),
         };
     }
@@ -114,6 +116,8 @@ public static class ClaudeReviewEndpoints
             (ExternalReviewResult.NotFound, _) => TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Review item not found"),
             (ExternalReviewResult.AlreadyDecided, _) => Conflict("Already decided", "The suggestions are no longer pending."),
             (ExternalReviewResult.NeedsHuman, _) => Conflict("Needs a human", "Claude gave no verdict to accept; decide on the review page."),
+            (ExternalReviewResult.NotApplicable, _) => Conflict(
+                "Not applicable", "No pending suggestion can take Claude's outcome (protected mail is never marked to-be-deleted, or the suggestions changed since the review); decide on the review page."),
             (ExternalReviewResult.InvalidVerdict, _) => Conflict("Invalid verdict", "Claude's label is not a valid label path; edit on the review page."),
             (_, var item) => Conflict("Wrong status", $"Not allowed while the item is {item?.Status ?? "in this status"}."),
         };

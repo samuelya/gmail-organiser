@@ -1,6 +1,6 @@
-using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Review;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Claude;
@@ -67,19 +67,21 @@ public sealed class ExternalReviewQuery(AppDbContext db)
     }
 
     /// <summary>
-    /// DTOs in the rows' order. <c>GroupDisplay</c> is what the review page titles the group: the newest member's
-    /// subject (plus the list suffix for a list group); for a single suggestion, its message's subject.
+    /// DTOs in the rows' order. <c>GroupDisplay</c> is titled as the review page titles a group
+    /// (<see cref="ReviewQuery.GroupDisplay"/>), from the newest member over all statuses, since the item outlives the
+    /// pending card; for a single suggestion, its message's subject.
     /// </summary>
     public async Task<IReadOnlyList<ExternalReviewDto>> ToDtosAsync(IReadOnlyList<ExternalReviewRow> rows, CancellationToken ct)
     {
-        var keys = rows.Where(r => r.TargetType == ExternalReviewTarget.Group && r.GroupKey is not null)
-            .Select(r => r.GroupKey!).Distinct().ToList();
+        var groupRows = rows.Where(r => r.TargetType == ExternalReviewTarget.Group && r.GroupKey is not null).ToList();
+        var senders = groupRows.Select(r => r.SenderAddress).Distinct().ToList();
+        var keys = groupRows.Select(r => r.GroupKey!).Distinct().ToList();
         var groupSubjects = keys.Count == 0
             ? []
             : (await (
                     from s in db.Suggestions.AsNoTracking()
                     join m in db.Messages.AsNoTracking() on s.MessageId equals m.Id
-                    where keys.Contains(s.GroupKey!)
+                    where senders.Contains(s.SenderAddress) && keys.Contains(s.GroupKey!)
                     group m by new { s.SenderAddress, s.GroupKey } into g
                     select new
                     {
@@ -106,19 +108,16 @@ public sealed class ExternalReviewQuery(AppDbContext db)
             if (r.TargetType == ExternalReviewTarget.Group && r.GroupKey is { } key
                 && groupSubjects.TryGetValue((r.SenderAddress, key), out var subject))
             {
-                display = Display(subject) + (GroupKey.IsList(key) ? AnalysisGrouper.ListDisplaySuffix : "");
+                display = ReviewQuery.GroupDisplay(subject, key);
             }
             else if (r.SuggestionId is { } id && suggestionSubjects.TryGetValue(id, out var single))
             {
-                display = Display(single);
+                display = ReviewQuery.GroupDisplay(single, null);
             }
 
             return ToDto(r, display);
         })];
     }
-
-    private static string Display(string? subject) =>
-        string.IsNullOrWhiteSpace(subject) ? AnalysisGrouper.NoSubjectDisplay : subject;
 
     private static ExternalReviewDto ToDto(ExternalReviewRow r, string? groupDisplay) => new(
         r.Id,

@@ -41,6 +41,14 @@ public enum ExternalReviewResolution
 /// </summary>
 public sealed class ExternalReviewRow
 {
+    /// <summary>At most one open item per suggestion.</summary>
+    public const string OpenSuggestionIndex = "ux_external_reviews_open_suggestion";
+
+    /// <summary>At most one open item per group (sender + group key).</summary>
+    public const string OpenGroupIndex = "ux_external_reviews_open_group";
+
+    private const string OpenFilter = "(status IN ('queued', 'running') OR (status = 'reviewed' AND resolution = 'none'))";
+
     public Guid Id { get; set; }
     public ExternalReviewTarget TargetType { get; set; }
     public Guid? SuggestionId { get; set; }
@@ -58,6 +66,10 @@ public sealed class ExternalReviewRow
     public string? Reviewer { get; set; }
     public string? ReviewerModel { get; set; }
     public ReviewVerdict? Verdict { get; set; }
+    /// <summary>
+    /// The outcome Claude reviewed: its alternative, or for <c>agree</c> the outcome shown when the verdict came in
+    /// (what accepting approves).
+    /// </summary>
     public string? VerdictTopicLabel { get; set; }
     public bool? VerdictNeedsAction { get; set; }
     public bool? VerdictToBeDeleted { get; set; }
@@ -88,6 +100,8 @@ public sealed class ExternalReviewRow
             e.HasIndex(r => r.SuggestionId);
             e.HasIndex(r => new { r.SenderAddress, r.GroupKey });
             e.HasIndex(r => r.BatchId);
+            e.HasIndex(r => r.SuggestionId, OpenSuggestionIndex).IsUnique().HasFilter($"target_type = 'suggestion' AND {OpenFilter}");
+            e.HasIndex(r => new { r.SenderAddress, r.GroupKey }, OpenGroupIndex).IsUnique().HasFilter($"target_type = 'group' AND {OpenFilter}");
         });
     }
 }

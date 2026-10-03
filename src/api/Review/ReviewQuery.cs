@@ -141,6 +141,32 @@ public sealed class ReviewQuery(AppDbContext db)
         return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
     }
 
+    /// <summary>
+    /// The outcome the card of the sender's group shows over its pending members (what approving the card approves);
+    /// null when none is pending.
+    /// </summary>
+    public async Task<GroupOutcome?> PendingOutcomeAsync(string senderAddress, string groupKey, CancellationToken ct)
+    {
+        var outcomes = await db.Suggestions.AsNoTracking()
+            .Where(s => s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending)
+            .GroupBy(s => new { s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
+            .Select(g => new OutcomeCount(
+                groupKey, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Count(), g.Count(s => s.Source == SuggestionSource.Llm) > 0))
+            .ToListAsync(ct);
+        if (outcomes.Count == 0)
+        {
+            return null;
+        }
+
+        var shown = Shown(outcomes);
+        return new GroupOutcome(shown.TopicLabel, shown.NeedsAction, shown.ToBeDeleted);
+    }
+
+    /// <summary>A group's title: the newest member's subject (or the no-subject text), plus the list suffix for a list group.</summary>
+    public static string GroupDisplay(string? subject, string? groupKey) =>
+        (string.IsNullOrWhiteSpace(subject) ? AnalysisGrouper.NoSubjectDisplay : subject)
+        + (groupKey is not null && GroupKey.IsList(groupKey) ? AnalysisGrouper.ListDisplaySuffix : "");
+
     public static SuggestionDto ToDto(SuggestionRow s, MessageRow m, bool senderAllowlisted) => new(
         s.Id,
         s.MessageId,
@@ -167,11 +193,7 @@ public sealed class ReviewQuery(AppDbContext db)
         GroupStats stats, IEnumerable<OutcomeCount> outcomes, IReadOnlyList<(SuggestionRow S, MessageRow M)> members, bool allowlisted)
     {
         var all = outcomes.ToList();
-        var shared = all
-            .OrderByDescending(o => o.Count)
-            .ThenByDescending(o => o.HasLlm)
-            .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
-            .First();
+        var shared = Shown(all);
         bool Matches(SuggestionRow s) =>
             s.TopicLabel == shared.TopicLabel && s.NeedsAction == shared.NeedsAction && s.ToBeDeleted == shared.ToBeDeleted;
         var representative = members.FirstOrDefault(x => Matches(x.S) && x.S.Source == SuggestionSource.Llm);
@@ -187,11 +209,9 @@ public sealed class ReviewQuery(AppDbContext db)
 
         var newest = members[0];
         var key = newest.S.GroupKey;
-        var display = (string.IsNullOrWhiteSpace(newest.M.Subject) ? AnalysisGrouper.NoSubjectDisplay : newest.M.Subject)
-            + (key is not null && GroupKey.IsList(key) ? AnalysisGrouper.ListDisplaySuffix : "");
         return new ReviewGroupDto(
             key,
-            display,
+            GroupDisplay(newest.M.Subject, key),
             stats.Size,
             stats.Llm,
             stats.Derived,
@@ -206,6 +226,15 @@ public sealed class ReviewQuery(AppDbContext db)
             [.. members.Select(x => ToDto(x.S, x.M, allowlisted))],
             members.Count < stats.Size);
     }
+
+    /// <summary>The card's outcome: the most common, then one with a model answer, then by label and flags.</summary>
+    private static OutcomeCount Shown(IEnumerable<OutcomeCount> outcomes) => outcomes
+        .OrderByDescending(o => o.Count)
+        .ThenByDescending(o => o.HasLlm)
+        .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
+        .ThenBy(o => o.NeedsAction)
+        .ThenBy(o => o.ToBeDeleted)
+        .First();
 
     private static ReviewSenderDto ToDto(StatusCounts c, SenderRow? sender) => new(
         c.Address, sender?.DisplayName, c.Pending, c.Approved, c.Rejected, c.Applied, sender?.TotalCount ?? 0);

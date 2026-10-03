@@ -111,36 +111,30 @@ public sealed class ReviewService(
     /// </summary>
     public async Task<GroupDecisionResponse> EditGroupAsync(string senderAddress, string groupKey, GroupOutcome outcome, CancellationToken ct)
     {
-        var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
         var allowlisted = await db.Senders.AnyAsync(s => s.Address == senderAddress && s.Allowlisted, ct);
+        var skipped = new List<Guid>();
+        var edit = await EditToAsync(outcome, allowlisted, skipped, ct);
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
-        var skipped = new List<Guid>();
         await foreach (var chunk in ChunksAsync(candidates, ct))
         {
-            changed += await ChangeChunkAsync(chunk, DecisionOutcome.Approved, (s, m) =>
-            {
-                if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))
-                {
-                    if (skipped.Count < MaxSkippedIds)
-                    {
-                        skipped.Add(s.Id);
-                    }
-
-                    return false;
-                }
-
-                s.IsNewLabel = isNewLabel ?? (s.IsNewLabel || !string.Equals(s.TopicLabel, outcome.TopicLabel, StringComparison.OrdinalIgnoreCase));
-                s.TopicLabel = outcome.TopicLabel;
-                s.NeedsAction = outcome.NeedsAction;
-                s.ToBeDeleted = outcome.ToBeDeleted;
-                s.Edited = true;
-                return true;
-            }, ct);
+            changed += await ChangeChunkAsync(chunk, DecisionOutcome.Approved, edit, ct);
         }
 
         return new GroupDecisionResponse(changed, skipped);
+    }
+
+    /// <summary>
+    /// Approves the suggestion only while it is pending, edited to <paramref name="edit"/> first when given; a protected
+    /// message never gets a to-be-deleted edit (it is skipped). Joins the caller's transaction when there is one.
+    /// </summary>
+    public async Task<GroupDecisionResponse> ApprovePendingAsync(Guid id, GroupOutcome? edit, CancellationToken ct)
+    {
+        var allowlisted = await db.Senders.AnyAsync(x => x.Allowlisted && db.Suggestions.Any(s => s.Id == id && s.SenderAddress == x.Address), ct);
+        var skipped = new List<Guid>();
+        Func<SuggestionRow, MessageRow, bool> include = edit is null ? (_, _) => true : await EditToAsync(edit, allowlisted, skipped, ct);
+        return new GroupDecisionResponse(await ChangeChunkAsync([id], DecisionOutcome.Approved, include, ct), skipped);
     }
 
     /// <summary>
@@ -238,6 +232,32 @@ public sealed class ReviewService(
         }
     }
 
+    /// <summary>The edit for <see cref="ChangeChunkAsync"/>: skips (and lists) a protected message the outcome would delete.</summary>
+    private async Task<Func<SuggestionRow, MessageRow, bool>> EditToAsync(
+        GroupOutcome outcome, bool allowlisted, List<Guid> skipped, CancellationToken ct)
+    {
+        var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
+        return (s, m) =>
+        {
+            if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))
+            {
+                if (skipped.Count < MaxSkippedIds)
+                {
+                    skipped.Add(s.Id);
+                }
+
+                return false;
+            }
+
+            s.IsNewLabel = isNewLabel ?? (s.IsNewLabel || !string.Equals(s.TopicLabel, outcome.TopicLabel, StringComparison.OrdinalIgnoreCase));
+            s.TopicLabel = outcome.TopicLabel;
+            s.NeedsAction = outcome.NeedsAction;
+            s.ToBeDeleted = outcome.ToBeDeleted;
+            s.Edited = true;
+            return true;
+        };
+    }
+
     private static SuggestionStatus ToStatus(DecisionOutcome outcome) =>
         outcome == DecisionOutcome.Approved ? SuggestionStatus.Approved : SuggestionStatus.Rejected;
 
@@ -271,11 +291,15 @@ public sealed class ReviewService(
         return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlisted));
     }
 
-    /// <summary>Changes the chunk's rows that are still pending under the lock and that <paramref name="include"/> accepts.</summary>
+    /// <summary>
+    /// Changes the chunk's rows that are still pending under the lock and that <paramref name="include"/> accepts. Inside
+    /// a caller's transaction (accepting a Claude verdict) it joins it, and the caller commits and calls
+    /// <see cref="DecisionRecorder.Committed"/>.
+    /// </summary>
     private async Task<int> ChangeChunkAsync(
         Guid[] ids, DecisionOutcome outcome, Func<SuggestionRow, MessageRow, bool> include, CancellationToken ct)
     {
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var locked = (await LockAsync(ids, ct)).Where(s => s.Status == SuggestionStatus.Pending).ToList();
         var messageIds = locked.ConvertAll(s => s.MessageId);
         var messages = await db.Messages.Where(m => messageIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, StringComparer.Ordinal, ct);
@@ -295,8 +319,12 @@ public sealed class ReviewService(
         }
 
         await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        decisions.Committed();
+        if (tx is not null)
+        {
+            await tx.CommitAsync(ct);
+            decisions.Committed();
+        }
+
         db.ChangeTracker.Clear();
         return changed;
     }
