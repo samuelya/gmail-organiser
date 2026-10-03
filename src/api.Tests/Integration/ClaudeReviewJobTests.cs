@@ -260,6 +260,130 @@ public sealed class ClaudeReviewJobTests : IClassFixture<ApiFactory>, IAsyncLife
         (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == followUp.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
     }
 
+    [Fact]
+    public async Task Follow_up_queued_during_a_failed_run_leaves_its_items_queued_until_a_retry_after_the_failure()
+    {
+        await SetModeAsync(ClaudeReviewerMode.HeadlessClaudeCode, maxItems: 1);
+        await QueueItemsAsync();
+        var late = Guid.Empty;
+        claude.Run = async (_, call, _) =>
+        {
+            if (call == 1)
+            {
+                late = await QueueAsync(new([await SuggestionIdAsync("c02")], null, null));
+            }
+
+            return ClaudeRunResult.Fail(ClaudeErrorKinds.RateLimit, "Usage limit reached.");
+        };
+
+        await h.RunNextAsync();
+        await using var db = postgres.CreateDbContext();
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.DedupKey == ClaudeReviewJob.DedupKey, Ct)).Status.ShouldBe(JobStatus.Failed);
+        var followUp = await db.Jobs.AsNoTracking().SingleAsync(j => j.Type == ClaudeReviewJob.JobType && j.Status == JobStatus.Queued, Ct);
+        followUp.DedupKey.ShouldBe(ClaudeReviewJob.FollowUpDedupKey);
+        await h.RunNextAsync();
+
+        claude.RunCalls.ShouldBe(1);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == followUp.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+        var rows = await RowsAsync();
+        rows.Select(r => r.Status).ShouldBe([ExternalReviewStatus.Unavailable, ExternalReviewStatus.Queued, ExternalReviewStatus.Queued]);
+        (await db.ExternalReviews.AsNoTracking().SingleAsync(r => r.Id == late, Ct)).Status.ShouldBe(ExternalReviewStatus.Queued);
+
+        claude.Run = (_, _, _) => Task.FromResult(FakeClaudeCliRunner.Success());
+        (await h.PostWithoutBodyAsync($"/api/claude/reviews/{rows[0].Id}/retry")).EnsureSuccessStatusCode();
+        await h.RunNextAsync();
+
+        claude.RunCalls.ShouldBe(5);
+        (await db.ExternalReviews.AsNoTracking().CountAsync(r => r.Status == ExternalReviewStatus.Queued, Ct)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Send_after_a_failure_replaces_a_job_queued_before_it_so_the_cli_runs()
+    {
+        await SetModeAsync(ClaudeReviewerMode.HeadlessClaudeCode, maxItems: 10);
+        await QueueItemsAsync();
+        await using var db = postgres.CreateDbContext();
+        var stale = await db.Jobs.AsNoTracking().SingleAsync(j => j.Type == ClaudeReviewJob.JobType, Ct);
+        // A follow-up that ran while this job waited behind it, and failed.
+        var now = DateTimeOffset.UtcNow;
+        db.Jobs.Add(new JobRow
+        {
+            Id = Guid.CreateVersion7(now),
+            Type = ClaudeReviewJob.JobType,
+            Queue = JobQueues.Claude,
+            DedupKey = ClaudeReviewJob.FollowUpDedupKey,
+            Status = JobStatus.Failed,
+            Error = "Claude unavailable (rate_limit): Usage limit reached.",
+            CreatedAt = stale.CreatedAt.AddMinutes(-1),
+            UpdatedAt = now,
+            FinishedAt = now,
+        });
+        await db.SaveChangesAsync(Ct);
+
+        await QueueAsync(new([await SuggestionIdAsync("c02")], null, null));
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == stale.Id, Ct)).Status.ShouldBe(JobStatus.Cancelled);
+        await h.RunNextAsync();
+
+        claude.RunCalls.ShouldBe(1);
+        (await db.ExternalReviews.AsNoTracking().CountAsync(r => r.Status == ExternalReviewStatus.Queued, Ct)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Resuming_a_failed_job_after_a_later_job_failed_runs_the_cli()
+    {
+        await SetModeAsync(ClaudeReviewerMode.HeadlessClaudeCode, maxItems: 1);
+        claude.Run = (_, _, _) => Task.FromResult(ClaudeRunResult.Fail(ClaudeErrorKinds.RateLimit, "Usage limit reached."));
+        await QueueItemsAsync();
+        var first = await RunJobAsync();
+        first.Status.ShouldBe("failed");
+        (await h.PostWithoutBodyAsync($"/api/claude/reviews/{items[0]}/retry")).EnsureSuccessStatusCode();
+        await h.RunNextAsync();
+        claude.RunCalls.ShouldBe(2);
+        await using var db = postgres.CreateDbContext();
+        (await db.Jobs.CountAsync(j => j.Type == ClaudeReviewJob.JobType && j.Status == JobStatus.Failed, Ct)).ShouldBe(2);
+
+        claude.Run = (_, _, _) => Task.FromResult(FakeClaudeCliRunner.Success());
+        (await h.PostWithoutBodyAsync($"/api/jobs/{first.Id}/resume")).EnsureSuccessStatusCode();
+        await h.RunNextAsync();
+
+        claude.RunCalls.ShouldBeGreaterThan(2);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == first.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+        (await db.ExternalReviews.AsNoTracking().CountAsync(r => r.Status == ExternalReviewStatus.Queued, Ct)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Resuming_a_paused_job_after_its_follow_up_failed_runs_the_cli()
+    {
+        await SetModeAsync(ClaudeReviewerMode.HeadlessClaudeCode, maxItems: 1);
+        await QueueItemsAsync();
+        await using var db = postgres.CreateDbContext();
+        var job = await db.Jobs.AsNoTracking().SingleAsync(j => j.Type == ClaudeReviewJob.JobType, Ct);
+        claude.Run = async (_, call, _) =>
+        {
+            if (call == 1)
+            {
+                // A follow-up is queued behind the running job, then the user pauses the running job.
+                await QueueAsync(new([await SuggestionIdAsync("c02")], null, null));
+                (await h.PostWithoutBodyAsync($"/api/jobs/{job.Id}/pause")).EnsureSuccessStatusCode();
+                return FakeClaudeCliRunner.Success();
+            }
+
+            return ClaudeRunResult.Fail(ClaudeErrorKinds.RateLimit, "Usage limit reached.");
+        };
+        await h.RunNextAsync();
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id, Ct)).Status.ShouldBe(JobStatus.Paused);
+        await h.RunNextAsync();
+        claude.RunCalls.ShouldBe(2);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.DedupKey == ClaudeReviewJob.FollowUpDedupKey, Ct)).Status.ShouldBe(JobStatus.Failed);
+
+        claude.Run = (_, _, _) => Task.FromResult(FakeClaudeCliRunner.Success());
+        (await h.PostWithoutBodyAsync($"/api/jobs/{job.Id}/resume")).EnsureSuccessStatusCode();
+        await h.RunNextAsync();
+
+        claude.RunCalls.ShouldBeGreaterThan(2);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+    }
+
     [Theory]
     [InlineData(ClaudeReviewerMode.HeadlessClaudeCode, 1)]
     [InlineData(ClaudeReviewerMode.ClaudeDesktop, 0)]

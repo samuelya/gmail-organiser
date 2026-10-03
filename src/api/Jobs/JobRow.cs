@@ -43,6 +43,9 @@ public sealed class JobRow
     public bool PauseRequested { get; set; }
     public bool CancelRequested { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>When the job was last queued by a user action: its enqueue, or a resume of a paused or failed job.</summary>
+    public DateTimeOffset QueuedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? FinishedAt { get; set; }

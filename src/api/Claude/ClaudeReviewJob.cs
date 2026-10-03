@@ -18,7 +18,8 @@ public sealed record ClaudeReviewCursor(Guid? BatchId, long Done);
 /// running as one batch and runs <c>claude -p</c> over them; Claude submits verdicts through <c>/mcp</c>. Afterwards the
 /// batch's reviewed items are credited to <see cref="Reviewer"/> and the rest become unavailable. A failed run (no CLI, no
 /// token, auth, rate limit, timeout) marks its batch unavailable and fails the job, leaving the queue until the user
-/// sends or retries; it never retries by itself. A batch interrupted by a restart is closed as unavailable, never run
+/// sends or retries; it never retries by itself, and a job enqueued before that failure completes without running (see
+/// <see cref="EnqueuedBeforeFailureAsync"/>). A batch interrupted by a restart is closed as unavailable, never run
 /// twice. A pause or cancel takes effect after the current batch.
 /// </summary>
 public sealed class ClaudeReviewJob(
@@ -62,6 +63,14 @@ public sealed class ClaudeReviewJob(
             }
         }
 
+        if (await EnqueuedBeforeFailureAsync(db, ctx.JobId, ct))
+        {
+            // The queue stops after a failed run until the user sends or retries; the items stay queued for the job
+            // that send or retry starts.
+            await ctx.CompleteAsync(cursor, await ProgressAsync(cursor, ct), _ => Task.CompletedTask, ct);
+            return;
+        }
+
         while (true)
         {
             var s = await settings.GetAsync(ct);
@@ -98,6 +107,18 @@ public sealed class ClaudeReviewJob(
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Whether another review job failed after <paramref name="jobId"/> was last queued: the job then belongs to a send,
+    /// retry or resume made before the failure (a follow-up, or one queued behind a running job) and must not start the
+    /// CLI. A resume after the failure is an explicit retry, so it counts from <see cref="JobRow.QueuedAt"/>.
+    /// </summary>
+    public static async Task<bool> EnqueuedBeforeFailureAsync(AppDbContext db, Guid jobId, CancellationToken ct)
+    {
+        var queuedAt = await db.Jobs.AsNoTracking().Where(j => j.Id == jobId).Select(j => j.QueuedAt).SingleAsync(ct);
+        return await db.Jobs.AnyAsync(
+            j => j.Type == JobType && j.Id != jobId && j.Status == JobStatus.Failed && j.FinishedAt > queuedAt, ct);
     }
 
     private async Task<ClaudeRunResult> RunBatchAsync(AppSettings s, int count, CancellationToken ct)
