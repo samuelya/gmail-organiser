@@ -50,6 +50,7 @@ public static class SettingsValidation
 
         CheckModelName(errors, "chatModel", request.ChatModel);
         CheckModelName(errors, "embeddingModel", request.EmbeddingModel);
+        CheckModelName(errors, "visionModel", request.VisionModel);
         if (request.FetchChunkSize is < MinFetchChunkSize or > MaxFetchChunkSize)
         {
             errors["fetchChunkSize"] = [$"Must be between {MinFetchChunkSize} and {MaxFetchChunkSize}."];
@@ -129,6 +130,10 @@ public static class SettingsValidation
         CheckRange(errors, "attachments.maxImageBytes", request.MaxImageBytes, MinAttachmentMaxBytes, MaxAttachmentMaxBytes);
         CheckRange(errors, "attachments.maxChars", request.MaxChars, MinAttachmentMaxChars, MaxAttachmentMaxChars);
         CheckRange(errors, "attachments.maxPerMessage", request.MaxPerMessage, MinAttachmentMaxPerMessage, MaxAttachmentMaxPerMessage);
+        if (request.ImageMode is not null && !ImageModeJsonConverter.TryParse(request.ImageMode, out _))
+        {
+            errors["attachments.imageMode"] = ["Must be ocr or vision."];
+        }
 
         var seen = new HashSet<AttachmentType>();
         for (var i = 0; i < (request.Types?.Count ?? 0); i++)

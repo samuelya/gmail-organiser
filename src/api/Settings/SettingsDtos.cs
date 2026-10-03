@@ -4,6 +4,7 @@ public sealed record SettingsDto(
     string OllamaBaseUrl,
     string? ChatModel,
     string? EmbeddingModel,
+    string? VisionModel,
     string ActionLabelName,
     string DeleteLabelName,
     bool SetupWizardSeen,
@@ -27,6 +28,7 @@ public sealed record SettingsDto(
         s.OllamaBaseUrl,
         s.ChatModel,
         s.EmbeddingModel,
+        s.VisionModel,
         s.ActionLabelName,
         s.DeleteLabelName,
         s.SetupWizardSeen,
@@ -71,11 +73,13 @@ public sealed record UpdateSettingsRequest(
     double? BulkApproveThreshold = null,
     bool? AutoArchiveOnActionDone = null,
     string? AnalysisPromptTemplate = null,
-    UpdateAttachmentSettingsRequest? Attachments = null);
+    UpdateAttachmentSettingsRequest? Attachments = null,
+    string? VisionModel = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>
-/// changes only the types it lists.
+/// changes only the types it lists. <see cref="ImageMode"/> is <c>ocr</c> or <c>vision</c>; a string so another value is a
+/// field error.
 /// </summary>
 public sealed record UpdateAttachmentSettingsRequest(
     bool? Enabled = null,
@@ -83,7 +87,8 @@ public sealed record UpdateAttachmentSettingsRequest(
     int? MaxBytes = null,
     int? MaxImageBytes = null,
     int? MaxChars = null,
-    int? MaxPerMessage = null);
+    int? MaxPerMessage = null,
+    string? ImageMode = null);
 
 /// <param name="Type">An <see cref="Analysis.Attachments.AttachmentType"/> snake_case name; a string so an unknown name is a field error.</param>
 public sealed record AttachmentTypeSettingRequest(string? Type, bool? Enabled);

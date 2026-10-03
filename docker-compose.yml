@@ -39,6 +39,12 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:${WEB_PORT:-5180}}
       GMAIL_FAKE: ${GMAIL_FAKE:-false}
+      # Attachment reading (not on the Settings page); the defaults match the code's.
+      Attachments__ImageTimeout: ${Attachments__ImageTimeout:-}
+      Attachments__MaxOcrPages: ${Attachments__MaxOcrPages:-3}
+      Attachments__OcrLanguages: ${Attachments__OcrLanguages:-eng}
+      Attachments__MaxSheetRows: ${Attachments__MaxSheetRows:-200}
+      Attachments__MaxTotalChars: ${Attachments__MaxTotalChars:-12000}
     extra_hosts:
       # Docker Desktop resolves this itself; Linux needs the mapping to reach Ollama on the host.
       - "host.docker.internal:host-gateway"

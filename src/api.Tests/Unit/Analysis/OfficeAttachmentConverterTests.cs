@@ -368,11 +368,12 @@ public sealed class OfficeAttachmentConverterTests
     public void AddAttachments_registers_one_converter_per_type_with_the_configured_row_cap()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Attachments:MaxSheetRows"] = "7" }).Build();
-        using var provider = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddAttachments().BuildServiceProvider();
+        using var provider = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddLogging()
+            .AddSingleton<GmailOrganiser.Llm.ILlmClientFactory>(new FakeLlmClientFactory()).AddAttachments().BuildServiceProvider();
 
         var converters = provider.GetServices<IAttachmentConverter>().ToList();
 
-        foreach (var type in new[] { AttachmentType.Pdf, AttachmentType.WordDocument, AttachmentType.Spreadsheet, AttachmentType.Csv, AttachmentType.Presentation, AttachmentType.PlainText })
+        foreach (var type in new[] { AttachmentType.Pdf, AttachmentType.Image, AttachmentType.WordDocument, AttachmentType.Spreadsheet, AttachmentType.Csv, AttachmentType.Presentation, AttachmentType.PlainText })
         {
             converters.Count(c => c.CanConvert(type)).ShouldBe(1, type.ToString());
         }
