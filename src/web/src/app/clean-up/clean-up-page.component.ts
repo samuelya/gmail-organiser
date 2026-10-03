@@ -130,9 +130,8 @@ export class CleanUpPage {
   });
   readonly selectedProtected = computed(
     () =>
-      (this.messages()?.items ?? []).filter(
-        (m) => m.protectedReason && this.selection().has(m.id),
-      ).length,
+      (this.messages()?.items ?? []).filter((m) => m.protectedReason && this.selection().has(m.id))
+        .length,
   );
   readonly empty = computed(() => this.summary()?.messages === 0);
 
@@ -399,9 +398,7 @@ export class CleanUpPage {
     this.snackBar
       .open(message, 'View in History', { duration: 10_000 })
       .onAction()
-      .subscribe(
-        () => void this.router.navigate(batchId ? ['/history', batchId] : ['/history']),
-      );
+      .subscribe(() => void this.router.navigate(batchId ? ['/history', batchId] : ['/history']));
   }
 
   /** Runs one action at a time, then re-fetches whatever happened (an error may mean the state moved). */

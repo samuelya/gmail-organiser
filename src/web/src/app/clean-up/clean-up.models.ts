@@ -48,9 +48,7 @@ export interface CleanupBatch {
 
 /** What an action applies to: ticked rows, a whole sender or every delete-labelled message. */
 export type CleanupSelection =
-  | { kind: 'ids'; ids: readonly string[] }
-  | { kind: 'sender'; address: string }
-  | { kind: 'all' };
+  { kind: 'ids'; ids: readonly string[] } | { kind: 'sender'; address: string } | { kind: 'all' };
 
 /** The selection as the API takes it. */
 export function selectionRequest(

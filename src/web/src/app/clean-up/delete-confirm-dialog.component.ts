@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogModule } from '@angular/material/dialog';
-import { Observable } from 'rxjs';
+import { map, Observable } from 'rxjs';
 import { DeleteConfirmData, plural, trashCount } from './clean-up.models';
 
 /** The confirmed Delete: whether protected messages go to Trash too. */
@@ -70,5 +70,6 @@ export function openDeleteConfirm(
       data,
       autoFocus: '[data-testid="delete-cancel"]',
     })
-    .afterClosed();
+    .afterClosed()
+    .pipe(map((result) => (result?.includeProtected === undefined ? undefined : result)));
 }

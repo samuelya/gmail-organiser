@@ -38,7 +38,7 @@ import { CleanupMessage, formatSize } from './clean-up.models';
                 <mat-checkbox
                   [checked]="selected().has(m.id)"
                   [disabled]="disabled()"
-                  (change)="toggle.emit(m.id)"
+                  (change)="toggleRow.emit(m.id)"
                   [aria-label]="'Select ' + (m.subject || 'message without subject')"
                   data-testid="message-check"
                 />
@@ -127,7 +127,7 @@ export class CleanupMessageTable {
   readonly result = input<PagedDto<CleanupMessage> | null>(null);
   readonly selected = input<ReadonlySet<string>>(new Set());
   readonly disabled = input(false);
-  readonly toggle = output<string>();
+  readonly toggleRow = output<string>();
   /** `true` ticks every row on the page, `false` clears them. */
   readonly toggleAll = output<boolean>();
   readonly pageChange = output<number>();

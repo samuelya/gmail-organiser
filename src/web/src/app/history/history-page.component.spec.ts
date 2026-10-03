@@ -131,6 +131,16 @@ describe('HistoryPage', () => {
     expect(q('no-batches')).not.toBeNull();
   });
 
+  it('opens the batch from /history/:batchId', async () => {
+    const { fixture, overlay } = await render();
+    api.get.mockReturnValue(of({ batch: batch(), rows: [], truncated: false, createdLabels: [] }));
+    fixture.componentRef.setInput('batchId', 'b-1');
+    fixture.detectChanges();
+    await fixture.whenStable();
+    expect(api.get).toHaveBeenCalledWith('b-1');
+    expect(overlay('detail-description')).not.toBeNull();
+  });
+
   it('opens the detail drawer with names, notes, created labels and the truncated hint', async () => {
     const { fixture, q, overlay } = await render();
     const detail: ActionBatchDetailDto = {
