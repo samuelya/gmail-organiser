@@ -5,14 +5,18 @@ namespace GmailOrganiser.Gmail.Fake;
 /// in the Inbox, older mail is archived; list senders carry <c>List-Id</c>/<c>List-Unsubscribe</c> (the newsletter
 /// supports RFC 8058 one-click, the shop only a link, the forum only <c>mailto:</c>), and the billing,
 /// travel and statement senders attach generated PDFs. Every third message has an html-only body, the next a text-only
-/// one, the next both. The last message is the user's reply (<c>SENT</c>) in Alice's thread, so that thread is replied.
+/// one, the next both. Alice's lunch message (#3) has a thread of its own; the last message is the user's reply
+/// (<c>SENT</c>) in it, so that thread, and only Alice's conversation, is replied.
 /// </summary>
 public static class FakeMailboxSeed
 {
     public const int MessageCount = 61;
 
     /// <summary>The thread the user replied to; its received messages are protected from the delete label.</summary>
-    public const string RepliedThreadId = "fake-thread-0003";
+    public const string RepliedThreadId = "fake-thread-0024";
+
+    /// <summary>The index of Alice's lunch message (#3), the one the user replied to.</summary>
+    private const int RepliedIndex = 2;
     public const long HistoryId = 1000;
 
     private sealed record Sender(
@@ -61,7 +65,8 @@ public static class FakeMailboxSeed
 
             messages.Add(new FakeMessage(
                 Id: $"fake-msg-{number:D4}",
-                ThreadId: $"fake-thread-{(i % 23) + 1:D4}",
+                // Threads 1..23 group messages round-robin; the replied conversation is kept apart from them.
+                ThreadId: i == RepliedIndex ? RepliedThreadId : $"fake-thread-{(i % 23) + 1:D4}",
                 From: sender.From,
                 Subject: $"{sender.Subject} #{number}",
                 Date: now.AddHours(-31 * i),

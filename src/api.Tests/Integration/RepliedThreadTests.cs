@@ -50,7 +50,7 @@ public sealed class RepliedThreadTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
-    public async Task Each_unknown_thread_is_asked_once_and_the_answer_is_stored_for_the_whole_thread()
+    public async Task Each_thread_is_asked_once_per_check_the_answer_is_stored_for_the_whole_thread_and_only_true_is_final()
     {
         h.Gmail.Inner.AddMessage(new FakeMessage(
             "s01", "t-c01", "User <user@example.com>", "Re: Invoice", DateTimeOffset.UtcNow, [MessageProtection.SentLabel]));
@@ -59,8 +59,36 @@ public sealed class RepliedThreadTests(ApiFactory factory, PostgresFixture postg
         await CheckAsync("c00", "c00-older", "c01", "c02", "gone");
         await CheckAsync("c00", "c01", "c02", "gone");
 
-        h.Gmail.ThreadCalls.ShouldBe(["t-c00", "t-c01", "t-c02", "t-gone"], ignoreOrder: true);
+        h.Gmail.ThreadCalls.ShouldBe(["t-c00", "t-c01", "t-c02", "t-gone", "t-c00", "t-c02", "t-gone"], ignoreOrder: true);
         (await RepliedAsync("c00", "c00-older", "c01", "c02", "gone")).ShouldBe([false, false, true, false, false]);
+    }
+
+    [Fact]
+    public async Task A_stored_not_replied_is_asked_again_and_a_reply_made_in_gmail_since_protects_the_thread()
+    {
+        await ApproveAsync(("c00", true));
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Messages.Where(m => m.Id == "c00").ExecuteUpdateAsync(s => s.SetProperty(m => m.ThreadReplied, false), Ct);
+        }
+
+        h.Gmail.Inner.AddMessage(new FakeMessage(
+            "s00", "t-c00", "User <user@example.com>", "Re: Invoice", DateTimeOffset.UtcNow, [MessageProtection.SentLabel]));
+
+        var batch = await ApplyAsync();
+        await h.RunNextAsync();
+
+        h.Gmail.ThreadCalls.ShouldBe(["t-c00"]);
+        (await RepliedAsync("c00")).ShouldBe([true]);
+        var deleteId = (await h.Gmail.Inner.ListLabelsAsync(Ct)).SingleOrDefault(l => l.Name == DeleteLabel)?.Id;
+        if (deleteId is not null)
+        {
+            Labels("c00").ShouldNotContain(deleteId);
+        }
+
+        await using var after = postgres.CreateDbContext();
+        (await after.ActionLog.SingleAsync(l => l.BatchId == batch.Id && l.MessageId == "c00", Ct)).Note
+            .ShouldBe("protected: replied thread");
     }
 
     [Fact]
@@ -101,7 +129,7 @@ public sealed class RepliedThreadTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
-    public async Task A_rate_limited_check_sends_nothing_and_the_resume_asks_only_the_threads_left()
+    public async Task A_rate_limited_check_sends_nothing_and_the_resume_checks_again()
     {
         await ApproveAsync(("c00", true), ("c01", true));
         h.Gmail.BeforeThread = (threadId, _) => h.Gmail.ThreadCalls.Count == 2
@@ -129,7 +157,8 @@ public sealed class RepliedThreadTests(ApiFactory factory, PostgresFixture postg
 
         await h.RunNextAsync();
 
-        h.Gmail.ThreadCalls.Count(t => t == first).ShouldBe(1);
+        // A stored "not replied" is only a hint, so the resume asks the first thread again.
+        h.Gmail.ThreadCalls.Count(t => t == first).ShouldBe(2);
         (await RepliedAsync("c00", "c01")).ShouldBe([false, false]);
         await using var after = postgres.CreateDbContext();
         (await after.ActionLog.CountAsync(l => l.BatchId == batch.Id, Ct)).ShouldBe(2);
@@ -175,7 +204,7 @@ public sealed class RepliedThreadTests(ApiFactory factory, PostgresFixture postg
     };
 
     private static GmailMessageMetadata Metadata(string id, string threadId, params string[] labels) =>
-        new(id, threadId, "1", DateTimeOffset.UtcNow, labels, "user@example.com", null, "Synthetic", null, null, null, 100, false);
+        new(id, threadId, "1", DateTimeOffset.UtcNow, labels, "user@example.com", null, "Synthetic", null, null, null, null, 100, false);
 
     private async Task ApproveAsync(params (string Id, bool ToBeDeleted)[] rows)
     {
