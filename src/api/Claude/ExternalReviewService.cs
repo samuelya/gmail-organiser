@@ -1,8 +1,6 @@
 using System.Linq.Expressions;
-using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
-using GmailOrganiser.Gmail;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using Microsoft.EntityFrameworkCore;
@@ -57,7 +55,8 @@ public enum ReviewVerdictResult
 /// <summary>
 /// The Claude review queue. Items never touch Gmail; accepting a verdict decides the local suggestions through
 /// <see cref="ReviewService"/>, so the decision (memory) rows are written as for any edit or approve. The partial unique
-/// indexes on open items keep a target to one open item; accepting holds the item's row lock while it decides.
+/// indexes on open items keep a target to one open item; accepting holds the item's row lock while it decides. Every
+/// committed status or resolution change is published through <see cref="IExternalReviewNotifier"/>.
 /// </summary>
 public sealed class ExternalReviewService(
     AppDbContext db,
@@ -66,6 +65,7 @@ public sealed class ExternalReviewService(
     DecisionRecorder decisions,
     ExternalReviewQuery query,
     IClaudeReviewStarter starter,
+    IExternalReviewNotifier notifier,
     TimeProvider time)
 {
     /// <summary>Most targets one create request may expand to.</summary>
@@ -138,13 +138,15 @@ public sealed class ExternalReviewService(
         }
 
         var created = await InsertWithoutOpenAsync(candidates, ct);
+        var items = await query.ToDtosAsync(created, ct);
+        await NotifyAsync(items, ct);
         if (created.Count > 0)
         {
             await starter.StartAsync(ct);
         }
 
         var skipped = ids.Count + groupTargets.Count - created.Count;
-        return (CreateExternalReviewsResult.Ok, new CreateExternalReviewsResponse(created.Count, skipped, await query.ToDtosAsync(created, ct)));
+        return (CreateExternalReviewsResult.Ok, new CreateExternalReviewsResponse(created.Count, skipped, items));
     }
 
     /// <summary><c>Queued → Cancelled</c>.</summary>
@@ -216,7 +218,13 @@ public sealed class ExternalReviewService(
             }
         }
 
-        return result == ExternalReviewResult.NotFound ? (result, null) : (result, await query.GetAsync(id, ct));
+        var item = result == ExternalReviewResult.NotFound ? null : await query.GetAsync(id, ct);
+        if (result == ExternalReviewResult.Ok && item is not null)
+        {
+            await notifier.NotifyAsync(item, ct);
+        }
+
+        return (result, item);
     }
 
     /// <summary>
@@ -226,7 +234,7 @@ public sealed class ExternalReviewService(
     /// </summary>
     public async Task<(ReviewVerdictResult Result, string? Reason)> SubmitVerdictAsync(Guid id, ReviewVerdictInput verdict, CancellationToken ct)
     {
-        if (Validate(verdict) is { } invalid)
+        if (ReviewVerdictValidation.Validate(verdict) is { } invalid)
         {
             return (ReviewVerdictResult.Invalid, invalid);
         }
@@ -262,80 +270,36 @@ public sealed class ExternalReviewService(
         row.ReviewedAt = time.GetUtcNow();
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await NotifyAsync(await query.ToDtosAsync([row], ct), ct);
         return (ReviewVerdictResult.Ok, null);
     }
 
     /// <summary><c>Queued → Running</c> for one reviewer run; returns how many items it took.</summary>
-    public Task<int> MarkRunningAsync(IReadOnlyCollection<Guid> ids, Guid batchId, CancellationToken ct)
+    public async Task<int> MarkRunningAsync(IReadOnlyCollection<Guid> ids, Guid batchId, CancellationToken ct)
     {
         var now = time.GetUtcNow();
-        return db.ExternalReviews.Where(r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Queued)
+        var changed = await db.ExternalReviews.Where(r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Queued)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.Status, ExternalReviewStatus.Running)
                 .SetProperty(r => r.BatchId, batchId)
                 .SetProperty(r => r.StartedAt, now), ct);
+        return await NotifyChangedAsync(changed, r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Running && r.BatchId == batchId, ct);
     }
 
-    /// <summary><c>Queued|Running → Unavailable</c> ("Claude unavailable"); the local suggestions are unaffected.</summary>
-    public Task<int> MarkUnavailableAsync(IReadOnlyCollection<Guid> ids, string error, CancellationToken ct)
+    /// <summary>
+    /// <c>Queued|Running → Unavailable</c> ("Claude unavailable"); the local suggestions are unaffected. The ids that
+    /// were unavailable already are published again with the others.
+    /// </summary>
+    public async Task<int> MarkUnavailableAsync(IReadOnlyCollection<Guid> ids, string error, CancellationToken ct)
     {
         var message = Truncate(error, MaxErrorLength);
-        return db.ExternalReviews
+        var changed = await db.ExternalReviews
             .Where(r => ids.Contains(r.Id) && (r.Status == ExternalReviewStatus.Queued || r.Status == ExternalReviewStatus.Running))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.Status, ExternalReviewStatus.Unavailable)
                 .SetProperty(r => r.Error, message), ct);
+        return await NotifyChangedAsync(changed, r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Unavailable, ct);
     }
-
-    private static string? Validate(ReviewVerdictInput v)
-    {
-        if (!Enum.IsDefined(v.Verdict))
-        {
-            return "Unknown verdict.";
-        }
-
-        if (string.IsNullOrWhiteSpace(v.Reasoning))
-        {
-            return "Reasoning is required.";
-        }
-
-        if (!Reviewers.Contains(v.Reviewer))
-        {
-            return $"Reviewer must be one of {string.Join(", ", Reviewers)}.";
-        }
-
-        if (v.Model is { Length: > MaxModelLength })
-        {
-            return $"Model is at most {MaxModelLength} characters.";
-        }
-
-        if (v.Verdict == ReviewVerdict.Alternative && !IsValidLabel(v.TopicLabel))
-        {
-            return $"An alternative needs a label path: up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters, not a Gmail system label.";
-        }
-
-        if (!string.IsNullOrWhiteSpace(v.FilterCriteria))
-        {
-            if (v.FilterCriteria.Length > MaxFilterCriteriaLength)
-            {
-                return $"Filter criteria are at most {MaxFilterCriteriaLength} characters.";
-            }
-
-            try
-            {
-                using var _ = JsonDocument.Parse(v.FilterCriteria);
-            }
-            catch (JsonException)
-            {
-                return "Filter criteria must be JSON.";
-            }
-        }
-
-        return null;
-    }
-
-    private static bool IsValidLabel(string? label) =>
-        label?.Trim() is { Length: > 0 } l && LabelPath.IsValid(l) && !LabelPath.IsReserved(l);
 
     /// <summary>The outcome the target shows now (what Claude reviewed); null when nothing is pending.</summary>
     private async Task<GroupOutcome?> ShownOutcomeAsync(ExternalReviewRow row, CancellationToken ct) =>
@@ -363,7 +327,7 @@ public sealed class ExternalReviewService(
         }
 
         var alternative = row.Verdict == ReviewVerdict.Alternative;
-        if (alternative && !IsValidLabel(row.VerdictTopicLabel))
+        if (alternative && !ReviewVerdictValidation.IsValidLabel(row.VerdictTopicLabel))
         {
             return ExternalReviewResult.InvalidVerdict;
         }
@@ -411,9 +375,36 @@ public sealed class ExternalReviewService(
         }
 
         var item = await query.GetAsync(id, ct);
-        return item is null
-            ? (ExternalReviewResult.NotFound, null)
-            : (changed == 1 ? ExternalReviewResult.Ok : ExternalReviewResult.Conflict, item);
+        if (item is null)
+        {
+            return (ExternalReviewResult.NotFound, null);
+        }
+
+        if (changed == 1)
+        {
+            await notifier.NotifyAsync(item, ct);
+        }
+
+        return (changed == 1 ? ExternalReviewResult.Ok : ExternalReviewResult.Conflict, item);
+    }
+
+    private async Task NotifyAsync(IEnumerable<ExternalReviewDto> items, CancellationToken ct)
+    {
+        foreach (var item in items)
+        {
+            await notifier.NotifyAsync(item, ct);
+        }
+    }
+
+    /// <summary>Publishes the rows matching <paramref name="which"/> when <paramref name="changed"/> is positive; returns it.</summary>
+    private async Task<int> NotifyChangedAsync(int changed, Expression<Func<ExternalReviewRow, bool>> which, CancellationToken ct)
+    {
+        if (changed > 0)
+        {
+            await NotifyAsync(await query.ToDtosAsync(await db.ExternalReviews.AsNoTracking().Where(which).ToListAsync(ct), ct), ct);
+        }
+
+        return changed;
     }
 
     private IQueryable<SuggestionRow> PendingMembers(ExternalReviewRow row) =>

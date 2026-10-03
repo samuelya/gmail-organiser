@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Net;
 using System.Threading.Channels;
+using GmailOrganiser.Claude;
 using GmailOrganiser.Data;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Tests.Fakes;
@@ -25,6 +26,7 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
     private readonly FakeTimeProvider clock = new(DateTimeOffset.UtcNow);
     private readonly Channel<JobDto[]> snapshots = Channel.CreateUnbounded<JobDto[]>();
     private readonly Channel<JobDto> changes = Channel.CreateUnbounded<JobDto>();
+    private readonly Channel<ExternalReviewDto> reviews = Channel.CreateUnbounded<ExternalReviewDto>();
     private WebApplicationFactory<Program> host = null!;
     private HubConnection? connection;
 
@@ -209,6 +211,21 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
     }
 
     [Fact]
+    public async Task A_claude_review_item_change_reaches_connected_clients()
+    {
+        host = CountingJobHandler.CreateHost(factory, state);
+        await ConnectAsync(ApiFactory.AllowedOrigin);
+        (await ReadAsync(snapshots)).ShouldBeEmpty();
+        var item = new ExternalReviewDto(
+            Guid.NewGuid(), "group", null, "sender@example.com", "from:sender@example.com", "Synthetic subject", "reviewed",
+            "mcp", "agree", "Synthetic", false, false, "Synthetic reasoning", null, "none", clock.GetUtcNow(), clock.GetUtcNow(), null);
+
+        await host.Services.GetRequiredService<IExternalReviewNotifier>().NotifyAsync(item, Ct);
+
+        (await ReadAsync(reviews)).ShouldBe(item);
+    }
+
+    [Fact]
     public async Task Negotiate_from_a_disallowed_origin_is_rejected()
     {
         host = CountingJobHandler.CreateHost(factory, state);
@@ -265,6 +282,7 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
             .Build();
         connection.On<JobDto[]>(JobsHub.SnapshotEvent, s => snapshots.Writer.TryWrite(s));
         connection.On<JobDto>(JobsHub.ChangedEvent, j => changes.Writer.TryWrite(j));
+        connection.On<ExternalReviewDto>(JobsHub.ExternalReviewChangedEvent, r => reviews.Writer.TryWrite(r));
         await connection.StartAsync(Ct);
     }
 
