@@ -54,16 +54,7 @@ public sealed class ReviewService(
     public async Task<(ReviewResult Result, SuggestionDto? Suggestion)> EditAsync(
         Guid id, string topicLabel, bool needsAction, bool toBeDeleted, CancellationToken ct)
     {
-        bool? isNewLabel;
-        try
-        {
-            isNewLabel = await labels.FindByNameAsync(topicLabel, ct) is null;
-        }
-        catch (GmailNotConnectedException)
-        {
-            isNewLabel = null;
-        }
-
+        var isNewLabel = await IsNewLabelAsync(topicLabel, ct);
         return await ChangeOneAsync(id, _ => true, s =>
         {
             s.IsNewLabel = isNewLabel ?? (s.IsNewLabel || !string.Equals(s.TopicLabel, topicLabel, StringComparison.OrdinalIgnoreCase));
@@ -108,6 +99,44 @@ public sealed class ReviewService(
                 }
 
                 return false;
+            }, ct);
+        }
+
+        return new GroupDecisionResponse(changed, skipped);
+    }
+
+    /// <summary>
+    /// Edits every pending member of the sender's group to <paramref name="outcome"/> and approves it (one decision row
+    /// each), as <see cref="EditAsync"/> does for one; a protected message never gets a to-be-deleted outcome here.
+    /// </summary>
+    public async Task<GroupDecisionResponse> EditGroupAsync(string senderAddress, string groupKey, GroupOutcome outcome, CancellationToken ct)
+    {
+        var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
+        var allowlisted = await db.Senders.AnyAsync(s => s.Address == senderAddress && s.Allowlisted, ct);
+        var candidates = db.Suggestions.AsNoTracking().Where(s =>
+            s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
+        var changed = 0;
+        var skipped = new List<Guid>();
+        await foreach (var chunk in ChunksAsync(candidates, ct))
+        {
+            changed += await ChangeChunkAsync(chunk, DecisionOutcome.Approved, (s, m) =>
+            {
+                if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))
+                {
+                    if (skipped.Count < MaxSkippedIds)
+                    {
+                        skipped.Add(s.Id);
+                    }
+
+                    return false;
+                }
+
+                s.IsNewLabel = isNewLabel ?? (s.IsNewLabel || !string.Equals(s.TopicLabel, outcome.TopicLabel, StringComparison.OrdinalIgnoreCase));
+                s.TopicLabel = outcome.TopicLabel;
+                s.NeedsAction = outcome.NeedsAction;
+                s.ToBeDeleted = outcome.ToBeDeleted;
+                s.Edited = true;
+                return true;
             }, ct);
         }
 
@@ -194,6 +223,19 @@ public sealed class ReviewService(
 
         var run = await runs.StartAsync(AnalysisScope.Messages, null, messageIds, messageIds.Length, AnalysisGroupingMode.Off, ct);
         return (ReviewResult.Ok, run);
+    }
+
+    /// <summary>Whether Gmail lacks the label; null without a Gmail connection.</summary>
+    private async Task<bool?> IsNewLabelAsync(string topicLabel, CancellationToken ct)
+    {
+        try
+        {
+            return await labels.FindByNameAsync(topicLabel, ct) is null;
+        }
+        catch (GmailNotConnectedException)
+        {
+            return null;
+        }
     }
 
     private static SuggestionStatus ToStatus(DecisionOutcome outcome) =>

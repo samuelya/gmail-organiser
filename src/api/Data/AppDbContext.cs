@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Claude;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
@@ -35,6 +36,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<DecisionRow> Decisions => Set<DecisionRow>();
     public DbSet<ActionBatchRow> ActionBatches => Set<ActionBatchRow>();
     public DbSet<ActionLogRow> ActionLog => Set<ActionLogRow>();
+    public DbSet<ExternalReviewRow> ExternalReviews => Set<ExternalReviewRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -110,6 +112,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         DecisionRow.Configure(modelBuilder);
         ActionBatchRow.Configure(modelBuilder);
         ActionLogRow.Configure(modelBuilder);
+        ExternalReviewRow.Configure(modelBuilder);
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>
