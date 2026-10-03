@@ -75,7 +75,8 @@ public sealed class UnsubscribeService(
             var sent = await sender.SendOneClickAsync(new Uri(option.Url), ct);
             if (sent.Done)
             {
-                await MarkRowAsync(address, UnsubscribeMethod.OneClick, ct);
+                // The sender has already unsubscribed us: record it even if the client has gone away meanwhile.
+                await MarkRowAsync(address, UnsubscribeMethod.OneClick, CancellationToken.None);
             }
 
             return (UnsubscribeOutcome.Ok, new UnsubscribeResultDto(

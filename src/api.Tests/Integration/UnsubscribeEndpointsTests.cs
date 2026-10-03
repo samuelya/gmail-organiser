@@ -148,6 +148,25 @@ public sealed class UnsubscribeEndpointsTests(ApiFactory factory, PostgresFixtur
         (await StoredAsync(OneClickSender)).ShouldBe((null, null));
     }
 
+    [Fact]
+    public async Task One_click_done_is_recorded_even_when_the_request_is_cancelled_after_sending()
+    {
+        using var aborted = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        unsubscriber.Respond = async (_, _) =>
+        {
+            await aborted.CancelAsync();
+            return new UnsubscribeSendResult(true, 200);
+        };
+
+        await using var scope = host.Services.CreateAsyncScope();
+        var (outcome, result) = await scope.ServiceProvider.GetRequiredService<UnsubscribeService>()
+            .SendAsync(OneClickSender, aborted.Token);
+
+        outcome.ShouldBe(UnsubscribeOutcome.Ok);
+        result.ShouldBe(new UnsubscribeResultDto("done", 200));
+        (await StoredAsync(OneClickSender)).ShouldBe((Now, UnsubscribeMethod.OneClick));
+    }
+
     [Theory]
     [InlineData(LinkSender)]
     [InlineData(MailtoSender)]

@@ -1,6 +1,6 @@
 using GmailOrganiser.Analysis;
-using GmailOrganiser.CleanUp.Unsubscribe;
 using GmailOrganiser.Claude;
+using GmailOrganiser.CleanUp.Unsubscribe;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
