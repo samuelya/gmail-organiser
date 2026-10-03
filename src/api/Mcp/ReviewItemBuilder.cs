@@ -51,14 +51,21 @@ public sealed class ReviewItemBuilder(
     public const int MaxSamples = 5;
     public const int MaxSimilarDecisions = 10;
 
-    /// <summary>Running items when any exist, else queued ones; oldest first, at most <paramref name="limit"/> (clamped).</summary>
+    /// <summary>
+    /// Running items when any exist, else queued ones; oldest first, at most <paramref name="limit"/> (clamped). Items
+    /// whose suggestions the user decided after sending them are skipped: <c>submit_review</c> refuses them.
+    /// </summary>
     public async Task<PendingReviewsDto> ListPendingAsync(int limit, CancellationToken ct)
     {
         limit = Math.Clamp(limit, 1, MaxListLimit);
-        var status = await db.ExternalReviews.AnyAsync(r => r.Status == ExternalReviewStatus.Running, ct)
+        var open = db.ExternalReviews.AsNoTracking().Where(r => db.Suggestions.Any(s => s.Status == SuggestionStatus.Pending
+            && (r.TargetType == ExternalReviewTarget.Suggestion
+                ? s.Id == r.SuggestionId
+                : s.SenderAddress == r.SenderAddress && s.GroupKey == r.GroupKey)));
+        var status = await open.AnyAsync(r => r.Status == ExternalReviewStatus.Running, ct)
             ? ExternalReviewStatus.Running
             : ExternalReviewStatus.Queued;
-        var rows = await db.ExternalReviews.AsNoTracking()
+        var rows = await open
             .Where(r => r.Status == status)
             .OrderBy(r => r.CreatedAt).ThenBy(r => r.Id)
             .Take(limit)

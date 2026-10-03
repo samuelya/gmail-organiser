@@ -24,5 +24,6 @@
   <ItemGroup>
     <EmbeddedResource Include="Analysis/Prompts/analysis-v2.md" LogicalName="GmailOrganiser.Analysis.Prompts.analysis-v2.md" />
     <EmbeddedResource Include="Analysis/Attachments/image-vision-v1.md" LogicalName="GmailOrganiser.Analysis.Attachments.image-vision-v1.md" />
+    <EmbeddedResource Include="Mcp/Prompts/review-pending.md" LogicalName="GmailOrganiser.Mcp.Prompts.review-pending.md" />
   </ItemGroup>
 </Project>
