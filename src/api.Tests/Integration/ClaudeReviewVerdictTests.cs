@@ -90,6 +90,31 @@ public sealed class ClaudeReviewVerdictTests : IClassFixture<ApiFactory>, IAsync
     }
 
     [Fact]
+    public async Task Group_item_is_titled_from_the_newest_member_over_all_statuses_as_its_events_are()
+    {
+        var groupItem = await CreateOneAsync(new(null, [await GroupAsync()], null));
+        await using (var db = postgres.CreateDbContext())
+        {
+            var newest = await (
+                    from s in db.Suggestions
+                    join m in db.Messages on s.MessageId equals m.Id
+                    where s.SenderAddress == AnalysisRunHarness.Shop
+                    orderby m.InternalDate descending, m.Id
+                    select s.Id)
+                .FirstAsync(Ct);
+            await db.Suggestions.Where(s => s.Id == newest)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SuggestionStatus.Approved), Ct);
+        }
+
+        // The pending tab titles the card from its newest pending member; the item keeps the event's title.
+        var group = (await DetailAsync()).Groups.ShouldHaveSingleItem();
+        await using var scope = h.Services.CreateAsyncScope();
+        var published = (await scope.ServiceProvider.GetRequiredService<ExternalReviewQuery>().GetAsync(groupItem, Ct)).ShouldNotBeNull();
+        group.ClaudeReview.ShouldNotBeNull().GroupDisplay.ShouldBe(published.GroupDisplay);
+        group.ClaudeReview!.GroupDisplay.ShouldNotBe(group.Display);
+    }
+
+    [Fact]
     public async Task Suggested_for_claude_needs_the_reviewer_on_and_a_rule_that_matches()
     {
         await SettingsAsync(ClaudeReviewerMode.Off, lowConfidence: true, threshold: 0.85, newLabels: true);

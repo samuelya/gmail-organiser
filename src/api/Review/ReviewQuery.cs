@@ -211,7 +211,9 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
 
     /// <summary>
     /// The newest not-cancelled Claude review item per listed suggestion and per group of the page: one query per
-    /// target type. Item titles come from the page (the member's subject, the group's display).
+    /// target type. A suggestion item is titled from the page (the member's subject); a group item as the
+    /// <c>externalReviewChanged</c> event titles it (<see cref="ExternalReviewQuery.ToDtosAsync"/>: newest member over
+    /// all statuses, not only the listed tab), so the title doesn't change when an event replaces the item.
     /// </summary>
     private async Task<ClaudeLookup> ClaudeLookupAsync(
         string address, List<(GroupStats Stats, List<(SuggestionRow S, MessageRow M)> Members)> groups, CancellationToken ct)
@@ -228,11 +230,15 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
         var groupItems = keys.Count == 0
             ? []
             : await items.Where(r => r.TargetType == ExternalReviewTarget.Group && keys.Contains(r.GroupKey!)).ToListAsync(ct);
+        var newestGroupItems = Newest(groupItems, r => r.GroupKey!).ToList();
+        var groupDtos = newestGroupItems.Count == 0
+            ? []
+            : await new ExternalReviewQuery(db).ToDtosAsync(newestGroupItems, ct);
         return new ClaudeLookup(
             settings,
             Newest(suggestionItems, r => r.SuggestionId!.Value)
                 .ToDictionary(r => r.SuggestionId!.Value, r => ExternalReviewQuery.ToDto(r, GroupDisplay(subjects[r.SuggestionId!.Value], null))),
-            Newest(groupItems, r => r.GroupKey!).ToDictionary(r => r.GroupKey!, StringComparer.Ordinal));
+            groupDtos.ToDictionary(d => d.GroupKey!, StringComparer.Ordinal));
 
         static IEnumerable<ExternalReviewRow> Newest<TKey>(IEnumerable<ExternalReviewRow> rows, Func<ExternalReviewRow, TKey> key) =>
             rows.GroupBy(key).Select(g => g.OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id).First());
@@ -285,7 +291,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
             [.. members.Select(x => ToDto(
                 x.S, x.M, allowlisted, claude.Suggestions.GetValueOrDefault(x.S.Id), IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))],
             members.Count < stats.Size,
-            key is not null && claude.Groups.TryGetValue(key, out var item) ? ExternalReviewQuery.ToDto(item, display) : null,
+            key is null ? null : claude.Groups.GetValueOrDefault(key),
             IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0));
     }
 
@@ -325,7 +331,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
     }
 
     private sealed record ClaudeLookup(
-        AppSettings Settings, Dictionary<Guid, ExternalReviewDto> Suggestions, Dictionary<string, ExternalReviewRow> Groups);
+        AppSettings Settings, Dictionary<Guid, ExternalReviewDto> Suggestions, Dictionary<string, ExternalReviewDto> Groups);
 
     private sealed record OutcomeCount(string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count, bool HasLlm);
 }
