@@ -195,19 +195,52 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
     }
 
     [Fact]
-    public async Task Item_whose_suggestion_the_user_already_decided_is_skipped_by_the_list_and_refused()
+    public async Task Item_whose_suggestion_the_user_already_decided_is_skipped_by_the_list_refused_and_cancelled()
     {
         await using (var db = postgres.CreateDbContext())
         {
             await db.Suggestions.Where(s => s.Id == c00).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SuggestionStatus.Approved), Ct);
+            await db.ExternalReviews.Where(r => r.Id == singleItem)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, ExternalReviewStatus.Running), Ct);
         }
 
         var list = McpTestClient.Structured(await McpTestClient.CallAsync(client, "list_pending_reviews", Ct));
         list.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("id").GetGuid()).ShouldBe([groupItem]);
 
         Failed(await SubmitAsync(new() { ["id"] = singleItem.ToString(), ["verdict"] = "agree", ["reasoning"] = "Synthetic reasoning." }),
-            "queued", "already decided");
-        (await RowAsync(singleItem)).Status.ShouldBe(ExternalReviewStatus.Queued);
+            "cancelled", "already decided");
+        (await RowAsync(singleItem)).ShouldSatisfyAllConditions(r => r.Status.ShouldBe(ExternalReviewStatus.Cancelled), r => r.Verdict.ShouldBeNull());
+        notifier.Items.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
+            e => e.Id.ShouldBe(singleItem),
+            e => e.Status.ShouldBe("cancelled"));
+    }
+
+    [Theory]
+    [InlineData("null", null)]
+    [InlineData(" null ", null)]
+    [InlineData("\"from:example.com\"", "from:example.com")]
+    [InlineData("true", "true")]
+    [InlineData("0", "0")]
+    [InlineData("[1]", "[1]")]
+    public async Task Filter_criteria_treats_JSON_null_as_none_and_other_non_object_JSON_as_a_string(string value, string? stored)
+    {
+        Ok(await SubmitAsync(new()
+        {
+            ["id"] = singleItem.ToString(),
+            ["verdict"] = "needs_human",
+            ["filter_criteria"] = value,
+            ["reasoning"] = "Synthetic reasoning.",
+        }));
+
+        var criteria = (await RowAsync(singleItem)).VerdictFilterCriteria;
+        if (stored is null)
+        {
+            criteria.ShouldBeNull();
+        }
+        else
+        {
+            JsonDocument.Parse(criteria!).RootElement.GetString().ShouldBe(stored);
+        }
     }
 
     private Task<CallToolResult> SubmitAsync(Dictionary<string, object?> arguments) =>

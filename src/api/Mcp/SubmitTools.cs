@@ -117,8 +117,9 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
         };
 
     /// <summary>
-    /// Blank is null; JSON text is kept as given; other text of at most <see cref="MaxPlainFilterCriteriaLength"/>
-    /// characters is stored as a JSON string (the column is jsonb). M6 interprets it.
+    /// Blank and JSON <c>null</c> are none; a JSON object or string is kept as given; any other text (including other
+    /// JSON literals) of at most <see cref="MaxPlainFilterCriteriaLength"/> characters is stored as a JSON string (the
+    /// column is jsonb). M6 interprets it.
     /// </summary>
     internal static bool TryFilterCriteria(string? value, out string? criteria)
     {
@@ -130,15 +131,22 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
 
         try
         {
-            using var _ = JsonDocument.Parse(value);
-            criteria = value;
-            return true;
+            using var doc = JsonDocument.Parse(value);
+            switch (doc.RootElement.ValueKind)
+            {
+                case JsonValueKind.Null:
+                    return true;
+                case JsonValueKind.Object or JsonValueKind.String:
+                    criteria = value;
+                    return true;
+            }
         }
         catch (JsonException)
         {
-            var text = value.Trim();
-            criteria = text.Length <= MaxPlainFilterCriteriaLength ? JsonSerializer.Serialize(text) : null;
-            return criteria is not null;
         }
+
+        var text = value.Trim();
+        criteria = text.Length <= MaxPlainFilterCriteriaLength ? JsonSerializer.Serialize(text) : null;
+        return criteria is not null;
     }
 }
