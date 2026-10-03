@@ -1,0 +1,181 @@
+<app-page-header title="Clean-up">
+  <button
+    actions
+    mat-flat-button
+    type="button"
+    [disabled]="busy() || !!tracked() || !summary()?.messages"
+    (click)="deleteAll()"
+    data-testid="delete-all"
+  >
+    <mat-icon aria-hidden="true">delete</mat-icon>
+    Delete all
+  </button>
+</app-page-header>
+
+@if (tracked(); as t) {
+  <mat-card appearance="outlined" class="mb-4" data-testid="job-progress">
+    <mat-card-content class="flex flex-wrap items-center gap-3">
+      <span class="min-w-0 flex-1" role="status" data-testid="job-message">
+        {{ job()?.progress?.message || t.verb + '…' }}
+      </span>
+      <mat-progress-bar
+        class="basis-full"
+        [mode]="percent() === null ? 'indeterminate' : 'determinate'"
+        [value]="percent() ?? 0"
+        aria-label="Clean-up progress"
+      />
+      <button mat-stroked-button type="button" (click)="cancelJob()" data-testid="job-cancel">
+        Cancel
+      </button>
+    </mat-card-content>
+  </mat-card>
+}
+
+@if (summary(); as s) {
+  <mat-card appearance="outlined" class="mb-4">
+    <mat-card-content>
+      <dl class="m-0 grid grid-cols-3 gap-4" aria-label="Summary" data-testid="summary">
+        <div>
+          <dt>Labelled “{{ labelName() }}”</dt>
+          <dd data-testid="summary-messages">{{ s.messages | number }}</dd>
+        </div>
+        <div>
+          <dt>Senders</dt>
+          <dd data-testid="summary-senders">{{ s.senders | number }}</dd>
+        </div>
+        <div>
+          <dt>Protected</dt>
+          <dd data-testid="summary-protected">{{ s.protected | number }}</dd>
+        </div>
+      </dl>
+    </mat-card-content>
+  </mat-card>
+}
+
+@if (empty()) {
+  <mat-card appearance="outlined" data-testid="empty">
+    <mat-card-content class="flex flex-col items-start gap-2">
+      <p class="m-0">Nothing is labelled “{{ labelName() }}”.</p>
+      <p class="muted m-0">Messages you approve for deletion in Review show up here.</p>
+      <a mat-stroked-button routerLink="/review" data-testid="link-review">Go to Review</a>
+    </mat-card-content>
+  </mat-card>
+} @else {
+  <div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
+    <mat-card appearance="outlined">
+      <mat-card-content>
+        <app-cleanup-sender-list
+          [result]="senders()"
+          [selected]="selected()"
+          [pageSize]="senderPageSize"
+          [loading]="sendersLoading()"
+          [failed]="sendersFailed()"
+          (searchChange)="onSearch($event)"
+          (pageChange)="onSenderPage($event)"
+          (selectSender)="selectSender($event)"
+        />
+      </mat-card-content>
+    </mat-card>
+
+    <section class="flex min-w-0 flex-col gap-3" aria-label="Selected sender" data-testid="detail">
+      @if (sender(); as s) {
+        <mat-card appearance="outlined">
+          <mat-card-content class="flex flex-col gap-3">
+            <div>
+              <h2 class="sender-title m-0" data-testid="detail-title">
+                {{ s.displayName || s.address }}
+              </h2>
+              <div class="muted text-sm">
+                {{ s.address }} · {{ s.count | number }} messages ·
+                {{ s.protectedCount | number }} protected
+                @if (s.allowlisted) {
+                  · Allowlisted
+                }
+              </div>
+            </div>
+            <div
+              class="flex flex-wrap items-center gap-2"
+              role="toolbar"
+              aria-label="Sender actions"
+            >
+              <button
+                mat-flat-button
+                type="button"
+                [disabled]="busy() || !!tracked()"
+                (click)="deleteSender()"
+                data-testid="delete-sender"
+              >
+                Delete sender
+              </button>
+              <button
+                mat-stroked-button
+                type="button"
+                [disabled]="busy() || !!tracked()"
+                (click)="removeSender()"
+                data-testid="remove-sender"
+              >
+                Remove sender from list
+              </button>
+              @if (!s.allowlisted) {
+                <button
+                  mat-stroked-button
+                  type="button"
+                  [disabled]="busy()"
+                  (click)="allowlist()"
+                  data-testid="allowlist-sender"
+                >
+                  Allowlist sender
+                </button>
+              }
+            </div>
+          </mat-card-content>
+        </mat-card>
+
+        <mat-card appearance="outlined">
+          <mat-card-content class="flex flex-col gap-3">
+            <div
+              class="flex flex-wrap items-center gap-2"
+              role="toolbar"
+              aria-label="Selected messages"
+            >
+              <span class="muted flex-1" data-testid="selection-count">
+                {{ selection().size }} selected
+              </span>
+              <button
+                mat-stroked-button
+                type="button"
+                [disabled]="busy() || !!tracked() || selection().size === 0"
+                (click)="removeSelected()"
+                data-testid="remove-selected"
+              >
+                Remove from list
+              </button>
+              <button
+                mat-stroked-button
+                type="button"
+                [disabled]="busy() || !!tracked() || selection().size === 0"
+                (click)="deleteSelected()"
+                data-testid="delete-selected"
+              >
+                Delete
+              </button>
+            </div>
+            @if (messagesLoading()) {
+              <mat-progress-bar mode="indeterminate" aria-label="Loading the sender's messages" />
+            }
+            <app-cleanup-message-table
+              [result]="messages()"
+              [selected]="selection()"
+              [disabled]="busy()"
+              (toggleRow)="toggle($event)"
+              (toggleAll)="toggleAll($event)"
+              (pageChange)="onMessagePage($event)"
+            />
+          </mat-card-content>
+        </mat-card>
+      } @else if (!sendersLoading()) {
+        <p class="muted m-0" data-testid="detail-none">Select a sender to see its messages.</p>
+      }
+    </section>
+  </div>
+}
