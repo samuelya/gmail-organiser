@@ -428,17 +428,17 @@ public sealed class ExternalReviewService(
 
     private static ExternalReviewRow New(
         ExternalReviewTarget type, string senderAddress, string? groupKey, Guid? suggestionId, Guid? runId, DateTimeOffset now) => new()
-    {
-        Id = Guid.CreateVersion7(now),
-        TargetType = type,
-        SuggestionId = suggestionId,
-        SenderAddress = senderAddress,
-        GroupKey = groupKey,
-        RunId = runId,
-        Status = ExternalReviewStatus.Queued,
-        Resolution = ExternalReviewResolution.None,
-        CreatedAt = now,
-    };
+        {
+            Id = Guid.CreateVersion7(now),
+            TargetType = type,
+            SuggestionId = suggestionId,
+            SenderAddress = senderAddress,
+            GroupKey = groupKey,
+            RunId = runId,
+            Status = ExternalReviewStatus.Queued,
+            Resolution = ExternalReviewResolution.None,
+            CreatedAt = now,
+        };
 
     private static string Truncate(string value, int max) => value.Length <= max ? value : value[..max];
 }
