@@ -23,16 +23,18 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
 
         var now = time.GetUtcNow();
         var known = await db.Senders.Where(s => distinct.Contains(s.Address)).Select(s => s.Address).ToListAsync(ct);
-        var missing = distinct.Except(known, StringComparer.Ordinal).ToList();
-        if (missing.Count > 0)
+        var missing = distinct.Except(known, StringComparer.Ordinal).ToArray();
+        if (missing.Length > 0)
         {
-            db.Senders.AddRange(missing.Select(a => new SenderRow
-            {
-                Address = a,
-                Domain = new SenderAddress(a, null).Domain,
-                UpdatedAt = now,
-            }));
-            await db.SaveChangesAsync(ct);
+            // DO NOTHING: the allowlist may have stubbed the same address since the read; its row (and flag) wins.
+            var domains = Array.ConvertAll(missing, a => new SenderAddress(a, null).Domain);
+            await db.Database.ExecuteSqlAsync(
+                $"""
+                INSERT INTO senders (address, domain, total_count, analysed_count, applied_count, allowlisted, updated_at)
+                SELECT a, d, 0, 0, 0, FALSE, {now} FROM unnest({missing}, {domains}) AS t(a, d)
+                ON CONFLICT (address) DO NOTHING
+                """,
+                ct);
         }
 
         await db.Senders
