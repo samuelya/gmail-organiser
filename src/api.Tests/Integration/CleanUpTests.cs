@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using GmailOrganiser.CleanUp;
 using GmailOrganiser.Common;
 using GmailOrganiser.Gmail;
@@ -204,18 +205,25 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
     {
         h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 2;
         using var stop = new CancellationTokenSource();
-        h.Gmail.BeforeBatchModify = (call, _) =>
+        var started = default(CleanupBatchDto);
+        h.Gmail.BeforeBatchModify = async (call, _) =>
         {
+            if (call == 3)
+            {
+                // Pause on the resent chunk's checkpoint, so its progress is what the job keeps.
+                await using var db = postgres.CreateDbContext();
+                await db.Jobs.Where(j => j.Id == started!.Batch.JobId).ExecuteUpdateAsync(s => s.SetProperty(j => j.PauseRequested, true), Ct);
+            }
+
             if (call != 2)
             {
-                return Task.CompletedTask;
+                return;
             }
 
             stop.Cancel();
             stop.Token.ThrowIfCancellationRequested();
-            return Task.CompletedTask;
         };
-        var started = await StartAsync("delete", new CleanupSelectionRequest(All: true, IncludeProtected: true));
+        started = await StartAsync("delete", new CleanupSelectionRequest(All: true, IncludeProtected: true));
 
         await h.RunNextAsync(stop.Token);
         await using (var db = postgres.CreateDbContext())
@@ -225,6 +233,13 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
         }
 
         (await h.Runner.RecoverAsync(Ct)).ShouldBe(1);
+        await h.RunNextAsync();
+
+        var paused = await JobAsync(started);
+        paused.Status.ShouldBe(JobStatus.Paused);
+        var progress = JsonSerializer.Deserialize<JobProgress>(paused.Progress!, JsonSerializerOptions.Web).ShouldNotBeNull();
+        (progress.Done, progress.Total).ShouldBe((4L, (long?)6));
+        (await h.PostWithoutBodyAsync($"/api/jobs/{paused.Id}/resume")).EnsureSuccessStatusCode();
         await h.RunNextAsync();
 
         h.Gmail.BatchModifyCalls.ElementAt(1).ShouldBe(h.Gmail.BatchModifyCalls.ElementAt(2));

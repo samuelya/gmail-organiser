@@ -84,7 +84,8 @@ public sealed partial class CleanUpActionsJob(
 
         var names = (await catalog.GetAsync(ct)).ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
         var rules = (await settingsStore.GetAsync(ct)).Protection;
-        var plan = await PlanAsync(cursor, rules, ct);
+        // The pending chunk's rows aren't stored as changed yet, so the plan would cover them a second time.
+        var plan = Without(await PlanAsync(cursor, rules, ct), cursor.Pending);
         var total = Done(cursor) + (cursor.Pending?.MessageIds.Length ?? 0) + plan.Sum(c => c.MessageIds.Length);
         if (cursor.Pending is not null)
         {
@@ -312,6 +313,18 @@ public sealed partial class CleanUpActionsJob(
             t => db.ActionLog.Where(l => l.BatchId == cursor.BatchId && ids.Contains(l.MessageId)).ExecuteDeleteAsync(t),
             CancellationToken.None);
         db.ChangeTracker.Clear();
+    }
+
+    private static List<CleanUpChunk> Without(List<CleanUpChunk> plan, CleanUpChunk? pending)
+    {
+        if (pending is null)
+        {
+            return plan;
+        }
+
+        var sent = pending.MessageIds.ToHashSet(StringComparer.Ordinal);
+        return [.. plan.Select(c => c with { MessageIds = [.. c.MessageIds.Where(id => !sent.Contains(id))] })
+            .Where(c => c.MessageIds.Length > 0)];
     }
 
     private static int Done(CleanUpCursor cursor) => cursor.MessagesDone + cursor.Gone;
