@@ -75,19 +75,22 @@ class FakeJobs {
 describe('CleanUpPage', () => {
   afterEach(() => document.querySelector('.cdk-overlay-container')?.replaceChildren());
 
-  async function render(summary: CleanupSummary = { messages: 5, senders: 2, protected: 1 }) {
+  async function render(
+    summary: CleanupSummary = { messages: 5, senders: 2, protected: 1 },
+    senderItems: CleanupSender[] = [
+      sender(),
+      sender({ address: 'shop@example.com', displayName: null, allowlisted: true }),
+    ],
+  ) {
     const jobs = new FakeJobs();
     const api = {
       summary: vi.fn(() => of(summary)),
       senders: vi.fn(() =>
         of({
-          items: [
-            sender(),
-            sender({ address: 'shop@example.com', displayName: null, allowlisted: true }),
-          ],
+          items: senderItems,
           page: 1,
           pageSize: 25,
-          total: 2,
+          total: senderItems.length,
         }),
       ),
       messages: vi.fn(() =>
@@ -104,6 +107,15 @@ describe('CleanUpPage', () => {
       unmark: vi.fn(() => of(batch() as CleanupBatch | null)),
       delete: vi.fn(() => of(batch() as CleanupBatch | null)),
       job: vi.fn(() => of(job('completed', { version: 5 }))),
+      unsubscribeInfo: vi.fn(() =>
+        of({
+          method: null,
+          url: null,
+          messageId: null,
+          unsubscribedAt: null,
+          unsubscribedVia: null,
+        }),
+      ),
     };
     const senders = { setAllowlisted: vi.fn(() => of(sender({ allowlisted: true }))) };
     TestBed.configureTestingModule({
@@ -243,6 +255,22 @@ describe('CleanUpPage', () => {
     expect(api.unmark).toHaveBeenCalledWith({ kind: 'sender', address: 'news@example.com' });
     expect(snackText()).toContain('Nothing to do');
     expect(q('job-progress')).toBeNull();
+  });
+
+  it('says “loses” for a single message when removing a sender (#229)', async () => {
+    const { q, settle } = await render(undefined, [sender({ count: 1 })]);
+    expect(q('detail-title')!.parentElement!.textContent).toContain('1 message ·');
+    q('remove-sender')!.click();
+    await settle();
+    expect(document.querySelector('mat-dialog-container')!.textContent).toContain(
+      '1 message from Example News loses the “Bin” label.',
+    );
+  });
+
+  it('shows the sender’s Unsubscribe in its header', async () => {
+    const { api, q } = await render();
+    expect(api.unsubscribeInfo).toHaveBeenCalledWith('news@example.com');
+    expect(q('unsubscribe')).not.toBeNull();
   });
 
   it('allowlists the selected sender and refreshes', async () => {

@@ -41,6 +41,7 @@ const sender = (over: Partial<SenderDto> = {}): SenderDto => ({
   lastSeenAt: '2026-01-01T00:00:00Z',
   allowlisted: false,
   activeFetchJob: null,
+  unsubscribedAt: null,
   ...over,
 });
 
@@ -124,6 +125,22 @@ describe('SendersPage', () => {
     expect(row.textContent).toContain('Example News');
     expect(row.textContent).toContain('news@example.com');
     expect(row.textContent).toMatch(/4\/10/);
+  });
+
+  it('shows an Unsubscribed chip only on a row with unsubscribedAt', async () => {
+    const { el } = await render(
+      '/senders',
+      paged([
+        sender(),
+        sender({ address: 'shop@example.com', unsubscribedAt: '2026-03-04T10:00:00Z' }),
+      ]),
+    );
+    const chips = el.querySelectorAll('[data-testid="unsubscribed-chip"]');
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain('Unsubscribed Mar 4, 2026');
+    expect(chips[0].closest('[data-testid="sender-row"]')!.textContent).toContain(
+      'shop@example.com',
+    );
   });
 
   it('each row links to Analyse with the sender and the default count from settings', async () => {

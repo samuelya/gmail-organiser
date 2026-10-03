@@ -10,6 +10,9 @@ import {
   CleanupSender,
   CleanupSummary,
   selectionRequest,
+  UnsubscribeInfo,
+  UnsubscribeMethod,
+  UnsubscribeResult,
 } from './clean-up.models';
 
 /** The delete-labelled mail by sender, removing it from the list, and Delete (to Trash). */
@@ -49,8 +52,30 @@ export class CleanUpService {
     );
   }
 
+  /** How the sender can be unsubscribed from, and when it last was. */
+  unsubscribeInfo(address: string): Observable<UnsubscribeInfo> {
+    return this.http.get<UnsubscribeInfo>(this.unsubscribePath(address));
+  }
+
+  /** The one-click POST, done by the api; never labels or trashes mail. */
+  unsubscribe(address: string): Observable<UnsubscribeResult> {
+    return this.http.post<UnsubscribeResult>(this.unsubscribePath(address), null);
+  }
+
+  /** Records a link or `mailto:` the user opened by hand. */
+  markUnsubscribed(
+    address: string,
+    method: Exclude<UnsubscribeMethod, 'one_click'>,
+  ): Observable<void> {
+    return this.http.post<void>(`${this.unsubscribePath(address)}/mark`, { method });
+  }
+
   /** A job's current state, for when the hub no longer holds it (it finished while disconnected). */
   job(id: string): Observable<JobDto> {
     return this.http.get<JobDto>(`/api/jobs/${encodeURIComponent(id)}`);
+  }
+
+  private unsubscribePath(address: string): string {
+    return `/api/clean-up/senders/${encodeURIComponent(address)}/unsubscribe`;
   }
 }

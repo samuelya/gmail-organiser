@@ -57,6 +57,8 @@ describe('AnalysisSummaryCard', () => {
     expect(q('savings')!.textContent).toContain('60 LLM calls for 300 emails (80 % saved)');
     expect(q('link-analyse')!.getAttribute('href')).toBe('/analyse');
     expect(q('link-review')!.getAttribute('href')).toBe('/review');
+    expect(q('open-clean-up')!.getAttribute('href')).toBe('/clean-up');
+    expect(q('open-clean-up')!.textContent).not.toMatch(/\d/);
   });
 
   it('reloads when an analysis job changes status, not for other jobs', async () => {

@@ -86,7 +86,7 @@
                 {{ s.displayName || s.address }}
               </h2>
               <div class="muted text-sm">
-                {{ s.address }} · {{ s.count | number }} messages ·
+                {{ s.address }} · {{ plural(s.count, 'message') }} ·
                 {{ s.protectedCount | number }} protected
                 @if (s.allowlisted) {
                   · Allowlisted
@@ -127,6 +127,7 @@
                   Allowlist sender
                 </button>
               }
+              <app-unsubscribe-button [address]="s.address" />
             </div>
           </mat-card-content>
         </mat-card>

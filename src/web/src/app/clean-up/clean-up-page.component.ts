@@ -42,6 +42,7 @@ import { CleanUpService } from './clean-up.service';
 import { CleanupMessageTable } from './cleanup-message-table.component';
 import { CleanupSenderList } from './cleanup-sender-list.component';
 import { openDeleteConfirm } from './delete-confirm-dialog.component';
+import { UnsubscribeButton } from './unsubscribe-button.component';
 
 /** A queued clean-up batch being followed; `batchId` is null for a job started before this page opened. */
 interface TrackedBatch {
@@ -66,6 +67,7 @@ interface TrackedBatch {
     MatProgressBarModule,
     PageHeader,
     RouterLink,
+    UnsubscribeButton,
   ],
   templateUrl: './clean-up-page.component.html',
   styles: `
@@ -97,6 +99,7 @@ export class CleanUpPage {
   private readonly destroyRef = inject(DestroyRef);
 
   readonly senderPageSize = CLEANUP_SENDER_PAGE_SIZE;
+  readonly plural = plural;
 
   private readonly search = signal('');
   private readonly senderPage = signal(1);
@@ -285,7 +288,7 @@ export class CleanUpPage {
     if (!s) return;
     openConfirm(this.dialog, {
       title: 'Remove sender from the list?',
-      message: `${plural(s.count, 'message')} from ${s.displayName || s.address} lose the “${this.labelName()}” label. Undo from History.`,
+      message: `${plural(s.count, 'message')} from ${s.displayName || s.address} ${s.count === 1 ? 'loses' : 'lose'} the “${this.labelName()}” label. Undo from History.`,
       confirm: 'Remove from list',
     })
       .pipe(

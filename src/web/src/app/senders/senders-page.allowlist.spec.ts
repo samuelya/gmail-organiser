@@ -21,6 +21,7 @@ const sender = (over: Partial<SenderDto> = {}): SenderDto => ({
   lastSeenAt: '2026-01-01T00:00:00Z',
   allowlisted: false,
   activeFetchJob: null,
+  unsubscribedAt: null,
   ...over,
 });
 

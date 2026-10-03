@@ -14,6 +14,8 @@ export interface SenderDto {
   allowlisted: boolean;
   /** The queued, running or paused `sender_fetch` job targeting this address or its domain. */
   activeFetchJob: JobDto | null;
+  /** When the sender was last unsubscribed from (one-click, or a link / `mailto:` the user marked). */
+  unsubscribedAt: string | null;
 }
 
 /** `POST /api/fetch/sender`: `created` for a new job (202), not when the target's job was active or resumed (200). */
