@@ -1,6 +1,7 @@
 using System.Text.Json;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Settings;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace GmailOrganiser.Tests.Unit;
 
@@ -18,7 +19,8 @@ public sealed class AttachmentSettingsTests
         settings.EnabledTypes().ShouldBe(
             [AttachmentType.Pdf, AttachmentType.Image, AttachmentType.Spreadsheet, AttachmentType.Csv,
              AttachmentType.WordDocument, AttachmentType.Presentation, AttachmentType.PlainText], ignoreOrder: true);
-        settings.ToLimits().ShouldBe(new ConversionLimits(10 * 1024 * 1024, 10 * 1024 * 1024, 4000, 5));
+        settings.ToLimits().ShouldBe(new ConversionLimits(
+            10 * 1024 * 1024, 10 * 1024 * 1024, 4000, 5, new ImageReading(ImageMode.Ocr, null, AppSettings.FallbackOllamaBaseUrl)));
     }
 
     [Theory]
@@ -128,7 +130,7 @@ public sealed class AttachmentSettingsTests
             Attachments = new AttachmentSettings { MaxImageBytes = 2_000_000, Types = AttachmentSettings.WithDefaults([new(AttachmentType.Csv, false)]) },
         });
 
-        var policy = await new AttachmentPolicy(store).GetAsync(TestContext.Current.CancellationToken);
+        var policy = await new AttachmentPolicy(store, NullLogger<AttachmentPolicy>.Instance).GetAsync(TestContext.Current.CancellationToken);
 
         policy.Enabled.ShouldBeTrue();
         policy.EnabledTypes.ShouldNotContain(AttachmentType.Csv);

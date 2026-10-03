@@ -94,10 +94,15 @@ public sealed class AttachmentConversionService(
                 return (null, SkipReason.TooLarge);
             }
 
-            using var stream = new MemoryStream(content, writable: false);
+            // publiclyVisible: converters that need the whole buffer take it with TryGetBuffer instead of copying it.
+            using var stream = new MemoryStream(content, 0, content.Length, writable: false, publiclyVisible: true);
             var result = await converter.ConvertAsync(attachment, stream, limits, ct);
             var (markdown, truncated) = limits.Truncate(result.Markdown);
             return (result with { AttachmentType = type, Markdown = markdown, Truncated = result.Truncated || truncated }, null);
+        }
+        catch (AttachmentSkippedException ex)
+        {
+            return (null, ex.Reason);
         }
         catch (Exception ex) when (ex is not (GmailNotConnectedException or GmailRateLimitedException) && !ct.IsCancellationRequested)
         {

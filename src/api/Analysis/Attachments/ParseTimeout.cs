@@ -9,7 +9,7 @@ internal static class ParseTimeout
 {
     public static readonly TimeSpan Default = TimeSpan.FromSeconds(30);
 
-    public static async Task<string> RunAsync(Func<CancellationToken, string> parse, TimeSpan timeout, string what, CancellationToken ct)
+    public static async Task<T> RunAsync<T>(Func<CancellationToken, T> parse, TimeSpan timeout, string what, CancellationToken ct)
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);

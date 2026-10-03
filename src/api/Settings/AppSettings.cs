@@ -1,3 +1,5 @@
+using GmailOrganiser.Analysis.Attachments;
+
 namespace GmailOrganiser.Settings;
 
 /// <summary>
@@ -11,6 +13,9 @@ public sealed record AppSettings
     public string OllamaBaseUrl { get; init; } = FallbackOllamaBaseUrl;
     public string? ChatModel { get; init; }
     public string? EmbeddingModel { get; init; }
+
+    /// <summary>The Ollama vision model for <see cref="ImageMode.Vision"/> image reading (#72); <c>null</c> when none is chosen.</summary>
+    public string? VisionModel { get; init; }
     public string ActionLabelName { get; init; } = "Action/ToDo";
     public string DeleteLabelName { get; init; } = "To-Be-Deleted";
     public string? GoogleClientId { get; init; }

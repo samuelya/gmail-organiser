@@ -31,6 +31,15 @@ ollama list                     # shows the exact names to enter in the app
 Larger chat models give better suggestions but analyse fewer emails per minute. Without an embedding model the app
 still works; memory falls back to exact-sender matches.
 
+Optional: image attachments are read by local OCR (Tesseract, in the `api` image) by default. To have a **vision model**
+describe and transcribe them instead, pull one (`ollama pull <vision-model>`), enter it as the vision model and set
+the image mode to "vision" on the Settings page. Vision mode without a vision model skips images; the vision model gets
+PNG, JPEG and WebP only (other formats are skipped as unsupported). Each image may take up to `Attachments__ImageTimeout`
+(unset: one minute for OCR, and the LLM model timeout, 180 s, for the vision model, model load included). Set the
+`Attachments__*` options in `.env`; compose passes them to the `api` container. When the API runs from the IDE, OCR needs
+`tesseract` on the `PATH` (or `Attachments__TesseractPath`); without it image attachments are recorded as failed and
+scanned PDFs stay unread.
+
 ## 3. Make Ollama reachable from the app
 
 Which URL the API uses depends on how you run it. The value is `OLLAMA_BASE_URL` (in `.env` for compose) and can be

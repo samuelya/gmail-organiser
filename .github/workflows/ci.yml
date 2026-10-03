@@ -44,6 +44,10 @@ jobs:
       - name: Build
         run: dotnet build GmailOrganiser.slnx -warnaserror --no-restore
 
+      # The OCR tests run the real Tesseract, as installed in the api image, on synthetic images.
+      - name: Install Tesseract
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends tesseract-ocr tesseract-ocr-eng
+
       # Integration tests use Testcontainers with the runner's Docker.
       - name: Test
         run: dotnet test --solution GmailOrganiser.slnx --no-build

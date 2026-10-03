@@ -9,7 +9,8 @@ public interface IAttachmentConverter
 
     /// <param name="content">The decoded attachment, within <see cref="ConversionLimits.MaxBytesFor"/> for its type.</param>
     /// <remarks>
-    /// Throws on content it cannot read; the caller records that as <see cref="SkipReason.Failed"/>. May stop reading
+    /// Throws on content it cannot read; the caller records that as <see cref="SkipReason.Failed"/>, or as the reason of an
+    /// <see cref="AttachmentSkippedException"/>. May stop reading
     /// once the text exceeds <see cref="ConversionLimits.MaxChars"/>; the caller truncates, once.
     /// </remarks>
     Task<ConvertedAttachment> ConvertAsync(GmailAttachment attachment, Stream content, ConversionLimits limits, CancellationToken ct);
@@ -20,7 +21,8 @@ public interface IAttachmentConverter
 /// <param name="MaxImageBytes"><see cref="MaxBytes"/> for <see cref="AttachmentType.Image"/>.</param>
 /// <param name="MaxChars">Markdown per attachment is cut to at most this many characters, <see cref="TruncatedMarker"/> included.</param>
 /// <param name="MaxPerMessage">At most this many attachments per message are downloaded, in attachment order.</param>
-public sealed record ConversionLimits(long MaxBytes, long MaxImageBytes, int MaxChars, int MaxPerMessage)
+/// <param name="Images">How images and scanned PDF pages are read; <c>null</c> when they are not read at all.</param>
+public sealed record ConversionLimits(long MaxBytes, long MaxImageBytes, int MaxChars, int MaxPerMessage, ImageReading? Images = null)
 {
     public const string TruncatedMarker = "[truncated]";
 
@@ -53,17 +55,27 @@ public sealed record ConversionLimits(long MaxBytes, long MaxImageBytes, int Max
     }
 }
 
+/// <param name="VisionModel">The Ollama model for <see cref="ImageMode.Vision"/>; never <c>null</c> in that mode.</param>
+/// <param name="OllamaBaseUrl">The Ollama server for <see cref="ImageMode.Vision"/>.</param>
+public sealed record ImageReading(ImageMode Mode, string? VisionModel, string OllamaBaseUrl);
+
+/// <summary>A converter declines an attachment for <see cref="Reason"/>; the caller records it as skipped, not failed.</summary>
+public sealed class AttachmentSkippedException(SkipReason reason, string message) : Exception(message)
+{
+    public SkipReason Reason { get; } = reason;
+}
+
 public sealed record ConvertedAttachment(string Filename, AttachmentType AttachmentType, string Markdown, bool Truncated);
 
 public enum SkipReason
 {
-    /// <summary>The type is not enabled in settings.</summary>
+    /// <summary>The type is not enabled in settings (images also in vision mode without a vision model).</summary>
     Disabled,
 
     /// <summary>Larger than <see cref="ConversionLimits.MaxBytesFor"/> for its type; not downloaded unless Gmail didn't report the size.</summary>
     TooLarge,
 
-    /// <summary>Enabled, but no converter handles the type.</summary>
+    /// <summary>Enabled, but no converter handles the type, or its format in the current image mode.</summary>
     Unsupported,
 
     /// <summary>The download or the converter failed or timed out, or the attachment was gone.</summary>

@@ -57,6 +57,7 @@ public static class SettingsEndpoints
             OllamaBaseUrl = request.OllamaBaseUrl?.Trim() ?? s.OllamaBaseUrl,
             ChatModel = request.ChatModel is null ? s.ChatModel : SettingsValidation.NormaliseModelName(request.ChatModel),
             EmbeddingModel = request.EmbeddingModel is null ? s.EmbeddingModel : SettingsValidation.NormaliseModelName(request.EmbeddingModel),
+            VisionModel = request.VisionModel is null ? s.VisionModel : SettingsValidation.NormaliseModelName(request.VisionModel),
             SetupWizardSeen = request.SetupWizardSeen ?? s.SetupWizardSeen,
             FetchChunkSize = request.FetchChunkSize ?? s.FetchChunkSize,
             AnalysisDefaultCount = request.AnalysisDefaultCount ?? s.AnalysisDefaultCount,
@@ -92,6 +93,7 @@ public static class SettingsEndpoints
         MaxImageBytes = request.MaxImageBytes ?? s.MaxImageBytes,
         MaxChars = request.MaxChars ?? s.MaxChars,
         MaxPerMessage = request.MaxPerMessage ?? s.MaxPerMessage,
+        ImageMode = ImageModeJsonConverter.TryParse(request.ImageMode, out var mode) ? mode.Value : s.ImageMode,
     };
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem, ProblemHttpResult>> SetGoogleClientAsync(

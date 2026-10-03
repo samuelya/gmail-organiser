@@ -31,6 +31,9 @@ public sealed record AttachmentSettings
     public int MaxChars { get; init; } = DefaultMaxChars;
     public int MaxPerMessage { get; init; } = DefaultMaxPerMessage;
 
+    /// <summary>Images and scanned PDF pages: local OCR by default (owner decision on #68), or the vision model.</summary>
+    public ImageMode ImageMode { get; init; } = ImageMode.Ocr;
+
     /// <summary>Archives and anything unrecognised are off by default; archives can never be enabled.</summary>
     public static bool IsEnabledByDefault(AttachmentType type) => type is not (AttachmentType.Archive or AttachmentType.Other);
 
@@ -55,12 +58,25 @@ public sealed record AttachmentSettings
         })];
     }
 
-    /// <summary>The types the converters may read: none when the master switch is off, never archives.</summary>
-    public IReadOnlySet<AttachmentType> EnabledTypes() => Enabled
-        ? Types.Where(t => t.Enabled && t.Type != AttachmentType.Archive).Select(t => t.Type).ToHashSet()
+    /// <summary>
+    /// The types the converters may read: none when the master switch is off, never archives, and no images in
+    /// <see cref="ImageMode.Vision"/> without <paramref name="visionModel"/> (they are skipped as disabled, never an error).
+    /// </summary>
+    /// <param name="visionModel"><see cref="AppSettings.VisionModel"/>.</param>
+    public IReadOnlySet<AttachmentType> EnabledTypes(string? visionModel = null) => Enabled
+        ? Types.Where(t => t.Enabled && t.Type != AttachmentType.Archive && (t.Type != AttachmentType.Image || ImagesReadable(visionModel)))
+            .Select(t => t.Type).ToHashSet()
         : new HashSet<AttachmentType>();
 
-    public ConversionLimits ToLimits() => new(MaxBytes, MaxImageBytes, MaxChars, MaxPerMessage);
+    /// <summary>The limits; <see cref="ConversionLimits.Images"/> is set exactly when <see cref="EnabledTypes"/> has images.</summary>
+    /// <param name="visionModel"><see cref="AppSettings.VisionModel"/>.</param>
+    /// <param name="ollamaBaseUrl"><see cref="AppSettings.OllamaBaseUrl"/>.</param>
+    public ConversionLimits ToLimits(string? visionModel = null, string ollamaBaseUrl = AppSettings.FallbackOllamaBaseUrl) =>
+        new(MaxBytes, MaxImageBytes, MaxChars, MaxPerMessage,
+            EnabledTypes(visionModel).Contains(AttachmentType.Image) ? new ImageReading(ImageMode, visionModel, ollamaBaseUrl) : null);
+
+    /// <summary>OCR needs nothing more; vision needs a model.</summary>
+    public bool ImagesReadable(string? visionModel) => ImageMode == ImageMode.Ocr || visionModel is not null;
 }
 
 public sealed record AttachmentTypeSetting(AttachmentType Type, bool Enabled);

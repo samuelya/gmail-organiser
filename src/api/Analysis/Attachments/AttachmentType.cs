@@ -36,3 +36,28 @@ public sealed class AttachmentTypeJsonConverter()
         return type is not null;
     }
 }
+
+/// <summary>How image attachments (and scanned PDF pages) are read: local OCR by default, or an Ollama vision model.</summary>
+[JsonConverter(typeof(ImageModeJsonConverter))]
+public enum ImageMode
+{
+    Ocr,
+    Vision,
+}
+
+/// <summary>Serialises <see cref="ImageMode"/> as <c>ocr | vision</c> (API and settings document).</summary>
+public sealed class ImageModeJsonConverter()
+    : JsonStringEnumConverter<ImageMode>(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false)
+{
+    /// <summary>Parses an exact lowercase name; integers and other spellings are not modes.</summary>
+    public static bool TryParse(string? name, [NotNullWhen(true)] out ImageMode? mode)
+    {
+        mode = name switch
+        {
+            "ocr" => ImageMode.Ocr,
+            "vision" => ImageMode.Vision,
+            _ => null,
+        };
+        return mode is not null;
+    }
+}

@@ -84,6 +84,8 @@ public sealed class AttachmentSettingsEndpointsTests(ApiFactory factory, Postgre
     [InlineData("""{"maxChars":499}""", "attachments.maxChars")]
     [InlineData("""{"maxPerMessage":21}""", "attachments.maxPerMessage")]
     [InlineData("""{"types":[{"type":"hologram","enabled":true}]}""", "attachments.types[0].type")]
+    [InlineData("""{"imageMode":"OCR"}""", "attachments.imageMode")]
+    [InlineData("""{"imageMode":"photo"}""", "attachments.imageMode")]
     public async Task Invalid_values_get_400_field_errors_and_change_nothing(string block, string field)
     {
         var response = await PutJsonAsync($$"""{"chatModel":"chat-model-a","attachments":{{block}}}""");
@@ -124,7 +126,42 @@ public sealed class AttachmentSettingsEndpointsTests(ApiFactory factory, Postgre
         attachments.Types.Single(t => t.Type == AttachmentType.Image).Enabled.ShouldBeTrue();
         policy.EnabledTypes.ShouldBe(attachments.EnabledTypes(), ignoreOrder: true);
         policy.Limits.ShouldBe(new ConversionLimits(
-            AttachmentSettings.DefaultMaxBytes, AttachmentSettings.DefaultMaxImageBytes, AttachmentSettings.DefaultMaxChars, 7));
+            AttachmentSettings.DefaultMaxBytes, AttachmentSettings.DefaultMaxImageBytes, AttachmentSettings.DefaultMaxChars, 7,
+            new ImageReading(ImageMode.Ocr, null, ApiFactory.EnvOllamaBaseUrl)));
+    }
+
+    [Fact]
+    public async Task Image_mode_and_vision_model_round_trip_store_only_what_changed_and_drive_the_policy()
+    {
+        (await GetAsync()).Attachments.ImageMode.ShouldBe(ImageMode.Ocr);
+        var response = await PutJsonAsync("""{"attachments":{"imageMode":"vision"}}""");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("\"imageMode\":\"vision\"");
+
+        // Vision without a model: images are left out of the readable types, never an error.
+        (await PolicyAsync()).EnabledTypes.ShouldNotContain(AttachmentType.Image);
+
+        await PutJsonAsync("""{"visionModel":" vision-model-a "}""");
+        var settings = await GetAsync();
+        settings.VisionModel.ShouldBe("vision-model-a");
+        settings.Attachments.ImageMode.ShouldBe(ImageMode.Vision);
+        var policy = await PolicyAsync();
+        policy.EnabledTypes.ShouldContain(AttachmentType.Image);
+        policy.Limits.Images.ShouldBe(new ImageReading(ImageMode.Vision, "vision-model-a", ApiFactory.EnvOllamaBaseUrl));
+
+        await using var db = postgres.CreateDbContext();
+        var document = JsonNode.Parse((await db.Settings.SingleAsync(Ct)).Document)!.AsObject();
+        JsonNode.DeepEquals(document, JsonNode.Parse("""{"attachments":{"imageMode":"vision"},"visionModel":"vision-model-a"}"""))
+            .ShouldBeTrue(document.ToJsonString());
+
+        await PutJsonAsync("""{"visionModel":""}""");
+        (await GetAsync()).VisionModel.ShouldBeNull();
+    }
+
+    private async Task<AttachmentPolicySnapshot> PolicyAsync()
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        return await scope.ServiceProvider.GetRequiredService<IAttachmentPolicy>().GetAsync(Ct);
     }
 
     private static async Task<HttpValidationProblemDetails> ShouldBeValidationProblemAsync(HttpResponseMessage response)
