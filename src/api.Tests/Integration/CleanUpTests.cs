@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using GmailOrganiser.CleanUp;
 using GmailOrganiser.Common;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
@@ -173,14 +174,10 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
     public async Task Undo_of_a_delete_takes_the_mail_out_of_trash_and_back_into_the_list()
     {
         var before = Marked.ToDictionary(id => id, id => Labels(id).ToArray());
+        await MarkSyncedAsync();
         var started = await StartAsync("delete", new CleanupSelectionRequest(All: true));
         await h.RunNextAsync();
-        // An incremental fetch stores a message in Trash as not deleted; it stays off the list and undoable.
-        await using (var fetched = postgres.CreateDbContext())
-        {
-            await fetched.Messages.Where(m => m.Id == "a00").ExecuteUpdateAsync(s => s.SetProperty(m => m.DeletedInGmail, false), Ct);
-        }
-
+        await IncrementalFetchAsync();
         (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(2, 2, 2));
 
         var undo = await h.PostAsync($"/api/history/{started.Batch.Id}/undo", new { });
@@ -198,6 +195,25 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
         (await db.Senders.SingleAsync(s => s.Address == Shop, Ct)).TotalCount.ShouldBe(10);
         (await db.ActionBatches.SingleAsync(b => b.Id == started.Batch.Id, Ct)).UndoneAt.ShouldNotBeNull();
         (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(6, 2, 2));
+    }
+
+    [Fact]
+    public async Task The_next_incremental_fetch_keeps_trashed_mail_out_of_the_live_mail()
+    {
+        await MarkSyncedAsync();
+        await StartAsync("delete", new CleanupSelectionRequest(All: true));
+        await h.RunNextAsync();
+
+        await IncrementalFetchAsync();
+
+        string[] trashed = ["a00", "a02", "a03", "b00"];
+        await using var db = postgres.CreateDbContext();
+        var stored = await db.Messages.AsNoTracking().Where(m => trashed.Contains(m.Id)).ToListAsync(Ct);
+        stored.Count.ShouldBe(trashed.Length);
+        stored.ShouldAllBe(m => m.DeletedInGmail && m.LabelIds.Contains("TRASH"));
+        (await db.Messages.SingleAsync(m => m.Id == "a01", Ct)).DeletedInGmail.ShouldBeFalse();
+        (await db.Senders.SingleAsync(s => s.Address == Shop, Ct)).TotalCount.ShouldBe(7);
+        (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(2, 2, 2));
     }
 
     [Fact]
@@ -309,6 +325,25 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
         var response = await h.GetAsync(path);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         return (await response.Content.ReadFromJsonAsync<T>(Ct)).ShouldNotBeNull();
+    }
+
+    /// <summary>Marks the mailbox fetch done at Gmail's current history id, so an incremental fetch reads what follows.</summary>
+    private async Task MarkSyncedAsync()
+    {
+        var historyId = (await h.Gmail.Inner.GetProfileAsync(Ct)).HistoryId;
+        await using var db = postgres.CreateDbContext();
+        await db.FetchState.ExecuteUpdateAsync(
+            s => s.SetProperty(r => r.MailboxPhase, MailboxPhase.Completed).SetProperty(r => r.LastHistoryId, historyId), Ct);
+    }
+
+    private async Task IncrementalFetchAsync()
+    {
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<IJobService>().EnqueueAsync(IncrementalFetchJob.JobType, IncrementalFetchJob.Queue, null, Ct);
+        }
+
+        await h.RunNextAsync();
     }
 
     /// <summary>Sets the labels in the fake mailbox and on the stored row, as a fetch would.</summary>
