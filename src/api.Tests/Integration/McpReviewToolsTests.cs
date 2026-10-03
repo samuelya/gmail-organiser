@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Claude;
@@ -231,6 +232,24 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
             .ShouldBe([.. FakeLabelStore.SeedUserLabelNames.Concat(["Action/ToDo", "Finance/Invoices", "Shopping", "To-Be-Deleted"]).Order(StringComparer.Ordinal)]);
         item.GetProperty("samples").EnumerateArray().First()
             .GetProperty("labels").EnumerateArray().Select(l => l.GetString()).ShouldContain("Shopping");
+    }
+
+    [Fact]
+    public async Task Get_review_item_without_bodies_stays_readable_when_the_Gmail_label_fetch_fails()
+    {
+        var gmail = h.Services.GetRequiredService<FakeGmailClient>();
+        h.Services.GetRequiredService<LabelCatalog>().Invalidate();
+        gmail.FailNext(HttpStatusCode.BadRequest, 10);
+
+        (await McpTestClient.CallAsync(client, "get_label_tree", Ct)).IsError.ShouldBe(true);
+        var result = await McpTestClient.CallAsync(client, "get_review_item", Ct,
+            new Dictionary<string, object?> { ["id"] = groupItem.ToString() });
+        gmail.FailNext(HttpStatusCode.BadRequest, 0);
+
+        result.IsError.ShouldNotBe(true);
+        var item = McpTestClient.Structured(result);
+        item.GetProperty("labelTree").GetArrayLength().ShouldBe(0);
+        item.GetProperty("samples").GetArrayLength().ShouldBeGreaterThan(0);
     }
 
     private async Task<Guid> CreateAsync(CreateExternalReviewsRequest request)

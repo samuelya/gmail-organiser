@@ -22,9 +22,9 @@ public sealed record LabelNodeDto(
 public sealed record LabelTreeDto(string ActionLabel, string DeleteLabel, int LabelCount, IReadOnlyList<LabelNodeDto> Labels);
 
 /// <summary>The user's Gmail labels as a tree, with message counts from <c>messages</c>.</summary>
-public sealed class LabelTreeBuilder(AppDbContext db, LabelCatalog catalog, ISettingsStore settings)
+public sealed partial class LabelTreeBuilder(AppDbContext db, LabelCatalog catalog, ISettingsStore settings, ILogger<LabelTreeBuilder> logger)
 {
-    /// <summary>The user labels' names, sorted, at most <paramref name="max"/>; empty when Gmail is not connected.</summary>
+    /// <summary>The user labels' names, sorted, at most <paramref name="max"/>; empty when Gmail is not connected or unavailable.</summary>
     public async Task<IReadOnlyList<string>> NamesAsync(int max, CancellationToken ct) =>
         [.. (await LabelsAsync(ct)).Where(l => l.Type == GmailLabelType.User).Select(l => l.Name).Order(StringComparer.Ordinal).Take(max)];
 
@@ -78,7 +78,10 @@ public sealed class LabelTreeBuilder(AppDbContext db, LabelCatalog catalog, ISet
         return new LabelTreeDto(app.ActionLabelName, app.DeleteLabelName, labels.Count, roots);
     }
 
-    /// <summary>All Gmail labels (system and user) from the catalog cache; empty when Gmail is not connected.</summary>
+    /// <summary>
+    /// All Gmail labels (system and user) from the catalog cache; empty when Gmail is not connected or the label
+    /// fetch fails (rate limit, network), so a review item stays readable without label names.
+    /// </summary>
     public async Task<IReadOnlyList<GmailLabel>> LabelsAsync(CancellationToken ct)
     {
         try
@@ -89,5 +92,13 @@ public sealed class LabelTreeBuilder(AppDbContext db, LabelCatalog catalog, ISet
         {
             return [];
         }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogLabelsUnavailable(logger, ex.GetType().Name);
+            return [];
+        }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail labels unavailable for an MCP review item ({ExceptionType}); returning none")]
+    private static partial void LogLabelsUnavailable(ILogger logger, string exceptionType);
 }
