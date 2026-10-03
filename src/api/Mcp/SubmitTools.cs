@@ -93,7 +93,23 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
             && Guid.TryParse(value.GetString(), out var guid)
             ? guid
             : (Guid?)null;
-        var result = id is { } known ? await ResultAsync(known, false, reason, ct) : new(false, null, reason);
+        SubmitReviewResultDto result = new(false, null, reason);
+        if (id is { } known)
+        {
+            try
+            {
+                result = await ResultAsync(known, false, reason, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning("MCP tool submit_review could not look up the item status ({Error})", ex.GetType().Name);
+            }
+        }
+
         return ToCallToolResult(result);
     }
 
