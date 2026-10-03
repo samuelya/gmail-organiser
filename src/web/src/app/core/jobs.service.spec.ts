@@ -178,6 +178,16 @@ describe('JobsService', () => {
     http.verify();
   });
 
+  it('passes every externalReviewChanged on', async () => {
+    await create();
+    const seen: unknown[] = [];
+    service.externalReviewChanges.subscribe((item) => seen.push(item));
+    const item = { id: 'r1', status: 'running' };
+    hub.handlers.get('externalReviewChanged')!(item);
+    hub.handlers.get('externalReviewChanged')!({ ...item, status: 'reviewed' });
+    expect(seen).toEqual([item, { ...item, status: 'reviewed' }]);
+  });
+
   it('stops the connection when destroyed', async () => {
     await create();
     TestBed.resetTestingModule();

@@ -5,6 +5,7 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { convertToParamMap, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
+import { ClaudeService } from '../core/claude.service';
 import { isActiveJob, JobDto, JobsConnectionState, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { SendersService } from '../senders/senders.service';
@@ -134,7 +135,10 @@ describe('AnalysePage', () => {
   let active: AnalysisRunDto[];
   let finished: AnalysisRunDto[];
 
-  async function render(url = '/analyse', defaultCount = 20) {
+  let claude: { createReviews: ReturnType<typeof vi.fn> };
+
+  async function render(url = '/analyse', defaultCount = 20, claudeReviewerMode = 'off') {
+    claude = { createReviews: vi.fn(() => of({ created: 2, skipped: 1, items: [] })) };
     jobs = new FakeJobs();
     active = [];
     finished = [];
@@ -155,8 +159,11 @@ describe('AnalysePage', () => {
         },
         {
           provide: SettingsService,
-          useValue: { getSettings: () => of({ analysisDefaultCount: defaultCount }) },
+          useValue: {
+            getSettings: () => of({ analysisDefaultCount: defaultCount, claudeReviewerMode }),
+          },
         },
+        { provide: ClaudeService, useValue: claude },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
@@ -325,5 +332,26 @@ describe('AnalysePage', () => {
     await harness.fixture.whenStable();
     expect(api.cancel).toHaveBeenCalledWith('run-1');
     expect(q('cancel-run')!.textContent).toContain('Cancelling…');
+  });
+
+  it('sends a finished run with groups to Claude, only when Claude review is on', async () => {
+    finished = [];
+    const off = await render();
+    finished.push(run({ status: 'completed', groups: 3 }));
+    off.component.loadRuns();
+    await off.harness.fixture.whenStable();
+    expect(off.q('run-claude')).toBeNull();
+    TestBed.resetTestingModule();
+
+    const on = await render('/analyse', 20, 'claude_desktop');
+    finished.push(run({ status: 'completed', groups: 3 }), run({ id: 'run-0', groups: 0 }));
+    on.component.loadRuns();
+    await on.harness.fixture.whenStable();
+    expect(on.all('run-claude')).toHaveLength(1);
+    on.q('run-claude')!.click();
+    expect(claude.createReviews).toHaveBeenCalledWith({ runId: 'run-1' });
+    expect(document.querySelector('mat-snack-bar-container')?.textContent).toContain(
+      'Sent 2 items to Claude; 1 already open.',
+    );
   });
 });

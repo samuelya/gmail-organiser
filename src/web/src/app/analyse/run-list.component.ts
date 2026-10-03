@@ -1,11 +1,26 @@
 import { DatePipe, DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, inject, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  DestroyRef,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSnackBar } from '@angular/material/snack-bar';
+import { catchError, finalize, of } from 'rxjs';
+import { sentMessage } from '../core/claude.models';
+import { ClaudeService } from '../core/claude.service';
 import { JobsService } from '../core/jobs.service';
 import { humanise } from '../dashboard/fetch.models';
+import { SettingsService } from '../settings/settings.service';
 import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysis.models';
 
 /** Active runs with live progress and Cancel, then the finished runs with their counters and savings. */
@@ -74,7 +89,21 @@ import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysi
               </mat-chip>
             </mat-chip-set>
           </div>
-          <span data-testid="run-savings">{{ savings(run) }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="min-w-0 flex-1" data-testid="run-savings">{{ savings(run) }}</span>
+            @if (claudeEnabled() && run.groups > 0) {
+              <button
+                mat-button
+                type="button"
+                [disabled]="sending().has(run.id)"
+                (click)="sendToClaude(run)"
+                [attr.aria-label]="'Send run to Claude: ' + target(run)"
+                data-testid="run-claude"
+              >
+                Send run to Claude
+              </button>
+            }
+          </div>
           <span class="muted text-sm">
             {{ run.messagesLlm | number }} by the LLM · {{ run.messagesDerived | number }} derived ·
             {{ run.messagesFromMemory | number }} from memory · {{ run.groups | number }} groups
@@ -118,6 +147,15 @@ import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysi
 })
 export class RunList {
   private readonly jobs = inject(JobsService);
+  private readonly claude = inject(ClaudeService);
+  private readonly snackBar = inject(MatSnackBar);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly settings = toSignal(
+    inject(SettingsService)
+      .getSettings()
+      .pipe(catchError(() => of(null))),
+    { initialValue: null },
+  );
 
   readonly active = input<readonly AnalysisRunDto[]>([]);
   readonly finished = input<readonly AnalysisRunDto[]>([]);
@@ -125,11 +163,38 @@ export class RunList {
   readonly cancelling = input<ReadonlySet<string>>(new Set());
   readonly cancelRun = output<AnalysisRunDto>();
 
+  readonly claudeEnabled = computed(() => (this.settings()?.claudeReviewerMode ?? 'off') !== 'off');
+  /** Run ids whose "Send run to Claude" is in flight. */
+  readonly sending = signal<ReadonlySet<string>>(new Set());
+
   readonly activeViews = computed(() =>
     this.active().map((run) =>
       activeRunView(run, run.jobId ? this.jobs.job(run.jobId) : undefined),
     ),
   );
+
+  /** Queues the run's groups that still have pending members. */
+  sendToClaude(run: AnalysisRunDto): void {
+    if (this.sending().has(run.id)) return;
+    this.sending.update((s) => new Set(s).add(run.id));
+    this.claude
+      .createReviews({ runId: run.id })
+      .pipe(
+        finalize(() =>
+          this.sending.update((s) => {
+            const next = new Set(s);
+            next.delete(run.id);
+            return next;
+          }),
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      // The error interceptor shows the server's problem detail.
+      .subscribe({
+        next: (r) => this.snackBar.open(sentMessage(r), 'Dismiss', { duration: 4000 }),
+        error: () => undefined,
+      });
+  }
 
   target(run: AnalysisRunDto): string {
     return runTarget(run);

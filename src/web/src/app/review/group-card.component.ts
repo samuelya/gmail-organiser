@@ -3,8 +3,12 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { ExternalReviewDto } from '../core/claude.models';
+import { ClaudeReviewerMode } from '../settings/settings.models';
+import { ClaudeVerdict } from './claude-verdict.component';
 import { MemberRow } from './member-row.component';
 import {
+  claudeCardTarget,
   confidenceRange,
   FlagLabels,
   groupOrigin,
@@ -19,7 +23,14 @@ export const MEMBERS_STEP = 20;
 /** One group of a sender: its suggested outcome, group decisions and, expanded, its members. */
 @Component({
   selector: 'app-group-card',
-  imports: [MatButtonModule, MatCardModule, MatIconModule, MatTooltipModule, MemberRow],
+  imports: [
+    ClaudeVerdict,
+    MatButtonModule,
+    MatCardModule,
+    MatIconModule,
+    MatTooltipModule,
+    MemberRow,
+  ],
   template: `
     @let g = group();
     <mat-card appearance="outlined" data-testid="group-card">
@@ -45,6 +56,14 @@ export const MEMBERS_STEP = 20;
             <span class="chip" data-testid="group-delete">{{ labels().delete }}</span>
           }
           <span class="muted" data-testid="group-confidence">Confidence {{ confidence() }}</span>
+          @if (claudeMode() !== 'off' && g.suggestedForClaude) {
+            <span
+              class="claude-hint"
+              matTooltip="Worth a second opinion from Claude"
+              data-testid="group-claude-hint"
+              >Claude?</span
+            >
+          }
           @if (g.mixed) {
             <span
               class="warn inline-flex items-center gap-1"
@@ -56,6 +75,17 @@ export const MEMBERS_STEP = 20;
         </div>
         @if (g.reason) {
           <p class="m-0 text-sm" data-testid="group-reason">{{ g.reason }}</p>
+        }
+        @if (claude(); as c) {
+          <app-claude-verdict
+            [mode]="claudeMode()"
+            [request]="c.request"
+            [review]="c.review"
+            [labels]="labels()"
+            [busy]="busy()"
+            [sendable]="pending()"
+            (changed)="claudeChange.emit($event)"
+          />
         }
         <div class="flex flex-wrap items-center gap-2">
           <button
@@ -88,15 +118,6 @@ export const MEMBERS_STEP = 20;
           <button
             mat-button
             type="button"
-            disabled
-            matTooltip="Available with the Claude review (M4)"
-            data-testid="group-claude"
-          >
-            Send to Claude
-          </button>
-          <button
-            mat-button
-            type="button"
             class="ml-auto"
             (click)="expanded.set(!expanded())"
             [attr.aria-expanded]="expanded()"
@@ -119,6 +140,8 @@ export const MEMBERS_STEP = 20;
                 (reject)="rejectMember.emit(m)"
                 (edit)="editMember.emit(m)"
                 (toggleSelect)="toggleMember.emit(m)"
+                [claudeMode]="g.groupKey === null ? 'off' : claudeMode()"
+                (claudeChange)="claudeChange.emit($event)"
               />
             }
             @if (shownMembers().length < g.members.length) {
@@ -164,6 +187,10 @@ export const MEMBERS_STEP = 20;
     .warn {
       color: var(--mat-sys-error);
     }
+    .claude-hint {
+      color: var(--mat-sys-tertiary);
+      font-weight: 600;
+    }
     .small-icon {
       font-size: 1.125rem;
       width: 1.125rem;
@@ -177,6 +204,8 @@ export const MEMBERS_STEP = 20;
 })
 export class GroupCard {
   readonly group = input.required<ReviewGroupDto>();
+  readonly senderAddress = input.required<string>();
+  readonly claudeMode = input<ClaudeReviewerMode>('off');
   readonly labels = input.required<FlagLabels>();
   readonly selected = input<ReadonlySet<string>>(new Set());
   readonly skipped = input<ReadonlySet<string>>(new Set());
@@ -189,6 +218,8 @@ export class GroupCard {
   readonly rejectMember = output<SuggestionDto>();
   readonly editMember = output<SuggestionDto>();
   readonly toggleMember = output<SuggestionDto>();
+  /** A Claude item of the card or one of its members changed. A message analysed on its own shows its item on the card only. */
+  readonly claudeChange = output<ExternalReviewDto>();
 
   readonly step = MEMBERS_STEP;
   readonly expanded = signal(false);
@@ -199,4 +230,6 @@ export class GroupCard {
   readonly newLabel = computed(() => isNewGroupLabel(this.group()));
   /** Applied members can no longer change. */
   readonly actionable = computed(() => this.group().members.some((m) => m.status !== 'applied'));
+  readonly pending = computed(() => this.group().members.some((m) => m.status === 'pending'));
+  readonly claude = computed(() => claudeCardTarget(this.senderAddress(), this.group()));
 }

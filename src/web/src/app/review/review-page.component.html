@@ -98,6 +98,12 @@
             >
               Analyse individually ({{ selection().size }})
             </button>
+            <app-claude-sender-actions
+              [mode]="claudeMode()"
+              [address]="d.sender.address"
+              [busy]="busy()"
+              (changed)="onClaudeChange($event)"
+            />
           </div>
         </mat-card-content>
       </mat-card>
@@ -105,6 +111,8 @@
       @for (g of d.groups; track g.groupKey ?? g.members[0]?.id) {
         <app-group-card
           [group]="g"
+          [senderAddress]="d.sender.address"
+          [claudeMode]="claudeMode()"
           [labels]="flagLabels()"
           [selected]="selection()"
           [skipped]="skipped()"
@@ -116,6 +124,7 @@
           (rejectMember)="rejectMember($event)"
           (editMember)="editMember($event)"
           (toggleMember)="toggleMember($event)"
+          (claudeChange)="onClaudeChange($event)"
         />
       } @empty {
         <p class="muted m-0" data-testid="detail-empty">
