@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +9,8 @@ namespace GmailOrganiser.Fetch;
 /// Stores Gmail metadata in <c>messages</c> keyed by the Gmail message ID: new ids are inserted, known ids get their
 /// mutable fields refreshed. <c>analysis_status</c> and <c>fetched_at</c> of existing rows are never touched, and a
 /// row whose Gmail metadata is unchanged is not written at all (<c>updated_at</c> means "changed in Gmail").
+/// An inserted message updates its thread's <c>thread_replied</c> (#177): <c>SENT</c> makes the thread replied, any
+/// other message makes a stored "not replied" unknown again; "replied" is final.
 /// </summary>
 public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
 {
@@ -31,6 +34,19 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
 
         var ids = unique.Select(m => m.Id).ToList();
         var existing = await db.Messages.Where(m => ids.Contains(m.Id)).ToDictionaryAsync(m => m.Id, StringComparer.Ordinal, ct);
+        var newThreads = unique.Where(m => !existing.ContainsKey(m.Id)).Select(m => m.ThreadId).Distinct(StringComparer.Ordinal).ToArray();
+        var sentThreads = unique
+            .Where(m => !existing.ContainsKey(m.Id) && m.LabelIds.Contains(MessageProtection.SentLabel, StringComparer.Ordinal))
+            .Select(m => m.ThreadId)
+            .ToHashSet(StringComparer.Ordinal);
+        var repliedThreads = newThreads.Length == 0
+            ? []
+            : (await db.Messages
+                .Where(m => newThreads.Contains(m.ThreadId) && m.ThreadReplied == true)
+                .Select(m => m.ThreadId)
+                .Distinct()
+                .ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
+        repliedThreads.UnionWith(sentThreads);
         var now = time.GetUtcNow();
         var rows = new List<MessageRow>(unique.Count);
         foreach (var metadata in unique)
@@ -48,6 +64,7 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
             else
             {
                 row = Create(metadata, now);
+                row.ThreadReplied = repliedThreads.Contains(row.ThreadId) ? true : null;
                 db.Messages.Add(row);
             }
 
@@ -55,7 +72,26 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
         }
 
         await db.SaveChangesAsync(ct);
+        await UpdateThreadsAsync([.. sentThreads], [.. newThreads.Where(t => !repliedThreads.Contains(t))], ct);
         return rows;
+    }
+
+    /// <summary>Marks <paramref name="replied"/> threads replied and makes the stored "not replied" of <paramref name="reopened"/> unknown.</summary>
+    private async Task UpdateThreadsAsync(string[] replied, string[] reopened, CancellationToken ct)
+    {
+        if (replied.Length > 0)
+        {
+            await db.Messages
+                .Where(m => replied.Contains(m.ThreadId) && m.ThreadReplied != true)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.ThreadReplied, true), ct);
+        }
+
+        if (reopened.Length > 0)
+        {
+            await db.Messages
+                .Where(m => reopened.Contains(m.ThreadId) && m.ThreadReplied == false)
+                .ExecuteUpdateAsync(u => u.SetProperty(m => m.ThreadReplied, (bool?)null), ct);
+        }
     }
 
     public static MessageCategory? CategoryOf(IEnumerable<string> labelIds) =>

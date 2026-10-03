@@ -18,6 +18,9 @@ public sealed class MessageProtectionTests
         { "starred", new(Starred: false), null },
         { "important", new(), "important" },
         { "important", new(Important: false), null },
+        { "replied", new(), "replied thread" },
+        { "replied", new(RepliedThreads: false), null },
+        { "unknown thread", new(), null },
         { "none", new(), null },
     };
 
@@ -75,6 +78,12 @@ public sealed class MessageProtectionTests
         InternalDate = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero).AddDays(day),
         Category = MessageCategory.Promotions,
         HasAttachment = flag == "attachment",
+        ThreadReplied = flag switch
+        {
+            "replied" => true,
+            "unknown thread" => null,
+            _ => false,
+        },
         LabelIds = flag switch
         {
             "starred" => ["INBOX", MessageProtection.StarredLabel],

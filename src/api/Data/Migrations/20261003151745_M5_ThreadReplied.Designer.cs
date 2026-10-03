@@ -3,6 +3,7 @@ using System;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -12,9 +13,11 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261003151745_M5_ThreadReplied")]
+    partial class M5_ThreadReplied
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -947,14 +950,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<int>("TotalCount")
                         .HasColumnType("integer")
                         .HasColumnName("total_count");
-
-                    b.Property<string>("UnsubscribeMethod")
-                        .HasColumnType("text")
-                        .HasColumnName("unsubscribe_method");
-
-                    b.Property<DateTimeOffset?>("UnsubscribedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("unsubscribed_at");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")

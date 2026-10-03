@@ -12,6 +12,9 @@ public sealed class GmailQuotaLimiter(IOptions<GmailOptions> options, TimeProvid
     /// <summary>Cost of <c>messages.list</c> and <c>messages.get</c> in Gmail quota units.</summary>
     public const int MessageCallUnits = 5;
 
+    /// <summary>Cost of <c>threads.get</c> in Gmail quota units.</summary>
+    public const int ThreadCallUnits = 10;
+
     /// <summary>Cost of <c>labels.get</c> and <c>labels.list</c> in Gmail quota units.</summary>
     public const int LabelCallUnits = 1;
 

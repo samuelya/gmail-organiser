@@ -24,4 +24,17 @@ public sealed partial class FakeGmailClient
                 ? a.Content.ToArray()
                 : null, ct).ConfigureAwait(false);
     }
+
+    public async Task<GmailThreadSummary?> GetThreadSummaryAsync(string threadId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        return await RetryAsync(() =>
+        {
+            var thread = messages.Where(m => m.ThreadId == threadId).OrderBy(m => m.Date).ToList();
+            return thread.Count == 0
+                ? null
+                : new GmailThreadSummary(threadId, [.. thread.Select(m => new GmailThreadMessage(m.Id, [.. m.LabelIds]))]);
+        }, ct).ConfigureAwait(false);
+    }
 }

@@ -56,6 +56,13 @@ public sealed class MessageRow
     /// (stats, analysis, apply, patterns, MCP) filter on this alone.
     /// </summary>
     public bool DeletedInGmail { get; set; }
+
+    /// <summary>
+    /// Whether any message of the thread carries <c>SENT</c> (#177): null until checked at mark time; <c>true</c> is
+    /// final, a stored <c>false</c> goes back to null when a new message arrives in the thread.
+    /// </summary>
+    public bool? ThreadReplied { get; set; }
+
     public DateTimeOffset FetchedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }

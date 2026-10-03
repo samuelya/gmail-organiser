@@ -79,6 +79,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(r => r.InternalDate);
             e.HasIndex(r => r.LabelIds).HasMethod("gin");
             e.HasIndex(r => r.AnalysisStatus);
+            // The replied-thread check reads and writes a thread's rows.
+            e.HasIndex(r => r.ThreadId);
         });
 
         modelBuilder.Entity<SenderRow>(e =>
