@@ -5,6 +5,8 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
+    <!-- DocumentFormat.OpenXml: MIT. docx, xlsx and pptx attachment converters. -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
     <PackageReference Include="Google.Apis.Auth" Version="1.77.0" />
     <PackageReference Include="Google.Apis.Gmail.v1" Version="1.75.0.4225" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />

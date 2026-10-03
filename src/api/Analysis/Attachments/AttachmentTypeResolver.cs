@@ -5,7 +5,8 @@ namespace GmailOrganiser.Analysis.Attachments;
 /// <summary>
 /// Resolves an <see cref="AttachmentType"/> from the MIME type first and the filename extension second: mail clients
 /// often send <c>application/octet-stream</c>, and the extension then decides. Executables and anything unknown are
-/// <see cref="AttachmentType.Other"/>.
+/// <see cref="AttachmentType.Other"/>. A <c>.csv</c> file wins over a spreadsheet MIME type, because Windows mail
+/// clients label CSV files <c>application/vnd.ms-excel</c>.
 /// </summary>
 public static class AttachmentTypeResolver
 {
@@ -74,13 +75,13 @@ public static class AttachmentTypeResolver
 
     public static AttachmentType Resolve(string? mimeType, string? filename)
     {
-        if (FromMimeType(mimeType) is { } byMime)
+        AttachmentType? byExtension = Extensions.TryGetValue(Path.GetExtension(filename ?? ""), out var type) ? type : null;
+        return FromMimeType(mimeType) switch
         {
-            return byMime;
-        }
-
-        var extension = Path.GetExtension(filename ?? "");
-        return Extensions.TryGetValue(extension, out var byExtension) ? byExtension : AttachmentType.Other;
+            AttachmentType.Spreadsheet when byExtension == AttachmentType.Csv => AttachmentType.Csv,
+            { } byMime => byMime,
+            null => byExtension ?? AttachmentType.Other,
+        };
     }
 
     /// <summary>The type the MIME type names; null when it is missing, malformed or generic.</summary>

@@ -28,6 +28,7 @@ public sealed class AttachmentConversionTests
     [InlineData("text/csv; charset=utf-8", "data.txt", AttachmentType.Csv)]
     [InlineData("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "book.xlsx", AttachmentType.Spreadsheet)]
     [InlineData("application/vnd.ms-excel", "book.xls", AttachmentType.Spreadsheet)]
+    [InlineData("application/vnd.ms-excel", "report.CSV", AttachmentType.Csv)]
     [InlineData("", "book.ods", AttachmentType.Spreadsheet)]
     [InlineData("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "letter.docx", AttachmentType.WordDocument)]
     [InlineData("application/msword", "letter.doc", AttachmentType.WordDocument)]
