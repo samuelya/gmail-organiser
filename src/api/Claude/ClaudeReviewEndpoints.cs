@@ -1,8 +1,14 @@
+using System.Text.Json;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Common;
+using GmailOrganiser.Mcp;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
+using GmailOrganiser.Settings;
+using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.Extensions.Options;
+using ModelContextProtocol.Client;
 
 namespace GmailOrganiser.Claude;
 
@@ -25,6 +31,7 @@ public static class ClaudeReviewEndpoints
             ToResultAsync(reviews.DismissAsync(id, ct)));
         group.MapPost("/{id:guid}/retry", (Guid id, ExternalReviewService reviews, CancellationToken ct) =>
             ToResultAsync(reviews.RetryAsync(id, ct)));
+        endpoints.MapPost("/api/claude/test", ClaudeTestEndpoint.TestAsync).WithTags("Claude");
         return endpoints;
     }
 
@@ -124,4 +131,97 @@ public static class ClaudeReviewEndpoints
 
     private static ProblemHttpResult Conflict(string title, string detail) =>
         TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: title, detail: detail);
+}
+
+/// <param name="Mode">The reviewer mode, as the settings API names it.</param>
+/// <param name="Error">What is wrong, as text the UI shows verbatim; null when <paramref name="Ok"/>.</param>
+public sealed record ClaudeTestResultDto(
+    bool Ok, string Mode, string? CliVersion, bool TokenSet, bool McpReachable, long ElapsedMs, string? Error);
+
+/// <summary>
+/// <c>POST /api/claude/test</c>: headless mode checks <c>claude --version</c>, that the OAuth token is set (never its
+/// value) and that <c>/mcp</c> answers <c>tools/list</c> with the bearer token, as the CLI will call it; desktop mode
+/// checks <c>/mcp</c> only. Never throws for a failed check.
+/// </summary>
+public static class ClaudeTestEndpoint
+{
+    public const string McpClientName = "claude-mcp-self";
+    public static readonly TimeSpan McpTimeout = TimeSpan.FromSeconds(10);
+
+    internal static async Task<Ok<ClaudeTestResultDto>> TestAsync(
+        ISettingsStore settings,
+        IClaudeCliRunner runner,
+        IOptions<SettingsEnvOptions> env,
+        McpTokenService tokens,
+        IServer server,
+        IHttpClientFactory http,
+        TimeProvider time,
+        ILoggerFactory loggers,
+        CancellationToken ct)
+    {
+        var started = time.GetTimestamp();
+        var mode = (await settings.GetAsync(ct)).ClaudeReviewerMode;
+        var modeName = JsonNamingPolicy.SnakeCaseLower.ConvertName(mode.ToString());
+        var tokenSet = env.Value.ClaudeCodeOAuthTokenSet;
+        if (mode == ClaudeReviewerMode.Off)
+        {
+            return Result(false, null, false, "Claude review is off; choose a mode first.");
+        }
+
+        var errors = new List<string>();
+        string? version = null;
+        if (mode == ClaudeReviewerMode.HeadlessClaudeCode)
+        {
+            var v = await runner.VersionAsync(ct);
+            version = v.Version;
+            if (v.Error is not null)
+            {
+                errors.Add(v.Error);
+            }
+
+            if (!tokenSet)
+            {
+                errors.Add(ClaudeReviewJob.TokenMissingMessage);
+            }
+        }
+
+        var mcpError = await ProbeMcpAsync(ClaudeExtensions.McpSelfUrl(server), tokens, http, loggers, ct);
+        if (mcpError is not null)
+        {
+            errors.Add(mcpError);
+        }
+
+        return Result(errors.Count == 0, version, mcpError is null, errors.Count == 0 ? null : string.Join(' ', errors));
+
+        Ok<ClaudeTestResultDto> Result(bool ok, string? cliVersion, bool mcpReachable, string? error) => TypedResults.Ok(
+            new ClaudeTestResultDto(ok, modeName, cliVersion, tokenSet, mcpReachable, (long)time.GetElapsedTime(started).TotalMilliseconds, error));
+    }
+
+    /// <summary>Null when <c>/mcp</c> lists the review tools for the current token; otherwise why not.</summary>
+    private static async Task<string?> ProbeMcpAsync(
+        string url, McpTokenService tokens, IHttpClientFactory http, ILoggerFactory loggers, CancellationToken ct)
+    {
+        try
+        {
+            var transport = new HttpClientTransport(
+                new HttpClientTransportOptions
+                {
+                    Endpoint = new Uri(url),
+                    TransportMode = HttpTransportMode.StreamableHttp,
+                    AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = $"Bearer {await tokens.GetOrCreateAsync(ct)}" },
+                },
+                http.CreateClient(McpClientName),
+                ownsHttpClient: true);
+            await using var client = await McpClient.CreateAsync(transport, cancellationToken: ct);
+            var tools = await client.ListToolsAsync(cancellationToken: ct);
+            return tools.Any(t => ClaudeReviewJob.AllowedTools.Contains($"mcp__{McpExtensions.ServerName}__{t.Name}"))
+                ? null
+                : $"The MCP endpoint {url} answered without the review tools.";
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            loggers.CreateLogger(typeof(ClaudeTestEndpoint)).LogInformation("MCP self-check failed ({Error})", ex.GetType().Name);
+            return $"The MCP endpoint {url} is not reachable: {ClaudeCliOutput.Sanitise(ex.Message) ?? ex.GetType().Name}";
+        }
+    }
 }

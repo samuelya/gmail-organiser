@@ -315,6 +315,17 @@ public sealed class ExternalReviewService(
         return await NotifyChangedAsync(changed, r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Unavailable, ct);
     }
 
+    /// <summary>Credits the batch's reviewed items to <paramref name="reviewer"/>, and to <paramref name="model"/> when known.</summary>
+    public async Task<int> SetBatchReviewerAsync(Guid batchId, string reviewer, string? model, CancellationToken ct)
+    {
+        model = string.IsNullOrWhiteSpace(model) ? null : Truncate(model.Trim(), MaxModelLength);
+        var changed = await db.ExternalReviews.Where(r => r.BatchId == batchId && r.Status == ExternalReviewStatus.Reviewed)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.Reviewer, reviewer)
+                .SetProperty(r => r.ReviewerModel, r => model ?? r.ReviewerModel), ct);
+        return await NotifyChangedAsync(changed, r => r.BatchId == batchId && r.Status == ExternalReviewStatus.Reviewed, ct);
+    }
+
     /// <summary>The outcome the target shows now (what Claude reviewed); null when nothing is pending.</summary>
     private async Task<GroupOutcome?> ShownOutcomeAsync(ExternalReviewRow row, CancellationToken ct) =>
         row.TargetType == ExternalReviewTarget.Group
