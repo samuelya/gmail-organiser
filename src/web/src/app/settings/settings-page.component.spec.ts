@@ -6,7 +6,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { LlmModels } from '../core/llm.service';
 import { GoogleAuthStatus, SetupStatus } from '../setup/setup.service';
 import { SettingsPage } from './settings-page.component';
-import { AttachmentSettings, SettingsDto } from './settings.models';
+import { AttachmentSettings, ClaudeSettings, SettingsDto } from './settings.models';
 
 const EMAIL = 'user@example.com';
 const URL_SAVED = 'http://ollama.example.com:11434';
@@ -339,6 +339,44 @@ describe('SettingsPage', () => {
         duration: 3000,
       });
       const section = fixture.debugElement.query((d) => d.name === 'app-attachment-settings');
+      expect(section.componentInstance.changes()).toEqual({});
+    });
+  });
+
+  describe('claude review', () => {
+    const claude: ClaudeSettings = {
+      claudeReviewerMode: 'off',
+      claudeSuggestLowConfidence: false,
+      claudeSuggestThreshold: 0.6,
+      claudeSuggestNewLabels: false,
+      claudeRunTimeoutSeconds: 600,
+      claudeMaxItemsPerRun: 10,
+      claudeMaxTurns: 80,
+      claudeModel: null,
+      claudeTokenSet: false,
+    };
+
+    it('is hidden when the API has no Claude fields', async () => {
+      const { q } = await render();
+      expect(q('section-claude')).toBeNull();
+    });
+
+    it('saves only the changed mode and updates from the response', async () => {
+      const { fixture, q } = await render(true, settings(claude));
+      expect(q('section-claude')).not.toBeNull();
+      q('claude-mode-headless_claude_code')!.querySelector('input')!.click();
+      await fixture.whenStable();
+      q('save-claude')!.click();
+      await fixture.whenStable();
+
+      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      expect(save.request.body).toEqual({ claudeReviewerMode: 'headless_claude_code' });
+      save.flush(settings({ ...claude, claudeReviewerMode: 'headless_claude_code' }));
+      await fixture.whenStable();
+      expect(snackOpen).toHaveBeenCalledWith('Claude review settings saved', undefined, {
+        duration: 3000,
+      });
+      const section = fixture.debugElement.query((d) => d.name === 'app-claude-settings');
       expect(section.componentInstance.changes()).toEqual({});
     });
   });

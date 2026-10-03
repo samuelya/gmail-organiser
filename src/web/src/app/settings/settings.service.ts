@@ -5,6 +5,7 @@ import { SetupService } from '../setup/setup.service';
 import {
   AnalysisSettingsUpdate,
   AttachmentsUpdate,
+  ClaudeSettingsUpdate,
   PromptTemplateDto,
   SettingsDto,
 } from './settings.models';
@@ -29,6 +30,11 @@ export class SettingsService {
 
   /** A partial update of the attachment block (and the vision model): fields left out stay unchanged. */
   saveAttachments(changes: AttachmentsUpdate): Observable<SettingsDto> {
+    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** A partial update of the Claude review fields: fields left out stay unchanged. */
+  saveClaude(changes: ClaudeSettingsUpdate): Observable<SettingsDto> {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
   }
 

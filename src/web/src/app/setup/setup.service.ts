@@ -2,7 +2,11 @@ import { DOCUMENT } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable, InjectionToken } from '@angular/core';
 import { Observable, of, shareReplay, tap } from 'rxjs';
-import type { AnalysisSettingsUpdate, AttachmentsUpdate } from '../settings/settings.models';
+import type {
+  AnalysisSettingsUpdate,
+  AttachmentsUpdate,
+  ClaudeSettingsUpdate,
+} from '../settings/settings.models';
 
 /** `GoogleClientDto`: the secret itself is never returned. */
 export interface GoogleClientSettings {
@@ -34,7 +38,8 @@ export interface GoogleClientRequest {
  * `UpdateSettingsRequest` for `PUT /api/settings`: a partial update where an omitted (or `null`)
  * value stays unchanged and an empty model name clears the model.
  */
-export interface UpdateSettingsRequest extends AnalysisSettingsUpdate, AttachmentsUpdate {
+export interface UpdateSettingsRequest
+  extends AnalysisSettingsUpdate, AttachmentsUpdate, ClaudeSettingsUpdate {
   ollamaBaseUrl?: string;
   chatModel?: string;
   embeddingModel?: string;

@@ -1,0 +1,242 @@
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-4" novalidate>
+  <fieldset class="flex flex-col gap-2">
+    <legend id="claude-mode" class="mb-1">Mode</legend>
+    <mat-radio-group
+      formControlName="claudeReviewerMode"
+      aria-labelledby="claude-mode"
+      class="flex flex-col gap-1"
+      data-testid="claude-mode"
+    >
+      @for (m of modes; track m.value) {
+        <div>
+          <mat-radio-button
+            [value]="m.value"
+            [attr.data-testid]="'claude-mode-' + m.value"
+            [attr.aria-describedby]="'claude-mode-help-' + m.value"
+          >
+            {{ m.label }}
+          </mat-radio-button>
+          <p class="help ml-10" [id]="'claude-mode-help-' + m.value">{{ m.help }}</p>
+        </div>
+      }
+    </mat-radio-group>
+  </fieldset>
+
+  @if (headless()) {
+    <fieldset class="flex flex-col gap-2" data-testid="claude-headless">
+      <legend class="mb-1">Claude Code</legend>
+      <mat-chip-set aria-label="Claude Code token status">
+        @if (settings()?.claudeTokenSet) {
+          <mat-chip data-testid="claude-token-set" disableRipple>
+            <mat-icon matChipAvatar aria-hidden="true">check_circle</mat-icon>
+            {{ tokenStatus.set }}
+          </mat-chip>
+        } @else {
+          <mat-chip data-testid="claude-token-missing" class="warn" disableRipple>
+            <mat-icon matChipAvatar aria-hidden="true">warning</mat-icon>
+            {{ tokenStatus.missing }}
+          </mat-chip>
+        }
+      </mat-chip-set>
+
+      @for (f of numberFields; track f.key) {
+        @let ctl = control(f.key);
+        @let r = range(f.key);
+        <mat-form-field subscriptSizing="dynamic">
+          <mat-label>{{ f.label }}</mat-label>
+          <input
+            matInput
+            type="number"
+            [formControl]="ctl"
+            [min]="r.min"
+            [max]="r.max"
+            [step]="r.step"
+            [attr.data-testid]="f.key"
+          />
+          @if (ctl.hasError('server')) {
+            <mat-error>{{ ctl.getError('server') }}</mat-error>
+          } @else if (ctl.hasError('required')) {
+            <mat-error>{{ f.label }} is required.</mat-error>
+          } @else if (ctl.hasError('min') || ctl.hasError('max')) {
+            <mat-error>Enter a number from {{ r.min }} to {{ r.max }}.</mat-error>
+          } @else if (ctl.hasError('integer')) {
+            <mat-error>Enter a whole number.</mat-error>
+          }
+          <mat-hint>{{ f.hint }}</mat-hint>
+        </mat-form-field>
+      }
+
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>Model (optional)</mat-label>
+        <input matInput formControlName="claudeModel" data-testid="claudeModel" />
+        @if (c.claudeModel.hasError('server')) {
+          <mat-error>{{ c.claudeModel.getError('server') }}</mat-error>
+        }
+        <mat-hint>Leave empty for your subscription's default model.</mat-hint>
+      </mat-form-field>
+    </fieldset>
+  }
+
+  @if (desktop()) {
+    <fieldset class="flex flex-col gap-2" data-testid="claude-desktop">
+      <legend class="mb-1">Claude Desktop</legend>
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>claude_desktop_config.json entry</mat-label>
+        <textarea
+          matInput
+          readonly
+          class="snippet"
+          rows="10"
+          [value]="snippet() ?? ''"
+          aria-describedby="claude-snippet-hint"
+          data-testid="claude-snippet"
+        ></textarea>
+        <mat-hint id="claude-snippet-hint">
+          @if (snippetLoading()) {
+            Loading the config…
+          } @else {
+            Contains the MCP token for this organiser: keep it private.
+          }
+        </mat-hint>
+      </mat-form-field>
+      <div class="flex flex-wrap gap-2">
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="copySnippet()"
+          [disabled]="!snippet()"
+          data-testid="claude-copy-snippet"
+        >
+          <mat-icon aria-hidden="true">content_copy</mat-icon>
+          Copy
+        </button>
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="rotateToken()"
+          [disabled]="rotating()"
+          data-testid="claude-rotate-token"
+        >
+          <mat-icon aria-hidden="true">autorenew</mat-icon>
+          Rotate token
+        </button>
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="copyPrompt()"
+          [disabled]="copyingPrompt()"
+          data-testid="claude-copy-prompt"
+        >
+          <mat-icon aria-hidden="true">content_copy</mat-icon>
+          Copy prompt
+        </button>
+      </div>
+      <p class="help">Paste the prompt into Claude Desktop to review the items you sent.</p>
+    </fieldset>
+  }
+
+  @if (mode() !== 'off') {
+    <fieldset class="flex flex-col gap-2" data-testid="claude-suggest">
+      <legend class="mb-1">Suggest for Claude</legend>
+      <mat-slide-toggle formControlName="claudeSuggestLowConfidence" data-testid="claude-low">
+        Low-confidence suggestions
+      </mat-slide-toggle>
+      <div class="ml-14 flex flex-wrap items-center gap-2">
+        <label id="claude-threshold-label" for="claude-threshold" class="help">Below</label>
+        <mat-slider
+          [min]="threshold.min"
+          [max]="threshold.max"
+          [step]="threshold.step"
+          discrete
+          [displayWith]="percent"
+        >
+          <input
+            id="claude-threshold"
+            matSliderThumb
+            formControlName="claudeSuggestThreshold"
+            aria-labelledby="claude-threshold-label"
+            data-testid="claude-threshold"
+          />
+        </mat-slider>
+        <span class="help">{{ percent(c.claudeSuggestThreshold.value) }}</span>
+      </div>
+      <mat-slide-toggle formControlName="claudeSuggestNewLabels" data-testid="claude-new-labels">
+        Suggestions that create a new label
+      </mat-slide-toggle>
+      <p class="help">
+        Marks these in Review as worth a second opinion; nothing is sent by itself.
+      </p>
+    </fieldset>
+
+    <div class="flex min-h-14 flex-wrap items-center gap-2" aria-live="polite">
+      @let run = testRun();
+      @if (run.state === 'running') {
+        <mat-spinner diameter="20" aria-label="Testing the Claude connection" />
+        <button mat-button type="button" (click)="cancelTest()" data-testid="claude-cancel-test">
+          Cancel
+        </button>
+      } @else {
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="testConnection()"
+          [disabled]="!modeSaved()"
+          data-testid="claude-test"
+        >
+          Test connection
+        </button>
+        @if (!modeSaved()) {
+          <span class="help" data-testid="claude-test-save-first">Save the mode to test it.</span>
+        }
+      }
+      @if (run.state === 'done') {
+        @let r = run.result;
+        <div class="flex flex-col gap-1" data-testid="claude-test-result">
+          @if (r.ok) {
+            <span class="flex items-center gap-1" data-testid="claude-test-ok">
+              <mat-icon aria-hidden="true">check_circle</mat-icon>
+              Connected in {{ (r.elapsedMs / 1000).toFixed(1) }} s
+            </span>
+          } @else {
+            <span class="flex items-center gap-1 warn" data-testid="claude-test-error">
+              <mat-icon aria-hidden="true">error</mat-icon>
+              {{ r.error ?? 'The test failed.' }}
+            </span>
+          }
+          <ul class="help m-0 list-none p-0" data-testid="claude-test-details">
+            @if (headless()) {
+              <li>Claude Code CLI: {{ r.cliVersion ?? 'not found' }}</li>
+              <li>Token: {{ r.tokenSet ? 'set' : 'not set' }}</li>
+            }
+            <li>MCP endpoint: {{ r.mcpReachable ? 'reachable' : 'not reachable' }}</li>
+          </ul>
+        </div>
+      } @else if (run.state === 'failed') {
+        <span class="flex items-center gap-1 warn" data-testid="claude-test-failed">
+          <mat-icon aria-hidden="true">error</mat-icon>
+          The test request failed.
+        </span>
+      }
+    </div>
+  }
+
+  <div class="flex flex-wrap gap-2">
+    <button
+      mat-flat-button
+      type="submit"
+      [disabled]="!settings() || saving()"
+      data-testid="save-claude"
+    >
+      Save
+    </button>
+    <button
+      mat-button
+      type="button"
+      (click)="discard()"
+      [disabled]="!settings() || saving() || form.pristine"
+      data-testid="discard-claude"
+    >
+      Discard
+    </button>
+  </div>
+</form>

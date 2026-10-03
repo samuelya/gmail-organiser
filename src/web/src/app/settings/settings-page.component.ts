@@ -29,11 +29,15 @@ import { ModelsStep } from '../setup/steps/models-step.component';
 import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
 import { AnalysisSettingsSection } from './analysis-settings.component';
 import { AttachmentSettingsSection } from './attachment-settings.component';
+import { ClaudeSettingsSection } from './claude-settings.component';
 import {
   AnalysisSettings,
   AnalysisSettingsUpdate,
   AttachmentsSettingsDto,
   AttachmentsUpdate,
+  ClaudeSettings,
+  ClaudeSettingsDto,
+  ClaudeSettingsUpdate,
   PromptTemplateDto,
 } from './settings.models';
 import { SettingsService } from './settings.service';
@@ -60,6 +64,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     ModelsStep,
     AnalysisSettingsSection,
     AttachmentSettingsSection,
+    ClaudeSettingsSection,
   ],
   templateUrl: './settings-page.component.html',
   styles: `
@@ -113,6 +118,11 @@ export class SettingsPage implements OnInit {
   readonly attachmentsSaving = signal(false);
   readonly attachmentsErrors = signal<Record<string, string[]> | null>(null);
 
+  /** `null` until loaded, and on an older API without Claude review, which hides the section. */
+  readonly claude = signal<ClaudeSettings | null>(null);
+  readonly claudeSaving = signal(false);
+  readonly claudeErrors = signal<Record<string, string[]> | null>(null);
+
   ngOnInit(): void {
     this.settingsApi
       .getSettings()
@@ -124,6 +134,7 @@ export class SettingsPage implements OnInit {
           this.embeddingModel.set(settings.embeddingModel);
           this.analysis.set(settings);
           this.attachments.set(attachmentsOf(settings));
+          this.claude.set(claudeOf(settings));
         },
         // The error interceptor shows why; the field stays disabled without a saved value.
         error: () => undefined,
@@ -184,6 +195,30 @@ export class SettingsPage implements OnInit {
       });
   }
 
+  saveClaude(changes: ClaudeSettingsUpdate): void {
+    if (this.claudeSaving()) return;
+    if (Object.keys(changes).length === 0) {
+      this.snackBar.open('No Claude review changes to save', undefined, { duration: 3000 });
+      return;
+    }
+    this.claudeSaving.set(true);
+    this.claudeErrors.set(null);
+    this.settingsApi
+      .saveClaude(changes)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (settings) => {
+          this.claudeSaving.set(false);
+          this.claude.set(claudeOf(settings));
+          this.snackBar.open('Claude review settings saved', undefined, { duration: 3000 });
+        },
+        error: (error: unknown) => {
+          this.claudeSaving.set(false);
+          this.claudeErrors.set(validationErrors(error));
+        },
+      });
+  }
+
   /** Loads the built-in prompt once; the section previews it while no override is set. */
   loadDefaultPrompt(): void {
     if (this.defaultPrompt()) return;
@@ -223,6 +258,10 @@ function wholeNumber(control: AbstractControl<number | null>): ValidationErrors 
 
 function attachmentsOf(settings: AttachmentsSettingsDto): AttachmentsSettingsDto {
   return { attachments: settings.attachments, visionModel: settings.visionModel };
+}
+
+function claudeOf(settings: ClaudeSettingsDto): ClaudeSettings | null {
+  return settings.claudeReviewerMode === undefined ? null : (settings as ClaudeSettings);
 }
 
 /** ValidationProblem `errors` from a 400, keyed by API field name. */
