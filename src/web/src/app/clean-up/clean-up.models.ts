@@ -149,7 +149,13 @@ export function unsubscribeUrl(info: UnsubscribeInfo | null): URL | null {
 /** What the UI shows of an unsubscribe URL: the host, or the `mailto:` domain; never a path or token. */
 export function unsubscribeHost(url: URL): string {
   if (url.protocol !== 'mailto:') return url.hostname;
-  const address = decodeURIComponent(url.pathname.split(',')[0]);
+  const raw = url.pathname.split(',')[0];
+  let address = raw;
+  try {
+    address = decodeURIComponent(raw);
+  } catch {
+    // Sender-controlled header with a malformed escape: show the raw domain instead.
+  }
   return address.slice(address.lastIndexOf('@') + 1).toLowerCase();
 }
 

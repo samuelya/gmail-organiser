@@ -166,6 +166,11 @@ describe('clean-up models', () => {
     );
   });
 
+  it('falls back to the raw mailto address when its escapes are malformed', () => {
+    expect(unsubscribeHost(new URL('mailto:unsub%ZZ@Lists.Example.com'))).toBe('lists.example.com');
+    expect(unsubscribeHost(new URL('mailto:unsub%E0@lists.example.com'))).toBe('lists.example.com');
+  });
+
   it('says why a one-click failed', () => {
     expect(unsubscribeFailedMessage({ status: 'failed', httpStatus: 500 })).toBe(
       'Unsubscribe failed (HTTP 500); open the link instead',
