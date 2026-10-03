@@ -160,6 +160,43 @@ public sealed class ImageAttachmentTests
     }
 
     [Fact]
+    public async Task Images_declaring_more_pixels_than_the_cap_are_too_large_and_never_decoded()
+    {
+        var ocr = new StubOcr(_ => "text");
+        var llm = new FakeLlmClientFactory();
+        (string, string, byte[])[] bombs =
+        [
+            Att("a.png", "image/png", ImageHeaderTests.Png(30_000, 30_000)),
+            Att("b.jpg", "image/jpeg", ImageHeaderTests.Jpeg(20_000, 20_000)),
+            Att("c.webp", "image/webp", ImageHeaderTests.WebPLossless(16_384, 16_384)),
+        ];
+
+        var byOcr = await ConvertAllAsync([.. bombs, Att("d.gif", "image/gif", ImageHeaderTests.Gif(4_000, 4_000, frames: 2))], Limits(Ocr), ocr);
+        var byVision = await ConvertAllAsync(bombs, Limits(Vision), ocr, llm);
+
+        byOcr.Skipped.Select(s => s.SkipReason).ShouldBe(Enumerable.Repeat(SkipReason.TooLarge, 4));
+        byVision.Skipped.Select(s => s.SkipReason).ShouldBe(Enumerable.Repeat(SkipReason.TooLarge, 3));
+        ocr.Images.ShouldBeEmpty();
+        llm.Chat.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Images_whose_header_cannot_be_read_fail_without_being_decoded()
+    {
+        var ocr = new StubOcr(_ => "text");
+        var llm = new FakeLlmClientFactory();
+        var truncated = Png()[..20];
+
+        var byOcr = await ConvertAllAsync([Att("a.png", "image/png", truncated), Att("b.bin", "image/png", [.. new byte[64]])], Limits(Ocr), ocr);
+        var byVision = await ConvertAllAsync([Att("a.png", "image/png", truncated)], Limits(Vision), ocr, llm);
+
+        byOcr.Skipped.Select(s => s.SkipReason).ShouldBe([SkipReason.Failed, SkipReason.Failed]);
+        byVision.Skipped.Single().SkipReason.ShouldBe(SkipReason.Failed);
+        ocr.Images.ShouldBeEmpty();
+        llm.Chat.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task Policy_reads_images_by_ocr_by_default_and_by_the_vision_model_when_one_is_chosen()
     {
         var store = new InMemorySettingsStore();
@@ -287,7 +324,7 @@ public sealed class ImageAttachmentTests
     [Fact]
     public async Task Jpeg_2000_pages_go_to_ocr_as_stored_but_never_to_the_vision_model()
     {
-        byte[] jp2 = [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A, 0, 0, 0, 0];
+        var jp2 = ImageHeaderTests.Jp2(420, 130, boxed: true);
         var pdf = SyntheticImage.PdfWithImage(420, 130, "JPXDecode", jp2);
         var ocr = new StubOcr(_ => "text");
         var llm = new FakeLlmClientFactory();

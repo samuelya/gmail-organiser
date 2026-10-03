@@ -31,8 +31,9 @@ public interface IVisionClient
 
 /// <summary>
 /// Reads one image (an attachment or a scanned PDF page) by OCR or the vision model, as <see cref="ImageReading"/>
-/// says, within <see cref="AttachmentOptions.ImageTimeoutFor"/>. The vision model gets PNG, JPEG and WebP only, the
-/// formats Ollama decodes. The text is never stored or logged.
+/// says, within <see cref="AttachmentOptions.ImageTimeoutFor"/>, once its header declares at most
+/// <see cref="ImageHeader.MaxPixels"/>. The vision model gets PNG, JPEG and WebP only, the formats Ollama decodes. The
+/// text is never stored or logged.
 /// </summary>
 public sealed class ImageTextReader(
     IOcrEngine ocr, IVisionClient vision, IOptions<AttachmentOptions> options, IOptions<LlmOptions> llmOptions)
@@ -41,13 +42,24 @@ public sealed class ImageTextReader(
     public const string OcrNoTextDescription = "Image; OCR found no text in it.";
 
     /// <exception cref="TimeoutException">Reading took longer than <see cref="AttachmentOptions.ImageTimeoutFor"/>.</exception>
-    /// <exception cref="AttachmentSkippedException"><see cref="SkipReason.Unsupported"/>: a format the vision model can't read.</exception>
+    /// <exception cref="AttachmentSkippedException">
+    /// <see cref="SkipReason.Unsupported"/>: a format the vision model can't read; <see cref="SkipReason.TooLarge"/>: the
+    /// header declares more than <see cref="ImageHeader.MaxPixels"/>.
+    /// </exception>
+    /// <exception cref="InvalidDataException">The header can't be read, so the image is never decoded.</exception>
     public async Task<ImageText> ReadAsync(ReadOnlyMemory<byte> image, ImageReading reading, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(reading);
         if (reading.Mode == ImageMode.Vision && !IsVisionFormat(MediaType(image.Span)))
         {
             throw new AttachmentSkippedException(SkipReason.Unsupported, "The vision model reads PNG, JPEG and WebP only.");
+        }
+
+        // Decoders allocate the declared canvas before rejecting anything: a 1 MB PNG made Tesseract take 4 GB (#156).
+        var pixels = ImageHeader.DeclaredPixels(image.Span) ?? throw new InvalidDataException("The image header can't be read.");
+        if (pixels > ImageHeader.MaxPixels)
+        {
+            throw new AttachmentSkippedException(SkipReason.TooLarge, $"The image declares {pixels} pixels; at most {ImageHeader.MaxPixels} are read.");
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
