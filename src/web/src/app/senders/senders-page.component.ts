@@ -333,7 +333,6 @@ export class SendersPage {
       .subscribe(() => this.runPending(job, 'cancel', this.jobs.cancel(job.id)));
   }
 
-  /** A resume or cancel for this job is in flight or waiting for its status to change. */
   /** Flips the sender's allowlist flag; the row shows the saved value once the API answers. */
   toggleAllowlist(sender: SenderDto): void {
     const address = sender.address;
@@ -361,6 +360,7 @@ export class SendersPage {
       });
   }
 
+  /** A resume or cancel for this job is in flight or waiting for its status to change. */
   isPending(job: JobDto): boolean {
     return this.pending().get(job.id)?.status === job.status;
   }

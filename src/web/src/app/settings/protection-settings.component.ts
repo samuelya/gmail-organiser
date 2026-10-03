@@ -26,7 +26,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { catchError, concatMap, map, merge, of } from 'rxjs';
+import { catchError, concatMap, forkJoin, map, merge, of } from 'rxjs';
 import { SenderDto, SenderQuery, normaliseAllowlistAddress } from '../senders/senders.models';
 import { SendersService } from '../senders/senders.service';
 import { PROTECTION_RULES, ProtectionRule, ProtectionSettings } from './settings.models';
@@ -124,15 +124,16 @@ export class ProtectionSettingsSection implements OnInit {
   }
 
   ngOnInit(): void {
-    this.loadAllowlist(1);
+    this.loadAllowlist(1, 1);
   }
 
   loadMore(): void {
-    if (!this.allowlistLoading()) this.loadAllowlist(this.allowlistPage() + 1);
+    const next = this.allowlistPage() + 1;
+    if (!this.allowlistLoading()) this.loadAllowlist(next, next);
   }
 
   reloadAllowlist(): void {
-    this.loadAllowlist(1);
+    this.loadAllowlist(1, 1);
   }
 
   add(): void {
@@ -179,6 +180,10 @@ export class ProtectionSettingsSection implements OnInit {
           this.setBusy(sender.address, false);
           this.allowlist.update((list) => list.filter((s) => s.address !== sender.address));
           this.allowlistTotal.update((n) => Math.max(0, n - 1));
+          // The server's pages moved up by one: reload the loaded ones so Load more skips nobody.
+          if (this.allowlist().length < this.allowlistTotal()) {
+            this.loadAllowlist(1, this.allowlistPage());
+          }
           this.snackBar.open(`${sender.address} removed from the allowlist`, undefined, {
             duration: 3000,
           });
@@ -221,21 +226,23 @@ export class ProtectionSettingsSection implements OnInit {
     this.form.setValue(settings, { emitEvent: false });
   }
 
-  private loadAllowlist(page: number): void {
+  /** Pages `from`..`to`; from page 1 they replace the list, else they are appended. */
+  private loadAllowlist(from: number, to: number): void {
     this.allowlistLoading.set(true);
     this.allowlistFailed.set(false);
-    this.senders
-      .list({ ...ALLOWLIST_QUERY, page }, true)
+    const pages = Array.from({ length: to - from + 1 }, (_, i) =>
+      this.senders.list({ ...ALLOWLIST_QUERY, page: from + i }, true),
+    );
+    forkJoin(pages)
       .pipe(takeUntilDestroyed(this.destroyRef))
       // The error interceptor shows why; the list offers a retry.
       .subscribe({
-        next: (result) => {
+        next: (results) => {
+          const items = results.flatMap((r) => r.items);
           this.allowlistLoading.set(false);
-          this.allowlistPage.set(page);
-          this.allowlistTotal.set(result.total);
-          this.allowlist.update((list) =>
-            page === 1 ? result.items : mergeByAddress(list, result.items),
-          );
+          this.allowlistPage.set(to);
+          this.allowlistTotal.set(results[results.length - 1].total);
+          this.allowlist.update((list) => mergeByAddress(from === 1 ? [] : list, items));
         },
         error: () => {
           this.allowlistLoading.set(false);

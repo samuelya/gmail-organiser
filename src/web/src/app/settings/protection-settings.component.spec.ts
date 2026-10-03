@@ -179,4 +179,28 @@ describe('ProtectionSettingsSection', () => {
     expect(all('allowlist-row')).toHaveLength(0);
     expect(q('allowlist-empty')).not.toBeNull();
   });
+
+  it('reloads the loaded pages after a remove so Load more skips nobody', async () => {
+    const first = Array.from({ length: 50 }, (_, i) =>
+      sender(`a${String(i).padStart(2, '0')}@example.com`),
+    );
+    await render(paged(first, 60));
+    all('allowlist-remove')[0].click();
+    await fixture.whenStable();
+    http
+      .expectOne(isAllowlistPut('a00@example.com'))
+      .flush(sender('a00@example.com', { allowlisted: false }));
+    await fixture.whenStable();
+    // The server's page 1 now starts at a01 and ends with the sender that was first on page 2.
+    http.expectOne(isList(1)).flush(paged([...first.slice(1), sender('b00@example.com')], 59));
+    await fixture.whenStable();
+    expect(all('allowlist-row')).toHaveLength(50);
+    q<HTMLButtonElement>('allowlist-more')!.click();
+    await fixture.whenStable();
+    const rest = Array.from({ length: 9 }, (_, i) => sender(`b0${i + 1}@example.com`));
+    http.expectOne(isList(2)).flush(paged(rest, 59, 2));
+    await fixture.whenStable();
+    expect(all('allowlist-row')).toHaveLength(59);
+    expect(q('allowlist-more')).toBeNull();
+  });
 });
