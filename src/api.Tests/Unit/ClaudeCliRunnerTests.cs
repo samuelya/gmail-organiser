@@ -148,10 +148,12 @@ public sealed class ClaudeCliRunnerTests : IDisposable
         result.ShouldSatisfyAllConditions(
             r => (r.Ok, r.NumTurns, r.Model, r.ErrorKind).ShouldBe((true, 12, "synthetic-large", null)),
             r => r.ResultText.ShouldBe("Agreed with 2, changed 1, left 0 to the user."));
-        (await File.ReadAllLinesAsync(record + ".args", Ct)).ShouldBe(ProcessClaudeCliRunner.BuildArguments(
-            Request(), Path.Combine((await File.ReadAllTextAsync(record + ".cwd", Ct)).Trim(), "mcp.json")));
-        (await File.ReadAllTextAsync(record + ".config", Ct)).ShouldContain(McpToken);
-        Directory.Exists((await File.ReadAllTextAsync(record + ".cwd", Ct)).Trim()).ShouldBeFalse();
+        var args = await File.ReadAllLinesAsync(record + ".args", Ct);
+        args.ShouldBe(ProcessClaudeCliRunner.BuildArguments(Request(), args[5]));
+        Path.GetFileName(args[5]).ShouldBe("mcp.json");
+        (await File.ReadAllTextAsync(record + ".cwd", Ct)).Trim().ShouldEndWith(Path.GetFileName(Path.GetDirectoryName(args[5]))!);
+        (await File.ReadAllTextAsync(record + ".config", Ct)).ShouldBe(ProcessClaudeCliRunner.McpConfigJson(Request()));
+        Directory.Exists(Path.GetDirectoryName(args[5])).ShouldBeFalse();
     }
 
     [Theory]
