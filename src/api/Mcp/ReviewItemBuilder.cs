@@ -131,7 +131,7 @@ public sealed class ReviewItemBuilder(
             SnakeCaseEnumConverter<ExternalReviewStatus>.ToDb(row.Status),
             sender is null ? null : new SenderDto(
                 sender.Address, sender.Domain, sender.DisplayName, sender.TotalCount, sender.AnalysedCount,
-                sender.AppliedCount, sender.LastSeenAt, sender.Allowlisted, null),
+                sender.AppliedCount, sender.LastSeenAt, sender.Allowlisted, null, sender.UnsubscribedAt),
             samples,
             await labels.NamesAsync(AnalysisPromptBuilder.MaxLabelTreeEntries, ct),
             similar);

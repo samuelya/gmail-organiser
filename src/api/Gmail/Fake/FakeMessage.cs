@@ -23,7 +23,8 @@ public sealed record FakeMessage(
     string HistoryId = "1",
     IReadOnlyList<FakeAttachment>? Attachments = null,
     string? BodyText = null,
-    string? BodyHtml = null)
+    string? BodyHtml = null,
+    string? ListUnsubscribePost = null)
 {
     public IReadOnlyList<FakeAttachment> Attachments { get; init; } = Attachments ?? [];
 

@@ -102,7 +102,8 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
     private static SenderDto ToDto(SenderRow s, List<(string Target, JobDto Job)> fetchJobs) => new(
         s.Address, s.Domain, s.DisplayName, s.TotalCount, s.AnalysedCount, s.AppliedCount, s.LastSeenAt, s.Allowlisted,
         fetchJobs.Find(j => j.Target.Equals(s.Address, StringComparison.OrdinalIgnoreCase)
-            || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job);
+            || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job,
+        s.UnsubscribedAt);
 
     /// <summary>Senders whose address, domain or display name contains <paramref name="search"/> (all when null).</summary>
     public static IQueryable<SenderRow> Filter(IQueryable<SenderRow> senders, string? search)

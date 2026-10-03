@@ -198,6 +198,7 @@ public sealed record MessageIdPage(IReadOnlyList<MessageRef> Messages, string? N
 public sealed record MessageRef(string Id, string ThreadId);
 
 /// <param name="From">The raw <c>From</c> header; <see cref="GmailMetadataMapper.ParseFrom"/> splits it.</param>
+/// <param name="ListUnsubscribePost">The RFC 8058 <c>List-Unsubscribe-Post</c> header; read at unsubscribe time, never stored.</param>
 /// <param name="HasAttachment">A heuristic from the top-level MIME type; see <see cref="GmailMetadataMapper"/>.</param>
 public sealed record GmailMessageMetadata(
     string Id,
@@ -210,6 +211,7 @@ public sealed record GmailMessageMetadata(
     string? Subject,
     string? ListId,
     string? ListUnsubscribe,
+    string? ListUnsubscribePost,
     string? Snippet,
     int SizeEstimate,
     bool HasAttachment);
