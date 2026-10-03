@@ -76,6 +76,9 @@ public sealed record AppSettings
     /// <summary>Optional <c>--model</c> for the Claude Code CLI; <c>null</c> means the subscription default.</summary>
     public string? ClaudeModel { get; init; }
 
+    /// <summary>Data Protection ciphertext of the <c>/mcp</c> bearer token (#164); never returned by the settings API.</summary>
+    public string? McpTokenProtected { get; init; }
+
     public const int DefaultAnalysisDefaultCount = 20;
     public const int DefaultAnalysisBodyMaxChars = 4000;
     public const AnalysisGroupingMode DefaultAnalysisGroupingMode = AnalysisGroupingMode.Auto;

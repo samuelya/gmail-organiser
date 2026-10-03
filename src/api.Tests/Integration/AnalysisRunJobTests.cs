@@ -244,6 +244,9 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
 
     public IServiceProvider Services => host.Services;
 
+    /// <summary>The test host, for clients other than <see cref="HttpClient"/> (e.g. <see cref="McpTestClient"/>).</summary>
+    public WebApplicationFactory<Program> Host => host;
+
     /// <summary>Runs on every published job change, before it is recorded.</summary>
     public Func<JobDto, Task>? OnPublish { get; set; }
 
