@@ -62,7 +62,11 @@ import { AnalysisService } from './analysis.service';
             </div>
             <div>
               <dt>To be deleted</dt>
-              <dd data-testid="to-be-deleted">{{ s.toBeDeletedCount | number }}</dd>
+              <dd>
+                <a routerLink="/clean-up" data-testid="to-be-deleted">{{
+                  s.toBeDeletedCount | number
+                }}</a>
+              </dd>
             </div>
           </dl>
           <p class="muted m-0" data-testid="savings">{{ savings() }}</p>

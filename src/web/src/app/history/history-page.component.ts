@@ -7,6 +7,7 @@ import {
   DestroyRef,
   effect,
   inject,
+  input,
   signal,
   untracked,
 } from '@angular/core';
@@ -92,6 +93,8 @@ export class HistoryPage {
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
   private readonly loads = new Subject<{ page: number; pageSize: number }>();
+  /** `/history/:batchId` opens that batch's detail. */
+  readonly batchId = input<string>();
 
   private readonly breakpoints = inject(BreakpointObserver);
   readonly narrow = toSignal(this.breakpoints.observe(NARROW_QUERY).pipe(map((s) => s.matches)), {
@@ -185,6 +188,18 @@ export class HistoryPage {
     // After a reconnect, job changes may have been missed.
     effect(() => {
       if (this.jobs.reconnects() > 0) untracked(() => this.reload());
+    });
+
+    effect(() => {
+      const id = this.batchId();
+      if (!id) return;
+      untracked(() =>
+        this.history
+          .get(id)
+          .pipe(takeUntilDestroyed(this.destroyRef))
+          // The error interceptor shows a missing batch.
+          .subscribe({ next: (d) => this.openDetail(d.batch), error: () => undefined }),
+      );
     });
 
     this.reload();
