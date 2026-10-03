@@ -90,6 +90,7 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
         row.HasAttachment = m.HasAttachment;
         row.ListId = m.ListId;
         row.ListUnsubscribe = m.ListUnsubscribe;
-        row.DeletedInGmail = false;
+        // A message in Trash counts as deleted (DESIGN §3.3) until it is restored.
+        row.DeletedInGmail = m.LabelIds.Contains(MailboxFetchJob.TrashLabelId, StringComparer.Ordinal);
     }
 }

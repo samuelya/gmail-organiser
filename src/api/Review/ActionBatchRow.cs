@@ -9,6 +9,12 @@ public enum ActionKind
     Undo,
     ApplyRest,
     AutoArchive,
+
+    /// <summary>Clean-up Delete: moved to Trash (#179).</summary>
+    Trash,
+
+    /// <summary>Clean-up: the delete label removed (#179).</summary>
+    Unmark,
 }
 
 /// <summary>One History entry (<c>action_batches</c>): the header of a set of <see cref="ActionLogRow"/>s undone together.</summary>

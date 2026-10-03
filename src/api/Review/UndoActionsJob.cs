@@ -1,8 +1,10 @@
 using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Senders;
 using Google;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -43,6 +45,7 @@ public sealed partial class UndoActionsJob(
     AppDbContext db,
     IGmailClient gmail,
     LabelCatalog catalog,
+    SenderStatsUpdater senders,
     IOptions<GmailOptions> gmailOptions,
     TimeProvider time,
     ILogger<UndoActionsJob> logger) : IJobHandler, IJobCancelHook
@@ -51,6 +54,7 @@ public sealed partial class UndoActionsJob(
     public const string Queue = JobQueues.Apply;
     public const string GoneNote = "message gone";
     public const string LabelDeletedNote = "label deleted in Gmail";
+    private const string Trash = MailboxFetchJob.TrashLabelId;
 
     public string Type => JobType;
 
@@ -144,7 +148,7 @@ public sealed partial class UndoActionsJob(
                 l.MessageId,
                 l.LabelIdsBefore,
                 l.LabelIdsAfter,
-                Gone = !db.Messages.Any(m => m.Id == l.MessageId && !m.DeletedInGmail),
+                Gone = !db.Messages.Any(m => m.Id == l.MessageId && (!m.DeletedInGmail || m.LabelIds.Contains(Trash))),
             })
             .AsNoTracking()
             .ToListAsync(ct);
@@ -190,7 +194,7 @@ public sealed partial class UndoActionsJob(
                     .ToDictionaryAsync(m => m.Id, StringComparer.Ordinal, t);
                 if (originals.Count != ids.Length
                     || originals.Any(o => o.UndoneByBatchId is not null)
-                    || (!chunk.Gone && chunk.MessageIds.Any(id => messages.GetValueOrDefault(id) is null or { DeletedInGmail: true })))
+                    || (!chunk.Gone && chunk.MessageIds.Any(id => messages.GetValueOrDefault(id) is not { } m || Gone(m))))
                 {
                     throw new PlanChangedException();
                 }
@@ -356,6 +360,10 @@ public sealed partial class UndoActionsJob(
             message.UpdatedAt = now;
         }
 
+        // A clean-up Delete undone: the messages are out of Trash, so stored and counted again.
+        var restored = messages.Values.Where(m => m.DeletedInGmail && !m.LabelIds.Contains(Trash, StringComparer.Ordinal)).ToList();
+        restored.ForEach(m => m.DeletedInGmail = false);
+
         var applied = await db.ActionLog
             .Where(l => chunk.LogIds.Contains(l.Id) && reverted.Contains(l.MessageId) && l.SuggestionId != null)
             .Select(l => new { l.MessageId, SuggestionId = l.SuggestionId!.Value })
@@ -373,6 +381,7 @@ public sealed partial class UndoActionsJob(
         }
 
         await db.SaveChangesAsync(ct);
+        await senders.UpdateAsync(restored.Select(m => m.FromAddress), ct);
         await db.Database.ExecuteSqlAsync($"""
             UPDATE senders AS s SET applied_count = GREATEST(s.applied_count - c.n, 0)
             FROM (SELECT from_address, count(*)::int AS n FROM messages WHERE id = ANY({counted}) GROUP BY from_address) AS c
@@ -406,6 +415,9 @@ public sealed partial class UndoActionsJob(
         await db.ActionLog.Where(l => logIds.Contains(l.Id))
             .ExecuteUpdateAsync(s => s.SetProperty(l => l.UndoneByBatchId, (Guid?)null), ct);
     }
+
+    /// <summary>Deleted in Gmail and not merely in Trash, where an undo of a clean-up Delete finds it.</summary>
+    private static bool Gone(MessageRow m) => m.DeletedInGmail && !m.LabelIds.Contains(Trash, StringComparer.Ordinal);
 
     private static int Done(UndoCursor cursor) => cursor.MessagesDone + cursor.Gone;
 
