@@ -4,16 +4,16 @@ using System.Text.RegularExpressions;
 namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>
-/// The analysis prompt template: the built-in embedded <c>analysis-v1.md</c> or the user's override from Settings.
+/// The analysis prompt template: the built-in embedded <c>analysis-v2.md</c> or the user's override from Settings.
 /// Placeholders are <c>{{name}}</c>; substitution is a single pass, so values (email text) never expand further.
 /// </summary>
 public sealed partial class PromptTemplate
 {
-    public const string BuiltInVersion = "analysis-v1";
+    public const string BuiltInVersion = "analysis-v2";
     public const string CustomVersion = "custom";
     public const string EmailsPlaceholder = "{{emails}}";
 
-    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v1.md";
+    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v2.md";
 
     private PromptTemplate(string version, string text)
     {
