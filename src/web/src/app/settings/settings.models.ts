@@ -20,8 +20,11 @@ export interface AnalysisSettings {
   analysisPromptTemplate: string | null;
 }
 
-/** The full `SettingsDto`: the setup fields, the analysis fields and the attachment block. */
-export type SettingsDto = AppSettings & AnalysisSettings & AttachmentsSettingsDto;
+/** The full `SettingsDto`: the setup, analysis, attachment and Claude review fields. */
+export type SettingsDto = AppSettings &
+  AnalysisSettings &
+  AttachmentsSettingsDto &
+  ClaudeSettingsDto;
 
 /**
  * The analysis part of `UpdateSettingsRequest`: only changed fields are sent; an empty prompt
@@ -194,3 +197,60 @@ export const IMAGE_MODES: readonly { value: AttachmentImageMode; label: string; 
 
 /** Ollama's capability name for models that accept images. */
 export const VISION_CAPABILITY = 'vision';
+
+/** `ClaudeReviewerMode` as the API serialises it. */
+export type ClaudeReviewerMode = 'off' | 'headless_claude_code' | 'claude_desktop';
+
+/** The Claude review fields of `SettingsDto` (DESIGN §6.7, §8.10). */
+export interface ClaudeSettings {
+  claudeReviewerMode: ClaudeReviewerMode;
+  claudeSuggestLowConfidence: boolean;
+  claudeSuggestThreshold: number;
+  claudeSuggestNewLabels: boolean;
+  claudeRunTimeoutSeconds: number;
+  claudeMaxItemsPerRun: number;
+  claudeMaxTurns: number;
+  /** `null` means the subscription's default model. */
+  claudeModel: string | null;
+  /** Whether `CLAUDE_CODE_OAUTH_TOKEN` is set in `.env`; the value never reaches the web. */
+  claudeTokenSet: boolean;
+}
+
+/** The Claude fields of `SettingsDto`; all absent on an API without Claude review. */
+export type ClaudeSettingsDto = Partial<ClaudeSettings>;
+
+/** The Claude part of `UpdateSettingsRequest`; an empty `claudeModel` clears it. */
+export type ClaudeSettingsUpdate = Partial<
+  Omit<ClaudeSettings, 'claudeTokenSet' | 'claudeModel'> & { claudeModel: string }
+>;
+
+export type NumericClaudeField =
+  'claudeSuggestThreshold' | 'claudeRunTimeoutSeconds' | 'claudeMaxItemsPerRun' | 'claudeMaxTurns';
+
+/** Same bounds as the API's `SettingsValidation`; `step` only sets the arrow-key increment. */
+export const CLAUDE_LIMITS: Record<NumericClaudeField, Range> = {
+  claudeSuggestThreshold: { min: 0.3, max: 0.95, step: 0.05, integer: false },
+  claudeRunTimeoutSeconds: { min: 60, max: 3600, step: 60, integer: true },
+  claudeMaxItemsPerRun: { min: 1, max: 50, step: 1, integer: true },
+  claudeMaxTurns: { min: 10, max: 300, step: 10, integer: true },
+};
+
+export const CLAUDE_MODES: readonly { value: ClaudeReviewerMode; label: string; help: string }[] = [
+  { value: 'off', label: 'Off', help: 'No Claude second opinion; the Claude actions stay hidden.' },
+  {
+    value: 'headless_claude_code',
+    label: 'Claude Code (headless)',
+    help: 'The api runs the Claude Code CLI for each batch you send; needs the token in .env.',
+  },
+  {
+    value: 'claude_desktop',
+    label: 'Claude Desktop',
+    help: 'You open Claude Desktop and paste the review prompt; it reaches the organiser over MCP.',
+  },
+];
+
+/** The token status chip; the token itself is never sent to the web. */
+export const CLAUDE_TOKEN_STATUS = {
+  set: 'Token set in .env',
+  missing: 'CLAUDE_CODE_OAUTH_TOKEN not set — run claude setup-token',
+} as const;

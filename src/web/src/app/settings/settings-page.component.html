@@ -112,4 +112,19 @@
       </mat-card-content>
     </mat-card>
   }
+
+  @if (claude(); as claudeSettings) {
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-claude">
+      <mat-card-content data-testid="section-claude">
+        <h2 id="settings-claude" class="section-title">Claude review</h2>
+        <p class="section-hint">An optional second opinion from Claude on the items you send.</p>
+        <app-claude-settings
+          [settings]="claudeSettings"
+          [saving]="claudeSaving()"
+          [serverErrors]="claudeErrors()"
+          (changed)="saveClaude($event)"
+        />
+      </mat-card-content>
+    </mat-card>
+  }
 </div>
