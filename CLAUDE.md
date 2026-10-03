@@ -45,7 +45,7 @@ Definitions: `.claude/agents/custom/`. The guard hook `.claude/hooks/guard-bash.
 - **Escaped defects:** filed `type:bug` + `found-after-merge` with `Escaped from #<pr>`.
 - **Owner check:** anything agents can't verify (the real Gmail account and Google OAuth consent, real Ollama models, Claude Desktop, Apps Script in Google's cloud) is stated plainly and listed in the merge note for the owner. Never build a proxy and call it verified.
 
-GitHub helpers: `scripts/gh/issue-context.sh <n>`, `pr-context.sh <pr>`, `set-status.sh <issue> "<Backlog|Ready|In progress|In review|Done>"`, `set-fields.sh <issue> "<Field>=<Option>"...` (Size, Priority, Phase, Status), `link-sub-issue.sh <parent> <child>`, `wait-ci.sh <pr>` (foreground, Bash timeout 600000; exit 0 green, 1 failed, 2 still running: run again), `ci-failures.sh <pr> [--post]`, `team-metrics.sh`. Shared config (`CLAUDE.md`, `.claude/`, `.githooks/`, root files) is lead-only and changes via PR.
+GitHub helpers: `scripts/gh/issue-context.sh <n>`, `pr-context.sh <pr>`, `set-status.sh <issue> "<Backlog|Ready|In progress|In review|Done>"`, `set-fields.sh <issue> "<Field>=<Option>"...` (Size, Priority, Phase, Status), `link-sub-issue.sh <parent> <child>`, `wait-ci.sh <pr>` (foreground, Bash timeout 600000; exit 0 green, 1 failed, 2 still running: run again), `ci-failures.sh <pr> [--post]`, `team-metrics.sh`, `clean-test-volumes.sh [--apply]` (lead: agents' `gmo-*` volumes once their PR or issue is closed). Shared config (`CLAUDE.md`, `.claude/`, `.githooks/`, root files) is lead-only and changes via PR.
 
 ## Cost discipline
 
