@@ -21,6 +21,7 @@ import {
 } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
+import { MatChipsModule } from '@angular/material/chips';
 import { MatDialog } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -86,6 +87,7 @@ interface PendingAction {
     DecimalPipe,
     MatButtonModule,
     MatCardModule,
+    MatChipsModule,
     MatFormFieldModule,
     MatIconModule,
     MatInputModule,
@@ -146,6 +148,8 @@ export class SendersPage {
   readonly loadFailed = signal(false);
   /** Addresses or domains whose fetch request is in flight. */
   readonly starting = signal<ReadonlySet<string>>(new Set());
+  /** Addresses with an allowlist change in flight. */
+  readonly allowlisting = signal<ReadonlySet<string>>(new Set());
   /** Resume or cancel per job id, until the job's status changes. */
   private readonly pending = signal<ReadonlyMap<string, PendingAction>>(new Map());
 
@@ -330,6 +334,33 @@ export class SendersPage {
   }
 
   /** A resume or cancel for this job is in flight or waiting for its status to change. */
+  /** Flips the sender's allowlist flag; the row shows the saved value once the API answers. */
+  toggleAllowlist(sender: SenderDto): void {
+    const address = sender.address;
+    if (this.allowlisting().has(address)) return;
+    this.allowlisting.update((busy) => new Set(busy).add(address));
+    this.senders
+      .setAllowlisted(address, !sender.allowlisted)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (saved) => {
+          this.allowlisting.update((busy) => without(busy, address));
+          this.result.update((page) =>
+            page
+              ? {
+                  ...page,
+                  items: page.items.map((s) =>
+                    s.address === address ? { ...s, allowlisted: saved.allowlisted } : s,
+                  ),
+                }
+              : page,
+          );
+        },
+        // The error interceptor shows why; the row keeps its flag.
+        error: () => this.allowlisting.update((busy) => without(busy, address)),
+      });
+  }
+
   isPending(job: JobDto): boolean {
     return this.pending().get(job.id)?.status === job.status;
   }

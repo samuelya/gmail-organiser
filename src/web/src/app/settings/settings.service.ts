@@ -7,6 +7,7 @@ import {
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
   PromptTemplateDto,
+  ProtectionUpdate,
   SettingsDto,
 } from './settings.models';
 
@@ -35,6 +36,11 @@ export class SettingsService {
 
   /** A partial update of the Claude review fields: fields left out stay unchanged. */
   saveClaude(changes: ClaudeSettingsUpdate): Observable<SettingsDto> {
+    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** A partial update of the protection rules: rules left out stay unchanged. */
+  saveProtection(changes: ProtectionUpdate): Observable<SettingsDto> {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
   }
 

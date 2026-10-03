@@ -107,6 +107,14 @@
                   @if (row.sender.displayName) {
                     <span class="address">{{ row.sender.address }}</span>
                   }
+                  @if (row.sender.allowlisted) {
+                    <mat-chip-set aria-label="Protection">
+                      <mat-chip disableRipple data-testid="allowlisted-chip">
+                        <mat-icon matChipAvatar aria-hidden="true">shield</mat-icon>
+                        Allowlisted
+                      </mat-chip>
+                    </mat-chip-set>
+                  }
                 </div>
               </td>
             </ng-container>
@@ -172,6 +180,25 @@
                 >
                   <mat-icon aria-hidden="true">psychology</mat-icon>
                 </a>
+                <button
+                  mat-icon-button
+                  type="button"
+                  (click)="toggleAllowlist(row.sender)"
+                  [disabled]="allowlisting().has(row.sender.address)"
+                  [attr.aria-pressed]="row.sender.allowlisted"
+                  [matTooltip]="
+                    row.sender.allowlisted ? 'Remove from allowlist' : 'Allowlist sender'
+                  "
+                  [attr.aria-label]="
+                    (row.sender.allowlisted ? 'Remove from allowlist: ' : 'Allowlist ') +
+                    row.sender.address
+                  "
+                  data-testid="allowlist-sender"
+                >
+                  <mat-icon aria-hidden="true">{{
+                    row.sender.allowlisted ? 'shield' : 'add_moderator'
+                  }}</mat-icon>
+                </button>
                 @if (rowJobs().get(row.sender.address); as job) {
                   <app-sender-progress
                     [job]="job"

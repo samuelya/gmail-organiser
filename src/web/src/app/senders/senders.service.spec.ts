@@ -5,6 +5,7 @@ import { convertToParamMap } from '@angular/router';
 import {
   DEFAULT_SENDER_QUERY,
   hasControlChars,
+  normaliseAllowlistAddress,
   normaliseFetchTarget,
   parseSenderQuery,
   relativeTime,
@@ -36,6 +37,21 @@ describe('SendersService', () => {
       'page=3&pageSize=25&sort=lastSeen&dir=asc&search=news',
     );
     req.flush({ items: [], page: 3, pageSize: 25, total: 0 });
+  });
+
+  it('list filters on the allowlist flag when asked', () => {
+    service.list(DEFAULT_SENDER_QUERY, true).subscribe();
+    const req = http.expectOne((r) => r.method === 'GET' && r.url === '/api/senders');
+    expect(req.request.params.get('allowlisted')).toBe('true');
+    req.flush({ items: [], page: 1, pageSize: 50, total: 0 });
+  });
+
+  it('setAllowlisted puts the flag on the encoded address', () => {
+    service.setAllowlisted('a+b@example.com', false).subscribe();
+    const req = http.expectOne('/api/senders/a%2Bb%40example.com/allowlist');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({ allowlisted: false });
+    req.flush({});
   });
 
   it('list leaves out an empty search', () => {
@@ -111,6 +127,26 @@ describe('normaliseFetchTarget', () => {
     `${'a'.repeat(65)}@example.com`,
   ])('rejects %j', (input) => {
     expect(normaliseFetchTarget(input)).toBeNull();
+  });
+});
+
+describe('normaliseAllowlistAddress', () => {
+  it.each([
+    ['News@Example.com', 'news@example.com'],
+    ['  <news@example.com> ', 'news@example.com'],
+  ])('accepts %j', (input, expected) => {
+    expect(normaliseAllowlistAddress(input)).toBe(expected);
+  });
+
+  it.each([
+    '',
+    'example.com',
+    '@example.com',
+    '<news@example.com',
+    'a@b@example.com',
+    'a;b@example.com',
+  ])('rejects %j', (input) => {
+    expect(normaliseAllowlistAddress(input)).toBeNull();
   });
 });
 

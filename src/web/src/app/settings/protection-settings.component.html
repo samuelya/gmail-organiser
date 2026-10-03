@@ -1,0 +1,105 @@
+<div class="flex max-w-2xl flex-col gap-6">
+  <fieldset class="flex flex-col gap-2" [formGroup]="form">
+    <legend class="mb-1">Protection rules</legend>
+    <p class="help mb-2">Each rule is saved as soon as you switch it.</p>
+    <ul class="m-0 flex list-none flex-col gap-2 p-0">
+      @for (rule of rules; track rule.key) {
+        <li>
+          <mat-slide-toggle
+            [formControlName]="rule.key"
+            [attr.data-testid]="'rule-' + rule.key"
+            [attr.aria-describedby]="'rule-help-' + rule.key"
+          >
+            {{ rule.label }}
+          </mat-slide-toggle>
+          <p class="help ml-14" [id]="'rule-help-' + rule.key">{{ rule.hint }}</p>
+        </li>
+      }
+    </ul>
+  </fieldset>
+
+  <section class="flex flex-col gap-2" aria-labelledby="allowlist-title">
+    <h3 id="allowlist-title" class="m-0">Allowlist</h3>
+    <p class="help" data-testid="allowlist-always">
+      Allowlisted senders are always protected, whichever rules are on.
+    </p>
+
+    <form
+      class="flex flex-wrap items-start gap-2"
+      [formGroup]="addForm"
+      (ngSubmit)="add()"
+      novalidate
+    >
+      <mat-form-field class="min-w-0 flex-1" subscriptSizing="dynamic">
+        <mat-label>Add address</mat-label>
+        <input
+          matInput
+          type="email"
+          autocomplete="off"
+          formControlName="address"
+          data-testid="allowlist-address"
+        />
+        @if (address.hasError('server')) {
+          <mat-error data-testid="allowlist-error">{{ address.getError('server') }}</mat-error>
+        } @else if (address.hasError('required')) {
+          <mat-error>Enter an address.</mat-error>
+        } @else if (address.hasError('address')) {
+          <mat-error data-testid="allowlist-error"
+            >Enter one address, like name&#64;example.com.</mat-error
+          >
+        }
+        <mat-hint>Mail from this address is never marked for deletion.</mat-hint>
+      </mat-form-field>
+      <button mat-flat-button type="submit" class="mt-2" data-testid="allowlist-add">Add</button>
+    </form>
+
+    @if (allowlistFailed()) {
+      <p class="help" role="alert">
+        The allowlist could not be loaded.
+        <button mat-button type="button" (click)="reloadAllowlist()" data-testid="allowlist-retry">
+          Retry
+        </button>
+      </p>
+    } @else if (allowlist().length === 0 && !allowlistLoading()) {
+      <p class="help" data-testid="allowlist-empty">No senders are allowlisted.</p>
+    }
+
+    <ul class="m-0 flex list-none flex-col p-0" aria-label="Allowlisted senders">
+      @for (sender of allowlist(); track sender.address) {
+        <li class="flex items-center gap-2" data-testid="allowlist-row">
+          <div class="flex min-w-0 flex-1 flex-col">
+            <span class="truncate">{{ sender.displayName || sender.address }}</span>
+            @if (sender.displayName) {
+              <span class="address truncate">{{ sender.address }}</span>
+            }
+          </div>
+          <span class="address whitespace-nowrap">{{ sender.totalCount | number }} emails</span>
+          <button
+            mat-icon-button
+            type="button"
+            (click)="remove(sender)"
+            [disabled]="isBusy(sender.address)"
+            [attr.aria-label]="'Remove ' + sender.address + ' from the allowlist'"
+            data-testid="allowlist-remove"
+          >
+            <mat-icon aria-hidden="true">remove_circle_outline</mat-icon>
+          </button>
+        </li>
+      }
+    </ul>
+
+    @if (allowlist().length < allowlistTotal()) {
+      <div>
+        <button
+          mat-stroked-button
+          type="button"
+          (click)="loadMore()"
+          [disabled]="allowlistLoading()"
+          data-testid="allowlist-more"
+        >
+          Load more ({{ allowlist().length | number }} of {{ allowlistTotal() | number }})
+        </button>
+      </div>
+    }
+  </section>
+</div>
