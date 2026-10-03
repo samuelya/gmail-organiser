@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.CleanUp.Unsubscribe;
 using GmailOrganiser.Claude;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
@@ -87,6 +88,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.Address).ValueGeneratedNever();
             e.Property(r => r.Domain).IsRequired();
             e.Property(r => r.Allowlisted).HasDefaultValue(false);
+            e.Property(r => r.UnsubscribeMethod).HasConversion(new SnakeCaseEnumConverter<UnsubscribeMethod>());
             e.HasIndex(r => r.Domain);
         });
 

@@ -365,6 +365,7 @@ public sealed partial class FakeGmailClient : IGmailClient
         AddHeader(headers, "To", m.To);
         AddHeader(headers, "List-Id", m.ListId);
         AddHeader(headers, "List-Unsubscribe", m.ListUnsubscribe);
+        AddHeader(headers, "List-Unsubscribe-Post", m.ListUnsubscribePost);
 
         return new Message
         {

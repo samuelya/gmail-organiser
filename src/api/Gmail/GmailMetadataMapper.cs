@@ -14,7 +14,7 @@ public sealed record SenderAddress(string Address, string? DisplayName)
 public static class GmailMetadataMapper
 {
     /// <summary>The headers requested with <c>format=metadata</c>.</summary>
-    public static readonly IReadOnlyList<string> MetadataHeaders = ["From", "To", "Subject", "Date", "List-Id", "List-Unsubscribe"];
+    public static readonly IReadOnlyList<string> MetadataHeaders = ["From", "To", "Subject", "Date", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post"];
 
     /// <summary>
     /// <c>HasAttachment</c> heuristic. <c>format=metadata</c> returns the top-level <c>payload.mimeType</c> and headers
@@ -41,6 +41,7 @@ public static class GmailMetadataMapper
             Subject: Header("Subject"),
             ListId: ParseListId(Header("List-Id")),
             ListUnsubscribe: Header("List-Unsubscribe"),
+            ListUnsubscribePost: Header("List-Unsubscribe-Post"),
             Snippet: message.Snippet,
             SizeEstimate: message.SizeEstimate ?? 0,
             HasAttachment: string.Equals(message.Payload?.MimeType, AttachmentMimeType, StringComparison.OrdinalIgnoreCase));

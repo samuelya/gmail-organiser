@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.CleanUp.Unsubscribe;
 using GmailOrganiser.Claude;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
@@ -33,6 +34,7 @@ builder.Services.AddAnalysis();
 builder.Services.AddMemory();
 builder.Services.AddReview();
 builder.Services.AddClaude();
+builder.Services.AddUnsubscribe();
 builder.Services.AddMcpServer();
 
 var app = builder.Build();
@@ -67,6 +69,7 @@ app.MapReviewEndpoints();
 app.MapLabelsEndpoints();
 app.MapHistoryEndpoints();
 app.MapClaudeReviewEndpoints();
+app.MapUnsubscribeEndpoints();
 app.MapMcpServer();
 app.MapHub<JobsHub>(JobsHub.Path);
 

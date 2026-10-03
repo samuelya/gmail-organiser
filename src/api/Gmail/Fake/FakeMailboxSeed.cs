@@ -2,7 +2,8 @@ namespace GmailOrganiser.Gmail.Fake;
 
 /// <summary>
 /// A deterministic synthetic mailbox: 60 messages from 8 <c>example.com</c> senders over the last months. Newer mail is
-/// in the Inbox, older mail is archived; list senders carry <c>List-Id</c>/<c>List-Unsubscribe</c>, and the billing,
+/// in the Inbox, older mail is archived; list senders carry <c>List-Id</c>/<c>List-Unsubscribe</c> (the newsletter
+/// supports RFC 8058 one-click, the shop only a link, the forum only <c>mailto:</c>), and the billing,
 /// travel and statement senders attach generated PDFs. Every third message has an html-only body, the next a text-only
 /// one, the next both.
 /// </summary>
@@ -17,15 +18,26 @@ public static class FakeMailboxSeed
         string[] Labels,
         string? ListId = null,
         int AttachmentsPerMessage = 0,
-        string AttachmentTitle = "");
+        string AttachmentTitle = "",
+        UnsubscribeKind Unsubscribe = UnsubscribeKind.None);
+
+    private enum UnsubscribeKind
+    {
+        None,
+        OneClick,
+        Link,
+        Mailto,
+    }
+
+    private const string OneClickPost = "List-Unsubscribe=One-Click";
 
     private static readonly Sender[] Senders =
     [
-        new("Weekly News <news@example.com>", "This week's digest", ["CATEGORY_PROMOTIONS"], "Weekly News <weekly.news.example.com>"),
-        new("\"Shop Offers\" <Offers@Shop.Example.com>", "Special offer inside", ["CATEGORY_PROMOTIONS"], "shop-offers.example.com"),
+        new("Weekly News <news@example.com>", "This week's digest", ["CATEGORY_PROMOTIONS"], "Weekly News <weekly.news.example.com>", Unsubscribe: UnsubscribeKind.OneClick),
+        new("\"Shop Offers\" <Offers@Shop.Example.com>", "Special offer inside", ["CATEGORY_PROMOTIONS"], "shop-offers.example.com", Unsubscribe: UnsubscribeKind.Link),
         new("Alice Example <alice@example.com>", "Lunch next week?", ["UNREAD", "CATEGORY_PERSONAL"]),
         new("Billing <billing@example.com>", "Your invoice is ready", ["CATEGORY_UPDATES"], AttachmentsPerMessage: 1, AttachmentTitle: "Invoice"),
-        new("Community Forum <forum@lists.example.com>", "New replies to your topic", ["CATEGORY_FORUMS"], "Forum <forum.lists.example.com>"),
+        new("Community Forum <forum@lists.example.com>", "New replies to your topic", ["CATEGORY_FORUMS"], "Forum <forum.lists.example.com>", Unsubscribe: UnsubscribeKind.Mailto),
         new("bob@example.com", "Notes from the meeting", []),
         new("Travel Desk <bookings@travel.example.com>", "Your trip itinerary", ["CATEGORY_UPDATES"], AttachmentsPerMessage: 2, AttachmentTitle: "Itinerary"),
         new("\"Example Bank\" <statements@bank.example.com>", "Your monthly statement", [], AttachmentsPerMessage: 1, AttachmentTitle: "Statement"),
@@ -53,13 +65,19 @@ public static class FakeMailboxSeed
                 LabelIds: labels,
                 To: "User <user@example.com>",
                 ListId: sender.ListId,
-                ListUnsubscribe: sender.ListId is null ? null : $"<https://example.com/unsubscribe/{number:D4}>",
+                ListUnsubscribe: sender.Unsubscribe switch
+                {
+                    UnsubscribeKind.OneClick or UnsubscribeKind.Link => $"<https://example.com/unsubscribe/{number:D4}>",
+                    UnsubscribeKind.Mailto => $"<mailto:unsubscribe@example.com?subject=unsubscribe%20{number:D4}>",
+                    _ => null,
+                },
                 Snippet: $"Synthetic message {number} for testing.",
                 SizeEstimate: 1500 + (i * 397 % 6000),
                 HistoryId: (HistoryId - i).ToString(System.Globalization.CultureInfo.InvariantCulture),
                 Attachments: attachments,
                 BodyText: i % 3 == 0 ? null : $"Hello,\n\nSynthetic body {number} from {sender.Subject.ToLowerInvariant()}. Grüße, Ünïcode ✓\n",
-                BodyHtml: i % 3 == 1 ? null : $"<html><body><p>Synthetic body {number}: <b>{sender.Subject}</b>. Grüße ✓</p></body></html>"));
+                BodyHtml: i % 3 == 1 ? null : $"<html><body><p>Synthetic body {number}: <b>{sender.Subject}</b>. Grüße ✓</p></body></html>",
+                ListUnsubscribePost: sender.Unsubscribe == UnsubscribeKind.OneClick ? OneClickPost : null));
         }
 
         return messages;
