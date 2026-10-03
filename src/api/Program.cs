@@ -8,6 +8,7 @@ using GmailOrganiser.Gmail.Auth;
 using GmailOrganiser.Health;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Mcp;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
@@ -32,6 +33,7 @@ builder.Services.AddAnalysis();
 builder.Services.AddMemory();
 builder.Services.AddReview();
 builder.Services.AddClaude();
+builder.Services.AddMcpServer();
 
 var app = builder.Build();
 
@@ -65,6 +67,7 @@ app.MapReviewEndpoints();
 app.MapLabelsEndpoints();
 app.MapHistoryEndpoints();
 app.MapClaudeReviewEndpoints();
+app.MapMcpServer();
 app.MapHub<JobsHub>(JobsHub.Path);
 
 // Hosted services start before the server listens: DatabaseMigrator applies the migrations first.
