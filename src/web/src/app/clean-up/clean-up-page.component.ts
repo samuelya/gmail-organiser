@@ -172,6 +172,11 @@ export class CleanUpPage {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((page) => {
+        const last = clampedPage(page);
+        if (last) {
+          this.senderPage.set(last);
+          return;
+        }
         this.sendersLoading.set(false);
         this.sendersFailed.set(!page);
         this.senders.set(page);
@@ -197,6 +202,11 @@ export class CleanUpPage {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((messages) => {
+        const last = clampedPage(messages);
+        if (last) {
+          this.messagePage.set(last);
+          return;
+        }
         this.messagesLoading.set(false);
         this.messages.set(messages);
         // Ticked rows that left the list (removed or trashed meanwhile) are dropped.
@@ -434,4 +444,13 @@ function orNull<T>() {
       map((value) => value as T | null),
       catchError(() => of(null)),
     );
+}
+
+/**
+ * The last existing page when a reload past the end (its rows removed or trashed meanwhile) came
+ * back empty though rows remain; `null` when the page is fine as it is.
+ */
+function clampedPage(page: PagedDto<unknown> | null): number | null {
+  if (!page || page.items.length > 0 || page.total === 0 || page.page <= 1) return null;
+  return Math.max(1, Math.ceil(page.total / page.pageSize));
 }

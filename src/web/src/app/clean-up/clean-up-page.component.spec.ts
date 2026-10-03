@@ -253,4 +253,28 @@ describe('CleanUpPage', () => {
     expect(senders.setAllowlisted).toHaveBeenCalledWith('news@example.com', true);
     expect(api.senders.mock.calls.length).toBeGreaterThan(calls);
   });
+
+  it('goes back to the last sender page when a reload past the end comes back empty', async () => {
+    const { api, fixture, all, settle } = await render();
+    const first = api.senders.getMockImplementation()!;
+    api.senders.mockImplementation((...args: unknown[]) =>
+      args[0] === 2 ? of({ items: [], page: 2, pageSize: 25, total: 25 }) : first(),
+    );
+    fixture.componentInstance.onSenderPage(2);
+    await settle();
+    expect(api.senders).toHaveBeenLastCalledWith(1, 25, '');
+    expect(all('sender-item')).toHaveLength(2);
+  });
+
+  it('goes back to the last message page when a reload past the end comes back empty', async () => {
+    const { api, fixture, all, settle } = await render();
+    const first = api.messages.getMockImplementation()!;
+    api.messages.mockImplementation((...args: unknown[]) =>
+      args[1] === 2 ? of({ items: [], page: 2, pageSize: 50, total: 50 }) : first(),
+    );
+    fixture.componentInstance.onMessagePage(2);
+    await settle();
+    expect(api.messages).toHaveBeenLastCalledWith('news@example.com', 1, 50);
+    expect(all('message-row')).toHaveLength(2);
+  });
 });
