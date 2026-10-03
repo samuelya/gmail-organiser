@@ -1,5 +1,10 @@
 import { InjectionToken } from '@angular/core';
 import { Observable } from 'rxjs';
+import {
+  CreateExternalReviewsRequest,
+  ExternalReviewDto,
+  MAX_CLAUDE_TARGETS,
+} from '../core/claude.models';
 
 /** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. */
 export type ReviewStatus = 'pending' | 'approved' | 'rejected';
@@ -17,6 +22,7 @@ export type SuggestionSource = 'llm' | 'derived' | 'memory' | 'sender_pattern';
 export const SENDER_PAGE_SIZE = 25;
 /** The API's `ReviewQuery.MaxGroupPageSize` is 50. */
 export const GROUP_PAGE_SIZE = 20;
+export const MAX_GROUP_PAGE_SIZE = 50;
 /** The API's `AnalysisCandidates.MaxMessageIds`. */
 export const MAX_ANALYSE_INDIVIDUALLY = 500;
 
@@ -47,6 +53,10 @@ export interface SuggestionDto {
   status: SuggestionStatus;
   edited: boolean;
   protected: boolean;
+  /** The newest not-cancelled Claude review item for this suggestion alone. */
+  claudeReview?: ExternalReviewDto | null;
+  /** Worth a Claude review by the settings; a hint only. */
+  suggestedForClaude?: boolean;
 }
 
 /** `groupKey` is null for a message analysed on its own. */
@@ -67,6 +77,10 @@ export interface ReviewGroupDto {
   members: SuggestionDto[];
   /** Not every member is listed; the counts cover them all. */
   truncated: boolean;
+  /** The newest not-cancelled Claude review item for the group. */
+  claudeReview?: ExternalReviewDto | null;
+  /** Any member is worth a Claude review. */
+  suggestedForClaude?: boolean;
 }
 
 export interface ReviewSenderDetailDto {
@@ -237,4 +251,81 @@ export function editRequest(member: SuggestionDto, outcome: ReviewOutcome): Revi
     needsAction: outcome.needsAction,
     toBeDeleted: outcome.toBeDeleted && !member.protected,
   };
+}
+
+/** What a group card sends to Claude and shows: a message analysed on its own is its one suggestion. */
+export interface ClaudeCardTarget {
+  request: CreateExternalReviewsRequest;
+  review: ExternalReviewDto | null;
+}
+
+export function claudeCardTarget(
+  senderAddress: string,
+  group: ReviewGroupDto,
+): ClaudeCardTarget | null {
+  if (group.groupKey !== null) {
+    return {
+      request: { groups: [{ senderAddress, groupKey: group.groupKey }] },
+      review: group.claudeReview ?? null,
+    };
+  }
+  const only = group.members[0];
+  return only ? { request: { suggestionIds: [only.id] }, review: only.claudeReview ?? null } : null;
+}
+
+/**
+ * The sender's pending groups (as `GET …/senders/{address}?status=pending` lists them) as one request,
+ * largest first and at most the API's limit; `null` when there is nothing to send.
+ */
+export function pendingClaudeRequest(
+  senderAddress: string,
+  groups: readonly ReviewGroupDto[],
+): CreateExternalReviewsRequest | null {
+  const request: Required<Pick<CreateExternalReviewsRequest, 'suggestionIds' | 'groups'>> = {
+    suggestionIds: [],
+    groups: [],
+  };
+  for (const g of groups.slice(0, MAX_CLAUDE_TARGETS)) {
+    if (g.groupKey !== null) request.groups.push({ senderAddress, groupKey: g.groupKey });
+    else if (g.members[0]) request.suggestionIds.push(g.members[0].id);
+  }
+  return request.groups.length || request.suggestionIds.length ? request : null;
+}
+
+/**
+ * Puts a changed Claude item on the row it belongs to. A cancelled item clears the row only when it
+ * is the one shown; an item older than the one shown is ignored. `accepted` says the item just became
+ * accepted, so the suggestions changed too.
+ */
+export function patchClaudeReview(
+  detail: ReviewSenderDetailDto,
+  item: ExternalReviewDto,
+): { detail: ReviewSenderDetailDto; accepted: boolean } {
+  let accepted = false;
+  const next = (
+    held: ExternalReviewDto | null | undefined,
+  ): ExternalReviewDto | null | undefined => {
+    if (held && held.id !== item.id && held.createdAt > item.createdAt) return held;
+    if (item.status === 'cancelled') return held?.id === item.id ? null : held;
+    accepted ||= item.resolution === 'accepted_claude' && held?.resolution !== 'accepted_claude';
+    return item;
+  };
+  const sameSender = detail.sender.address.toLowerCase() === item.senderAddress.toLowerCase();
+  let changed = false;
+  const groups = detail.groups.map((g) => {
+    if (item.targetType === 'group') {
+      if (!sameSender || g.groupKey === null || g.groupKey !== item.groupKey) return g;
+      changed = true;
+      return { ...g, claudeReview: next(g.claudeReview) };
+    }
+    if (!g.members.some((m) => m.id === item.suggestionId)) return g;
+    changed = true;
+    return {
+      ...g,
+      members: g.members.map((m) =>
+        m.id === item.suggestionId ? { ...m, claudeReview: next(m.claudeReview) } : m,
+      ),
+    };
+  });
+  return { detail: changed ? { ...detail, groups } : detail, accepted };
 }

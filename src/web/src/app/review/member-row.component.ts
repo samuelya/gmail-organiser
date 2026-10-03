@@ -4,12 +4,22 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { ExternalReviewDto } from '../core/claude.models';
+import { ClaudeReviewerMode } from '../settings/settings.models';
+import { ClaudeVerdict } from './claude-verdict.component';
 import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.models';
 
 /** One suggestion inside a group card: preview, source, confidence and per-member decisions. */
 @Component({
   selector: 'app-member-row',
-  imports: [DatePipe, MatButtonModule, MatCheckboxModule, MatIconModule, MatTooltipModule],
+  imports: [
+    ClaudeVerdict,
+    DatePipe,
+    MatButtonModule,
+    MatCheckboxModule,
+    MatIconModule,
+    MatTooltipModule,
+  ],
   template: `
     @let s = suggestion();
     <div
@@ -37,6 +47,14 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           <span class="muted" [attr.aria-label]="'Confidence ' + confidence()">{{
             confidence()
           }}</span>
+          @if (claudeMode() !== 'off' && s.suggestedForClaude) {
+            <span
+              class="claude-hint"
+              matTooltip="Worth a second opinion from Claude"
+              data-testid="member-claude-hint"
+              >Claude?</span
+            >
+          }
           @if (s.topicLabel) {
             <span class="badge">{{ s.topicLabel }}</span>
           }
@@ -60,6 +78,16 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
             <span class="skipped" data-testid="member-skipped">skipped</span>
           }
         </div>
+        <app-claude-verdict
+          class="mt-1 block"
+          [mode]="claudeMode()"
+          [request]="claudeRequest()"
+          [review]="s.claudeReview"
+          [labels]="labels()"
+          [busy]="busy()"
+          [sendable]="s.status === 'pending'"
+          (changed)="claudeChange.emit($event)"
+        />
       </div>
       <div class="ml-auto flex shrink-0">
         @if (s.status !== 'approved') {
@@ -125,6 +153,10 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
     .skipped {
       color: var(--mat-sys-error);
     }
+    .claude-hint {
+      color: var(--mat-sys-tertiary);
+      font-weight: 600;
+    }
     .small-icon {
       font-size: 1.125rem;
       width: 1.125rem;
@@ -140,14 +172,17 @@ export class MemberRow {
   /** The last group or bulk approve left this member pending. */
   readonly skipped = input(false);
   readonly busy = input(false);
+  readonly claudeMode = input<ClaudeReviewerMode>('off');
   readonly approve = output<void>();
   readonly reject = output<void>();
   readonly edit = output<void>();
   readonly toggleSelect = output<void>();
+  readonly claudeChange = output<ExternalReviewDto>();
 
   readonly subject = computed(() => this.suggestion().subject || '(no subject)');
   readonly source = computed(
     () => SOURCE_LABELS[this.suggestion().source] ?? this.suggestion().source,
   );
   readonly confidence = computed(() => percent(this.suggestion().confidence));
+  readonly claudeRequest = computed(() => ({ suggestionIds: [this.suggestion().id] }));
 }

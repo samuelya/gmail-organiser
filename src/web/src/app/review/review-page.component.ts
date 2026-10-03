@@ -19,6 +19,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { Router } from '@angular/router';
 import { catchError, filter, finalize, map, Observable, of, switchMap, tap } from 'rxjs';
+import { ExternalReviewDto } from '../core/claude.models';
 import { openConfirm } from '../core/confirm-dialog';
 import { isActiveJob, JobDto, newerJob, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
@@ -27,6 +28,7 @@ import { PageHeader } from '../layout/page-header';
 import { ANALYSIS_LIMITS } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
 import { openBulkApprove } from './bulk-approve-dialog.component';
+import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
 import {
   APPLY_JOB,
@@ -36,6 +38,7 @@ import {
   GroupDecisionResponse,
   MAX_ANALYSE_INDIVIDUALLY,
   outcomeOf,
+  patchClaudeReview,
   patternSummary,
   REVIEW_EDIT_DIALOG,
   ReviewGroupDto,
@@ -57,6 +60,7 @@ import { SenderList } from './sender-list.component';
 @Component({
   selector: 'app-review-page',
   imports: [
+    ClaudeSenderActions,
     GroupCard,
     MatButtonModule,
     MatCardModule,
@@ -122,6 +126,7 @@ export class ReviewPage {
     const s = this.settings();
     return s ? { action: s.actionLabelName, delete: s.deleteLabelName } : DEFAULT_FLAG_LABELS;
   });
+  readonly claudeMode = computed(() => this.settings()?.claudeReviewerMode ?? 'off');
 
   /** The apply batch's job, from the hub or (after a reconnect) from the API, whichever is newer. */
   readonly applyJobId = signal<string | null>(null);
@@ -196,6 +201,10 @@ export class ReviewPage {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((pattern) => this.pattern.set(pattern));
+
+    this.jobs.externalReviewChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((item) => this.onClaudeChange(item));
 
     // An apply job started elsewhere or before this page opened (the hub's snapshot, also after a
     // reconnect): follow it, so its progress and Cancel show and no second batch can be queued.
@@ -293,6 +302,15 @@ export class ReviewPage {
 
   editMember(m: SuggestionDto): void {
     this.afterEdit(this.editDialog.editMember(m));
+  }
+
+  /** Patched in place; an accepted verdict changed suggestions, so everything is re-fetched. */
+  onClaudeChange(item: ExternalReviewDto): void {
+    const d = this.detail();
+    if (!d) return;
+    const patched = patchClaudeReview(d, item);
+    this.detail.set(patched.detail);
+    if (patched.accepted) this.refresh();
   }
 
   toggleMember(m: SuggestionDto): void {

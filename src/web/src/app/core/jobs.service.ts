@@ -1,7 +1,8 @@
 import { HttpClient } from '@angular/common/http';
 import { computed, DestroyRef, inject, Injectable, InjectionToken, signal } from '@angular/core';
 import { HubConnection, HubConnectionBuilder, IRetryPolicy, LogLevel } from '@microsoft/signalr';
-import { Observable } from 'rxjs';
+import { Observable, Subject } from 'rxjs';
+import { ExternalReviewDto } from './claude.models';
 import { isActiveJob, JobDto, JobsConnectionState } from './jobs.models';
 
 export const JOBS_HUB_URL = '/hubs/jobs';
@@ -48,6 +49,7 @@ export class JobsService {
   private startAttempts = 0;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private destroyed = false;
+  private readonly reviewChanges = new Subject<ExternalReviewDto>();
 
   /** Every job held: active ones and the latest finished ones. */
   readonly jobs = computed(() => [...this.byId().values()]);
@@ -60,10 +62,15 @@ export class JobsService {
   readonly connectionState = this.state.asReadonly();
   /** Increments after every reconnect or late first connect: REST state may have changed meanwhile. */
   readonly reconnects = this.reconnectCount.asReadonly();
+  /** Every `externalReviewChanged`: a Claude review item was created or changed. Missed while disconnected. */
+  readonly externalReviewChanges = this.reviewChanges.asObservable();
 
   constructor() {
     this.connection.on('jobsSnapshot', (jobs: JobDto[]) => this.onSnapshot(jobs));
     this.connection.on('jobChanged', (job: JobDto) => this.onChanged(job));
+    this.connection.on('externalReviewChanged', (item: ExternalReviewDto) =>
+      this.reviewChanges.next(item),
+    );
     this.connection.onreconnecting(() => {
       this.seen.clear();
       this.missedUpdates = true;
@@ -79,6 +86,7 @@ export class JobsService {
     inject(DestroyRef).onDestroy(() => {
       this.destroyed = true;
       clearTimeout(this.retryTimer);
+      this.reviewChanges.complete();
       void this.connection.stop();
     });
     this.start();
