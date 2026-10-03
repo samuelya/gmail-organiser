@@ -118,6 +118,18 @@ export function normaliseFetchTarget(input: string | null | undefined): string |
   return ok ? target : null;
 }
 
+/**
+ * An allowlist address as the API stores it: one surrounding `<…>` stripped, trimmed and lower-cased,
+ * a plain `local@domain`. Returns the normalised address, or `null` (a bare domain is not an address).
+ */
+export function normaliseAllowlistAddress(input: string | null | undefined): string | null {
+  let value = (input ?? '').trim();
+  if (value.length >= 2 && value.startsWith('<') && value.endsWith('>')) value = value.slice(1, -1);
+  if (value.trim().startsWith('@')) return null;
+  const address = normaliseFetchTarget(value);
+  return address?.includes('@') ? address : null;
+}
+
 function isHostname(value: string): boolean {
   return value.length <= MAX_DOMAIN && HOSTNAME.test(value);
 }

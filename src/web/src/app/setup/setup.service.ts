@@ -6,6 +6,7 @@ import type {
   AnalysisSettingsUpdate,
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
+  ProtectionUpdate,
 } from '../settings/settings.models';
 
 /** `GoogleClientDto`: the secret itself is never returned. */
@@ -39,7 +40,7 @@ export interface GoogleClientRequest {
  * value stays unchanged and an empty model name clears the model.
  */
 export interface UpdateSettingsRequest
-  extends AnalysisSettingsUpdate, AttachmentsUpdate, ClaudeSettingsUpdate {
+  extends AnalysisSettingsUpdate, AttachmentsUpdate, ClaudeSettingsUpdate, ProtectionUpdate {
   ollamaBaseUrl?: string;
   chatModel?: string;
   embeddingModel?: string;

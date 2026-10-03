@@ -113,6 +113,16 @@
     </mat-card>
   }
 
+  @if (protection(); as protectionSettings) {
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-protection">
+      <mat-card-content data-testid="section-protection">
+        <h2 id="settings-protection" class="section-title">Protection</h2>
+        <p class="section-hint">Mail that is never marked for deletion.</p>
+        <app-protection-settings [settings]="protectionSettings" />
+      </mat-card-content>
+    </mat-card>
+  }
+
   @if (claude(); as claudeSettings) {
     <mat-card appearance="outlined" role="region" aria-labelledby="settings-claude">
       <mat-card-content data-testid="section-claude">

@@ -30,6 +30,7 @@ import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
 import { AnalysisSettingsSection } from './analysis-settings.component';
 import { AttachmentSettingsSection } from './attachment-settings.component';
 import { ClaudeSettingsSection } from './claude-settings.component';
+import { ProtectionSettingsSection } from './protection-settings.component';
 import {
   AnalysisSettings,
   AnalysisSettingsUpdate,
@@ -39,6 +40,7 @@ import {
   ClaudeSettingsDto,
   ClaudeSettingsUpdate,
   PromptTemplateDto,
+  ProtectionSettings,
 } from './settings.models';
 import { SettingsService } from './settings.service';
 
@@ -65,6 +67,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     AnalysisSettingsSection,
     AttachmentSettingsSection,
     ClaudeSettingsSection,
+    ProtectionSettingsSection,
   ],
   templateUrl: './settings-page.component.html',
   styles: `
@@ -123,6 +126,9 @@ export class SettingsPage implements OnInit {
   readonly claudeSaving = signal(false);
   readonly claudeErrors = signal<Record<string, string[]> | null>(null);
 
+  /** `null` until loaded, and on an older API without protection rules, which hides the section. */
+  readonly protection = signal<ProtectionSettings | null>(null);
+
   ngOnInit(): void {
     this.settingsApi
       .getSettings()
@@ -135,6 +141,7 @@ export class SettingsPage implements OnInit {
           this.analysis.set(settings);
           this.attachments.set(attachmentsOf(settings));
           this.claude.set(claudeOf(settings));
+          this.protection.set(settings.protection ?? null);
         },
         // The error interceptor shows why; the field stays disabled without a saved value.
         error: () => undefined,

@@ -20,11 +20,12 @@ export interface AnalysisSettings {
   analysisPromptTemplate: string | null;
 }
 
-/** The full `SettingsDto`: the setup, analysis, attachment and Claude review fields. */
+/** The full `SettingsDto`: the setup, analysis, attachment, Claude review and protection fields. */
 export type SettingsDto = AppSettings &
   AnalysisSettings &
   AttachmentsSettingsDto &
-  ClaudeSettingsDto;
+  ClaudeSettingsDto &
+  ProtectionSettingsDto;
 
 /**
  * The analysis part of `UpdateSettingsRequest`: only changed fields are sent; an empty prompt
@@ -254,3 +255,43 @@ export const CLAUDE_TOKEN_STATUS = {
   set: 'Token set in .env',
   missing: 'CLAUDE_CODE_OAUTH_TOKEN not set — run claude setup-token',
 } as const;
+
+/** `ProtectionSettings` (`protection` in `GET /api/settings`, #176): which rules keep mail off `To-Be-Deleted`. */
+export interface ProtectionSettings {
+  attachments: boolean;
+  starred: boolean;
+  important: boolean;
+  repliedThreads: boolean;
+}
+
+/** The protection field of `SettingsDto`; absent on an older API. */
+export interface ProtectionSettingsDto {
+  protection?: ProtectionSettings;
+}
+
+/** The protection part of `UpdateSettingsRequest`: omitted rules stay unchanged. */
+export interface ProtectionUpdate {
+  protection?: Partial<ProtectionSettings>;
+}
+
+export type ProtectionRule = keyof ProtectionSettings;
+
+/** Label and one-line hint per rule, in the API's order. */
+export const PROTECTION_RULES: readonly { key: ProtectionRule; label: string; hint: string }[] = [
+  {
+    key: 'attachments',
+    label: 'Attachments',
+    hint: 'Emails with an attachment are never marked for deletion.',
+  },
+  { key: 'starred', label: 'Starred', hint: 'Starred emails are never marked for deletion.' },
+  {
+    key: 'important',
+    label: 'Important',
+    hint: 'Emails Gmail marks important are never marked for deletion.',
+  },
+  {
+    key: 'repliedThreads',
+    label: 'Replied threads',
+    hint: 'Emails in a thread you replied to are never marked for deletion.',
+  },
+];

@@ -10,7 +10,8 @@ import { SenderDto, SenderFetchStarted, SenderQuery } from './senders.models';
 export class SendersService {
   private readonly http = inject(HttpClient);
 
-  list(query: SenderQuery): Observable<PagedDto<SenderDto>> {
+  /** `allowlisted` filters on the flag; left out lists every sender. */
+  list(query: SenderQuery, allowlisted?: boolean): Observable<PagedDto<SenderDto>> {
     let params = new HttpParams()
       .set('page', query.page)
       .set('pageSize', query.pageSize)
@@ -18,7 +19,15 @@ export class SendersService {
       .set('dir', query.dir);
     const search = query.search.trim();
     if (search) params = params.set('search', search);
+    if (allowlisted !== undefined) params = params.set('allowlisted', allowlisted);
     return this.http.get<PagedDto<SenderDto>>('/api/senders', { params });
+  }
+
+  /** Sets an address's allowlist flag; allowlisting an address never fetched adds it with no mail. */
+  setAllowlisted(address: string, allowlisted: boolean): Observable<SenderDto> {
+    return this.http.put<SenderDto>(`/api/senders/${encodeURIComponent(address)}/allowlist`, {
+      allowlisted,
+    });
   }
 
   /**
