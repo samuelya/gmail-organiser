@@ -1,7 +1,7 @@
 # Build from the repository root: docker build -f src/api/Dockerfile .
 # The SDK stage runs natively on the build machine and cross-publishes for the target arch (no QEMU);
 # without BuildKit TARGETARCH is empty and the publish is the portable default.
-# WITH_CLAUDE=true adds Node 22 LTS and the Claude Code CLI for headless Claude reviews (#166, about +250 MB);
+# WITH_CLAUDE=true adds Node 22 LTS and the Claude Code CLI for headless Claude reviews (#166, about +480 MB);
 # the default false builds the image without them.
 ARG WITH_CLAUDE=false
 

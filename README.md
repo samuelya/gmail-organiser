@@ -31,6 +31,8 @@ redirect URI is built from `APP_BASE_URL`, and a mismatch makes Google reject si
 Open <http://localhost:5180> (or your `WEB_PORT`) and run the setup wizard: enter your Google OAuth client, connect
 Gmail, point the app at Ollama and choose your models.
 
+Optional second opinion from Claude (headless Claude Code or Claude Desktop): [Claude review setup](docs/setup/claude-review.md).
+
 Only the `web` container is published, on `127.0.0.1:${WEB_PORT:-5180}`; `api` and `db` stay on the compose network.
 Data lives in the `db-data` and `dp-keys` volumes (`dp-keys` holds the key that encrypts your Google token; keep it
 with the database).
@@ -90,6 +92,7 @@ Build, test and CI commands: [docs/ci.md](docs/ci.md).
 - [Google OAuth setup](docs/setup/google-oauth.md): your own Cloud project, scopes, redirect URIs, publishing to
   "In production".
 - [Ollama setup](docs/setup/ollama.md): install, models, `host.docker.internal` on macOS and Linux.
+- [Claude review setup](docs/setup/claude-review.md): `WITH_CLAUDE`, `claude setup-token`, Claude Desktop config.
 - [Design](docs/DESIGN.md): architecture, workflows, data model.
 
 ## Licence

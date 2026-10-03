@@ -9,7 +9,7 @@ GitHub Actions, `.github/workflows/`. Every workflow has `permissions: contents:
 | Secret scan | `secret-scan.yml` | every PR, push to `main` | `Secret scan` | gitleaks over the full history |
 | CI | `ci.yml` | every PR, push to `main` | `api` | setup-dotnet from `global.json`, restore (NuGet cache), `dotnet format --verify-no-changes`, `dotnet build -warnaserror`, apt-installs Tesseract (OCR tests), `dotnet test` (Testcontainers uses the runner's Docker) |
 | CI | `ci.yml` | every PR, push to `main` | `web` | in `src/web`: setup-node from `.nvmrc` (npm cache), `npm ci`, `npm run lint`, `npm test`, `npm run build` |
-| Images | `images.yml` | PR / push to `main` that changes `src/*/Dockerfile*`, `src/web/.dockerignore`, `src/web/nginx.conf`, `global.json`, `Directory.Build.props`, `src/api/**/*.csproj`, `src/web/package*.json`, `src/web/angular.json`, `docker-compose*.yml` or `images.yml` | `images` | `docker build` of the api and web images, no push |
+| Images | `images.yml` | PR / push to `main` that changes `src/*/Dockerfile*`, `src/web/.dockerignore`, `src/web/nginx.conf`, `global.json`, `Directory.Build.props`, `src/api/**/*.csproj`, `src/web/package*.json`, `src/web/angular.json`, `docker-compose*.yml` or `images.yml` | `images` | `docker build` of the api and web images, plus the api image with `WITH_CLAUDE=true` (checks `claude --version`), no push |
 | Publish | `publish.yml` | push of a `v*.*.*` tag, or manual run (`workflow_dispatch`) | `publish api`, `publish web` (not required) | Builds linux/amd64 + linux/arm64 and pushes `ghcr.io/<owner>/gmail-organiser-{api,web}`. Job has `packages: write` (GITHUB_TOKEN). Tags: `vX.Y.Z` gives `X.Y.Z`, `X.Y`, `latest`; a pre-release `vX.Y.Z-rc.N` gives only `X.Y.Z-rc.N`; a manual run gives `sha-<short>` and `<branch>`, never `latest` |
 
 A new push to a PR cancels that PR's previous run.
@@ -49,6 +49,7 @@ Images (repository root; same as the `images` job):
 ```sh
 docker build -f src/api/Dockerfile -t gmail-organiser-api:ci .
 docker build -f src/web/Dockerfile -t gmail-organiser-web:ci src/web
+docker build -f src/api/Dockerfile --build-arg WITH_CLAUDE=true -t gmail-organiser-api:ci-claude .   # with the Claude Code CLI
 ```
 
 ## End-to-end (Playwright, local only)
