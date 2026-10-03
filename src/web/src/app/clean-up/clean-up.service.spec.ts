@@ -1,7 +1,15 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
-import { formatSize, queuedMessage, trashCount } from './clean-up.models';
+import {
+  formatSize,
+  queuedMessage,
+  trashCount,
+  UnsubscribeInfo,
+  unsubscribeFailedMessage,
+  unsubscribeHost,
+  unsubscribeUrl,
+} from './clean-up.models';
 import { CleanUpService } from './clean-up.service';
 
 describe('CleanUpService', () => {
@@ -83,6 +91,18 @@ describe('CleanUpService', () => {
     http.expectOne('/api/clean-up/delete').flush(null, { status: 204, statusText: 'No Content' });
     expect(result).toBeNull();
   });
+
+  it('reads, sends and marks a sender’s unsubscribe with the address encoded', () => {
+    const path = '/api/clean-up/senders/a%2Bb%40example.com/unsubscribe';
+    service.unsubscribeInfo('a+b@example.com').subscribe();
+    http.expectOne({ method: 'GET', url: path }).flush({});
+    service.unsubscribe('a+b@example.com').subscribe();
+    http.expectOne({ method: 'POST', url: path }).flush({ status: 'done', httpStatus: 200 });
+    service.markUnsubscribed('a+b@example.com', 'mailto').subscribe();
+    const mark = http.expectOne({ method: 'POST', url: `${path}/mark` });
+    expect(mark.request.body).toEqual({ method: 'mailto' });
+    mark.flush(null, { status: 204, statusText: 'No Content' });
+  });
 });
 
 describe('clean-up models', () => {
@@ -114,5 +134,44 @@ describe('clean-up models', () => {
     expect(formatSize(500)).toBe('500 B');
     expect(formatSize(2048)).toBe('2.0 KB');
     expect(formatSize(5 * 1024 * 1024)).toBe('5.0 MB');
+  });
+
+  const info = (over: Partial<UnsubscribeInfo>): UnsubscribeInfo => ({
+    method: null,
+    url: null,
+    messageId: null,
+    unsubscribedAt: null,
+    unsubscribedVia: null,
+    ...over,
+  });
+
+  it('accepts an unsubscribe URL only when its scheme fits the method', () => {
+    expect(
+      unsubscribeUrl(info({ method: 'one_click', url: 'https://example.com/u?t=1' })),
+    ).not.toBeNull();
+    expect(unsubscribeUrl(info({ method: 'one_click', url: 'http://example.com/u' }))).toBeNull();
+    expect(unsubscribeUrl(info({ method: 'link', url: 'http://example.com/u' }))).not.toBeNull();
+    expect(unsubscribeUrl(info({ method: 'link', url: 'javascript:alert(1)' }))).toBeNull();
+    expect(unsubscribeUrl(info({ method: 'mailto', url: 'https://example.com/u' }))).toBeNull();
+    expect(unsubscribeUrl(info({ method: 'link', url: 'not a url' }))).toBeNull();
+    expect(unsubscribeUrl(info({ url: 'https://example.com/u' }))).toBeNull();
+  });
+
+  it('shows only the host of an unsubscribe URL', () => {
+    expect(unsubscribeHost(new URL('https://lists.example.com/u/secret-token'))).toBe(
+      'lists.example.com',
+    );
+    expect(unsubscribeHost(new URL('mailto:leave-123@Lists.Example.com?subject=stop'))).toBe(
+      'lists.example.com',
+    );
+  });
+
+  it('says why a one-click failed', () => {
+    expect(unsubscribeFailedMessage({ status: 'failed', httpStatus: 500 })).toBe(
+      'Unsubscribe failed (HTTP 500); open the link instead',
+    );
+    expect(unsubscribeFailedMessage({ status: 'failed', httpStatus: null })).toBe(
+      'Unsubscribe failed; open the link instead',
+    );
   });
 });

@@ -25,6 +25,7 @@ const sender = (address: string, over: Partial<SenderDto> = {}): SenderDto => ({
   lastSeenAt: null,
   allowlisted: true,
   activeFetchJob: null,
+  unsubscribedAt: null,
   ...over,
 });
 

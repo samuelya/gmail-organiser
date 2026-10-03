@@ -108,3 +108,53 @@ export function formatSize(bytes: number): string {
   }
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
+
+/** How a sender can be (or was) unsubscribed from: one-click by the api, or a link / `mailto:` the user opens. */
+export type UnsubscribeMethod = 'one_click' | 'link' | 'mailto';
+
+/** `UnsubscribeInfoDto` from `GET /api/clean-up/senders/{address}/unsubscribe`. */
+export interface UnsubscribeInfo {
+  /** Null when none of the sender's newest messages offers a usable `List-Unsubscribe`. */
+  method: UnsubscribeMethod | null;
+  url: string | null;
+  messageId: string | null;
+  unsubscribedAt: string | null;
+  unsubscribedVia: UnsubscribeMethod | null;
+}
+
+/** `UnsubscribeResultDto`: `httpStatus` is null when the sender's server never answered. */
+export interface UnsubscribeResult {
+  status: 'done' | 'failed';
+  httpStatus: number | null;
+}
+
+/** The schemes each method may carry; anything else is treated as no unsubscribe header. */
+const UNSUBSCRIBE_SCHEMES: Record<UnsubscribeMethod, readonly string[]> = {
+  one_click: ['https:'],
+  link: ['https:', 'http:'],
+  mailto: ['mailto:'],
+};
+
+/** The info's URL when it parses and its scheme fits the method; null otherwise. */
+export function unsubscribeUrl(info: UnsubscribeInfo | null): URL | null {
+  if (!info?.method || !info.url) return null;
+  try {
+    const url = new URL(info.url);
+    return UNSUBSCRIBE_SCHEMES[info.method].includes(url.protocol) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What the UI shows of an unsubscribe URL: the host, or the `mailto:` domain; never a path or token. */
+export function unsubscribeHost(url: URL): string {
+  if (url.protocol !== 'mailto:') return url.hostname;
+  const address = decodeURIComponent(url.pathname.split(',')[0]);
+  return address.slice(address.lastIndexOf('@') + 1).toLowerCase();
+}
+
+/** The snackbar after a one-click POST the sender's server did not accept. */
+export function unsubscribeFailedMessage(result: UnsubscribeResult): string {
+  const status = result.httpStatus === null ? '' : ` (HTTP ${result.httpStatus})`;
+  return `Unsubscribe failed${status}; open the link instead`;
+}

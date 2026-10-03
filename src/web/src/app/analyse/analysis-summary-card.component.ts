@@ -62,10 +62,9 @@ import { AnalysisService } from './analysis.service';
             </div>
             <div>
               <dt>To be deleted</dt>
-              <dd>
-                <a routerLink="/clean-up" data-testid="to-be-deleted">{{
-                  s.toBeDeletedCount | number
-                }}</a>
+              <dd data-testid="to-be-deleted">{{ s.toBeDeletedCount | number }}</dd>
+              <dd class="dd-link">
+                <a routerLink="/clean-up" data-testid="open-clean-up">Open Clean-up</a>
               </dd>
             </div>
           </dl>
@@ -89,6 +88,9 @@ import { AnalysisService } from './analysis.service';
     dd {
       margin: 0;
       font: var(--mat-sys-title-medium);
+    }
+    .dd-link {
+      font: var(--mat-sys-body-small);
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
