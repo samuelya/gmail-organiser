@@ -186,6 +186,80 @@ public sealed class ClaudeReviewJobTests : IClassFixture<ApiFactory>, IAsyncLife
         (await db.Jobs.SingleAsync(j => j.Type == ClaudeReviewJob.JobType, Ct)).Status.ShouldBe(JobStatus.Completed);
     }
 
+    [Fact]
+    public async Task Items_decided_before_their_batch_are_cancelled_and_each_run_reviews_only_its_claimed_batch()
+    {
+        await SetModeAsync(ClaudeReviewerMode.HeadlessClaudeCode, maxItems: 1);
+        var submitted = new List<int>();
+        claude.Run = async (request, _, ct) =>
+        {
+            submitted.Add(await FakeClaudeCliRunner.SubmitAllAsync(h.Host, request, ct));
+            return FakeClaudeCliRunner.Success();
+        };
+        await QueueItemsAsync();
+        await DecideAsync(s => s.MessageId == "c00");
+
+        (await RunJobAsync()).Status.ShouldBe("completed");
+
+        // c00's batch is never run: the item is cancelled at the claim, not sent to Claude.
+        submitted.ShouldBe([1, 1]);
+        var rows = await RowsAsync();
+        rows.Select(r => r.Status).ShouldBe([ExternalReviewStatus.Reviewed, ExternalReviewStatus.Cancelled, ExternalReviewStatus.Reviewed]);
+        rows.Where(r => r.Status == ExternalReviewStatus.Reviewed).ShouldAllBe(r => r.Reviewer == ClaudeReviewJob.Reviewer && r.BatchId != null);
+    }
+
+    [Fact]
+    public async Task Batch_decided_during_its_run_lists_nothing_so_Claude_never_reviews_the_next_queued_items()
+    {
+        await SetModeAsync(ClaudeReviewerMode.HeadlessClaudeCode, maxItems: 1);
+        var submitted = new List<int>();
+        claude.Run = async (request, call, ct) =>
+        {
+            if (call == 1)
+            {
+                await DecideAsync(s => s.SenderAddress == AnalysisRunHarness.Shop);
+            }
+
+            submitted.Add(await FakeClaudeCliRunner.SubmitAllAsync(h.Host, request, ct));
+            return FakeClaudeCliRunner.Success();
+        };
+        await QueueItemsAsync();
+
+        (await RunJobAsync()).Status.ShouldBe("completed");
+
+        submitted.ShouldBe([0, 1, 1]);
+        var rows = await RowsAsync();
+        rows[0].Status.ShouldBe(ExternalReviewStatus.Unavailable);
+        rows.Skip(1).ShouldAllBe(r => r.Status == ExternalReviewStatus.Reviewed && r.Reviewer == ClaudeReviewJob.Reviewer);
+        rows.Select(r => r.BatchId).Distinct().Count().ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Items_sent_while_the_job_is_finishing_get_a_follow_up_job()
+    {
+        await SetModeAsync(ClaudeReviewerMode.HeadlessClaudeCode, maxItems: 10);
+        claude.Run = async (request, _, ct) =>
+        {
+            await FakeClaudeCliRunner.SubmitAllAsync(h.Host, request, ct);
+            return FakeClaudeCliRunner.Success();
+        };
+        await QueueItemsAsync();
+        await using var db = postgres.CreateDbContext();
+        // The job is running but past its last look at the queue when c02 is sent.
+        await db.Jobs.Where(j => j.Type == ClaudeReviewJob.JobType).ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, JobStatus.Running), Ct);
+        var late = await QueueAsync(new([await SuggestionIdAsync("c02")], null, null));
+        await db.Jobs.Where(j => j.Type == ClaudeReviewJob.JobType && j.DedupKey == ClaudeReviewJob.DedupKey)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, JobStatus.Completed), Ct);
+
+        var followUp = await db.Jobs.AsNoTracking().SingleAsync(j => j.Type == ClaudeReviewJob.JobType && j.Status == JobStatus.Queued, Ct);
+        followUp.DedupKey.ShouldBe(ClaudeReviewJob.FollowUpDedupKey);
+        await h.RunNextAsync();
+
+        claude.RunCalls.ShouldBe(1);
+        (await db.ExternalReviews.AsNoTracking().SingleAsync(r => r.Id == late, Ct)).Status.ShouldBe(ExternalReviewStatus.Reviewed);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == followUp.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+    }
+
     [Theory]
     [InlineData(ClaudeReviewerMode.HeadlessClaudeCode, 1)]
     [InlineData(ClaudeReviewerMode.ClaudeDesktop, 0)]
@@ -232,6 +306,13 @@ public sealed class ClaudeReviewJobTests : IClassFixture<ApiFactory>, IAsyncLife
         var off = await TestConnectionAsync();
         (off.Ok, off.Mode, off.McpReachable).ShouldBe((false, "off", false));
         off.Error.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    /// <summary>The user approves the matching suggestions in the portal.</summary>
+    private async Task DecideAsync(System.Linq.Expressions.Expression<Func<SuggestionRow, bool>> which)
+    {
+        await using var db = postgres.CreateDbContext();
+        await db.Suggestions.Where(which).ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, SuggestionStatus.Approved), Ct);
     }
 
     /// <summary>As if <c>CLAUDE_CODE_OAUTH_TOKEN</c> were empty; the options instance is the host's singleton.</summary>

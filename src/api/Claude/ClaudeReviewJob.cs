@@ -33,6 +33,9 @@ public sealed class ClaudeReviewJob(
 {
     public const string JobType = ClaudeJobTypes.Review;
     public const string DedupKey = "single";
+
+    /// <summary>The job <see cref="HeadlessClaudeReviewStarter"/> adds behind a running one, for items it may miss.</summary>
+    public const string FollowUpDedupKey = "follow-up";
     public const string Reviewer = "claude_code";
     public const string NoVerdict = "No verdict submitted.";
     public const string Interrupted = "The Claude run was interrupted by an api restart; retry to send the item again.";
@@ -68,7 +71,8 @@ public sealed class ClaudeReviewJob(
                 : [];
             if (ids.Count == 0)
             {
-                // Done, or the mode changed: anything still queued waits for the next send.
+                // Done, or the mode changed: anything still queued waits for the next send. Items sent from here on
+                // get a follow-up job from the starter, since this one is still running.
                 await ctx.CompleteAsync(cursor, await ProgressAsync(cursor, ct), _ => Task.CompletedTask, ct);
                 return;
             }
