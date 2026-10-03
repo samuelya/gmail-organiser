@@ -11,6 +11,7 @@ public static class MessageProtection
 {
     public const string StarredLabel = "STARRED";
     public const string ImportantLabel = "IMPORTANT";
+    public const string SentLabel = "SENT";
 
     public static bool IsProtected(MessageRow m, bool senderAllowlisted, ProtectionSettings rules) =>
         Reason(m, senderAllowlisted, rules) is not null;
@@ -24,5 +25,6 @@ public static class MessageProtection
         : rules.Attachments && m.HasAttachment ? "attachment"
         : rules.Starred && m.LabelIds.Contains(StarredLabel, StringComparer.Ordinal) ? "starred"
         : rules.Important && m.LabelIds.Contains(ImportantLabel, StringComparer.Ordinal) ? "important"
+        : rules.RepliedThreads && m.ThreadReplied == true ? "replied thread"
         : null;
 }

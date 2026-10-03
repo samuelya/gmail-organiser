@@ -65,6 +65,14 @@ public interface IGmailClient
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<byte[]?> GetAttachmentContentAsync(string messageId, string attachmentId, CancellationToken ct);
 
+    /// <summary>
+    /// The message ids and label ids of thread <paramref name="threadId"/> (<c>threads.get</c>, format=minimal); null
+    /// when Gmail no longer knows the thread.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<GmailThreadSummary?> GetThreadSummaryAsync(string threadId, CancellationToken ct);
+
     /// <summary>Every system and user label of the mailbox.</summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -153,6 +161,11 @@ public sealed record GmailAttachment(string? AttachmentId, string Filename, stri
 
 /// <summary>A message's body and attachment list, read in one call.</summary>
 public sealed record GmailMessageContent(GmailMessageBody Body, IReadOnlyList<GmailAttachment> Attachments);
+
+/// <summary>A thread's messages with their labels, as <see cref="IGmailClient.GetThreadSummaryAsync"/> reads them.</summary>
+public sealed record GmailThreadSummary(string Id, IReadOnlyList<GmailThreadMessage> Messages);
+
+public sealed record GmailThreadMessage(string Id, IReadOnlyList<string> LabelIds);
 
 /// <summary>A message's raw text parts; html-to-text conversion happens later.</summary>
 public sealed record GmailMessageBody(string? Text, string? Html);

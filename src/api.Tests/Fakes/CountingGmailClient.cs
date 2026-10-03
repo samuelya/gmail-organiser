@@ -98,6 +98,22 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return inner.GetAttachmentContentAsync(messageId, attachmentId, ct);
     }
 
+    public ConcurrentQueue<string> ThreadCalls { get; } = new();
+
+    /// <summary>Runs before each thread lookup is passed on, after it is counted.</summary>
+    public Func<string, CancellationToken, Task>? BeforeThread { get; set; }
+
+    public async Task<GmailThreadSummary?> GetThreadSummaryAsync(string threadId, CancellationToken ct)
+    {
+        ThreadCalls.Enqueue(threadId);
+        if (BeforeThread is { } before)
+        {
+            await before(threadId, ct);
+        }
+
+        return await inner.GetThreadSummaryAsync(threadId, ct);
+    }
+
     /// <summary>Runs after the label list is read and before it is returned.</summary>
     public Func<Task>? AfterListLabels { get; set; }
 

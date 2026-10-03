@@ -5,11 +5,18 @@ namespace GmailOrganiser.Gmail.Fake;
 /// in the Inbox, older mail is archived; list senders carry <c>List-Id</c>/<c>List-Unsubscribe</c> (the newsletter
 /// supports RFC 8058 one-click, the shop only a link, the forum only <c>mailto:</c>), and the billing,
 /// travel and statement senders attach generated PDFs. Every third message has an html-only body, the next a text-only
-/// one, the next both.
+/// one, the next both. Alice's lunch message (#3) has a thread of its own; the last message is the user's reply
+/// (<c>SENT</c>) in it, so that thread, and only Alice's conversation, is replied.
 /// </summary>
 public static class FakeMailboxSeed
 {
-    public const int MessageCount = 60;
+    public const int MessageCount = 61;
+
+    /// <summary>The thread the user replied to; its received messages are protected from the delete label.</summary>
+    public const string RepliedThreadId = "fake-thread-0024";
+
+    /// <summary>The index of Alice's lunch message (#3), the one the user replied to.</summary>
+    private const int RepliedIndex = 2;
     public const long HistoryId = 1000;
 
     private sealed record Sender(
@@ -46,7 +53,7 @@ public static class FakeMailboxSeed
     public static IReadOnlyList<FakeMessage> Create(DateTimeOffset now)
     {
         var messages = new List<FakeMessage>(MessageCount);
-        for (var i = 0; i < MessageCount; i++)
+        for (var i = 0; i < MessageCount - 1; i++)
         {
             var sender = Senders[i % Senders.Length];
             var number = i + 1;
@@ -58,7 +65,8 @@ public static class FakeMailboxSeed
 
             messages.Add(new FakeMessage(
                 Id: $"fake-msg-{number:D4}",
-                ThreadId: $"fake-thread-{(i % 23) + 1:D4}",
+                // Threads 1..23 group messages round-robin; the replied conversation is kept apart from them.
+                ThreadId: i == RepliedIndex ? RepliedThreadId : $"fake-thread-{(i % 23) + 1:D4}",
                 From: sender.From,
                 Subject: $"{sender.Subject} #{number}",
                 Date: now.AddHours(-31 * i),
@@ -81,6 +89,18 @@ public static class FakeMailboxSeed
                 ListUnsubscribePost: sender.Unsubscribe == UnsubscribeKind.OneClick ? OneClickPost : null));
         }
 
+        messages.Add(new FakeMessage(
+            Id: $"fake-msg-{MessageCount:D4}",
+            ThreadId: RepliedThreadId,
+            From: "User <user@example.com>",
+            Subject: "Re: Lunch next week? #3",
+            Date: now.AddHours(-31 * 2).AddMinutes(30),
+            LabelIds: ["SENT"],
+            To: "Alice Example <alice@example.com>",
+            Snippet: "Synthetic reply for testing.",
+            SizeEstimate: 900,
+            HistoryId: (HistoryId - MessageCount).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            BodyText: "Sounds good.\n"));
         return messages;
     }
 

@@ -45,6 +45,7 @@ public sealed partial class ApplyActionsJob(
     IGmailClient gmail,
     LabelCatalog catalog,
     LabelResolver labels,
+    RepliedThreadChecker repliedThreads,
     ISettingsStore settingsStore,
     IOptions<GmailOptions> gmailOptions,
     TimeProvider time,
@@ -157,7 +158,10 @@ public sealed partial class ApplyActionsJob(
         }
     }
 
-    /// <summary>Plans every eligible suggestion; topic labels Gmail would refuse are skipped and stay approved.</summary>
+    /// <summary>
+    /// Plans every eligible suggestion; topic labels Gmail would refuse are skipped and stay approved. Runs before any
+    /// chunk is prepared, so a Gmail error in the replied-thread check leaves the cursor as it was.
+    /// </summary>
     private async Task<Plan> PlanAsync(ApplyCursor cursor, AppSettings settings, CancellationToken ct)
     {
         var skipped = (cursor.Skipped ?? []).Select(s => s.SuggestionId).ToArray();
@@ -170,6 +174,15 @@ public sealed partial class ApplyActionsJob(
         var allowlisted = await AllowlistedAsync(rows.Select(r => r.Message.FromAddress), ct);
         var valid = rows.Where(r => LabelResolver.IsValid(r.Suggestion.TopicLabel)).ToList();
         invalidLabels = rows.Count - valid.Count;
+        if (settings.Protection.RepliedThreads)
+        {
+            // Mark time (#177): only messages that would otherwise get the delete label cost a thread lookup.
+            await repliedThreads.CheckAsync(
+                [.. valid
+                    .Where(r => r.Suggestion.ToBeDeleted && !MessageProtection.IsProtected(r.Message, allowlisted, settings.Protection))
+                    .Select(r => r.Message)],
+                ct);
+        }
 
         var paths = valid.Select(r => r.Suggestion.TopicLabel).ToList();
         if (valid.Any(r => r.Suggestion.NeedsAction))

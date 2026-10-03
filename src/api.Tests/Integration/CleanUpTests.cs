@@ -87,6 +87,28 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
     }
 
     [Fact]
+    public async Task A_replied_thread_counts_as_protected_while_its_rule_is_on()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Messages.Where(m => m.Id == "a02").ExecuteUpdateAsync(s => s.SetProperty(m => m.ThreadReplied, true), Ct);
+        }
+
+        (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(6, 2, 3));
+        (await GetAsync<PagedDto<CleanupSenderDto>>("/api/clean-up/senders?search=shop")).Items.Single().ProtectedCount.ShouldBe(2);
+        (await GetAsync<PagedDto<CleanupMessageDto>>($"/api/clean-up/senders/{Shop}/messages")).Items
+            .Single(m => m.Id == "a02").ProtectedReason.ShouldBe("replied thread");
+
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(s => s with { Protection = s.Protection with { RepliedThreads = false } }, Ct);
+        }
+
+        (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(6, 2, 2));
+    }
+
+    [Fact]
     public async Task Without_the_delete_label_in_gmail_the_list_is_empty()
     {
         h.Gmail.Inner.DeleteLabel(deleteLabelId);

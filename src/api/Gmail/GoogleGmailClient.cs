@@ -257,6 +257,31 @@ public sealed partial class GoogleGmailClient(
         }
     }
 
+    public Task<GmailThreadSummary?> GetThreadSummaryAsync(string threadId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        return RunAsync(service => retry.ExecuteAsync(async token =>
+        {
+            await quota.AcquireAsync(GmailQuotaLimiter.ThreadCallUnits, token);
+            var request = service.Users.Threads.Get(Me, threadId);
+            request.Format = UsersResource.ThreadsResource.GetRequest.FormatEnum.Minimal;
+            try
+            {
+                var thread = await request.ExecuteAsync(token);
+                var messages = thread.Messages?
+                    .Select(m => new GmailThreadMessage(m.Id, [.. m.LabelIds ?? []]))
+                    .ToList() ?? [];
+                logger.LogDebug("Read a Gmail thread of {Count} messages", messages.Count);
+                return new GmailThreadSummary(thread.Id ?? threadId, messages);
+            }
+            catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.NotFound)
+            {
+                logger.LogDebug("Gmail no longer has the thread that was requested");
+                return (GmailThreadSummary?)null;
+            }
+        }, ct), ct);
+    }
+
     public Task<IReadOnlyList<GmailLabel>> ListLabelsAsync(CancellationToken ct) =>
         RunAsync(service => ListLabelsAsync(service, ct), ct);
 

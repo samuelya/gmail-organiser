@@ -141,7 +141,7 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
     /// </summary>
     private IQueryable<Flagged> Flag(IQueryable<MessageRow> messages, ProtectionSettings rules)
     {
-        var (attachments, starred, important) = (rules.Attachments, rules.Starred, rules.Important);
+        var (attachments, starred, important, replied) = (rules.Attachments, rules.Starred, rules.Important, rules.RepliedThreads);
         return messages.Select(m => new Flagged
         {
             FromAddress = m.FromAddress,
@@ -149,7 +149,8 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
             Protected = db.Senders.Any(s => s.Address == m.FromAddress && s.Allowlisted)
                 || (attachments && m.HasAttachment)
                 || (starred && m.LabelIds.Contains(MessageProtection.StarredLabel))
-                || (important && m.LabelIds.Contains(MessageProtection.ImportantLabel)),
+                || (important && m.LabelIds.Contains(MessageProtection.ImportantLabel))
+                || (replied && m.ThreadReplied == true),
         });
     }
 
