@@ -359,12 +359,12 @@ namespace GmailOrganiser.Data.Migrations
 
                     b.HasIndex(new[] { "SenderAddress", "GroupKey" }, "ux_external_reviews_open_group")
                         .IsUnique()
-                        .HasDatabaseName("ix_external_reviews_sender_address_group_key1")
+                        .HasDatabaseName("ux_external_reviews_open_group")
                         .HasFilter("target_type = 'group' AND (status IN ('queued', 'running') OR (status = 'reviewed' AND resolution = 'none'))");
 
                     b.HasIndex(new[] { "SuggestionId" }, "ux_external_reviews_open_suggestion")
                         .IsUnique()
-                        .HasDatabaseName("ix_external_reviews_suggestion_id1")
+                        .HasDatabaseName("ux_external_reviews_open_suggestion")
                         .HasFilter("target_type = 'suggestion' AND (status IN ('queued', 'running') OR (status = 'reviewed' AND resolution = 'none'))");
 
                     b.ToTable("external_reviews", (string)null);

@@ -60,13 +60,6 @@ namespace GmailOrganiser.Data.Migrations
                 columns: new[] { "sender_address", "group_key" });
 
             migrationBuilder.CreateIndex(
-                name: "ix_external_reviews_sender_address_group_key1",
-                table: "external_reviews",
-                columns: new[] { "sender_address", "group_key" },
-                unique: true,
-                filter: "target_type = 'group' AND (status IN ('queued', 'running') OR (status = 'reviewed' AND resolution = 'none'))");
-
-            migrationBuilder.CreateIndex(
                 name: "ix_external_reviews_status_created_at",
                 table: "external_reviews",
                 columns: new[] { "status", "created_at" });
@@ -77,7 +70,14 @@ namespace GmailOrganiser.Data.Migrations
                 column: "suggestion_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_external_reviews_suggestion_id1",
+                name: "ux_external_reviews_open_group",
+                table: "external_reviews",
+                columns: new[] { "sender_address", "group_key" },
+                unique: true,
+                filter: "target_type = 'group' AND (status IN ('queued', 'running') OR (status = 'reviewed' AND resolution = 'none'))");
+
+            migrationBuilder.CreateIndex(
+                name: "ux_external_reviews_open_suggestion",
                 table: "external_reviews",
                 column: "suggestion_id",
                 unique: true,

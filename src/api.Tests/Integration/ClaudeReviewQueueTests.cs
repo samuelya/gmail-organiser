@@ -185,6 +185,26 @@ public sealed class ClaudeReviewQueueTests : IClassFixture<ApiFactory>, IAsyncLi
     }
 
     [Fact]
+    public async Task Retry_while_the_target_has_another_open_item_is_a_conflict()
+    {
+        var a01 = await IdAsync("a01");
+        var shop = await GroupAsync(AnalysisRunHarness.Shop);
+        var first = await CreateAsync(new([a01], [shop], null));
+        foreach (var item in first.Items)
+        {
+            await PostOkAsync($"{Path}/{item.Id}/cancel");
+        }
+
+        (await CreateAsync(new([a01], [shop], null))).Created.ShouldBe(2);
+
+        foreach (var item in first.Items)
+        {
+            await PostConflictAsync($"{Path}/{item.Id}/retry");
+            (await GetAsync<ExternalReviewDto>($"{Path}/{item.Id}")).Status.ShouldBe("cancelled");
+        }
+    }
+
+    [Fact]
     public async Task Submit_validates_and_truncates_the_reasoning()
     {
         var id = (await CreateAsync(new([await IdAsync("a01")], null, null))).Items[0].Id;

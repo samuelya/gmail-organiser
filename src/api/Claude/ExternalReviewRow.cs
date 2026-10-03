@@ -100,8 +100,10 @@ public sealed class ExternalReviewRow
             e.HasIndex(r => r.SuggestionId);
             e.HasIndex(r => new { r.SenderAddress, r.GroupKey });
             e.HasIndex(r => r.BatchId);
-            e.HasIndex(r => r.SuggestionId, OpenSuggestionIndex).IsUnique().HasFilter($"target_type = 'suggestion' AND {OpenFilter}");
-            e.HasIndex(r => new { r.SenderAddress, r.GroupKey }, OpenGroupIndex).IsUnique().HasFilter($"target_type = 'group' AND {OpenFilter}");
+            e.HasIndex(r => r.SuggestionId, OpenSuggestionIndex).HasDatabaseName(OpenSuggestionIndex)
+                .IsUnique().HasFilter($"target_type = 'suggestion' AND {OpenFilter}");
+            e.HasIndex(r => new { r.SenderAddress, r.GroupKey }, OpenGroupIndex).HasDatabaseName(OpenGroupIndex)
+                .IsUnique().HasFilter($"target_type = 'group' AND {OpenFilter}");
         });
     }
 }
