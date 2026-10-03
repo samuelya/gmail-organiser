@@ -182,10 +182,12 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
         await using var check = postgres.CreateDbContext();
         (await check.Messages.SingleAsync(m => m.Id == Id(1), Ct)).DeletedInGmail.ShouldBeTrue();
         var trashed = await check.Messages.SingleAsync(m => m.Id == Id(3), Ct);
-        trashed.DeletedInGmail.ShouldBeFalse();
+        // In Trash: stored with its labels but not live, so it leaves sender3's count.
+        trashed.DeletedInGmail.ShouldBeTrue();
         trashed.LabelIds.ShouldBe(["TRASH"]);
         (await check.Messages.SingleAsync(m => m.Id == Id(5), Ct)).LabelIds.ShouldBe(["STARRED"]);
         (await check.Senders.SingleAsync(x => x.Address == "sender1@example.com", Ct)).TotalCount.ShouldBe(MessageCount / 4 - 1);
+        (await check.Senders.SingleAsync(x => x.Address == "sender3@example.com", Ct)).TotalCount.ShouldBe(MessageCount / 4 - 1);
         (await check.FetchState.SingleAsync(Ct)).MailboxPhase.ShouldBe(MailboxPhase.Completed);
         (await check.FetchRunMessages.CountAsync(Ct)).ShouldBe(0);
     }

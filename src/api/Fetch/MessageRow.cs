@@ -51,6 +51,10 @@ public sealed class MessageRow
     public string? ListId { get; set; }
     public string? ListUnsubscribe { get; set; }
     public AnalysisStatus AnalysisStatus { get; set; } = AnalysisStatus.NotAnalysed;
+    /// <summary>
+    /// Not live: gone from Gmail or in Trash. Every writer keeps a row carrying <c>TRASH</c> at true, so readers
+    /// (stats, analysis, apply, patterns, MCP) filter on this alone.
+    /// </summary>
     public bool DeletedInGmail { get; set; }
     public DateTimeOffset FetchedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

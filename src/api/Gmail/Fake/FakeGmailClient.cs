@@ -276,7 +276,9 @@ public sealed partial class FakeGmailClient : IGmailClient
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
         lock (gate)
         {
-            return messages.Count(m => m.LabelIds.Contains(labelId, StringComparer.OrdinalIgnoreCase));
+            // Like Gmail, a message in Spam or Trash no longer counts towards its other labels.
+            return messages.Count(m => m.LabelIds.Contains(labelId, StringComparer.OrdinalIgnoreCase)
+                && (IsSpamOrTrash(labelId) || !m.LabelIds.Any(IsSpamOrTrash)));
         }
     }
 
