@@ -2,6 +2,7 @@ using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Claude;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Mcp;
 using GmailOrganiser.Review;
 using GmailOrganiser.Tests.Fakes;
@@ -210,9 +211,10 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
 
         var tree = McpTestClient.Structured(await McpTestClient.CallAsync(client, "get_label_tree", Ct));
 
-        tree.GetProperty("labelCount").GetInt32().ShouldBe(4);
+        tree.GetProperty("labelCount").GetInt32().ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 4);
         var roots = tree.GetProperty("labels").EnumerateArray().ToDictionary(n => n.GetProperty("name").GetString()!);
-        roots.Keys.Order(StringComparer.Ordinal).ShouldBe(["Action", "Finance", "Shopping", "To-Be-Deleted"]);
+        roots.Keys.Order(StringComparer.Ordinal).ShouldBe(["Action", "Example", "Finance", "Shopping", "Synthetic Receipts", "To-Be-Deleted"]);
+        roots["Example"].GetProperty("children").EnumerateArray().Single().GetProperty("path").GetString().ShouldBe("Example/Nested");
         roots["Shopping"].GetProperty("messageCount").GetInt32().ShouldBe(10);
         roots["Shopping"].GetProperty("id").GetString().ShouldBe(shopping);
         roots["To-Be-Deleted"].GetProperty("isDeleteLabel").GetBoolean().ShouldBeTrue();
@@ -226,7 +228,7 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         var item = McpTestClient.Structured(await McpTestClient.CallAsync(client, "get_review_item", Ct,
             new Dictionary<string, object?> { ["id"] = groupItem.ToString() }));
         item.GetProperty("labelTree").EnumerateArray().Select(l => l.GetString())
-            .ShouldBe(["Action/ToDo", "Finance/Invoices", "Shopping", "To-Be-Deleted"]);
+            .ShouldBe([.. FakeLabelStore.SeedUserLabelNames.Concat(["Action/ToDo", "Finance/Invoices", "Shopping", "To-Be-Deleted"]).Order(StringComparer.Ordinal)]);
         item.GetProperty("samples").EnumerateArray().First()
             .GetProperty("labels").EnumerateArray().Select(l => l.GetString()).ShouldContain("Shopping");
     }

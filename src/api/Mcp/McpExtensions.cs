@@ -20,12 +20,12 @@ public static class McpExtensions
         // The SDK logs JSON-RPC traffic below Warning; that traffic carries email content.
         services.AddLogging(b => b.AddFilter("ModelContextProtocol", LogLevel.Warning));
         services.AddMcpServer(o => o.ServerInfo = new Implementation
-            {
-                Name = ServerName,
-                Version = typeof(McpExtensions).Assembly.GetName().Version?.ToString() ?? "0.0.0",
-            })
+        {
+            Name = ServerName,
+            Version = typeof(McpExtensions).Assembly.GetName().Version?.ToString() ?? "0.0.0",
+        })
             .WithHttpTransport(o => o.Stateless = true)
-            .WithTools<ReviewTools>(ReviewTools.Json);
+            .WithTools<ReviewTools>();
         return services;
     }
 
