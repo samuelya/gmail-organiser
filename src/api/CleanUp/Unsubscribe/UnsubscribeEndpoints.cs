@@ -2,18 +2,26 @@ using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Gmail;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.CleanUp.Unsubscribe;
 
 /// <summary>Per-sender unsubscribe under <c>/api/clean-up/senders/{address}/unsubscribe</c>.</summary>
 public static class UnsubscribeEndpoints
 {
-    /// <summary>Registers the unsubscribe service, its in-flight set, the sender and its guarded, log-free HTTP client.</summary>
+    /// <summary>
+    /// Registers the unsubscribe service, its in-flight set, the sender and its guarded, log-free HTTP client. With
+    /// <see cref="GmailOptions.UseFake"/> the sender is <see cref="OfflineUnsubscribeSender"/>, chosen at resolution time.
+    /// </summary>
     public static IServiceCollection AddUnsubscribe(this IServiceCollection services)
     {
         services.AddScoped<UnsubscribeService>();
         services.AddSingleton<UnsubscribeInFlight>();
-        services.TryAddSingleton<IUnsubscribeSender, HttpUnsubscribeSender>();
+        services.TryAddSingleton<HttpUnsubscribeSender>();
+        services.TryAddSingleton<OfflineUnsubscribeSender>();
+        services.TryAddSingleton<IUnsubscribeSender>(sp => sp.GetRequiredService<IOptions<GmailOptions>>().Value.UseFake
+            ? sp.GetRequiredService<OfflineUnsubscribeSender>()
+            : sp.GetRequiredService<HttpUnsubscribeSender>());
         // No HttpClientFactory loggers: they would log the full URL, which may carry a personal token.
         services.AddHttpClient(UnsubscribeHttp.ClientName, c => c.Timeout = UnsubscribeHttp.Timeout)
             .ConfigurePrimaryHttpMessageHandler(UnsubscribeHttp.CreateHandler)
