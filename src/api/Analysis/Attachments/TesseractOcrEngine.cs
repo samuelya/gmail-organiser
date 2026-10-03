@@ -18,7 +18,10 @@ namespace GmailOrganiser.Analysis.Attachments;
 public sealed class TesseractOcrEngine(IOptions<AttachmentOptions> options, ILogger<TesseractOcrEngine> logger) : IOcrEngine
 {
     /// <summary>The <c>prlimit</c> binary (util-linux, in every Debian and Ubuntu base image); <c>null</c> off Linux or without it.</summary>
-    private static readonly Lazy<string?> Prlimit = new(() => OperatingSystem.IsLinux() ? FindOnPath("prlimit") : null);
+    private static readonly Lazy<string?> Prlimit = new(() => OperatingSystem.IsLinux() ? Find("prlimit") : null);
+
+    /// <summary>The Tesseract binary once found; a miss is looked up again, since it may be installed while the api runs.</summary>
+    private string? tesseractPath;
 
     private int missingLogged;
     private int unboundedLogged;
@@ -66,6 +69,7 @@ public sealed class TesseractOcrEngine(IOptions<AttachmentOptions> options, ILog
         }
         catch (Win32Exception ex)
         {
+            tesseractPath = null;
             throw Unavailable(o, ex);
         }
 
@@ -97,10 +101,11 @@ public sealed class TesseractOcrEngine(IOptions<AttachmentOptions> options, ILog
     }
 
     /// <summary>
-    /// The Tesseract executable's path: as configured when it is a path, else found on <c>PATH</c> (prlimit would otherwise
-    /// report a missing command as an ordinary failure).
+    /// The Tesseract executable, found once and kept: the configured path, or the configured name on <c>PATH</c>. Looked up
+    /// here rather than left to the OS, since prlimit would report a missing or non-executable command as an ordinary
+    /// failure (exit 126/127) instead of an engine that isn't there.
     /// </summary>
-    private string Resolve(AttachmentOptions o) => FindOnPath(o.TesseractPath) ?? throw Unavailable(o, null);
+    private string Resolve(AttachmentOptions o) => tesseractPath ??= Find(o.TesseractPath) ?? throw Unavailable(o, null);
 
     private OcrUnavailableException Unavailable(AttachmentOptions o, Exception? inner)
     {
@@ -113,17 +118,29 @@ public sealed class TesseractOcrEngine(IOptions<AttachmentOptions> options, ILog
         return new OcrUnavailableException("The OCR engine could not be started.", inner);
     }
 
-    private static string? FindOnPath(string name)
+    /// <summary>
+    /// The executable file <paramref name="name"/> refers to, as <c>CreateProcess</c>/<c>execvp</c> would find it: the file
+    /// itself when the name has a directory, else the first match in <c>PATH</c>, with <c>.exe</c> appended as well on Windows.
+    /// </summary>
+    private static string? Find(string name)
     {
-        if (name.Contains(Path.DirectorySeparatorChar) || name.Contains(Path.AltDirectorySeparatorChar))
+        var extensions = OperatingSystem.IsWindows() ? (string[])["", ".exe"] : [""];
+        var directories = name.Contains(Path.DirectorySeparatorChar) || name.Contains(Path.AltDirectorySeparatorChar)
+            ? [""]
+            : (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+        return directories
+            .SelectMany(directory => extensions.Select(extension => Path.Combine(directory, name + extension)))
+            .FirstOrDefault(IsExecutableFile);
+    }
+
+    private static bool IsExecutableFile(string path)
+    {
+        if (!File.Exists(path))
         {
-            return File.Exists(name) ? name : null;
+            return false;
         }
 
-        var extensions = OperatingSystem.IsWindows() ? (string[])["", ".exe"] : [""];
-        return (Environment.GetEnvironmentVariable("PATH") ?? "")
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-            .SelectMany(directory => extensions.Select(extension => Path.Combine(directory, name + extension)))
-            .FirstOrDefault(File.Exists);
+        const UnixFileMode AnyExecute = UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+        return OperatingSystem.IsWindows() || (File.GetUnixFileMode(path) & AnyExecute) != 0;
     }
 }

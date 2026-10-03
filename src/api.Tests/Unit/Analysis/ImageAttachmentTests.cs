@@ -1,53 +1,39 @@
-using System.ComponentModel;
-using System.Diagnostics;
 using System.IO.Compression;
 using GmailOrganiser.Analysis.Attachments;
-using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
-using GmailOrganiser.Llm;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Writer;
+using static GmailOrganiser.Tests.Unit.Analysis.ImageTestSupport;
 
 namespace GmailOrganiser.Tests.Unit.Analysis;
 
 /// <summary>
-/// The image converter (stubbed OCR, fake vision client), the policy's image mode, scanned PDFs, and the real Tesseract
-/// on rendered synthetic images where it is installed (CI and the api image).
+/// The image converter (stubbed OCR, fake vision client), the policy's image mode and scanned PDFs. The real engine is
+/// covered by <see cref="TesseractOcrEngineTests"/>.
 /// </summary>
 public sealed class ImageAttachmentTests
 {
-    private const string MessageId = "msg-img-0001";
-    private const string BaseUrl = "http://ollama.example.com:11434";
-    private static readonly ImageReading Ocr = new(ImageMode.Ocr, null, BaseUrl);
-    private static readonly ImageReading Vision = new(ImageMode.Vision, "vision-model-a", BaseUrl);
-    private static readonly IReadOnlySet<AttachmentType> ImagesAndPdfs = new HashSet<AttachmentType> { AttachmentType.Image, AttachmentType.Pdf };
-
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    private static ConversionLimits Limits(ImageReading? images) => new AttachmentSettings().ToLimits() with { Images = images };
-
     [Fact]
     public async Task Ocr_text_follows_a_one_line_description()
     {
         var ocr = new StubOcr(_ => "\n  Total due: 12.00 EUR\nbilling@example.com \n");
 
-        var result = await ConvertImageAsync(Png(), Limits(Ocr), ocr);
+        var result = await ConvertImageAsync(Png, Limits(Ocr), ocr);
 
         result.ShouldBe(new ConvertedAttachment(
             "scan.png", AttachmentType.Image, $"{ImageTextReader.OcrDescription}\n\nTotal due: 12.00 EUR\nbilling@example.com", false));
-        ocr.Images.Single().ShouldBe(Png());
+        ocr.Images.Single().ShouldBe(Png);
     }
 
     [Fact]
     public async Task Ocr_without_text_says_so()
     {
-        var result = await ConvertImageAsync(Png(), Limits(Ocr), new StubOcr(_ => " \n"));
+        var result = await ConvertImageAsync(Png, Limits(Ocr), new StubOcr(_ => " \n"));
 
         result.Markdown.ShouldBe(ImageTextReader.OcrNoTextDescription);
     }
@@ -79,7 +65,7 @@ public sealed class ImageAttachmentTests
         Should.Throw<InvalidDataException>(() => OllamaVisionClient.Parse(answer));
         var llm = new FakeLlmClientFactory(new FakeChatClient(answer));
 
-        var digest = await ConvertAllAsync([Att("photo.png", "image/png", Png())], Limits(Vision), new StubOcr(_ => ""), llm);
+        var digest = await ConvertAllAsync([Att("photo.png", "image/png", Png)], Limits(Vision), new StubOcr(_ => ""), llm);
 
         digest.Skipped.ShouldBe([new SkippedAttachment("photo.png", AttachmentType.Image, SkipReason.Failed)]);
     }
@@ -92,7 +78,7 @@ public sealed class ImageAttachmentTests
         byte[] tiff = [0x49, 0x49, 0x2A, 0x00, 8, 0, 0, 0, 0, 0, 0, 0];
 
         var digest = await ConvertAllAsync(
-            [Att("photo.heic", "image/heic", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]), Att("a.gif", "image/gif", gif), Att("b.tif", "image/tiff", tiff)],
+            [Att("photo.heic", "image/heic", Heic), Att("a.gif", "image/gif", gif), Att("b.tif", "image/tiff", tiff)],
             Limits(Vision), new StubOcr(_ => ""), llm);
 
         digest.Skipped.Select(s => s.SkipReason).ShouldBe([SkipReason.Unsupported, SkipReason.Unsupported, SkipReason.Unsupported]);
@@ -101,11 +87,50 @@ public sealed class ImageAttachmentTests
     }
 
     [Fact]
+    public async Task Ocr_skips_a_format_it_does_not_know_as_unsupported_whether_or_not_an_engine_is_installed()
+    {
+        var ocr = new StubOcr(_ => "text");
+        var unavailable = new StubOcr(available: false);
+
+        var digest = await ConvertAllAsync([Att("photo.heic", "image/heic", Heic), Att("photo.png", "image/png", Png)], Limits(Ocr), ocr);
+        var skipped = await Should.ThrowAsync<AttachmentSkippedException>(() => Reader(unavailable).ReadAsync(Heic, Ocr, Ct));
+
+        digest.Skipped.ShouldBe([new SkippedAttachment("photo.heic", AttachmentType.Image, SkipReason.Unsupported)]);
+        digest.Converted.Single().Filename.ShouldBe("photo.png");
+        skipped.Reason.ShouldBe(SkipReason.Unsupported);
+        ocr.Images.Single().ShouldBe(Png);
+    }
+
+    /// <summary>
+    /// GIF, TIFF, BMP and JPEG 2000 have no header check: they go to Tesseract as they are, bounded by its memory limit,
+    /// so an animated GIF, a GIF without its trailer or a TIFF cut short is Tesseract's to accept or reject (#158).
+    /// </summary>
+    [Fact]
+    public async Task Formats_without_a_header_check_go_to_ocr_as_they_are()
+    {
+        var ocr = new StubOcr(_ => "text");
+        (string, string, byte[])[] images =
+        [
+            Att("banner.gif", "image/gif", Gif(600, 300, frames: 250, trailer: true)),
+            Att("no-trailer.gif", "image/gif", [.. Gif(10, 10, frames: 1, trailer: false), 0, 0]),
+            Att("short.tif", "image/tiff", [0x49, 0x49, 0x2A, 0x00, 8, 0, 0, 0]),
+            Att("a.bmp", "image/bmp", [.. "BM"u8, .. new byte[24]]),
+            Att("a.jp2", "image/jp2", Jp2Stub),
+        ];
+
+        var digest = await ConvertAllAsync(images, Limits(Ocr), ocr);
+
+        digest.Skipped.ShouldBeEmpty();
+        digest.Converted.Select(c => c.Filename).ShouldBe(images.Select(i => i.Item1));
+        ocr.Images.ShouldBe(images.Select(i => i.Item3));
+    }
+
+    [Fact]
     public async Task Image_converter_without_image_limits_is_a_disabled_skip_not_a_failure()
     {
         var ocr = new StubOcr(_ => "text");
 
-        var digest = await ConvertAllAsync([Att("photo.png", "image/png", Png())], Limits(null), ocr);
+        var digest = await ConvertAllAsync([Att("photo.png", "image/png", Png)], Limits(null), ocr);
 
         digest.Skipped.ShouldBe([new SkippedAttachment("photo.png", AttachmentType.Image, SkipReason.Disabled)]);
         ocr.Images.ShouldBeEmpty();
@@ -141,10 +166,10 @@ public sealed class ImageAttachmentTests
         var slow = new StubOcr(hang: true);
 
         var digest = await ConvertAllAsync(
-            [Att("slow.png", "image/png", Png()), Att("fast.png", "image/png", Png())], Limits(Ocr), slow, timeout: TimeSpan.FromMilliseconds(50));
+            [Att("slow.png", "image/png", Png), Att("fast.png", "image/png", Png)], Limits(Ocr), slow, timeout: TimeSpan.FromMilliseconds(50));
 
         digest.Skipped.Select(s => s.SkipReason).ShouldBe([SkipReason.Failed, SkipReason.Failed]);
-        await Should.ThrowAsync<TimeoutException>(() => Reader(slow, timeout: TimeSpan.FromMilliseconds(50)).ReadAsync(Png(), Ocr, Ct));
+        await Should.ThrowAsync<TimeoutException>(() => Reader(slow, timeout: TimeSpan.FromMilliseconds(50)).ReadAsync(Png, Ocr, Ct));
     }
 
     [Fact]
@@ -153,7 +178,7 @@ public sealed class ImageAttachmentTests
         var ocr = new StubOcr(_ => "text");
         var limits = Limits(Ocr) with { MaxImageBytes = 100 };
 
-        var digest = await ConvertAllAsync([Att("big.png", "image/png", Png())], limits, ocr);
+        var digest = await ConvertAllAsync([Att("big.png", "image/png", Png)], limits, ocr);
 
         digest.Skipped.ShouldBe([new SkippedAttachment("big.png", AttachmentType.Image, SkipReason.TooLarge)]);
         ocr.Images.ShouldBeEmpty();
@@ -171,10 +196,10 @@ public sealed class ImageAttachmentTests
             Att("c.webp", "image/webp", ImageHeaderTests.WebPLossless(16_384, 16_384)),
         ];
 
-        var byOcr = await ConvertAllAsync([.. bombs, Att("d.gif", "image/gif", ImageHeaderTests.Gif(4_000, 4_000, frames: 3))], Limits(Ocr), ocr);
+        var byOcr = await ConvertAllAsync(bombs, Limits(Ocr), ocr);
         var byVision = await ConvertAllAsync(bombs, Limits(Vision), ocr, llm);
 
-        byOcr.Skipped.Select(s => s.SkipReason).ShouldBe(Enumerable.Repeat(SkipReason.TooLarge, 4));
+        byOcr.Skipped.Select(s => s.SkipReason).ShouldBe(Enumerable.Repeat(SkipReason.TooLarge, 3));
         byVision.Skipped.Select(s => s.SkipReason).ShouldBe(Enumerable.Repeat(SkipReason.TooLarge, 3));
         ocr.Images.ShouldBeEmpty();
         llm.Chat.Requests.ShouldBeEmpty();
@@ -185,9 +210,9 @@ public sealed class ImageAttachmentTests
     {
         var ocr = new StubOcr(_ => "text");
         var llm = new FakeLlmClientFactory();
-        var truncated = Png()[..20];
+        var truncated = Png[..20];
 
-        var byOcr = await ConvertAllAsync([Att("a.png", "image/png", truncated), Att("b.bin", "image/png", [.. new byte[64]])], Limits(Ocr), ocr);
+        var byOcr = await ConvertAllAsync([Att("a.png", "image/png", truncated), Att("b.jpg", "image/jpeg", [0xFF, 0xD8, 0xFF, 0xD9])], Limits(Ocr), ocr);
         var byVision = await ConvertAllAsync([Att("a.png", "image/png", truncated)], Limits(Vision), ocr, llm);
 
         byOcr.Skipped.Select(s => s.SkipReason).ShouldBe([SkipReason.Failed, SkipReason.Failed]);
@@ -222,7 +247,7 @@ public sealed class ImageAttachmentTests
         var scan = SyntheticImage.ScannedPdf(1);
 
         var digest = await ConvertAllAsync(
-            Gmail(Att("photo.png", "image/png", Png()), Att("scan.pdf", "application/pdf", scan)), policy.EnabledTypes, policy.Limits, ocr, llm);
+            Message(Att("photo.png", "image/png", Png), Att("scan.pdf", "application/pdf", scan)), policy.EnabledTypes, policy.Limits, ocr, llm);
 
         policy.Limits.Images.ShouldBeNull();
         digest.Skipped.ShouldBe([new SkippedAttachment("photo.png", AttachmentType.Image, SkipReason.Disabled)]);
@@ -259,18 +284,6 @@ public sealed class ImageAttachmentTests
     }
 
     [Fact]
-    public async Task Missing_ocr_engine_fails_the_image_and_leaves_a_scanned_pdf_unread_not_failed()
-    {
-        var engine = Tesseract(path: "tesseract-not-installed-example");
-
-        await Should.ThrowAsync<OcrUnavailableException>(() => engine.ReadTextAsync(Png(), Ct));
-        var digest = await ConvertAllAsync(
-            [Att("photo.png", "image/png", Png()), Att("scan.pdf", "application/pdf", SyntheticImage.ScannedPdf(2))], Limits(Ocr), engine);
-        digest.Skipped.Single().ShouldBe(new SkippedAttachment("photo.png", AttachmentType.Image, SkipReason.Failed));
-        digest.Converted.Single().Markdown.ShouldBeEmpty();
-    }
-
-    [Fact]
     public async Task Missing_ocr_engine_leaves_a_scanned_pdf_unread_even_when_its_pages_fail_the_header_check()
     {
         var engine = Tesseract(path: "tesseract-not-installed-example");
@@ -290,7 +303,7 @@ public sealed class ImageAttachmentTests
         var bomb = ImageHeaderTests.Png(30_000, 30_000);
 
         await Should.ThrowAsync<OcrUnavailableException>(() => Reader(unavailable).ReadAsync(bomb, Ocr, Ct));
-        await Should.ThrowAsync<OcrUnavailableException>(() => Reader(unavailable).ReadAsync(Png()[..20], Ocr, Ct));
+        await Should.ThrowAsync<OcrUnavailableException>(() => Reader(unavailable).ReadAsync(Png[..20], Ocr, Ct));
         var skipped = await Should.ThrowAsync<AttachmentSkippedException>(() => Reader(unavailable).ReadAsync(bomb, Vision, Ct));
 
         skipped.Reason.ShouldBe(SkipReason.TooLarge);
@@ -351,153 +364,30 @@ public sealed class ImageAttachmentTests
     [Fact]
     public async Task Jpeg_2000_pages_go_to_ocr_as_stored_but_never_to_the_vision_model()
     {
-        var jp2 = ImageHeaderTests.Jp2(420, 130, boxed: true);
-        var pdf = SyntheticImage.PdfWithImage(420, 130, "JPXDecode", jp2);
+        var pdf = SyntheticImage.PdfWithImage(420, 130, "JPXDecode", Jp2Stub);
         var ocr = new StubOcr(_ => "text");
         var llm = new FakeLlmClientFactory();
 
         var byOcr = await ConvertAllAsync([Att("scan.pdf", "application/pdf", pdf)], Limits(Ocr), ocr);
         var byVision = await ConvertAllAsync([Att("scan.pdf", "application/pdf", pdf)], Limits(Vision), ocr, llm);
 
-        ocr.Images.Single().ShouldBe(jp2);
+        ocr.Images.Single().ShouldBe(Jp2Stub);
         byOcr.Converted.Single().Markdown.ShouldStartWith("Scanned PDF without a text layer; page(s) 1 read by OCR.");
         byVision.Converted.Single().Markdown.ShouldBe("Scanned PDF without a text layer; no page could be read.\n\n[page 1 unreadable]");
         llm.Chat.Requests.ShouldBeEmpty();
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Tesseract_reads_rendered_synthetic_text(bool jpeg)
+    /// <summary>Bytes no reader recognises, as an iPhone HEIC would be to them.</summary>
+    private static byte[] Heic => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+
+    /// <summary>The JP2 signature box and nothing else; enough to be sniffed as JPEG 2000.</summary>
+    private static byte[] Jp2Stub => [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A, 0, 0, 0, 0];
+
+    /// <summary>A GIF89a of <paramref name="frames"/> image descriptors, with or without the trailer byte.</summary>
+    private static byte[] Gif(ushort width, ushort height, int frames, bool trailer)
     {
-        Assert.SkipUnless(TesseractInstalled.Value, "Tesseract is not installed (CI and the api image have it).");
-
-        var text = await Tesseract().ReadTextAsync(jpeg ? SyntheticImage.Jpeg : SyntheticImage.Png, Ct);
-
-        foreach (var line in SyntheticImage.Lines)
-        {
-            text.ShouldContain(line);
-        }
-    }
-
-    [Fact]
-    public async Task Tesseract_reads_a_scanned_pdf_end_to_end()
-    {
-        Assert.SkipUnless(TesseractInstalled.Value, "Tesseract is not installed (CI and the api image have it).");
-        var scan = SyntheticImage.ScannedPdf(1);
-
-        var digest = await ConvertAllAsync([Att("scan.pdf", "application/pdf", scan)], Limits(Ocr), Tesseract());
-
-        digest.Converted.Single().Markdown.ShouldContain("billing@example.com");
-    }
-
-    /// <summary>
-    /// The OS bound behind the header check: a 39.7 MP RGB PNG passes the 40 MP cap, yet under a 256 MiB address-space
-    /// limit Leptonica can't allocate its canvas (measured: fails at 384 MiB, reads at 512 MiB), so Tesseract exits
-    /// non-zero and the image is a failed attachment, while the next image reads normally in a fresh process.
-    /// </summary>
-    [Fact]
-    public async Task Tesseract_under_the_memory_limit_fails_an_image_the_header_check_let_through_and_keeps_reading()
-    {
-        Assert.SkipUnless(TesseractInstalled.Value && OperatingSystem.IsLinux(), "Needs Tesseract and prlimit (Linux: CI and the api image).");
-        var engine = Tesseract(memoryLimitMb: 256);
-        var big = SyntheticImage.BlankPng(6_300, 6_300);
-        ImageHeader.DeclaredPixels(big).ShouldBe(6_300L * 6_300);
-
-        var digest = await ConvertAllAsync([Att("big.png", "image/png", big), Att("small.png", "image/png", Png())], Limits(Ocr), engine);
-
-        digest.Skipped.ShouldBe([new SkippedAttachment("big.png", AttachmentType.Image, SkipReason.Failed)]);
-        digest.Converted.Single().Markdown.ShouldContain("billing@example.com");
-        (await Should.ThrowAsync<InvalidOperationException>(() => engine.ReadTextAsync(big, Ct))).Message.ShouldContain("exited with code");
-    }
-
-    private static readonly Lazy<bool> TesseractInstalled = new(() =>
-    {
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo("tesseract", "--version") { RedirectStandardOutput = true, RedirectStandardError = true });
-            process!.WaitForExit(10_000);
-            return process.ExitCode == 0;
-        }
-        catch (Win32Exception)
-        {
-            return false;
-        }
-    });
-
-    private static byte[] Png() => SyntheticImage.Png;
-
-    private static TesseractOcrEngine Tesseract(string path = "tesseract", int memoryLimitMb = AttachmentOptions.DefaultOcrMemoryLimitMb) =>
-        new(Options.Create(new AttachmentOptions { TesseractPath = path, OcrMemoryLimitMb = memoryLimitMb }), NullLogger<TesseractOcrEngine>.Instance);
-
-    private static ImageTextReader Reader(IOcrEngine ocr, FakeLlmClientFactory? llm = null, TimeSpan? timeout = null) =>
-        new(ocr, new OllamaVisionClient(llm ?? new FakeLlmClientFactory()),
-            Options.Create(new AttachmentOptions { ImageTimeout = timeout ?? TimeSpan.FromSeconds(30) }), Options.Create(new LlmOptions()));
-
-    private static async Task<ConvertedAttachment> ConvertImageAsync(
-        byte[] image, ConversionLimits limits, IOcrEngine ocr, FakeLlmClientFactory? llm = null)
-    {
-        using var stream = new MemoryStream(image);
-        return await new ImageAttachmentConverter(Reader(ocr, llm))
-            .ConvertAsync(new GmailAttachment("att-1", "scan.png", "image/png", image.Length), stream, limits, Ct);
-    }
-
-    private static AttachmentConversionService Service(
-        IGmailClient gmail, IOcrEngine ocr, FakeLlmClientFactory? llm = null, TimeSpan? timeout = null)
-    {
-        var reader = Reader(ocr, llm, timeout);
-        return new(
-            gmail,
-            [new PdfAttachmentConverter(scanReader: reader, maxOcrPages: 3), new ImageAttachmentConverter(reader)],
-            NullLogger<AttachmentConversionService>.Instance);
-    }
-
-    private static async Task<AttachmentDigest> ConvertAllAsync(
-        (string Filename, string MimeType, byte[] Content)[] attachments, ConversionLimits limits, IOcrEngine ocr,
-        FakeLlmClientFactory? llm = null, TimeSpan? timeout = null) =>
-        await ConvertAllAsync(Gmail(attachments), ImagesAndPdfs, limits, ocr, llm, timeout);
-
-    private static async Task<AttachmentDigest> ConvertAllAsync(
-        IGmailClient gmail, IReadOnlySet<AttachmentType> enabled, ConversionLimits limits, IOcrEngine ocr,
-        FakeLlmClientFactory? llm = null, TimeSpan? timeout = null) =>
-        await Service(gmail, ocr, llm, timeout).ConvertAllAsync(MessageId, await AttachmentsAsync(gmail), enabled, limits, Ct);
-
-    private static async Task<GmailAttachment[]> AttachmentsAsync(IGmailClient gmail) =>
-        [.. (await gmail.GetMessageContentAsync(MessageId, Ct)).ShouldNotBeNull().Attachments];
-
-    private static FakeGmailClient Gmail(params (string Filename, string MimeType, byte[] Content)[] attachments) =>
-        new(new FakeTokenStore(TimeProvider.System), [new FakeMessage(
-            MessageId, "thread-1", "Sender <sender@example.com>", "Synthetic subject", DateTimeOffset.UnixEpoch, ["INBOX"],
-            Attachments: [.. attachments.Select((a, i) => new FakeAttachment($"att-{i + 1}", a.Filename, a.MimeType, a.Content.Length, a.Content))])]);
-
-    private static (string, string, byte[]) Att(string filename, string mimeType, byte[] content) => (filename, mimeType, content);
-
-    /// <summary>
-    /// Records each image and answers with <paramref name="answer"/>, or never answers when <paramref name="hang"/> is set;
-    /// not installed when <paramref name="available"/> is false.
-    /// </summary>
-    private sealed class StubOcr(Func<byte[], string>? answer = null, bool hang = false, bool available = true) : IOcrEngine
-    {
-        public List<byte[]> Images { get; } = [];
-
-        public void EnsureAvailable()
-        {
-            if (!available)
-            {
-                throw new OcrUnavailableException("The stub OCR engine is not installed.");
-            }
-        }
-
-        public async Task<string> ReadTextAsync(ReadOnlyMemory<byte> image, CancellationToken ct)
-        {
-            var bytes = image.ToArray();
-            Images.Add(bytes);
-            if (hang)
-            {
-                await Task.Delay(Timeout.Infinite, ct);
-            }
-
-            return answer?.Invoke(bytes) ?? "";
-        }
+        byte[] frame = [0x2C, 0, 0, 0, 0, (byte)width, (byte)(width >> 8), (byte)height, (byte)(height >> 8), 0, 2, 0];
+        return [.. "GIF89a"u8, (byte)width, (byte)(width >> 8), (byte)height, (byte)(height >> 8), 0, 0, 0,
+                .. Enumerable.Repeat(frame, frames).SelectMany(f => f), .. (trailer ? (byte[])[0x3B] : [])];
     }
 }

@@ -35,10 +35,11 @@ public interface IVisionClient
 
 /// <summary>
 /// Reads one image (an attachment or a scanned PDF page) by OCR or the vision model, as <see cref="ImageReading"/>
-/// says, within <see cref="AttachmentOptions.ImageTimeoutFor"/>, once its header declares at most
-/// <see cref="ImageHeader.MaxPixels"/>. The header check is the cheap pre-filter and the only bound for the vision
-/// path; the OCR process is bounded by <see cref="AttachmentOptions.OcrMemoryLimitMb"/> as well. The vision model gets
-/// PNG, JPEG and WebP only, the formats Ollama decodes. The text is never stored or logged.
+/// says, within <see cref="AttachmentOptions.ImageTimeoutFor"/>. A PNG, JPEG or WebP whose header declares more than
+/// <see cref="ImageHeader.MaxPixels"/> is not decoded; that check is the only bound for the vision path (Ollama decodes
+/// on the host) and a cheap pre-filter for OCR, whose process is bounded by <see cref="AttachmentOptions.OcrMemoryLimitMb"/>
+/// for every format. The vision model gets PNG, JPEG and WebP only, the formats Ollama decodes; OCR gets every format
+/// <see cref="MediaType"/> knows. The text is never stored or logged.
 /// </summary>
 public sealed class ImageTextReader(
     IOcrEngine ocr, IVisionClient vision, IOptions<AttachmentOptions> options, IOptions<LlmOptions> llmOptions)
@@ -46,20 +47,22 @@ public sealed class ImageTextReader(
     public const string OcrDescription = "Image; text read by OCR, no visual description.";
     public const string OcrNoTextDescription = "Image; OCR found no text in it.";
 
-    /// <exception cref="OcrUnavailableException">OCR mode without an OCR engine, whatever the image; checked first.</exception>
-    /// <exception cref="TimeoutException">Reading took longer than <see cref="AttachmentOptions.ImageTimeoutFor"/>.</exception>
     /// <exception cref="AttachmentSkippedException">
-    /// <see cref="SkipReason.Unsupported"/>: a format the vision model can't read; <see cref="SkipReason.TooLarge"/>: the
-    /// header declares more than <see cref="ImageHeader.MaxPixels"/>.
+    /// <see cref="SkipReason.Unsupported"/>: a format the mode's reader doesn't decode (checked first);
+    /// <see cref="SkipReason.TooLarge"/>: the header declares more than <see cref="ImageHeader.MaxPixels"/>.
     /// </exception>
-    /// <exception cref="InvalidDataException">The header can't be read, so the image is never decoded.</exception>
+    /// <exception cref="OcrUnavailableException">OCR mode without an OCR engine, whatever the image; checked before the header.</exception>
+    /// <exception cref="InvalidDataException">The header of a format <see cref="ImageHeader.Reads"/> can't be read, so the image is never decoded.</exception>
+    /// <exception cref="TimeoutException">Reading took longer than <see cref="AttachmentOptions.ImageTimeoutFor"/>.</exception>
     public async Task<ImageText> ReadAsync(ReadOnlyMemory<byte> image, ImageReading reading, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(reading);
         var mediaType = MediaType(image.Span);
-        if (reading.Mode == ImageMode.Vision && !IsVisionFormat(mediaType))
+        if (reading.Mode == ImageMode.Vision ? !IsVisionFormat(mediaType) : mediaType is null)
         {
-            throw new AttachmentSkippedException(SkipReason.Unsupported, "The vision model reads PNG, JPEG and WebP only.");
+            throw new AttachmentSkippedException(
+                SkipReason.Unsupported,
+                reading.Mode == ImageMode.Vision ? "The vision model reads PNG, JPEG and WebP only." : "The OCR engine reads PNG, JPEG, GIF, WebP, TIFF, BMP and JPEG 2000 only.");
         }
 
         // Without an engine every image fails alike; a scanned PDF then stays unread rather than failed (the converter's contract).
@@ -69,10 +72,13 @@ public sealed class ImageTextReader(
         }
 
         // Decoders allocate the declared canvas before rejecting anything: a 1 MB PNG made Tesseract take 4 GB (#156).
-        var pixels = ImageHeader.DeclaredPixels(mediaType, image.Span) ?? throw new InvalidDataException("The image header can't be read.");
-        if (pixels > ImageHeader.MaxPixels)
+        if (ImageHeader.Reads(mediaType))
         {
-            throw new AttachmentSkippedException(SkipReason.TooLarge, $"The image declares {pixels} pixels; at most {ImageHeader.MaxPixels} are read.");
+            var pixels = ImageHeader.DeclaredPixels(mediaType, image.Span) ?? throw new InvalidDataException("The image header can't be read.");
+            if (pixels > ImageHeader.MaxPixels)
+            {
+                throw new AttachmentSkippedException(SkipReason.TooLarge, $"The image declares {pixels} pixels; at most {ImageHeader.MaxPixels} are read.");
+            }
         }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -117,10 +123,10 @@ public sealed class ImageAttachmentConverter(ImageTextReader reader) : IAttachme
 
     /// <exception cref="AttachmentSkippedException">
     /// <see cref="SkipReason.Disabled"/> when <see cref="ConversionLimits.Images"/> is <c>null</c> (images are not read);
-    /// <see cref="SkipReason.Unsupported"/> for a format the vision model can't read; <see cref="SkipReason.TooLarge"/>
-    /// when the header declares more than <see cref="ImageHeader.MaxPixels"/>.
+    /// <see cref="SkipReason.Unsupported"/> for a format the mode's reader doesn't decode; <see cref="SkipReason.TooLarge"/>
+    /// when a PNG, JPEG or WebP header declares more than <see cref="ImageHeader.MaxPixels"/>.
     /// </exception>
-    /// <exception cref="InvalidDataException">The header can't be read; the image is never decoded (a failed attachment).</exception>
+    /// <exception cref="InvalidDataException">A PNG, JPEG or WebP header can't be read; the image is never decoded (a failed attachment).</exception>
     /// <exception cref="OcrUnavailableException">OCR mode without an OCR engine (a failed attachment).</exception>
     /// <exception cref="TimeoutException">Reading took longer than the image timeout (a failed attachment).</exception>
     public async Task<ConvertedAttachment> ConvertAsync(GmailAttachment attachment, Stream content, ConversionLimits limits, CancellationToken ct)

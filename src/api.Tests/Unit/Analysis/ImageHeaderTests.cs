@@ -6,8 +6,9 @@ using GmailOrganiser.Tests.Fakes;
 namespace GmailOrganiser.Tests.Unit.Analysis;
 
 /// <summary>
-/// <see cref="ImageHeader"/> on tiny synthetic files that only declare their size (no pixel data), so a decompression
-/// bomb is caught without building one. <see cref="ImageAttachmentTests"/> checks that OCR and vision never see them.
+/// <see cref="ImageHeader"/> on tiny synthetic PNG, JPEG and WebP files that only declare their size (no pixel data), so
+/// a decompression bomb is caught without building one. <see cref="ImageAttachmentTests"/> checks that OCR and vision
+/// never see them, and that the other formats are left to the OCR memory limit.
 /// </summary>
 public sealed class ImageHeaderTests
 {
@@ -18,17 +19,12 @@ public sealed class ImageHeaderTests
         { "webp-vp8", WebPLossy(16_383, 16_383), 16_383L * 16_383 },
         { "webp-vp8l", WebPLossless(16_384, 16_384), 16_384L * 16_384 },
         { "webp-vp8x", WebPExtended(100_000, 100_000), 10_000_000_000 },
-        { "gif", Gif(65_535, 65_535), 65_535L * 65_535 },
-        { "tiff", Tiff(100_000, 100_000), 10_000_000_000 },
-        { "bmp-top-down", Bmp(20_000, -20_000), 400_000_000 },
-        { "jp2-codestream", Jp2(20_000, 20_000, boxed: false), 400_000_000 },
-        { "jp2-file", Jp2(20_000, 20_000, boxed: true), 400_000_000 },
         { "png-max", Png(uint.MaxValue, uint.MaxValue), long.MaxValue },
     };
 
     [Theory]
     [MemberData(nameof(Declared))]
-    public void Reads_the_declared_size_of_every_known_format_without_decoding(string format, byte[] image, long pixels)
+    public void Reads_the_declared_size_of_png_jpeg_and_webp_without_decoding(string format, byte[] image, long pixels)
     {
         ImageHeader.DeclaredPixels(image).ShouldBe(pixels, format);
         image.Length.ShouldBeLessThan(100);
@@ -42,11 +38,22 @@ public sealed class ImageHeaderTests
     }
 
     [Fact]
-    public void Gif_counts_every_frame_but_not_the_canvas_because_giflib_allocates_frames_only()
+    public void Reads_the_vision_formats_only_and_leaves_the_rest_to_the_ocr_memory_limit()
     {
-        // Three 16 MP frames: each under the cap, together over it; a single 20 MP frame is not counted twice.
-        ImageHeader.DeclaredPixels(Gif(4_000, 4_000, frames: 3)).ShouldBe(48_000_000);
-        ImageHeader.DeclaredPixels(Gif(4_500, 4_500)).ShouldBe(20_250_000);
+        foreach (var mediaType in (string?[])["image/png", "image/jpeg", "image/webp"])
+        {
+            ImageHeader.Reads(mediaType).ShouldBeTrue(mediaType);
+            ImageTextReader.IsVisionFormat(mediaType).ShouldBeTrue(mediaType);
+        }
+
+        foreach (var mediaType in (string?[])["image/gif", "image/tiff", "image/bmp", "image/jp2", null])
+        {
+            ImageHeader.Reads(mediaType).ShouldBeFalse(mediaType);
+        }
+
+        // A GIF frame declaring 65535² and a 2-byte TIFF prefix: neither is parsed, neither throws.
+        ImageHeader.DeclaredPixels([.. "GIF89a"u8, .. Le16(10), .. Le16(10), 0, 0, 0, 0x2C, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0, 2, 0, 0x3B]).ShouldBeNull();
+        ImageHeader.DeclaredPixels("image/tiff", [0x49, 0x49]).ShouldBeNull();
     }
 
     [Fact]
@@ -60,12 +67,7 @@ public sealed class ImageHeaderTests
     }
 
     [Fact]
-    public void Up_to_four_components_are_read()
-    {
-        ImageHeader.DeclaredPixels(Jp2(100, 100, boxed: true, components: 4)).ShouldBe(10_000);
-        ImageHeader.DeclaredPixels(Tiff(100, 100, samples: 4)).ShouldBe(10_000);
-        ImageHeader.DeclaredPixels(Jpeg(100, 100, components: 4)).ShouldBe(10_000);
-    }
+    public void Jpeg_with_up_to_four_components_is_read() => ImageHeader.DeclaredPixels(Jpeg(100, 100, components: 4)).ShouldBe(10_000);
 
     /// <summary>Two headers that could disagree: the larger counts, whichever comes first, since decoders differ on which they use.</summary>
     public static TheoryData<string, byte[], long> Ambiguous => new()
@@ -77,15 +79,6 @@ public sealed class ImageHeaderTests
         { "webp-animation-frame", [.. WebPExtended(10, 10), .. WebPFrame(20_000, 20_000, WebPLossy(10, 10)[12..])], 400_000_000 },
         { "webp-animation-nested-vp8", [.. WebPExtended(10, 10), .. WebPFrame(10, 10, WebPLossy(16_000, 16_000)[12..])], 256_000_000 },
         { "webp-frames-nested-to-the-limit", [.. WebPExtended(10, 10), .. WebPNestedFrames(8, WebPLossy(16_000, 16_000)[12..])], 256_000_000 },
-        { "gif-frame-larger-than-canvas", GifFrameOverCanvas(), 20_000L * 20_000 },
-        { "tiff-tiles-larger-than-the-image", TiffIfd(TiffEntry(256, 16), TiffEntry(257, 16), TiffEntry(322, 65_520), TiffEntry(323, 65_520)), 65_520L * 65_520 },
-        { "tiff-tiles-smaller-than-the-image", TiffIfd(TiffEntry(256, 20_000), TiffEntry(257, 20_000), TiffEntry(322, 256), TiffEntry(323, 256)), 400_000_000 },
-        { "jp2-big-ihdr", Jp2(10, 10, boxed: true, ihdrWidth: 20_000, ihdrHeight: 20_000), 400_000_000 },
-        { "jp2-big-siz", Jp2(20_000, 20_000, boxed: true, ihdrWidth: 10, ihdrHeight: 10), 400_000_000 },
-        { "jp2-big-ihdr-first", Jp2TwoIhdr(20_000, 10), 400_000_000 },
-        { "jp2-big-ihdr-second", Jp2TwoIhdr(10, 20_000), 400_000_000 },
-        { "jp2-second-siz", [.. Jp2(10, 10, boxed: false), .. Jp2(20_000, 20_000, boxed: false)[2..]], 400_000_000 },
-        { "bmp-os2-16-bit", [.. "BM"u8, .. new byte[12], .. Le32(12), .. Le16(20_000), .. Le16(20_000), 1, 0, 24, 0], 400_000_000 },
     };
 
     [Theory]
@@ -98,28 +91,15 @@ public sealed class ImageHeaderTests
         { "unknown", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29] },
         { "png-truncated", Png(10, 10)[..20] },
         { "png-zero-width", Png(0, 10) },
+        { "png-second-ihdr", [.. Png(10, 10), .. Png(30_000, 30_000)[8..]] },
         { "jpeg-scan-before-frame", [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x08, 1, 2, 3, 4, 5, 6] },
+        { "jpeg-scan-before-frame-after-fill", [0xFF, 0xD8, 0xFF, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xC0, 0, 11, 8, 0, 10, 0, 10, 1, 1, 0x11, 0] },
         { "jpeg-no-frame", [0xFF, 0xD8, 0xFF, 0xD9] },
+        { "jpeg-10-components", Jpeg(6_000, 6_000, components: 10) },
+        { "jpeg-no-components", Jpeg(10, 10, components: 0) },
         { "webp-unknown-chunk", [.. WebPExtended(10, 10)[..12], .. "ABCD"u8, .. new byte[14]] },
         { "webp-frames-nested-past-the-limit", [.. WebPExtended(10, 10), .. WebPNestedFrames(9, WebPLossy(10, 10)[12..])] },
         { "webp-frames-nested-100-000-deep", [.. WebPExtended(10, 10), .. WebPNestedFrames(100_000, WebPLossy(10, 10)[12..])] },
-        { "tiff-ifd-loop", TiffLoop() },
-        { "tiff-no-ifd", [0x49, 0x49, 0x2A, 0x00, 0, 0, 0, 0] },
-        { "bmp-truncated", Bmp(10, 10)[..20] },
-        { "jp2-1000-components", Jp2(6_000, 6_000, boxed: false, components: 1_000) },
-        { "jp2-no-components", Jp2(10, 10, boxed: true, components: 0) },
-        { "tiff-5-samples", Tiff(6_000, 6_000, samples: 5) },
-        { "tiff-repeated-tile-width", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(322, 16), TiffEntry(322, 65_520)) },
-        { "jpeg-10-components", Jpeg(6_000, 6_000, components: 10) },
-        { "jpeg-no-components", Jpeg(10, 10, components: 0) },
-        { "tiff-repeated-size-big-first", TiffIfd(TiffEntry(256, 20_000), TiffEntry(257, 20_000), TiffEntry(256, 10), TiffEntry(257, 10)) },
-        { "tiff-repeated-size-small-first", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(256, 20_000), TiffEntry(257, 20_000)) },
-        { "tiff-repeated-samples", TiffIfd(TiffEntry(256, 10), TiffEntry(257, 10), TiffEntry(277, 5), TiffEntry(277, 1)) },
-        { "png-second-ihdr", [.. Png(10, 10), .. Png(30_000, 30_000)[8..]] },
-        { "bmp-unknown-header-size", [.. Bmp(10, 10)[..14], .. Le32(20), .. Bmp(10, 10)[18..]] },
-        { "jp2-ihdr-5-components", Jp2(10, 10, boxed: true, ihdrWidth: 10, ihdrHeight: 10, ihdrComponents: 5) },
-        { "jpeg-scan-before-frame-after-fill", [0xFF, 0xD8, 0xFF, 0xFF, 0xDA, 0x00, 0x02, 0xFF, 0xC0, 0, 11, 8, 0, 10, 0, 10, 1, 1, 0x11, 0] },
-        { "jp2-without-codestream", [0x00, 0x00, 0x00, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A, 0, 0, 0, 0] },
     };
 
     [Theory]
@@ -144,34 +124,6 @@ public sealed class ImageHeaderTests
 
     public static byte[] WebPExtended(uint width, uint height) =>
         WebP("VP8X", [0, 0, 0, 0, .. Le32(width - 1)[..3], .. Le32(height - 1)[..3]]);
-
-    public static byte[] Gif(ushort width, ushort height, int frames = 1)
-    {
-        byte[] frame = [0x2C, 0, 0, 0, 0, .. Le16(width), .. Le16(height), 0, 2, 0];
-        return [.. "GIF89a"u8, .. Le16(width), .. Le16(height), 0, 0, 0, .. Enumerable.Repeat(frame, frames).SelectMany(f => f), 0x3B];
-    }
-
-    public static byte[] Tiff(uint width, uint height, uint samples = 3) =>
-        [0x49, 0x49, 0x2A, 0x00, .. Le32(8), 0x03, 0x00, .. TiffEntry(256, width), .. TiffEntry(257, height), .. TiffEntry(277, samples), .. Le32(0)];
-
-    public static byte[] Bmp(int width, int height) =>
-        [.. "BM"u8, .. new byte[12], .. Le32(40), .. Le32((uint)width), .. Le32((uint)height), .. new byte[28]];
-
-    /// <summary>
-    /// A raw codestream (SOC, SIZ) as PDFs embed it, or wrapped in a JP2 signature box, an optional <c>jp2h</c> box holding
-    /// an <c>ihdr</c> box, and a <c>jp2c</c> box.
-    /// </summary>
-    public static byte[] Jp2(
-        uint width, uint height, bool boxed, ushort components = 3, uint ihdrWidth = 0, uint ihdrHeight = 0, ushort ihdrComponents = 3)
-    {
-        byte[] codestream = [0xFF, 0x4F, 0xFF, 0x51, 0, 38, 0, 0, .. Be32(width), .. Be32(height), .. new byte[24], .. Be16(components)];
-        byte[] header = ihdrWidth == 0
-            ? []
-            : [0, 0, 0, 30, .. "jp2h"u8, 0, 0, 0, 22, .. "ihdr"u8, .. Be32(ihdrHeight), .. Be32(ihdrWidth), .. Be16(ihdrComponents), 8, 7, 0, 0];
-        return boxed
-            ? [0, 0, 0, 12, .. "jP  "u8, 0x0D, 0x0A, 0x87, 0x0A, .. header, .. Be32((uint)codestream.Length + 8), .. "jp2c"u8, .. codestream]
-            : codestream;
-    }
 
     /// <summary>SOI, then a small and a large baseline frame header in the given order, then EOI.</summary>
     private static byte[] JpegTwoFrames(ushort first, ushort second) =>
@@ -199,32 +151,6 @@ public sealed class ImageHeaderTests
         bytes.AddRange(frame);
         return [.. bytes];
     }
-
-    /// <summary>A JP2 file whose <c>jp2h</c> box holds two <c>ihdr</c> boxes of the given sizes around a 10 × 10 codestream.</summary>
-    private static byte[] Jp2TwoIhdr(uint first, uint second)
-    {
-        byte[] codestream = Jp2(10, 10, boxed: false);
-        return
-            [0, 0, 0, 12, .. "jP  "u8, 0x0D, 0x0A, 0x87, 0x0A,
-             0, 0, 0, 52, .. "jp2h"u8, .. Ihdr(first), .. Ihdr(second),
-             .. Be32((uint)codestream.Length + 8), .. "jp2c"u8, .. codestream];
-
-        static byte[] Ihdr(uint side) => [0, 0, 0, 22, .. "ihdr"u8, .. Be32(side), .. Be32(side), 0, 3, 8, 7, 0, 0];
-    }
-
-    private static byte[] GifFrameOverCanvas()
-    {
-        byte[] frame = [0x2C, 0, 0, 0, 0, .. Le16(20_000), .. Le16(20_000), 0, 2, 0];
-        return [.. "GIF89a"u8, .. Le16(10), .. Le16(10), 0, 0, 0, .. frame, 0x3B];
-    }
-
-    private static byte[] TiffIfd(params byte[][] entries) =>
-        [0x49, 0x49, 0x2A, 0x00, .. Le32(8), (byte)entries.Length, 0x00, .. entries.SelectMany(e => e), .. Le32(0)];
-
-    private static byte[] TiffLoop() =>
-        [0x49, 0x49, 0x2A, 0x00, .. Le32(8), 0x02, 0x00, .. TiffEntry(256, 10), .. TiffEntry(257, 10), .. Le32(8)];
-
-    private static byte[] TiffEntry(ushort tag, uint value) => [.. Le16(tag), 4, 0, 1, 0, 0, 0, .. Le32(value)];
 
     private static byte[] WebP(string chunk, byte[] payload) =>
         [.. "RIFF"u8, .. Le32((uint)payload.Length + 12), .. "WEBP"u8, .. Encoding.ASCII.GetBytes(chunk), .. Le32((uint)payload.Length), .. payload];
