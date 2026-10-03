@@ -283,7 +283,7 @@ public sealed partial class CleanUpActionsJob(
             foreach (var message in messages)
             {
                 message.LabelIds = LabelChunks.After(message.LabelIds, chunk.Add, chunk.Remove);
-                message.DeletedInGmail = cursor.Kind == ActionKind.Trash;
+                message.DeletedInGmail = message.LabelIds.Contains(CleanUpQuery.TrashLabel, StringComparer.Ordinal);
                 message.UpdatedAt = now;
             }
 

@@ -6,6 +6,7 @@ using GmailOrganiser.Common;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Mcp;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
@@ -214,6 +215,9 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
         (await db.Messages.SingleAsync(m => m.Id == "a01", Ct)).DeletedInGmail.ShouldBeFalse();
         (await db.Senders.SingleAsync(s => s.Address == Shop, Ct)).TotalCount.ShouldBe(7);
         (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(2, 2, 2));
+        await using var scope = h.Services.CreateAsyncScope();
+        var tree = await scope.ServiceProvider.GetRequiredService<LabelTreeBuilder>().BuildAsync(Ct);
+        tree.Labels.Single(l => l.IsDeleteLabel).MessageCount.ShouldBe(2);
     }
 
     [Fact]
