@@ -98,11 +98,10 @@ public sealed class OfficeAttachmentConverterTests
     [Fact]
     public async Task Csv_parse_past_the_timeout_throws_a_timeout()
     {
-        // One long field under a generous limit keeps the parse busy well past a zero timeout.
-        var csv = Encoding.UTF8.GetBytes("a," + new string('x', 20_000_000));
+        var csv = Encoding.UTF8.GetBytes("a,b");
 
         await Should.ThrowAsync<TimeoutException>(() =>
-            ConvertAsync(new CsvAttachmentConverter(parseTimeout: TimeSpan.Zero), csv, "slow.csv", Limits with { MaxChars = int.MaxValue / 2 }));
+            ConvertAsync(new CsvAttachmentConverter(parseTimeout: TimeSpan.Zero), csv, "slow.csv"));
     }
 
     [Fact]
