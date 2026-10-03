@@ -2,7 +2,9 @@ import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter } from '@angular/router';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
+import { ExternalReviewDto } from '../core/claude.models';
+import { ClaudeService } from '../core/claude.service';
 import { isActiveJob, JobDto, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { SettingsService } from '../settings/settings.service';
@@ -104,6 +106,7 @@ class FakeJobs {
   readonly jobs = this.held.asReadonly();
   readonly activeJobs = computed(() => this.held().filter(isActiveJob));
   readonly reconnects = signal(0);
+  readonly externalReviewChanges = new Subject<ExternalReviewDto>();
   cancel = vi.fn(() => of(undefined));
   job(id: string) {
     return this.held().find((j) => j.id === id);
@@ -113,8 +116,15 @@ class FakeJobs {
 describe('ReviewPage', () => {
   afterEach(() => document.querySelector('.cdk-overlay-container')?.replaceChildren());
 
-  async function render(pattern: SenderPatternDto = noPattern) {
+  async function render(
+    pattern: SenderPatternDto = noPattern,
+    claudeReviewerMode = 'off',
+    groups = [group()],
+  ) {
     const jobs = new FakeJobs();
+    const claude = {
+      createReviews: vi.fn(() => of({ created: 1, skipped: 0, items: [] })),
+    };
     const api = {
       listSenders: vi.fn(() =>
         of({
@@ -124,7 +134,7 @@ describe('ReviewPage', () => {
           total: 2,
         }),
       ),
-      sender: vi.fn(() => of(detail())),
+      sender: vi.fn(() => of(detail(groups))),
       pattern: vi.fn(() => of(pattern)),
       approve: vi.fn(() => of(member('a'))),
       reject: vi.fn(() => of(member('a'))),
@@ -149,11 +159,17 @@ describe('ReviewPage', () => {
         { provide: JobsService, useValue: jobs },
         { provide: ReviewService, useValue: api },
         { provide: REVIEW_EDIT_DIALOG, useValue: edit },
+        { provide: ClaudeService, useValue: claude },
         {
           provide: SettingsService,
           useValue: {
             getSettings: () =>
-              of({ bulkApproveThreshold: 0.85, actionLabelName: 'Act', deleteLabelName: 'Bin' }),
+              of({
+                bulkApproveThreshold: 0.85,
+                actionLabelName: 'Act',
+                deleteLabelName: 'Bin',
+                claudeReviewerMode,
+              }),
           },
         },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
@@ -172,7 +188,7 @@ describe('ReviewPage', () => {
       q('group-expand')!.click();
       await settle();
     };
-    return { fixture, jobs, api, edit, el, q, all, settle, expand };
+    return { fixture, jobs, api, edit, claude, el, q, all, settle, expand };
   }
 
   const dialogButton = (testId: string) =>
@@ -381,5 +397,95 @@ describe('ReviewPage', () => {
     dialogButton('confirm-cancel').click();
     await settle();
     expect(api.applyRest).not.toHaveBeenCalled();
+  });
+
+  const claudeItem = (over: Partial<ExternalReviewDto> = {}): ExternalReviewDto => ({
+    id: 'r1',
+    targetType: 'suggestion',
+    suggestionId: 'b',
+    senderAddress: 'news@example.com',
+    groupKey: null,
+    groupDisplay: null,
+    status: 'running',
+    reviewer: null,
+    verdict: null,
+    verdictTopicLabel: null,
+    verdictNeedsAction: null,
+    verdictToBeDeleted: null,
+    reasoning: null,
+    error: null,
+    resolution: 'none',
+    createdAt: '2026-01-01T00:00:00Z',
+    reviewedAt: null,
+    resolvedAt: null,
+    ...over,
+  });
+
+  it('hides every Claude action and hint when Claude review is off', async () => {
+    const { q, expand } = await render(noPattern, 'off', [
+      group({ suggestedForClaude: true, members: [member('a', { suggestedForClaude: true })] }),
+    ]);
+    await expand();
+    expect(q('claude-panel')).toBeNull();
+    expect(q('claude-send-pending')).toBeNull();
+    expect(q('group-claude-hint')).toBeNull();
+    expect(q('member-claude-hint')).toBeNull();
+  });
+
+  it('shows the Claude? hint only on items suggested for Claude', async () => {
+    const { q, all, expand } = await render(noPattern, 'headless_claude_code', [
+      group({
+        suggestedForClaude: true,
+        members: [member('a', { suggestedForClaude: true }), member('b')],
+      }),
+    ]);
+    await expand();
+    expect(q('group-claude-hint')!.textContent).toContain('Claude?');
+    expect(all('member-claude-hint')).toHaveLength(1);
+  });
+
+  it('sends a group card and a member row to Claude', async () => {
+    const { claude, all, expand } = await render(noPattern, 'headless_claude_code');
+    await expand();
+    const sends = all('claude-send');
+    expect(sends).toHaveLength(3);
+    sends[0].click();
+    expect(claude.createReviews).toHaveBeenLastCalledWith({
+      groups: [{ senderAddress: 'news@example.com', groupKey: 'key-1' }],
+    });
+    sends[2].click();
+    expect(claude.createReviews).toHaveBeenLastCalledWith({ suggestionIds: ['b'] });
+  });
+
+  it('a hub change patches the matching row in place', async () => {
+    const { jobs, api, el, settle, expand } = await render(noPattern, 'headless_claude_code');
+    await expand();
+    const calls = api.sender.mock.calls.length;
+    jobs.externalReviewChanges.next(claudeItem());
+    jobs.externalReviewChanges.next(
+      claudeItem({
+        id: 'r2',
+        targetType: 'group',
+        suggestionId: null,
+        groupKey: 'key-1',
+        status: 'queued',
+      }),
+    );
+    await settle();
+    const rows = el.querySelectorAll('[data-testid="member-row"]');
+    expect(rows[0].querySelector('[data-testid="claude-running"]')).toBeNull();
+    expect(rows[1].querySelector('[data-testid="claude-running"]')).not.toBeNull();
+    expect(el.querySelectorAll('[data-testid="claude-queued"]')).toHaveLength(1);
+    expect(api.sender.mock.calls.length).toBe(calls);
+  });
+
+  it('re-fetches once an item is accepted, since its suggestions changed', async () => {
+    const { jobs, api, settle } = await render(noPattern, 'headless_claude_code');
+    const calls = api.sender.mock.calls.length;
+    jobs.externalReviewChanges.next(
+      claudeItem({ status: 'reviewed', verdict: 'agree', resolution: 'accepted_claude' }),
+    );
+    await settle();
+    expect(api.sender.mock.calls.length).toBe(calls + 1);
   });
 });
