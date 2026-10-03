@@ -217,6 +217,16 @@ describe('ClaudeSettingsSection', () => {
       expect(details).not.toContain('CLI');
     });
 
+    it('a mode change cancels a running test', async () => {
+      await render(claude({ claudeReviewerMode: 'headless_claude_code' }));
+      q('claude-test')!.click();
+      const req = http.expectOne('/api/claude/test');
+      await chooseMode('claude_desktop');
+      await flushSnippet();
+      expect(req.cancelled).toBe(true);
+      expect(section.testRun()).toEqual({ state: 'idle' });
+    });
+
     it('shows a failed request', async () => {
       await render(claude({ claudeReviewerMode: 'headless_claude_code' }));
       q('claude-test')!.click();
@@ -238,12 +248,70 @@ describe('ClaudeSettingsSection', () => {
       expect(snackOpen).toHaveBeenCalled();
     });
 
-    it('copies the review prompt', async () => {
-      q('claude-copy-prompt')!.click();
-      const req = http.expectOne('/api/claude/prompts/review-pending');
-      expect(req.request.responseType).toBe('text');
-      req.flush('Synthetic review prompt.');
-      expect(copy).toHaveBeenCalledWith('Synthetic review prompt.');
+    describe('copy prompt', () => {
+      let write: ReturnType<typeof vi.fn>;
+      const flushPrompt = () =>
+        http.expectOne('/api/claude/prompts/review-pending').flush('Synthetic review prompt.');
+      const settle = () => new Promise((resolve) => setTimeout(resolve));
+
+      function stubClipboard(result: Promise<void>) {
+        write = vi.fn((items: { data: Record<string, Promise<Blob>> }[]) =>
+          items[0].data['text/plain'].then(() => result),
+        );
+        vi.stubGlobal(
+          'ClipboardItem',
+          class {
+            constructor(public data: Record<string, Promise<Blob>>) {}
+          },
+        );
+        vi.stubGlobal('navigator', { clipboard: { write } });
+      }
+
+      afterEach(() => vi.unstubAllGlobals());
+
+      it('starts the clipboard write in the click, before the prompt arrives', async () => {
+        stubClipboard(Promise.resolve());
+        q('claude-copy-prompt')!.click();
+        expect(write).toHaveBeenCalledTimes(1);
+        const req = http.expectOne('/api/claude/prompts/review-pending');
+        expect(req.request.responseType).toBe('text');
+        req.flush('Synthetic review prompt.');
+        const blob: Blob = await write.mock.calls[0][0][0].data['text/plain'];
+        expect(await blob.text()).toBe('Synthetic review prompt.');
+        await settle();
+        expect(snackOpen).toHaveBeenCalledWith('Review prompt copied', undefined, {
+          duration: 2000,
+        });
+      });
+
+      it('shows an error when the browser refuses the write', async () => {
+        stubClipboard(Promise.reject(new DOMException('denied', 'NotAllowedError')));
+        q('claude-copy-prompt')!.click();
+        flushPrompt();
+        await settle();
+        expect(snackOpen).toHaveBeenCalledWith('Could not copy the review prompt', 'Close');
+      });
+
+      it('falls back to the CDK clipboard and shows an error when it fails', async () => {
+        vi.stubGlobal('ClipboardItem', undefined);
+        copy.mockReturnValue(false);
+        q('claude-copy-prompt')!.click();
+        flushPrompt();
+        await settle();
+        expect(copy).toHaveBeenCalledWith('Synthetic review prompt.');
+        expect(snackOpen).toHaveBeenCalledWith('Could not copy the review prompt', 'Close');
+      });
+
+      it('leaves a failed request to the error interceptor', async () => {
+        stubClipboard(Promise.resolve());
+        q('claude-copy-prompt')!.click();
+        http
+          .expectOne('/api/claude/prompts/review-pending')
+          .flush(null, { status: 500, statusText: 'Server Error' });
+        await settle();
+        expect(snackOpen).not.toHaveBeenCalled();
+        expect(section.copyingPrompt()).toBe(false);
+      });
     });
 
     it('rotate asks first; Cancel keeps the token', async () => {

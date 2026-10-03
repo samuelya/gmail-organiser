@@ -32,7 +32,7 @@ import { MatRadioModule } from '@angular/material/radio';
 import { MatSliderModule } from '@angular/material/slider';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { catchError, filter, of, Subscription, switchMap } from 'rxjs';
+import { catchError, filter, firstValueFrom, of, Subscription, switchMap } from 'rxjs';
 import { ClaudeTestResult } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
 import { openConfirm } from '../core/confirm-dialog';
@@ -193,7 +193,7 @@ export class ClaudeSettingsSection {
       });
     this.c.claudeReviewerMode.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => {
       this.applyMode();
-      this.testRun.set({ state: 'idle' });
+      this.cancelTest();
     });
     this.c.claudeSuggestLowConfidence.valueChanges
       .pipe(takeUntilDestroyed())
@@ -312,18 +312,36 @@ export class ClaudeSettingsSection {
   copyPrompt(): void {
     if (this.copyingPrompt()) return;
     this.copyingPrompt.set(true);
-    this.claude
-      .getReviewPrompt()
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (prompt) => {
-          this.copyingPrompt.set(false);
-          if (this.clipboard.copy(prompt)) {
-            this.snackBar.open('Review prompt copied', undefined, { duration: 2000 });
-          }
+    let loaded = false;
+    const prompt = firstValueFrom(
+      this.claude.getReviewPrompt().pipe(takeUntilDestroyed(this.destroyRef)),
+    ).then((text) => {
+      loaded = true;
+      return text;
+    });
+    this.writePrompt(prompt)
+      .then(
+        () => this.snackBar.open('Review prompt copied', undefined, { duration: 2000 }),
+        () => {
+          // A failed request is shown by the error interceptor; only a failed copy is ours.
+          if (loaded) this.snackBar.open('Could not copy the review prompt', 'Close');
         },
-        error: () => this.copyingPrompt.set(false),
-      });
+      )
+      .finally(() => this.copyingPrompt.set(false));
+  }
+
+  /**
+   * Starts the clipboard write inside the click, with the prompt still loading, so the browser
+   * keeps the user gesture; copying after the response arrives fails in Safari and Firefox.
+   */
+  private writePrompt(prompt: Promise<string>): Promise<void> {
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      const blob = prompt.then((text) => new Blob([text], { type: 'text/plain' }));
+      return navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]);
+    }
+    return prompt.then((text) => {
+      if (!this.clipboard.copy(text)) throw new Error('copy failed');
+    });
   }
 
   private load(settings: ClaudeSettings | null): void {
