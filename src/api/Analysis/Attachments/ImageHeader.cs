@@ -22,6 +22,12 @@ public static class ImageHeader
     private const int MaxTiffPages = 1000;
 
     /// <summary>
+    /// Deeper animation frames nested in animation frames than any decoder reads (libwebp reads none): each level is a
+    /// recursive call, so an unbounded chain could exhaust the stack.
+    /// </summary>
+    private const int MaxWebPFrameDepth = 8;
+
+    /// <summary>
     /// The declared pixels: the largest page of a TIFF, the canvas plus every frame of a GIF (giflib decodes them all),
     /// width × height otherwise. <c>null</c> when the format is unknown or the header is truncated, malformed or declares
     /// no pixels.
@@ -168,15 +174,21 @@ public static class ImageHeader
 
     /// <summary>
     /// The largest of the VP8X canvas, every VP8/VP8L frame and every animation frame: libwebp rejects a frame that
-    /// doesn't fit the canvas, but a decoder that ignores VP8X allocates the frame's own size.
+    /// doesn't fit the canvas, but a decoder that ignores VP8X allocates the frame's own size. Frames nested deeper than
+    /// <see cref="MaxWebPFrameDepth"/> declare nothing.
     /// </summary>
     private static long? WebP(ReadOnlySpan<byte> s) =>
         s.Length >= 16 && (s[12..16].SequenceEqual("VP8 "u8) || s[12..16].SequenceEqual("VP8L"u8) || s[12..16].SequenceEqual("VP8X"u8))
             ? WebPChunks(s[12..])
             : null;
 
-    private static long? WebPChunks(ReadOnlySpan<byte> s)
+    private static long? WebPChunks(ReadOnlySpan<byte> s, int depth = 0)
     {
+        if (depth > MaxWebPFrameDepth)
+        {
+            return null;
+        }
+
         long largest = 0;
         for (var i = 0; i + 8 <= s.Length;)
         {
@@ -203,7 +215,7 @@ public static class ImageHeader
             else if (chunk.SequenceEqual("ANMF"u8))
             {
                 // X, Y, width - 1, height - 1, duration (24 bits each), flags, then the frame's own chunks.
-                var frames = data.Length >= 16 && size >= 16 ? WebPChunks(data[16..(int)Math.Min(size, (uint)data.Length)]) : null;
+                var frames = data.Length >= 16 && size >= 16 ? WebPChunks(data[16..(int)Math.Min(size, (uint)data.Length)], depth + 1) : null;
                 pixels = frames is { } nested ? Math.Max((long)(UInt24(data[6..]) + 1) * (UInt24(data[9..]) + 1), nested) : null;
             }
 
@@ -367,7 +379,7 @@ public static class ImageHeader
                     return null;
                 }
 
-                largest = Area(BinaryPrimitives.ReadUInt32BigEndian(s[(i + header + 4)..]), BinaryPrimitives.ReadUInt32BigEndian(s[(i + header)..]));
+                largest = Math.Max(largest, Area(BinaryPrimitives.ReadUInt32BigEndian(s[(i + header + 4)..]), BinaryPrimitives.ReadUInt32BigEndian(s[(i + header)..])));
             }
 
             if (box.SequenceEqual("jp2c"u8) || box.SequenceEqual("jp2h"u8))

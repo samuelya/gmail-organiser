@@ -74,9 +74,12 @@ public sealed class ImageHeaderTests
         { "webp-big-canvas-small-vp8", [.. WebPExtended(16_000, 16_000), .. WebPLossy(10, 10)[12..]], 256_000_000 },
         { "webp-animation-frame", [.. WebPExtended(10, 10), .. WebPFrame(20_000, 20_000, WebPLossy(10, 10)[12..])], 400_000_000 },
         { "webp-animation-nested-vp8", [.. WebPExtended(10, 10), .. WebPFrame(10, 10, WebPLossy(16_000, 16_000)[12..])], 256_000_000 },
+        { "webp-frames-nested-to-the-limit", [.. WebPExtended(10, 10), .. WebPNestedFrames(8, WebPLossy(16_000, 16_000)[12..])], 256_000_000 },
         { "gif-frame-larger-than-canvas", GifFrameOverCanvas(), 100 + (20_000L * 20_000) },
         { "jp2-big-ihdr", Jp2(10, 10, boxed: true, ihdrWidth: 20_000, ihdrHeight: 20_000), 400_000_000 },
         { "jp2-big-siz", Jp2(20_000, 20_000, boxed: true, ihdrWidth: 10, ihdrHeight: 10), 400_000_000 },
+        { "jp2-big-ihdr-first", Jp2TwoIhdr(20_000, 10), 400_000_000 },
+        { "jp2-big-ihdr-second", Jp2TwoIhdr(10, 20_000), 400_000_000 },
         { "jp2-second-siz", [.. Jp2(10, 10, boxed: false), .. Jp2(20_000, 20_000, boxed: false)[2..]], 400_000_000 },
         { "bmp-os2-16-bit", [.. "BM"u8, .. new byte[12], .. Le32(12), .. Le16(20_000), .. Le16(20_000), 1, 0, 24, 0], 400_000_000 },
     };
@@ -94,6 +97,8 @@ public sealed class ImageHeaderTests
         { "jpeg-scan-before-frame", [0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x08, 1, 2, 3, 4, 5, 6] },
         { "jpeg-no-frame", [0xFF, 0xD8, 0xFF, 0xD9] },
         { "webp-unknown-chunk", [.. WebPExtended(10, 10)[..12], .. "ABCD"u8, .. new byte[14]] },
+        { "webp-frames-nested-past-the-limit", [.. WebPExtended(10, 10), .. WebPNestedFrames(9, WebPLossy(10, 10)[12..])] },
+        { "webp-frames-nested-100-000-deep", [.. WebPExtended(10, 10), .. WebPNestedFrames(100_000, WebPLossy(10, 10)[12..])] },
         { "tiff-ifd-loop", TiffLoop() },
         { "tiff-no-ifd", [0x49, 0x49, 0x2A, 0x00, 0, 0, 0, 0] },
         { "bmp-truncated", Bmp(10, 10)[..20] },
@@ -168,6 +173,36 @@ public sealed class ImageHeaderTests
     /// <summary>An ANMF chunk: offset, size, duration and flags, then the frame's own chunks.</summary>
     private static byte[] WebPFrame(uint width, uint height, byte[] frame) =>
         [.. "ANMF"u8, .. Le32((uint)frame.Length + 16), 0, 0, 0, 0, 0, 0, .. Le32(width - 1)[..3], .. Le32(height - 1)[..3], 0, 0, 0, 0, .. frame];
+
+    /// <summary>
+    /// <paramref name="depth"/> 10 × 10 ANMF chunks, each holding the next, the innermost holding <paramref name="frame"/>;
+    /// written outermost first so a chain of any length costs one pass.
+    /// </summary>
+    private static byte[] WebPNestedFrames(int depth, byte[] frame)
+    {
+        var bytes = new List<byte>((depth * 24) + frame.Length);
+        for (var level = 0; level < depth; level++)
+        {
+            bytes.AddRange("ANMF"u8);
+            bytes.AddRange(Le32((uint)(16 + ((depth - 1 - level) * 24) + frame.Length)));
+            bytes.AddRange([0, 0, 0, 0, 0, 0, 9, 0, 0, 9, 0, 0, 0, 0, 0, 0]);
+        }
+
+        bytes.AddRange(frame);
+        return [.. bytes];
+    }
+
+    /// <summary>A JP2 file whose <c>jp2h</c> box holds two <c>ihdr</c> boxes of the given sizes around a 10 × 10 codestream.</summary>
+    private static byte[] Jp2TwoIhdr(uint first, uint second)
+    {
+        byte[] codestream = Jp2(10, 10, boxed: false);
+        return
+            [0, 0, 0, 12, .. "jP  "u8, 0x0D, 0x0A, 0x87, 0x0A,
+             0, 0, 0, 52, .. "jp2h"u8, .. Ihdr(first), .. Ihdr(second),
+             .. Be32((uint)codestream.Length + 8), .. "jp2c"u8, .. codestream];
+
+        static byte[] Ihdr(uint side) => [0, 0, 0, 22, .. "ihdr"u8, .. Be32(side), .. Be32(side), 0, 3, 8, 7, 0, 0];
+    }
 
     private static byte[] GifFrameOverCanvas()
     {
