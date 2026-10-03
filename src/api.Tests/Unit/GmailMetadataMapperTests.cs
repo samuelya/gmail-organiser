@@ -43,7 +43,8 @@ public sealed class GmailMetadataMapperTests
             ("To", "user@example.com"),
             ("SUBJECT", "Hello"),
             ("List-Id", "News <news.example.com>"),
-            ("List-Unsubscribe", "<https://example.com/u/1>"));
+            ("List-Unsubscribe", "<https://example.com/u/1>"),
+            ("List-Unsubscribe-Post", "List-Unsubscribe=One-Click"));
 
         var metadata = GmailMetadataMapper.Map(message);
 
@@ -57,6 +58,7 @@ public sealed class GmailMetadataMapperTests
         metadata.Subject.ShouldBe("Hello");
         metadata.ListId.ShouldBe("news.example.com");
         metadata.ListUnsubscribe.ShouldBe("<https://example.com/u/1>");
+        metadata.ListUnsubscribePost.ShouldBe("List-Unsubscribe=One-Click");
         metadata.Snippet.ShouldBe("Synthetic snippet");
         metadata.SizeEstimate.ShouldBe(4096);
         metadata.HasAttachment.ShouldBeFalse();
@@ -72,6 +74,7 @@ public sealed class GmailMetadataMapperTests
         metadata.Subject.ShouldBeNull();
         metadata.ListId.ShouldBeNull();
         metadata.ListUnsubscribe.ShouldBeNull();
+        metadata.ListUnsubscribePost.ShouldBeNull();
     }
 
     [Theory]
