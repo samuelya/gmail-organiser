@@ -7,6 +7,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -220,6 +221,27 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
         (await check.Decisions.CountAsync(Ct)).ShouldBe(19);
         (await h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(0.3))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(1.5))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Saved_protection_rules_apply_a_starred_deletion_is_approved_once_the_starred_rule_is_off()
+    {
+        var starredId = await IdAsync("b00");
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.Id == starredId).ExecuteUpdateAsync(s => s.SetProperty(x => x.ToBeDeleted, true), Ct);
+            await db.Messages.Where(m => m.Id == "b00").ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "STARRED" }), Ct);
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(x => x with { Protection = new ProtectionSettings(Starred: false) }, Ct);
+        }
+
+        // Default threshold 0.80: all nine model answers, the starred deletion among them.
+        (await BulkAsync(new BulkApproveRequest(null))).ShouldBe((9, 0));
+        (await PostOkAsync($"/api/review/suggestions/{starredId}/approve")).Protected.ShouldBeFalse();
     }
 
     [Fact]

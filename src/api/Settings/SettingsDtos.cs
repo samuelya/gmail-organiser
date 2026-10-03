@@ -23,6 +23,7 @@ public sealed record SettingsDto(
     bool AutoArchiveOnActionDone,
     string? AnalysisPromptTemplate,
     AttachmentSettings Attachments,
+    ProtectionSettings Protection,
     ClaudeReviewerMode ClaudeReviewerMode,
     bool ClaudeSuggestLowConfidence,
     double ClaudeSuggestThreshold,
@@ -57,6 +58,7 @@ public sealed record SettingsDto(
         s.AutoArchiveOnActionDone,
         s.AnalysisPromptTemplate,
         s.Attachments,
+        s.Protection,
         s.ClaudeReviewerMode,
         s.ClaudeSuggestLowConfidence,
         s.ClaudeSuggestThreshold,
@@ -102,7 +104,8 @@ public sealed record UpdateSettingsRequest(
     int? ClaudeRunTimeoutSeconds = null,
     int? ClaudeMaxItemsPerRun = null,
     int? ClaudeMaxTurns = null,
-    string? ClaudeModel = null);
+    string? ClaudeModel = null,
+    UpdateProtectionSettingsRequest? Protection = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>
@@ -117,6 +120,13 @@ public sealed record UpdateAttachmentSettingsRequest(
     int? MaxChars = null,
     int? MaxPerMessage = null,
     string? ImageMode = null);
+
+/// <summary>Partial update of <see cref="ProtectionSettings"/>: <c>null</c> leaves a rule unchanged.</summary>
+public sealed record UpdateProtectionSettingsRequest(
+    bool? Attachments = null,
+    bool? Starred = null,
+    bool? Important = null,
+    bool? RepliedThreads = null);
 
 /// <param name="Type">An <see cref="Analysis.Attachments.AttachmentType"/> snake_case name; a string so an unknown name is a field error.</param>
 public sealed record AttachmentTypeSettingRequest(string? Type, bool? Enabled);

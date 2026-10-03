@@ -86,6 +86,7 @@ public static class SettingsEndpoints
             ClaudeMaxItemsPerRun = request.ClaudeMaxItemsPerRun ?? s.ClaudeMaxItemsPerRun,
             ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
             ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
+            Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
         }, ct);
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
     }
@@ -105,6 +106,14 @@ public static class SettingsEndpoints
         MaxChars = request.MaxChars ?? s.MaxChars,
         MaxPerMessage = request.MaxPerMessage ?? s.MaxPerMessage,
         ImageMode = ImageModeJsonConverter.TryParse(request.ImageMode, out var mode) ? mode.Value : s.ImageMode,
+    };
+
+    private static ProtectionSettings Apply(ProtectionSettings s, UpdateProtectionSettingsRequest request) => s with
+    {
+        Attachments = request.Attachments ?? s.Attachments,
+        Starred = request.Starred ?? s.Starred,
+        Important = request.Important ?? s.Important,
+        RepliedThreads = request.RepliedThreads ?? s.RepliedThreads,
     };
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem, ProblemHttpResult>> SetGoogleClientAsync(

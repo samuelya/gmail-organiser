@@ -26,7 +26,7 @@ public static class ActionPlanner
     public static ActionPlan Plan(
         SuggestionRow suggestion, MessageRow message, IReadOnlyDictionary<string, string> labelIds, AppSettings settings, bool senderAllowlisted)
     {
-        var protectedReason = MessageProtection.Reason(message, senderAllowlisted);
+        var protectedReason = MessageProtection.Reason(message, senderAllowlisted, settings.Protection);
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
         if (suggestion.NeedsAction)
         {

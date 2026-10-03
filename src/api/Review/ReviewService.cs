@@ -78,6 +78,7 @@ public sealed class ReviewService(
         }
 
         var allowlisted = await db.Senders.AnyAsync(s => s.Address == senderAddress && s.Allowlisted, ct);
+        var rules = await RulesAsync(ct);
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
@@ -88,7 +89,7 @@ public sealed class ReviewService(
             {
                 if (outcome == DecisionOutcome.Rejected
                     || (s.TopicLabel == shown!.TopicLabel && s.NeedsAction == shown.NeedsAction && s.ToBeDeleted == shown.ToBeDeleted
-                        && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))))
+                        && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, rules))))
                 {
                     return true;
                 }
@@ -145,7 +146,8 @@ public sealed class ReviewService(
     public async Task<BulkApproveResponse> BulkApproveAsync(
         double? threshold, bool includeDerived, string? senderAddress, CancellationToken ct)
     {
-        var min = threshold ?? (await settingsStore.GetAsync(ct)).BulkApproveThreshold;
+        var settings = await settingsStore.GetAsync(ct);
+        var min = threshold ?? settings.BulkApproveThreshold;
         SuggestionSource[] sources = includeDerived
             ? [SuggestionSource.Llm, SuggestionSource.Derived, SuggestionSource.Memory]
             : [SuggestionSource.Llm];
@@ -168,7 +170,7 @@ public sealed class ReviewService(
                 .ToHashSet(StringComparer.Ordinal);
             approved += await ChangeChunkAsync(chunk, DecisionOutcome.Approved, (s, m) =>
             {
-                if (s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))
+                if (s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, settings.Protection))
                 {
                     if (skipped++ < MaxSkippedIds)
                     {
@@ -237,9 +239,10 @@ public sealed class ReviewService(
         GroupOutcome outcome, bool allowlisted, List<Guid> skipped, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
+        var rules = await RulesAsync(ct);
         return (s, m) =>
         {
-            if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted))
+            if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, rules))
             {
                 if (skipped.Count < MaxSkippedIds)
                 {
@@ -258,6 +261,8 @@ public sealed class ReviewService(
         };
     }
 
+    private async Task<ProtectionSettings> RulesAsync(CancellationToken ct) => (await settingsStore.GetAsync(ct)).Protection;
+
     private static SuggestionStatus ToStatus(DecisionOutcome outcome) =>
         outcome == DecisionOutcome.Approved ? SuggestionStatus.Approved : SuggestionStatus.Rejected;
 
@@ -273,9 +278,10 @@ public sealed class ReviewService(
 
         var message = await db.Messages.SingleAsync(m => m.Id == suggestion.MessageId, ct);
         var allowlisted = await db.Senders.AnyAsync(s => s.Address == message.FromAddress && s.Allowlisted, ct);
+        var rules = await RulesAsync(ct);
         if (suggestion.Status == SuggestionStatus.Applied)
         {
-            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlisted));
+            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlisted, rules));
         }
 
         if (needsChange(suggestion))
@@ -288,7 +294,7 @@ public sealed class ReviewService(
 
         await tx.CommitAsync(ct);
         decisions.Committed();
-        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlisted));
+        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlisted, rules));
     }
 
     /// <summary>
