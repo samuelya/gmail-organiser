@@ -60,6 +60,22 @@ public sealed record AppSettings
     /// <summary>Attachment types and limits for the analysis (#68); see <see cref="AttachmentSettings"/>.</summary>
     public AttachmentSettings Attachments { get; init; } = new();
 
+    // Claude review (epic #23); ranges are in SettingsValidation.
+    public ClaudeReviewerMode ClaudeReviewerMode { get; init; } = DefaultClaudeReviewerMode;
+
+    /// <summary>Mark suggestions below <see cref="ClaudeSuggestThreshold"/> as worth a Claude review (a UI hint; nothing is sent automatically).</summary>
+    public bool ClaudeSuggestLowConfidence { get; init; }
+    public double ClaudeSuggestThreshold { get; init; } = DefaultClaudeSuggestThreshold;
+
+    /// <summary>Mark suggestions that propose a new label as worth a Claude review.</summary>
+    public bool ClaudeSuggestNewLabels { get; init; }
+    public int ClaudeRunTimeoutSeconds { get; init; } = DefaultClaudeRunTimeoutSeconds;
+    public int ClaudeMaxItemsPerRun { get; init; } = DefaultClaudeMaxItemsPerRun;
+    public int ClaudeMaxTurns { get; init; } = DefaultClaudeMaxTurns;
+
+    /// <summary>Optional <c>--model</c> for the Claude Code CLI; <c>null</c> means the subscription default.</summary>
+    public string? ClaudeModel { get; init; }
+
     public const int DefaultAnalysisDefaultCount = 20;
     public const int DefaultAnalysisBodyMaxChars = 4000;
     public const AnalysisGroupingMode DefaultAnalysisGroupingMode = AnalysisGroupingMode.Auto;
@@ -69,6 +85,11 @@ public sealed record AppSettings
     public const double DefaultAnalysisClusterDistance = 0.15;
     public const int DefaultAnalysisMemoryMinApprovals = 3;
     public const double DefaultBulkApproveThreshold = 0.80;
+    public const ClaudeReviewerMode DefaultClaudeReviewerMode = ClaudeReviewerMode.Off;
+    public const double DefaultClaudeSuggestThreshold = 0.60;
+    public const int DefaultClaudeRunTimeoutSeconds = 600;
+    public const int DefaultClaudeMaxItemsPerRun = 10;
+    public const int DefaultClaudeMaxTurns = 80;
 
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()

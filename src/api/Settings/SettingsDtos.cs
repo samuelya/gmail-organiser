@@ -22,9 +22,19 @@ public sealed record SettingsDto(
     double BulkApproveThreshold,
     bool AutoArchiveOnActionDone,
     string? AnalysisPromptTemplate,
-    AttachmentSettings Attachments)
+    AttachmentSettings Attachments,
+    ClaudeReviewerMode ClaudeReviewerMode,
+    bool ClaudeSuggestLowConfidence,
+    double ClaudeSuggestThreshold,
+    bool ClaudeSuggestNewLabels,
+    int ClaudeRunTimeoutSeconds,
+    int ClaudeMaxItemsPerRun,
+    int ClaudeMaxTurns,
+    string? ClaudeModel,
+    bool ClaudeTokenSet)
 {
-    public static SettingsDto From(AppSettings s, GoogleClientCredentials google) => new(
+    /// <param name="claudeTokenSet">Whether <c>CLAUDE_CODE_OAUTH_TOKEN</c> is set; the token itself is never returned.</param>
+    public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet) => new(
         s.OllamaBaseUrl,
         s.ChatModel,
         s.EmbeddingModel,
@@ -46,14 +56,24 @@ public sealed record SettingsDto(
         s.BulkApproveThreshold,
         s.AutoArchiveOnActionDone,
         s.AnalysisPromptTemplate,
-        s.Attachments);
+        s.Attachments,
+        s.ClaudeReviewerMode,
+        s.ClaudeSuggestLowConfidence,
+        s.ClaudeSuggestThreshold,
+        s.ClaudeSuggestNewLabels,
+        s.ClaudeRunTimeoutSeconds,
+        s.ClaudeMaxItemsPerRun,
+        s.ClaudeMaxTurns,
+        s.ClaudeModel,
+        claudeTokenSet);
 }
 
 /// <summary>Never carries the secret itself.</summary>
 public sealed record GoogleClientDto(string? ClientId, bool SecretSet, bool LockedByEnv);
 
 /// <summary>
-/// Partial update: <c>null</c> leaves a value unchanged; an empty model name or a blank prompt template clears it.
+/// Partial update: <c>null</c> leaves a value unchanged; an empty model name (including <see cref="ClaudeModel"/>) or a
+/// blank prompt template clears it.
 /// </summary>
 public sealed record UpdateSettingsRequest(
     string? OllamaBaseUrl,
@@ -74,7 +94,15 @@ public sealed record UpdateSettingsRequest(
     bool? AutoArchiveOnActionDone = null,
     string? AnalysisPromptTemplate = null,
     UpdateAttachmentSettingsRequest? Attachments = null,
-    string? VisionModel = null);
+    string? VisionModel = null,
+    ClaudeReviewerMode? ClaudeReviewerMode = null,
+    bool? ClaudeSuggestLowConfidence = null,
+    double? ClaudeSuggestThreshold = null,
+    bool? ClaudeSuggestNewLabels = null,
+    int? ClaudeRunTimeoutSeconds = null,
+    int? ClaudeMaxItemsPerRun = null,
+    int? ClaudeMaxTurns = null,
+    string? ClaudeModel = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>

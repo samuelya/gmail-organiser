@@ -14,7 +14,9 @@ public static class SettingsEndpoints
     /// <summary>Registers the settings store, the Google client service and Data Protection (key ring on disk).</summary>
     public static IServiceCollection AddSettings(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddOptions<SettingsEnvOptions>().Bind(configuration);
+        // Only whether the Claude token is set is kept; the value is read here and dropped.
+        services.AddOptions<SettingsEnvOptions>().Bind(configuration).PostConfigure(o =>
+            o.ClaudeCodeOAuthTokenSet = !string.IsNullOrWhiteSpace(configuration[SettingsEnvOptions.ClaudeCodeOAuthTokenKey]));
         services.AddOptions<DataProtectionKeyOptions>().BindConfiguration(DataProtectionKeyOptions.SectionName);
         services.AddDataProtection().SetApplicationName(ApplicationName);
 
@@ -37,14 +39,15 @@ public static class SettingsEndpoints
         return endpoints;
     }
 
-    private static async Task<Ok<SettingsDto>> GetAsync(ISettingsStore store, GoogleClientService google, CancellationToken ct)
+    private static async Task<Ok<SettingsDto>> GetAsync(
+        ISettingsStore store, GoogleClientService google, IOptions<SettingsEnvOptions> env, CancellationToken ct)
     {
         var settings = await store.GetAsync(ct);
-        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings)));
+        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
     }
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem>> UpdateAsync(
-        UpdateSettingsRequest request, ISettingsStore store, GoogleClientService google, CancellationToken ct)
+        UpdateSettingsRequest request, ISettingsStore store, GoogleClientService google, IOptions<SettingsEnvOptions> env, CancellationToken ct)
     {
         var errors = SettingsValidation.Validate(request);
         if (errors.Count > 0)
@@ -75,8 +78,16 @@ public static class SettingsEndpoints
                 ? s.AnalysisPromptTemplate
                 : SettingsValidation.NormalisePromptTemplate(request.AnalysisPromptTemplate),
             Attachments = request.Attachments is { } attachments ? Apply(s.Attachments, attachments) : s.Attachments,
+            ClaudeReviewerMode = request.ClaudeReviewerMode ?? s.ClaudeReviewerMode,
+            ClaudeSuggestLowConfidence = request.ClaudeSuggestLowConfidence ?? s.ClaudeSuggestLowConfidence,
+            ClaudeSuggestThreshold = request.ClaudeSuggestThreshold ?? s.ClaudeSuggestThreshold,
+            ClaudeSuggestNewLabels = request.ClaudeSuggestNewLabels ?? s.ClaudeSuggestNewLabels,
+            ClaudeRunTimeoutSeconds = request.ClaudeRunTimeoutSeconds ?? s.ClaudeRunTimeoutSeconds,
+            ClaudeMaxItemsPerRun = request.ClaudeMaxItemsPerRun ?? s.ClaudeMaxItemsPerRun,
+            ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
+            ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
         }, ct);
-        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings)));
+        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
     }
 
     /// <summary>Applies a validated request; listed types change, the others keep their saved value.</summary>
@@ -97,7 +108,7 @@ public static class SettingsEndpoints
     };
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem, ProblemHttpResult>> SetGoogleClientAsync(
-        GoogleClientRequest request, ISettingsStore store, GoogleClientService google, CancellationToken ct)
+        GoogleClientRequest request, ISettingsStore store, GoogleClientService google, IOptions<SettingsEnvOptions> env, CancellationToken ct)
     {
         var errors = SettingsValidation.Validate(request);
         if (errors.Count > 0)
@@ -114,7 +125,7 @@ public static class SettingsEndpoints
         }
 
         var settings = await store.GetAsync(ct);
-        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings)));
+        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
     }
 }
 

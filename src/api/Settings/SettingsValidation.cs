@@ -39,6 +39,14 @@ public static class SettingsValidation
     public const int MaxAttachmentMaxChars = 50_000;
     public const int MinAttachmentMaxPerMessage = 1;
     public const int MaxAttachmentMaxPerMessage = 20;
+    public const double MinClaudeSuggestThreshold = 0.30;
+    public const double MaxClaudeSuggestThreshold = 0.95;
+    public const int MinClaudeRunTimeoutSeconds = 60;
+    public const int MaxClaudeRunTimeoutSeconds = 3600;
+    public const int MinClaudeMaxItemsPerRun = 1;
+    public const int MaxClaudeMaxItemsPerRun = 50;
+    public const int MinClaudeMaxTurns = 10;
+    public const int MaxClaudeMaxTurns = 300;
 
     public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request)
     {
@@ -70,6 +78,16 @@ public static class SettingsValidation
         if (request.AnalysisGroupingMode is { } mode && !Enum.IsDefined(mode))
         {
             errors["analysisGroupingMode"] = ["Must be off, sender_subject or auto."];
+        }
+
+        CheckModelName(errors, "claudeModel", request.ClaudeModel);
+        CheckRange(errors, "claudeSuggestThreshold", request.ClaudeSuggestThreshold, MinClaudeSuggestThreshold, MaxClaudeSuggestThreshold);
+        CheckRange(errors, "claudeRunTimeoutSeconds", request.ClaudeRunTimeoutSeconds, MinClaudeRunTimeoutSeconds, MaxClaudeRunTimeoutSeconds);
+        CheckRange(errors, "claudeMaxItemsPerRun", request.ClaudeMaxItemsPerRun, MinClaudeMaxItemsPerRun, MaxClaudeMaxItemsPerRun);
+        CheckRange(errors, "claudeMaxTurns", request.ClaudeMaxTurns, MinClaudeMaxTurns, MaxClaudeMaxTurns);
+        if (request.ClaudeReviewerMode is { } reviewer && !Enum.IsDefined(reviewer))
+        {
+            errors["claudeReviewerMode"] = ["Must be off, headless_claude_code or claude_desktop."];
         }
 
         if (request.AnalysisPromptTemplate is { } template

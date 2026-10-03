@@ -1,3 +1,4 @@
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Integration;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -31,6 +32,7 @@ public sealed class ApiFactory(PostgresFixture postgres) : WebApplicationFactory
         builder.UseSetting("OLLAMA_BASE_URL", EnvOllamaBaseUrl);
         builder.UseSetting("GOOGLE_CLIENT_ID", "");
         builder.UseSetting("GOOGLE_CLIENT_SECRET", "");
+        builder.UseSetting(SettingsEnvOptions.ClaudeCodeOAuthTokenKey, "");
         builder.UseSetting("GMAIL_FAKE", "");
         builder.UseSetting("APP_BASE_URL", AllowedOrigin);
         builder.ConfigureServices(services => services.AddTransient<IStartupFilter, TestEndpointStartupFilter>());
