@@ -38,6 +38,7 @@ public sealed class MailboxFetchJob(
     MessageFetchPipeline pipeline,
     LocalAccountClaim accountClaim,
     ISettingsStore settings,
+    MailboxTotalsReader totalsReader,
     AppDbContext db,
     TimeProvider time) : IJobHandler
 {
@@ -93,12 +94,9 @@ public sealed class MailboxFetchJob(
         var resync = await db.Messages.AnyAsync(ct);
         var profile = await gmail.GetProfileAsync(ct);
         await accountClaim.ClaimAsync(profile.EmailAddress, ct);
-        var labelTotals = await Task.WhenAll(
-            gmail.GetLabelMessagesTotalAsync(InboxLabelId, ct),
-            gmail.GetLabelMessagesTotalAsync(SpamLabelId, ct),
-            gmail.GetLabelMessagesTotalAsync(TrashLabelId, ct));
-        var inboxTotal = labelTotals[0];
-        var allMailTotal = Math.Max(0, profile.MessagesTotal - labelTotals[1] - labelTotals[2]);
+        var totals = await totalsReader.MeasureAsync(gmail, profile, ct);
+        var inboxTotal = totals.Inbox;
+        var allMailTotal = totals.AllMail;
         var now = time.GetUtcNow();
         await db.FetchRunMessages.ExecuteDeleteAsync(ct);
         await db.FetchState.ExecuteUpdateAsync(set => set

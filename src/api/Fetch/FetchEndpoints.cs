@@ -143,7 +143,8 @@ public static class FetchEndpoints
     private static bool IsFetched(FetchStateRow state) =>
         state.MailboxPhase == MailboxPhase.Completed && state.LastHistoryId is not null;
 
-    private static async Task<Ok<FetchStatusDto>> GetStatusAsync(AppDbContext db, ITokenStore tokens, CancellationToken ct)
+    private static async Task<Ok<FetchStatusDto>> GetStatusAsync(
+        AppDbContext db, ITokenStore tokens, MailboxTotalsReader totalsReader, CancellationToken ct)
     {
         var counts = await db.FetchState.AsNoTracking()
             .Where(s => s.Id == FetchStateRow.SingletonId)
@@ -151,12 +152,17 @@ public static class FetchEndpoints
             {
                 State = s,
                 Stored = db.Messages.LongCount(m => !m.DeletedInGmail),
+                InboxStored = db.Messages.LongCount(m => !m.DeletedInGmail && m.LabelIds.Contains(MailboxFetchJob.InboxLabelId)),
+                AllMailStored = db.Messages.LongCount(m => !m.DeletedInGmail
+                    && !m.LabelIds.Contains(MailboxFetchJob.SpamLabelId)
+                    && !m.LabelIds.Contains(MailboxFetchJob.TrashLabelId)),
                 Senders = db.Senders.LongCount(),
             })
             .SingleAsync(ct);
         var state = counts.State;
         var latest = await LatestJobAsync(db, [MailboxFetchJob.JobType, IncrementalFetchJob.JobType], ct);
         var check = AccountGuard.Compare(state.AccountEmail, (await tokens.GetAsync(ct))?.AccountEmail);
+        var totals = await totalsReader.GetAsync(refresh: false, ct);
 
         return TypedResults.Ok(new FetchStatusDto(
             state.AccountEmail,
@@ -173,9 +179,14 @@ public static class FetchEndpoints
             latest is { Status: JobStatus.Failed } ? latest.ToDto() : null,
             check.IsMismatch,
             check.LocalAccountMasked,
-            state.InboxTotal,
-            state.AllMailTotal));
+            AtLeast(totals?.Inbox ?? state.InboxTotal, counts.InboxStored),
+            AtLeast(totals?.AllMail ?? state.AllMailTotal, counts.AllMailStored),
+            counts.InboxStored,
+            counts.AllMailStored));
     }
+
+    /// <summary>A Gmail total never below what is stored, so the coverage bar never overflows; null stays null.</summary>
+    private static long? AtLeast(long? gmailTotal, long stored) => gmailTotal is { } total ? Math.Max(total, stored) : null;
 
     private static ProblemHttpResult GmailNotConnected(string detail) =>
         TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: "Gmail not connected", detail: detail);

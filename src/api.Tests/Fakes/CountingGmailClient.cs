@@ -19,7 +19,15 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
     /// <summary>Rejects the n-th (1-based) list call's page token, as Gmail does for an expired token, when it returns true.</summary>
     public Func<int, MessageListQuery, bool>? RejectPageToken { get; set; }
 
-    public Task<GmailProfile> GetProfileAsync(CancellationToken ct) => inner.GetProfileAsync(ct);
+    private int profileCalls;
+
+    public int ProfileCalls => profileCalls;
+
+    public Task<GmailProfile> GetProfileAsync(CancellationToken ct)
+    {
+        Interlocked.Increment(ref profileCalls);
+        return inner.GetProfileAsync(ct);
+    }
 
     /// <summary>Rewrites the n-th (1-based) list call's page, for example its result size estimate.</summary>
     public Func<int, MessageIdPage, MessageIdPage>? MapPage { get; set; }
@@ -62,7 +70,13 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return page;
     }
 
-    public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct) => inner.GetLabelMessagesTotalAsync(labelId, ct);
+    public ConcurrentQueue<string> LabelTotalCalls { get; } = new();
+
+    public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)
+    {
+        LabelTotalCalls.Enqueue(labelId);
+        return inner.GetLabelMessagesTotalAsync(labelId, ct);
+    }
 
     /// <summary>Runs before each body (or body and attachments) fetch, for example to hold it and measure how many run at once.</summary>
     public Func<string, CancellationToken, Task>? BeforeBody { get; set; }
