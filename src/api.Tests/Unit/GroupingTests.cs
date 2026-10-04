@@ -246,8 +246,24 @@ public sealed class GroupingTests
     }
 
     private static RepresentativeOutput Out(
-        string label = "Shopping", bool action = false, bool delete = true, double confidence = 0.9, bool unsubscribe = false, string[]? replace = null) =>
-        new(label, action, delete, unsubscribe, confidence, replace);
+        string label = "Shopping", bool action = false, bool delete = true, double confidence = 0.9, bool unsubscribe = false, string[]? replace = null,
+        string? type = null) =>
+        new(label, action, delete, unsubscribe, confidence, replace, type);
+
+    [Fact]
+    public void Rule_agrees_on_the_document_type_label_case_insensitively_none_equals_none()
+    {
+        DerivationRule.Decide([Out(type: "Types/Invoice"), Out(type: " types/invoice")], 0.10)
+            .ShouldBeOfType<Agreed>().DocumentTypeLabel.ShouldBe("Types/Invoice");
+        DerivationRule.Decide([Out(), Out(type: " ")], 0.10).ShouldBeOfType<Agreed>().DocumentTypeLabel.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("Types/Invoice", "Types/Receipt")]
+    [InlineData("Types/Invoice", null)]
+    [InlineData(null, "Types/Invoice")]
+    public void Rule_is_mixed_when_document_type_labels_differ(string? first, string? second) =>
+        DerivationRule.Decide([Out(type: first), Out(type: second)], 0.10).ShouldBe(Mixed.Instance);
 
     [Fact]
     public void Rule_agrees_on_the_same_replaced_label_set_in_any_order()
