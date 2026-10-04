@@ -26,18 +26,23 @@ public static class SuggestionOutputParser
         CommentHandling = JsonCommentHandling.Skip,
     };
 
-    public static ParsedSuggestions Parse(string? raw, IReadOnlySet<string> expectedIds)
+    /// <param name="currentLabels">Each email's current personal label names, the only entries <c>replaceLabels</c>
+    /// may hold; an email missing here has none.</param>
+    public static ParsedSuggestions Parse(
+        string? raw, IReadOnlySet<string> expectedIds, IReadOnlyDictionary<string, IReadOnlyList<string>>? currentLabels = null)
     {
         ArgumentNullException.ThrowIfNull(expectedIds);
         var valid = new List<SuggestionOutput>();
         var errors = new List<string>();
+        var dropped = new List<string>();
+        var current = currentLabels ?? new Dictionary<string, IReadOnlyList<string>>();
         FilterCriteriaOutput? filter = null;
 
         var document = ReadFirstValue(raw ?? string.Empty, out var candidates);
         if (document is null)
         {
             errors.Add(candidates == 0 ? "Output contains no JSON array or object." : "Output is not valid JSON.");
-            return Finish(valid, errors, filter, expectedIds, []);
+            return Finish(valid, errors, filter, expectedIds, [], dropped);
         }
 
         var answered = new HashSet<string>(StringComparer.Ordinal);
@@ -55,14 +60,14 @@ public static class SuggestionOutputParser
             {
                 // A lone surrogate escape (\ud800) in a name or string: System.Text.Json throws on reading it.
                 errors.Add(InvalidText);
-                return Finish(valid, errors, null, expectedIds, []);
+                return Finish(valid, errors, null, expectedIds, [], dropped);
             }
 
             foreach (var item in items)
             {
                 try
                 {
-                    filter = ReadItem(item, expectedIds, errors, filter, answered, accepted, valid);
+                    filter = ReadItem(item, expectedIds, current, errors, dropped, filter, answered, accepted, valid);
                 }
                 catch (InvalidOperationException)
                 {
@@ -71,10 +76,11 @@ public static class SuggestionOutputParser
             }
         }
 
-        return Finish(valid, errors, filter, expectedIds, answered);
+        return Finish(valid, errors, filter, expectedIds, answered, dropped);
     }
 
-    private static FilterCriteriaOutput? ReadItem(JsonElement item, IReadOnlySet<string> expectedIds, List<string> errors,
+    private static FilterCriteriaOutput? ReadItem(JsonElement item, IReadOnlySet<string> expectedIds,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> current, List<string> errors, List<string> dropped,
         FilterCriteriaOutput? filter, HashSet<string> answered, HashSet<string> accepted, List<SuggestionOutput> valid)
     {
         if (item.ValueKind != JsonValueKind.Object)
@@ -102,7 +108,7 @@ public static class SuggestionOutputParser
         {
             errors.Add($"Duplicate id '{id}': first valid answer kept.");
         }
-        else if (ReadSuggestion(id, item, errors) is { } suggestion)
+        else if (ReadSuggestion(id, item, current.GetValueOrDefault(id) ?? [], errors, dropped) is { } suggestion)
         {
             accepted.Add(id);
             valid.Add(suggestion);
@@ -186,7 +192,8 @@ public static class SuggestionOutputParser
         return arrays.Count == 1 ? (arrays[0].Value.EnumerateArray(), true) : ([root], false);
     }
 
-    private static SuggestionOutput? ReadSuggestion(string id, JsonElement item, List<string> errors)
+    private static SuggestionOutput? ReadSuggestion(
+        string id, JsonElement item, IReadOnlyList<string> current, List<string> errors, List<string> dropped)
     {
         var count = errors.Count;
         var label = ReadString(item, "topicLabel")?.Trim();
@@ -210,7 +217,7 @@ public static class SuggestionOutputParser
             errors.Add($"Email '{id}': 'reason' must be a string.");
         }
 
-        var replaceLabels = ReadReplaceLabels(id, item, label, errors);
+        var replaceLabels = ReadReplaceLabels(id, item, label, current, dropped);
         return errors.Count > count
             ? null
             : new SuggestionOutput(id, label!, isNewLabel, needsAction, toBeDeleted, unsubscribe, confidence,
@@ -221,10 +228,14 @@ public static class SuggestionOutputParser
     }
 
     /// <summary>
-    /// The optional <c>replaceLabels</c> array: valid label paths, not system labels, not the topic label; duplicates
-    /// (case-insensitive) dropped. Missing or null is empty.
+    /// The optional <c>replaceLabels</c> array: entries naming one of the email's <paramref name="current"/> labels
+    /// (case-insensitive, returned as the current label is written), other than the topic label; duplicates dropped.
+    /// Anything else (not a string, a label the email does not carry, the app's action or delete label, which are never
+    /// current labels, or the topic label itself) is dropped with a note in <paramref name="dropped"/>, never an
+    /// error: small models echo the kept label here, and that must not cost the suggestion. Missing or null is empty.
     /// </summary>
-    private static IReadOnlyList<string> ReadReplaceLabels(string id, JsonElement item, string? topicLabel, List<string> errors)
+    private static IReadOnlyList<string> ReadReplaceLabels(
+        string id, JsonElement item, string? topicLabel, IReadOnlyList<string> current, List<string> dropped)
     {
         if (!item.TryGetProperty("replaceLabels", out var element) || element.ValueKind == JsonValueKind.Null)
         {
@@ -233,25 +244,29 @@ public static class SuggestionOutputParser
 
         if (element.ValueKind != JsonValueKind.Array)
         {
-            errors.Add($"Email '{id}': 'replaceLabels' must be an array of strings.");
+            dropped.Add($"Email '{id}': 'replaceLabels' is not an array; ignored.");
             return [];
         }
 
         var labels = new List<string>();
+        var skipped = 0;
         foreach (var entry in element.EnumerateArray())
         {
             var value = entry.ValueKind == JsonValueKind.String ? entry.GetString()?.Trim() : null;
-            if (value is null || !IsValidLabelPath(value) || LabelPath.IsReserved(value)
-                || string.Equals(value, topicLabel, StringComparison.OrdinalIgnoreCase))
+            var match = value is null ? null : current.FirstOrDefault(c => string.Equals(c.Trim(), value, StringComparison.OrdinalIgnoreCase));
+            if (match is null || string.Equals(value, topicLabel, StringComparison.OrdinalIgnoreCase))
             {
-                errors.Add($"Email '{id}': 'replaceLabels' holds an entry that is not a replaceable label path.");
-                return [];
+                skipped++;
             }
+            else if (!labels.Contains(match, StringComparer.Ordinal))
+            {
+                labels.Add(match);
+            }
+        }
 
-            if (!labels.Contains(value, StringComparer.OrdinalIgnoreCase))
-            {
-                labels.Add(value);
-            }
+        if (skipped > 0)
+        {
+            dropped.Add($"Email '{id}': {skipped} 'replaceLabels' entr{(skipped == 1 ? "y" : "ies")} not among its replaceable current labels; dropped.");
         }
 
         return labels.Count == 0 ? [] : labels;
@@ -323,10 +338,10 @@ public static class SuggestionOutputParser
     }
 
     private static ParsedSuggestions Finish(List<SuggestionOutput> valid, List<string> errors, FilterCriteriaOutput? filter,
-        IReadOnlySet<string> expectedIds, HashSet<string> answered)
+        IReadOnlySet<string> expectedIds, HashSet<string> answered, List<string> dropped)
     {
         errors.AddRange(expectedIds.Where(id => !answered.Contains(id)).Order(StringComparer.Ordinal).Select(id => $"Email '{id}': no answer."));
-        return new ParsedSuggestions(valid, errors, filter);
+        return new ParsedSuggestions(valid, errors, filter) { Dropped = dropped };
     }
 
     private static string Shorten(string id) => id.Length <= MaxIdInError ? id : Cut(id, MaxIdInError) + "…";

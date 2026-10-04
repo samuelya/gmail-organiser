@@ -1,7 +1,6 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Analysis.Prompts;
-using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Memory;
 
@@ -9,7 +8,7 @@ namespace GmailOrganiser.Memory;
 /// Memory as a pre-filter (epic #22, option C): when the group's scope (its <see cref="GroupKey"/>: list or sender and
 /// category, plus subject template) has a consistent approved pattern, every non-protected member gets that suggestion
 /// without a model call. Protected members always go to the model, so a memory <c>toBeDeleted</c> never lands on
-/// protected mail. A group already filed under another user label than the memorised one goes to the model too.
+/// protected mail. A group already filed under another personal label than the memorised one goes to the model too.
 /// Suggestions only; the user still reviews them.
 /// </summary>
 public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortCircuit
@@ -39,12 +38,13 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
     }
 
     /// <summary>
-    /// Whether every user label of the group is the memorised topic label. An id without a known name (deleted in Gmail
-    /// since the fetch, or names not loaded) counts as different: the model sees the group instead.
+    /// Whether every personal label of the group is the memorised topic label (the app's action and delete labels do
+    /// not count). An id without a known name (deleted in Gmail since the fetch, or names not loaded) counts as
+    /// different: the model sees the group instead.
     /// </summary>
     private static bool KeepsLabels(MessageGroup group, MemoryPattern pattern, ShortCircuitContext context) =>
-        group.Members.SelectMany(m => m.LabelIds).Where(GmailLabelIds.IsUser).All(id =>
-            context.LabelNames.TryGetValue(id, out var name)
+        group.Members.SelectMany(context.Labels.IdsOf).All(id =>
+            context.Labels.Names.TryGetValue(id, out var name)
             && string.Equals(name.Trim(), pattern.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private static ShortCircuitResult? Cover(MessageGroup group, MemoryPattern pattern, ShortCircuitContext context)

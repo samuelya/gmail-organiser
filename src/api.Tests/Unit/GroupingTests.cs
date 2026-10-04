@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Settings;
 
 namespace GmailOrganiser.Tests.Unit;
@@ -27,8 +28,16 @@ public sealed class GroupingTests
     private static MessageGroup GroupOf(IEnumerable<MessageRow> members) =>
         new("k", "shop@example.com", "d", members.OrderByDescending(m => m.InternalDate).ToList(), [], false);
 
+    private static readonly PersonalLabels Labels = PersonalLabels.From(
+        [
+            new GmailLabel("Label_1", "Topic/One", GmailLabelType.User),
+            new GmailLabel("Label_2", "Topic/Two", GmailLabelType.User),
+            new GmailLabel("Label_8", "Synthetic Delete", GmailLabelType.User),
+        ],
+        new AppSettings { DeleteLabelName = "Synthetic Delete" });
+
     private static Task<IReadOnlyList<MessageGroup>> GroupAsync(IReadOnlyList<MessageRow> messages, GroupingSettings? settings = null) =>
-        new AnalysisGrouper(new NoOpGroupRefiner()).GroupAsync(messages, settings ?? Defaults, NoAllowlist, Ct);
+        new AnalysisGrouper(new NoOpGroupRefiner()).GroupAsync(messages, settings ?? Defaults, NoAllowlist, Labels, Ct);
 
     [Fact]
     public async Task Off_mode_makes_one_individual_group_per_message()
@@ -47,15 +56,17 @@ public sealed class GroupingTests
         [
             .. Enumerable.Range(1, 3).Select(i => WithLabels(Msg(i, subject: $"Order {i} shipped"), "INBOX", "Label_1")),
             .. Enumerable.Range(4, 3).Select(i => WithLabels(Msg(i, subject: $"Order {i} shipped"), "Label_2", "Label_1")),
-            .. Enumerable.Range(7, 3).Select(i => Msg(i, subject: $"Order {i} shipped")),
+            .. Enumerable.Range(7, 2).Select(i => Msg(i, subject: $"Order {i} shipped")),
+            WithLabels(Msg(9, subject: "Order 9 shipped"), "INBOX", "Label_8"),
         ];
 
         var groups = await GroupAsync(messages, Defaults with { MinGroupSize = 2 });
 
-        groups.Select(g => (g.Key, string.Join(',', g.Members.Select(m => m.Id)))).ShouldBe([
-            ("from:shop@example.com|promotions|order # shipped", "m009,m008,m007"),
-            ("from:shop@example.com|promotions|order # shipped|labels:Label_1,Label_2", "m006,m005,m004"),
-            ("from:shop@example.com|promotions|order # shipped|labels:Label_1", "m003,m002,m001"),
+        // The app's delete label is not the person's filing: it neither splits a group nor shows in its title.
+        groups.Select(g => (g.Key, g.Display, string.Join(',', g.Members.Select(m => m.Id)))).ShouldBe([
+            ("from:shop@example.com|promotions|order # shipped", "Order 9 shipped", "m009,m008,m007"),
+            ("from:shop@example.com|promotions|order # shipped|labels:Label_1,Label_2", "Order 6 shipped [Topic/One, Topic/Two]", "m006,m005,m004"),
+            ("from:shop@example.com|promotions|order # shipped|labels:Label_1", "Order 3 shipped [Topic/One]", "m003,m002,m001"),
         ]);
     }
 
@@ -107,10 +118,10 @@ public sealed class GroupingTests
         var grouper = new AnalysisGrouper(refiner);
         var messages = Enumerable.Range(1, 3).Select(i => Msg(i)).ToList();
 
-        await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.SenderSubject }, NoAllowlist, Ct);
+        await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.SenderSubject }, NoAllowlist, PersonalLabels.None, Ct);
         refiner.Calls.ShouldBe(0);
 
-        await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, Ct);
+        await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, PersonalLabels.None, Ct);
         refiner.Calls.ShouldBe(1);
         refiner.Seen.ShouldHaveSingleItem().RepresentativeIds.ShouldBeEmpty();
     }
@@ -122,7 +133,7 @@ public sealed class GroupingTests
         var grouper = new AnalysisGrouper(new FuncRefiner(groups =>
             [groups[0] with { Key = "cluster:1", Members = [.. groups.SelectMany(g => g.Members).OrderBy(m => m.InternalDate)] }]));
 
-        var group = (await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, Ct)).Single();
+        var group = (await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, PersonalLabels.None, Ct)).Single();
 
         group.Key.ShouldBe("cluster:1");
         group.Members.Select(m => m.Id).ShouldBe(["m003", "m002", "m001"]);
@@ -145,7 +156,7 @@ public sealed class GroupingTests
         }));
 
         await Should.ThrowAsync<InvalidOperationException>(
-            () => grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, Ct));
+            () => grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, PersonalLabels.None, Ct));
     }
 
     [Fact]

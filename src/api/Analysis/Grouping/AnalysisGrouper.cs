@@ -45,6 +45,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
         IReadOnlyList<MessageRow> messages,
         GroupingSettings settings,
         IReadOnlySet<string> allowlistedSenders,
+        PersonalLabels labels,
         CancellationToken ct)
     {
         var ordered = Newest(messages);
@@ -54,14 +55,14 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
         }
 
         List<MessageGroup> keyed = ordered
-            .GroupBy(GroupKey.ForGrouping, StringComparer.Ordinal)
-            .Select(g => Keyed(g.Key, g.ToList()))
+            .GroupBy(m => GroupKey.ForGrouping(m, labels), StringComparer.Ordinal)
+            .Select(g => Keyed(g.Key, g.ToList(), labels))
             .ToList();
         if (settings.Mode == AnalysisGroupingMode.Auto)
         {
             var refined = await refiner.RefineAsync(keyed, settings, ct);
             EnsurePartition(ordered, refined);
-            keyed = refined.Select(g => Keyed(g.Key, Newest(g.Members))).ToList();
+            keyed = refined.Select(g => Keyed(g.Key, Newest(g.Members), labels)).ToList();
         }
 
         var result = new List<MessageGroup>();
@@ -76,7 +77,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
             result.AddRange(overflow.Select(Single));
             var group = overflow.Count == 0
                 ? keyedGroup
-                : Keyed(keyedGroup.Key, keyedGroup.Members.Where(m => !overflow.Contains(m)).ToList());
+                : Keyed(keyedGroup.Key, keyedGroup.Members.Where(m => !overflow.Contains(m)).ToList(), labels);
 
             if (group.Members.Count < Math.Max(settings.MinGroupSize, 2))
             {
@@ -111,11 +112,21 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
         }
     }
 
-    private static MessageGroup Keyed(string key, IReadOnlyList<MessageRow> members)
+    private static MessageGroup Keyed(string key, IReadOnlyList<MessageRow> members, PersonalLabels labels)
     {
         var newest = members[0];
-        var display = Subject(newest) + (GroupKey.IsList(key) ? ListDisplaySuffix : "");
+        var display = Subject(newest) + (GroupKey.IsList(key) ? ListDisplaySuffix : "") + LabelsDisplay(key, labels.Names);
         return new MessageGroup(key, newest.FromAddress, display, members, [], Individual: false);
+    }
+
+    /// <summary>
+    /// The label set a group key splits by, as <c> [name, name]</c> (an unknown id as itself), so groups of one sender
+    /// and subject filed differently are told apart; empty for a key without labels.
+    /// </summary>
+    public static string LabelsDisplay(string key, IReadOnlyDictionary<string, string> names)
+    {
+        var ids = GroupKey.LabelIds(key);
+        return ids.Count == 0 ? "" : $" [{string.Join(", ", ids.Select(id => names.GetValueOrDefault(id, id)))}]";
     }
 
     /// <summary>A message analysed on its own.</summary>

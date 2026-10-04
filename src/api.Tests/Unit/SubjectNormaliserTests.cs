@@ -1,5 +1,8 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
+using GmailOrganiser.Settings;
 
 namespace GmailOrganiser.Tests.Unit;
 
@@ -90,10 +93,17 @@ public sealed class SubjectNormaliserTests
         MessageRow Message(params string[] labels) =>
             new() { FromAddress = "shop@example.com", Subject = "Order 42 shipped", LabelIds = labels };
 
-        GroupKey.ForGrouping(Message("INBOX", "CATEGORY_UPDATES")).ShouldBe("from:shop@example.com|-|order # shipped");
-        GroupKey.ForGrouping(Message("Label_9", "INBOX", "Label_10", "Label_9"))
+        var labels = PersonalLabels.From(
+            [new GmailLabel("Label_5", "Synthetic Delete", GmailLabelType.User)],
+            new AppSettings { DeleteLabelName = "Synthetic Delete" });
+
+        GroupKey.ForGrouping(Message("INBOX", "CATEGORY_UPDATES"), labels).ShouldBe("from:shop@example.com|-|order # shipped");
+        GroupKey.ForGrouping(Message("Label_9", "INBOX", "Label_10", "Label_9", "Label_5"), labels)
             .ShouldBe("from:shop@example.com|-|order # shipped|labels:Label_10,Label_9");
-        GroupKey.ForGrouping(Message("Label_1")).ShouldNotBe(GroupKey.ForGrouping(Message("Label_2")));
+        GroupKey.ForGrouping(Message("Label_5"), labels).ShouldBe("from:shop@example.com|-|order # shipped");
+        GroupKey.ForGrouping(Message("Label_1"), labels).ShouldNotBe(GroupKey.ForGrouping(Message("Label_2"), labels));
         GroupKey.For(Message("Label_1")).ShouldBe("from:shop@example.com|-|order # shipped");
+        GroupKey.LabelIds("from:shop@example.com|-|order # shipped|labels:Label_10,Label_9").ShouldBe(["Label_10", "Label_9"]);
+        GroupKey.LabelIds("from:shop@example.com|-|re |labels:x").ShouldBeEmpty();
     }
 }

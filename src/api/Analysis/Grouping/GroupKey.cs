@@ -12,13 +12,24 @@ public static class GroupKey
     public const string LabelsPrefix = "|labels:";
 
     /// <summary>
-    /// The analysis group: <see cref="For"/> plus the message's sorted user label ids, so mail the person filed
-    /// differently never shares a group. Unchanged for mail without user labels.
+    /// The analysis group: <see cref="For"/> plus the message's sorted personal label ids, so mail the person filed
+    /// differently never shares a group. Unchanged for mail without personal labels.
     /// </summary>
-    public static string ForGrouping(MessageRow m)
+    public static string ForGrouping(MessageRow m, PersonalLabels labels)
     {
-        var labels = string.Join(',', m.LabelIds.Where(GmailLabelIds.IsUser).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
-        return labels.Length == 0 ? For(m) : $"{For(m)}{LabelsPrefix}{labels}";
+        var ids = string.Join(',', labels.IdsOf(m));
+        return ids.Length == 0 ? For(m) : $"{For(m)}{LabelsPrefix}{ids}";
+    }
+
+    /// <summary>
+    /// The label ids a <see cref="ForGrouping"/> key splits by; empty for any other key (also one whose subject template
+    /// merely contains the prefix: every id must be a user label id).
+    /// </summary>
+    public static IReadOnlyList<string> LabelIds(string key)
+    {
+        var at = key.LastIndexOf(LabelsPrefix, StringComparison.Ordinal);
+        var ids = at < 0 ? [] : key[(at + LabelsPrefix.Length)..].Split(',');
+        return ids.Length > 0 && ids.All(GmailLabelIds.IsUser) ? ids : [];
     }
 
     /// <summary>The memory scope (<c>decisions.scope_key</c>): list or sender and category, plus the subject template.</summary>

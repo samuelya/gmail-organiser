@@ -3,6 +3,7 @@ using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public sealed class AnalysisRunService(
     IJobService jobs,
     ISettingsStore settingsStore,
     SenderStatsUpdater senderStats,
+    LabelCatalog labelCatalog,
     TimeProvider time)
 {
     public const int MaxListLimit = 200;
@@ -47,7 +49,9 @@ public sealed class AnalysisRunService(
         var ids = scope == AnalysisScope.Messages ? messageIds?.Distinct(StringComparer.Ordinal).ToArray() : null;
 
         // A resume works over exactly these ids, whatever is fetched meanwhile.
-        var candidates = await AnalysisCandidates.QueryAsync(db, scope, sender, ids, count, ct);
+        // Without Gmail, app labels count as personal here; the run's eligibility check skips such candidates.
+        var appLabelIds = scope == AnalysisScope.Labelled ? (await PersonalLabels.LoadAsync(labelCatalog, settings, ct)).AppLabelIds : [];
+        var candidates = await AnalysisCandidates.QueryAsync(db, scope, sender, ids, count, appLabelIds, ct);
         var run = new AnalysisRunRow
         {
             Id = Guid.CreateVersion7(now),
@@ -201,11 +205,8 @@ public sealed class AnalysisRunService(
 
     public async Task<AnalysisSummaryDto> SummaryAsync(CancellationToken ct)
     {
-        var counts = await db.Messages.AsNoTracking()
-            .Where(m => !m.DeletedInGmail)
-            .GroupBy(m => m.AnalysisStatus)
-            .Select(g => new { Status = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(x => x.Status, x => x.Count, ct);
+        var labels = await PersonalLabels.LoadAsync(labelCatalog, await settingsStore.GetAsync(ct), ct);
+        var (counts, labelled) = await AnalysisCandidates.CountAsync(db, labels.AppLabelIds, ct);
         var applied = db.Suggestions.AsNoTracking().Where(s => s.Status == SuggestionStatus.Applied);
         var actionCount = await applied.CountAsync(s => s.NeedsAction, ct);
         var deleteCount = await applied.CountAsync(s => s.ToBeDeleted, ct);
@@ -215,7 +216,6 @@ public sealed class AnalysisRunService(
             .FirstOrDefaultAsync(ct);
         var llmCalls = totals?.LlmCalls ?? 0;
         var covered = totals?.Covered ?? 0;
-        var labelled = await AnalysisCandidates.CountLabelledAsync(db, ct);
 
         return new AnalysisSummaryDto(
             counts.GetValueOrDefault(AnalysisStatus.NotAnalysed),

@@ -2,7 +2,7 @@ namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>
 /// One email as the prompt shows it; <see cref="Body"/> is already cleaned and truncated and is never stored.
-/// <see cref="Labels"/> are its current user label names, sorted, at most <see cref="MaxLabels"/>.
+/// <see cref="Labels"/> are its current personal label names, sorted; the prompt shows at most <see cref="MaxLabels"/>.
 /// </summary>
 public sealed record EmailForPrompt(
     string Id,
@@ -58,6 +58,10 @@ public sealed record FilterCriteriaOutput(string? From, string? ListId, string? 
 public sealed record ParsedSuggestions(
     IReadOnlyList<SuggestionOutput> Valid,
     IReadOnlyList<string> Errors,
-    FilterCriteriaOutput? Filter);
+    FilterCriteriaOutput? Filter)
+{
+    /// <summary>Optional output the parser ignored without failing the email (ids and field names only).</summary>
+    public IReadOnlyList<string> Dropped { get; init; } = [];
+}
 
 public sealed record PromptTemplateDto(string Version, string Template);

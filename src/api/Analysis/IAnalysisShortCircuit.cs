@@ -16,13 +16,13 @@ public interface IAnalysisShortCircuit
 }
 
 /// <summary>
-/// The caller's settings snapshot, allowlisted senders, Gmail user label names (empty when only counting) and the user
-/// label names by id (empty when Gmail is not connected).
+/// The caller's settings snapshot, allowlisted senders, Gmail user label names (empty when only counting) and the
+/// person's own labels (<see cref="PersonalLabels.None"/> when Gmail is not reachable).
 /// </summary>
 public sealed record ShortCircuitContext(
     AppSettings Settings,
     IReadOnlySet<string> Allowlisted,
     IReadOnlyList<string> LabelTree,
-    IReadOnlyDictionary<string, string> LabelNames);
+    PersonalLabels Labels);
 
 public sealed record ShortCircuitResult(IReadOnlyList<SuggestionOutput> Suggestions);

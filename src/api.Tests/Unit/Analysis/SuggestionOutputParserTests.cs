@@ -22,33 +22,55 @@ public sealed class SuggestionOutputParserTests
         valid[0].ShouldBe(new SuggestionOutput("m1", "Topic/Sub", false, true, false, false, 0.9, "Synthetic reason"));
     }
 
-    [Fact]
-    public void Replace_labels_are_trimmed_and_deduplicated()
+    private static readonly Dictionary<string, IReadOnlyList<string>> Current = new()
     {
-        var raw = $"[{Item("m1", label: "Bills/Water", extra: ",\"replaceLabels\":[\" Water \",\"water\",\"Old/Bills\"]")},{Item("m2", extra: ",\"replaceLabels\":null")}]";
+        ["m1"] = ["Subtopic", "Old/Topic", "Topic/Sub"],
+    };
 
-        var (valid, errors, _) = SuggestionOutputParser.Parse(raw, Ids);
+    [Fact]
+    public void Replace_labels_keep_current_labels_trimmed_and_deduplicated()
+    {
+        var raw = $"[{Item("m1", label: "Topic/Subtopic", extra: ",\"replaceLabels\":[\" subtopic \",\"Subtopic\",\"Old/Topic\"]")},{Item("m2", extra: ",\"replaceLabels\":null")}]";
 
-        errors.ShouldBeEmpty();
-        valid[0].ReplaceLabels.ShouldBe(["Water", "Old/Bills"]);
-        valid[1].ReplaceLabels.ShouldBeEmpty();
+        var result = SuggestionOutputParser.Parse(raw, Ids, Current);
+
+        result.Errors.ShouldBeEmpty();
+        result.Dropped.ShouldBeEmpty();
+        result.Valid[0].ReplaceLabels.ShouldBe(["Subtopic", "Old/Topic"]);
+        result.Valid[1].ReplaceLabels.ShouldBeEmpty();
     }
 
     [Theory]
-    [InlineData("\"Water\"")]
+    [InlineData("\"Subtopic\"")]
     [InlineData("[3]")]
     [InlineData("[\"INBOX\"]")]
     [InlineData("[\"topic/sub\"]")]
     [InlineData("[\" \"]")]
-    [InlineData("[\"A/B/C/D/E/F\"]")]
-    public void Invalid_replace_labels_are_an_error_for_that_email(string value)
+    [InlineData("[\"Elsewhere\"]")]
+    [InlineData("[\"Synthetic Delete\"]")]
+    public void Unusable_replace_labels_are_dropped_without_failing_the_email(string value)
     {
-        var raw = $"[{Item("m1", extra: $",\"replaceLabels\":{value}")},{Item("m2")}]";
+        var raw = $"[{Item("m1", extra: $",\"replaceLabels\":{value}")},{Item("m2", extra: ",\"replaceLabels\":[\"Subtopic\"]")}]";
 
-        var (valid, errors, _) = SuggestionOutputParser.Parse(raw, Ids);
+        var result = SuggestionOutputParser.Parse(raw, Ids, Current);
 
-        valid.Select(v => v.Id).ShouldBe(["m2"]);
-        errors.ShouldHaveSingleItem().ShouldStartWith("Email 'm1': 'replaceLabels'");
+        result.Errors.ShouldBeEmpty();
+        result.Valid.Select(v => v.Id).ShouldBe(["m1", "m2"]);
+        result.Valid.ShouldAllBe(v => v.ReplaceLabels.Count == 0);
+        result.Dropped.Count.ShouldBe(2);
+        result.Dropped[0].ShouldStartWith("Email 'm1': ");
+        result.Dropped[1].ShouldStartWith("Email 'm2': ");
+    }
+
+    [Fact]
+    public void Replace_labels_drop_the_topic_label_but_keep_the_rest()
+    {
+        var raw = $"[{Item("m1", label: "Topic/Sub", extra: ",\"replaceLabels\":[\"Topic/Sub\",\"Old/Topic\"]")}]";
+
+        var result = SuggestionOutputParser.Parse(raw, new HashSet<string> { "m1" }, Current);
+
+        result.Valid.ShouldHaveSingleItem().ReplaceLabels.ShouldBe(["Old/Topic"]);
+        result.Dropped.ShouldHaveSingleItem().ShouldStartWith("Email 'm1': 1 'replaceLabels' entry");
     }
 
     [Fact]
