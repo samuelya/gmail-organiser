@@ -38,6 +38,14 @@ public interface IGmailClient
     Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct);
 
     /// <summary>
+    /// <see cref="GetLabelMessagesTotalAsync"/> for many labels in batch calls, in request order. Labels Gmail no longer
+    /// knows (deleted meanwhile) are omitted.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<IReadOnlyList<GmailLabelTotal>> GetLabelsMessagesTotalAsync(IReadOnlyList<string> labelIds, CancellationToken ct);
+
+    /// <summary>
     /// One page of <c>history.list</c> records after <paramref name="startHistoryId"/>, with all four history types.
     /// Pass the same start id with every page token of one listing.
     /// </summary>
@@ -258,6 +266,9 @@ public sealed record GmailMessageMetadata(
 
 /// <summary>A message's labels as <c>format=minimal</c> returns them; read state is the <c>UNREAD</c> label.</summary>
 public sealed record GmailMessageLabels(string Id, IReadOnlyList<string> LabelIds);
+
+/// <summary>A label's <c>messagesTotal</c> as <c>labels.get</c> returns it.</summary>
+public sealed record GmailLabelTotal(string Id, long MessagesTotal);
 
 /// <param name="HistoryId">The mailbox's current history ID when the page was read.</param>
 public sealed record HistoryPage(IReadOnlyList<HistoryRecord> Records, string? NextPageToken, string HistoryId);

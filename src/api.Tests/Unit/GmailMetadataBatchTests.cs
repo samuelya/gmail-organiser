@@ -142,6 +142,27 @@ public sealed class GmailMetadataBatchTests : IDisposable
         attempt.Retry.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task The_label_totals_batch_gets_each_label_at_one_unit_and_drops_deleted_labels()
+    {
+        string? body = null;
+        handler.Respond = request =>
+        {
+            body = request.Content!.ReadAsStringAsync(Ct).GetAwaiter().GetResult();
+            return Multipart(
+                (HttpStatusCode.OK, """{"id":"Label_1","name":"Synthetic","messagesTotal":7}"""),
+                (HttpStatusCode.OK, """{"id":"Label_2","name":"Synthetic Empty"}"""),
+                (HttpStatusCode.NotFound, ErrorJson(HttpStatusCode.NotFound, "notFound")));
+        };
+
+        var attempt = await GmailMetadataBatch.SendLabelTotalsAsync(
+            service, ["Label_1", "Label_2", "Label_3"], Limiter(budget: 3), NullLogger.Instance, Ct);
+
+        body.ShouldNotBeNull().ShouldContain("/labels/Label_1");
+        attempt.Succeeded.ShouldBe([new GmailLabelTotal("Label_1", 7), new GmailLabelTotal("Label_2", 0)]);
+        attempt.Retry.ShouldBeEmpty();
+    }
+
     private Task<GmailBatchAttempt<string, GmailMessageMetadata>> SendAsync(IReadOnlyList<string> ids, GmailQuotaLimiter limiter) =>
         GmailMetadataBatch.SendAsync(service, ids, limiter, NullLogger.Instance, Ct);
 
