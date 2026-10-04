@@ -32,12 +32,12 @@ public sealed class FetchStateRow
     public long? MessagesTotal { get; set; }
 
     /// <summary>
-    /// The Inbox total the run's progress reports: the label total at the start, at least the fetched count while the phase
-    /// runs, the fetched count once it is done. Null before a run has started.
+    /// The last Gmail measurement of the Inbox label total (<see cref="MailboxTotalsReader"/> or a mailbox fetch's start),
+    /// the status's fallback while Gmail can't be read. Only measurements write it, never a run's counts. Null before one.
     /// </summary>
     public long? InboxTotal { get; set; }
 
-    /// <summary>The All Mail total (mailbox total minus Spam and Trash), on the same rule as <see cref="InboxTotal"/>.</summary>
+    /// <summary>The last Gmail measurement of the All Mail total (mailbox total minus Spam and Trash), as <see cref="InboxTotal"/>.</summary>
     public long? AllMailTotal { get; set; }
 
     public string? LastHistoryId { get; set; }

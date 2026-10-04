@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Tests.Fakes;
@@ -44,13 +45,116 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     [Fact]
-    public async Task Status_before_any_fetch_is_not_started_with_zeros()
+    public async Task Status_before_any_fetch_is_not_started_with_zeros_and_the_Gmail_totals()
     {
         await using var host = FakeGmailHost();
+        var (inbox, allMail) = await GmailTotalsAsync(host);
 
         var status = await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct);
 
-        status.ShouldBe(new FetchStatusDto(null, "not_started", 0, 0, null, 0, 0, null, null, null, null, null, false, null, null, null));
+        status.ShouldBe(new FetchStatusDto(
+            null, "not_started", 0, 0, null, 0, 0, null, null, null, null, null, false, null, inbox, allMail, 0, 0));
+        await using var db = postgres.CreateDbContext();
+        var state = await db.FetchState.AsNoTracking().SingleAsync(Ct);
+        state.InboxTotal.ShouldBe(inbox);
+        state.AllMailTotal.ShouldBe(allMail);
+    }
+
+    [Fact]
+    public async Task Stored_counters_cover_a_sender_fetch_then_the_mailbox_fetch_then_an_incremental_fetch()
+    {
+        await using var host = FakeGmailHost();
+        var (inbox, allMail) = await GmailTotalsAsync(host);
+        var fromSender = FakeGmailClient.Seed(DateTimeOffset.UtcNow).Where(m => m.From.Contains(SenderAddress, StringComparison.Ordinal)).ToList();
+        var senderInbox = fromSender.Count(m => m.LabelIds.Contains(MailboxFetchJob.InboxLabelId));
+        senderInbox.ShouldBeGreaterThan(0);
+        (inbox - senderInbox).ShouldBeGreaterThan(0);
+
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+        (await client.PostAsJsonAsync("/api/fetch/sender", new SenderFetchRequest(SenderAddress), Ct)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await RunQueuedJobsAsync(host);
+        var status = await StatusAsync(host);
+        (status.InboxStored, status.InboxTotal, status.AllMailStored, status.AllMailTotal)
+            .ShouldBe((senderInbox, inbox, fromSender.Count, allMail));
+
+        (await PostStartAsync(host)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await RunQueuedJobsAsync(host);
+        status = await StatusAsync(host);
+        (status.InboxStored, status.InboxTotal, status.AllMailStored, status.AllMailTotal).ShouldBe((inbox, inbox, allMail, allMail));
+
+        // Inside the cache TTL the totals lag behind Gmail; they never fall below what is stored.
+        host.Services.GetRequiredService<FakeGmailClient>().AddMessage(new FakeMessage(
+            "new-1", "new-1", "New Sender <new@example.com>", "Synthetic new", DateTimeOffset.UtcNow, [MailboxFetchJob.InboxLabelId]));
+        (await PostStartAsync(host, "/api/fetch/incremental")).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await RunQueuedJobsAsync(host);
+        status = await StatusAsync(host);
+        (status.InboxStored, status.InboxTotal, status.AllMailStored, status.AllMailTotal)
+            .ShouldBe((inbox + 1, inbox + 1, allMail + 1, allMail + 1));
+        status.InboxFetched.ShouldBe((int)inbox);
+    }
+
+    [Fact]
+    public async Task Status_polls_inside_the_cache_TTL_measure_the_Gmail_totals_once()
+    {
+        CountingGmailClient? gmail = null;
+        await using var host = FakeGmailHost().WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+        {
+            services.AddSingleton(sp => gmail = new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>()));
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
+        }));
+
+        var first = await StatusAsync(host);
+        var second = await StatusAsync(host);
+
+        second.InboxTotal.ShouldBe(first.InboxTotal.ShouldNotBeNull());
+        gmail.ShouldNotBeNull().ProfileCalls.ShouldBe(1);
+        gmail.LabelTotalCalls.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Status_without_a_Gmail_connection_reports_the_last_known_totals()
+    {
+        await using var host = FakeGmailHost();
+        await host.Services.GetRequiredService<FakeTokenStore>().DeleteAsync(Ct);
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.InboxTotal, 5L).SetProperty(r => r.AllMailTotal, 7L), Ct);
+        }
+
+        var status = await StatusAsync(host);
+
+        (status.InboxTotal, status.AllMailTotal).ShouldBe((5L, 7L));
+    }
+
+    public static TheoryData<string> GmailFailures => ["api-error", "timeout"];
+
+    [Theory]
+    [MemberData(nameof(GmailFailures))]
+    public async Task Status_when_Gmail_fails_is_200_with_the_last_known_totals(string failure)
+    {
+        CountingGmailClient? gmail = null;
+        await using var host = FakeGmailHost().WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+        {
+            services.AddSingleton(sp => gmail = new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>())
+            {
+                ProfileFailure = failure == "timeout"
+                    ? new TaskCanceledException("The request timed out.")
+                    : new Google.GoogleApiException("gmail", "Backend Error") { HttpStatusCode = HttpStatusCode.ServiceUnavailable },
+            });
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
+        }));
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.InboxTotal, 5L).SetProperty(r => r.AllMailTotal, 7L), Ct);
+        }
+
+        var response = await host.CreateClient().GetAsync("/api/fetch/status", Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var status = (await response.Content.ReadFromJsonAsync<FetchStatusDto>(Ct)).ShouldNotBeNull();
+        (status.InboxTotal, status.AllMailTotal).ShouldBe((5L, 7L));
+        gmail.ShouldNotBeNull().ProfileCalls.ShouldBe(1);
     }
 
     [Fact]
@@ -275,6 +379,29 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
             UpdatedAt = now,
             FinishedAt = JobRow.Finished.Contains(status) ? now : null,
         };
+    }
+
+    private const string SenderAddress = "bob@example.com";
+
+    private static async Task<(long Inbox, long AllMail)> GmailTotalsAsync(WebApplicationFactory<Program> host)
+    {
+        var fake = host.Services.GetRequiredService<FakeGmailClient>();
+        var profile = await fake.GetProfileAsync(Ct);
+        var spamAndTrash = await fake.GetLabelMessagesTotalAsync(MailboxFetchJob.SpamLabelId, Ct)
+            + await fake.GetLabelMessagesTotalAsync(MailboxFetchJob.TrashLabelId, Ct);
+        return (await fake.GetLabelMessagesTotalAsync(MailboxFetchJob.InboxLabelId, Ct), profile.MessagesTotal - spamAndTrash);
+    }
+
+    private static async Task<FetchStatusDto> StatusAsync(WebApplicationFactory<Program> host) =>
+        (await host.CreateClient().GetFromJsonAsync<FetchStatusDto>("/api/fetch/status", Ct)).ShouldNotBeNull();
+
+    private static async Task RunQueuedJobsAsync(WebApplicationFactory<Program> host)
+    {
+        var runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
+        foreach (var id in await runner.ClaimAsync(Ct))
+        {
+            await runner.RunAsync(id, Ct);
+        }
     }
 
     private WebApplicationFactory<Program> FakeGmailHost() =>

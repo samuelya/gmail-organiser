@@ -190,8 +190,8 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         await using var db = postgres.CreateDbContext();
         var state = await db.FetchState.AsNoTracking().SingleAsync(Ct);
         state.InboxFetched.ShouldBe(InboxCount + inboxChange);
-        state.InboxTotal.ShouldBe(state.InboxFetched);
-        state.AllMailTotal.ShouldBe(state.AllMailFetched);
+        // fetch_state keeps the Gmail measurement taken at the start; the run's checkpoints don't overwrite it.
+        (state.InboxTotal, state.AllMailTotal).ShouldBe((InboxCount, MessageCount));
     }
 
     [Fact]
@@ -203,10 +203,9 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         await RunNextAsync();
         (await GetJobAsync(job.Id)).Status.ShouldBe("paused");
 
-        // The cursor and fetch_state as a run started before the Inbox total existed left them.
+        // The cursor as a run started before the Inbox total existed left it.
         await using var db = postgres.CreateDbContext();
         await db.Database.ExecuteSqlAsync($"UPDATE jobs SET cursor = cursor - 'inboxTotal' WHERE id = {job.Id}", Ct);
-        await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(f => f.InboxTotal, (long?)null), Ct);
         published.Clear();
         gmail.AfterMetadata = null;
         (await WithAsync<IJobService, JobActionResult>(s => s.ResumeAsync(job.Id, Ct))).ShouldBe(JobActionResult.Ok);
@@ -216,7 +215,6 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         var inbox = published.Select(j => j.Progress).OfType<JobProgress>().Where(p => p.Message == "Fetching Inbox").ToList();
         inbox.ShouldNotBeEmpty();
         inbox.ShouldAllBe(p => p.Total == InboxCount && p.Done <= p.Total);
-        (await db.FetchState.AsNoTracking().SingleAsync(Ct)).InboxTotal.ShouldBe(InboxCount);
     }
 
     [Fact]

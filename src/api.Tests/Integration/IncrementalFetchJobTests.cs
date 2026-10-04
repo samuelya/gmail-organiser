@@ -127,7 +127,7 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
     }
 
     [Fact]
-    public async Task Expired_history_queues_a_full_resync_and_resets_the_mailbox_phase()
+    public async Task Expired_history_queues_a_full_resync_and_resets_the_mailbox_phase_keeping_the_Gmail_totals()
     {
         gmail.Inner.HistoryRetention = 2;
         for (var i = 0; i < 3; i++)
@@ -152,8 +152,8 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
         var state = await db.FetchState.SingleAsync(Ct);
         state.MailboxPhase.ShouldBe(MailboxPhase.NotStarted);
         state.PageToken.ShouldBeNull();
-        state.InboxTotal.ShouldBeNull();
-        state.AllMailTotal.ShouldBeNull();
+        // The last Gmail measurement stays as the status fallback.
+        (state.InboxTotal, state.AllMailTotal).ShouldBe((3L, 5L));
         (await db.Jobs.SingleAsync(j => j.Type == MailboxFetchJob.JobType && j.Status == JobStatus.Queued, Ct)).Queue.ShouldBe(JobQueues.Fetch);
         gmail.MetadataCalls.ShouldBeEmpty();
     }
