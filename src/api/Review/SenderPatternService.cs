@@ -105,6 +105,9 @@ public sealed class SenderPatternService(
                 TopicLabel = label,
                 NeedsAction = needsAction,
                 ToBeDeleted = toBeDeleted && !isProtected,
+
+                // Apply to rest of sender never removes labels.
+                ReplaceLabels = [],
                 Confidence = agreement,
                 Reason = Reason,
                 Edited = edited,

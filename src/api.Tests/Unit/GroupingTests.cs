@@ -245,8 +245,18 @@ public sealed class GroupingTests
         MessageProtection.IsProtected(m, allowlisted, AllRules).ShouldBe(expected);
     }
 
-    private static RepresentativeOutput Out(string label = "Shopping", bool action = false, bool delete = true, double confidence = 0.9, bool unsubscribe = false) =>
-        new(label, action, delete, unsubscribe, confidence);
+    private static RepresentativeOutput Out(
+        string label = "Shopping", bool action = false, bool delete = true, double confidence = 0.9, bool unsubscribe = false, string[]? replace = null) =>
+        new(label, action, delete, unsubscribe, confidence, replace);
+
+    [Fact]
+    public void Rule_agrees_on_the_same_replaced_label_set_in_any_order()
+    {
+        var agreed = DerivationRule.Decide([Out(replace: ["Old", "Older"]), Out(replace: ["Older", "Old"])], 0.10).ShouldBeOfType<Agreed>();
+
+        agreed.ReplaceLabels.ShouldBe(["Old", "Older"]);
+        DerivationRule.Decide([Out(), Out()], 0.10).ShouldBeOfType<Agreed>().ReplaceLabels.ShouldBeEmpty();
+    }
 
     [Fact]
     public void Rule_agrees_case_insensitively_with_penalised_minimum_confidence()
@@ -279,6 +289,8 @@ public sealed class GroupingTests
         new RepresentativeOutput?[] { },
         new RepresentativeOutput?[] { Out(), Out(confidence: double.NaN) },
         new RepresentativeOutput?[] { Out(), Out(" ") },
+        new RepresentativeOutput?[] { Out(replace: ["Old"]), Out() },
+        new RepresentativeOutput?[] { Out(replace: ["Old"]), Out(replace: ["old"]) },
     };
 
     [Theory]
