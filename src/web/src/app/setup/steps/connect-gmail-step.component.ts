@@ -15,9 +15,9 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { filter } from 'rxjs';
 import { openConfirm } from '../../core/confirm-dialog';
-import { GoogleAuthStatus, SetupService } from '../setup.service';
+import { ConnectReturnTo, GoogleAuthStatus, SetupService } from '../setup.service';
 
-/** The result the OAuth callback hands back in `/setup?gmail=…&reason=…`. */
+/** The result the OAuth callback hands back in `/setup|settings?gmail=…&reason=…`. */
 export type ConnectResult = { kind: 'connected' } | { kind: 'error'; reason: string };
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -160,6 +160,8 @@ export class ConnectGmailStep implements OnInit {
   readonly clientLocation = input('in step 1');
   /** Ask before disconnecting (Settings); the wizard disconnects directly. */
   readonly confirmDisconnect = input(false);
+  /** The page the OAuth callback returns to. */
+  readonly returnTo = input<ConnectReturnTo>('setup');
   /** Emits the connection status after every load. */
   readonly statusChange = output<GoogleAuthStatus>();
 
@@ -206,7 +208,7 @@ export class ConnectGmailStep implements OnInit {
 
   connect(): void {
     if (!this.clientConfigured()) return;
-    this.setup.connectGoogle();
+    this.setup.connectGoogle(this.returnTo());
   }
 
   disconnect(): void {

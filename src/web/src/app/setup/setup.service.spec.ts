@@ -85,4 +85,9 @@ describe('SetupService', () => {
     expect(navigate).toHaveBeenCalledWith(GOOGLE_CONNECT_URL);
     backend.expectNone(GOOGLE_CONNECT_URL);
   });
+
+  it('connects from Settings with returnTo=settings', () => {
+    service.connectGoogle('settings');
+    expect(navigate).toHaveBeenCalledWith(`${GOOGLE_CONNECT_URL}?returnTo=settings`);
+  });
 });

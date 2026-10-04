@@ -3,8 +3,16 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
+import { provideRouter, Router } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
 import { LlmModels } from '../core/llm.service';
-import { GoogleAuthStatus, SetupStatus } from '../setup/setup.service';
+import {
+  GOOGLE_CONNECT_URL,
+  GoogleAuthStatus,
+  NAVIGATE_TO,
+  SetupStatus,
+} from '../setup/setup.service';
+import { connectErrorMessage } from '../setup/steps/connect-gmail-step.component';
 import { SettingsPage } from './settings-page.component';
 import { AttachmentSettings, ClaudeSettings, SettingsDto } from './settings.models';
 
@@ -106,11 +114,34 @@ describe('SettingsPage', () => {
   }
 
   async function render(gmailConnected = true, dto = settings()) {
+    configure(gmailConnected, dto);
+    const fixture = TestBed.createComponent(SettingsPage);
+    await flushLoads(fixture);
+    const el = fixture.nativeElement as HTMLElement;
+    const q = (id: string) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    return { fixture, el, q };
+  }
+
+  /** Opens the page through the router, as the OAuth callback redirect does. */
+  async function openAt(url: string, gmailConnected = true) {
+    const navigate = vi.fn();
+    configure(gmailConnected, settings(), navigate);
+    const harness = await RouterTestingHarness.create();
+    await harness.navigateByUrl(url, SettingsPage);
+    await flushLoads(harness.fixture);
+    const el = harness.routeNativeElement as HTMLElement;
+    const q = (id: string) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    return { harness, el, q, navigate };
+  }
+
+  function configure(gmailConnected: boolean, dto: SettingsDto, navigate = vi.fn()) {
     connected = gmailConnected;
     loaded = dto;
     snackOpen = vi.fn();
     TestBed.configureTestingModule({
       providers: [
+        provideRouter([{ path: 'settings', component: SettingsPage }]),
+        { provide: NAVIGATE_TO, useValue: navigate },
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: MatSnackBar, useValue: { open: snackOpen } },
@@ -119,11 +150,6 @@ describe('SettingsPage', () => {
       ],
     });
     http = TestBed.inject(HttpTestingController);
-    const fixture = TestBed.createComponent(SettingsPage);
-    await flushLoads(fixture);
-    const el = fixture.nativeElement as HTMLElement;
-    const q = (id: string) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-    return { fixture, el, q };
   }
 
   const overlay = (id: string) =>
@@ -155,6 +181,40 @@ describe('SettingsPage', () => {
     expect(q('section-ollama')!.querySelector('app-models-step')).not.toBeNull();
     expect(q('connected-as')!.textContent).toContain(EMAIL);
     expect(q('no-client')).toBeNull();
+  });
+
+  it('callback connected: shows the result on the Gmail card, scrolls to it, clears the params', async () => {
+    const original = Element.prototype.scrollIntoView;
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    try {
+      const { el, q } = await openAt('/settings?gmail=connected');
+      expect(q('connect-success')!.textContent).toContain(`Gmail connected as ${EMAIL}.`);
+      expect(TestBed.inject(Router).url).toBe('/settings');
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.contexts[0]).toBe(el.querySelector('[data-testid="section-gmail"]'));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it('callback error: shows the mapped message and clears the params', async () => {
+    const { q } = await openAt('/settings?gmail=error&reason=state_mismatch', false);
+    expect(q('connect-error')!.textContent).toContain(connectErrorMessage('state_mismatch'));
+    expect(TestBed.inject(Router).url).toBe('/settings');
+  });
+
+  it('no callback params: no result, URL untouched', async () => {
+    const { q } = await openAt('/settings');
+    expect(q('connect-success')).toBeNull();
+    expect(q('connect-error')).toBeNull();
+    expect(q('connected-as')).not.toBeNull();
+  });
+
+  it('Reconnect returns to Settings', async () => {
+    const { q, navigate } = await openAt('/settings');
+    q('reconnect')!.click();
+    expect(navigate).toHaveBeenCalledWith(`${GOOGLE_CONNECT_URL}?returnTo=settings`);
   });
 
   it('Disconnect asks first; Cancel keeps the connection', async () => {

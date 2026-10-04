@@ -72,7 +72,17 @@ describe('ConnectGmailStep', () => {
   it('not connected: "Connect Gmail" navigates to the start endpoint', async () => {
     const { el } = await render(status({}));
     q(el, 'connect')!.click();
-    expect(setup.connectGoogle).toHaveBeenCalled();
+    expect(setup.connectGoogle).toHaveBeenCalledWith('setup');
+  });
+
+  it('returnTo settings: Reconnect returns to Settings', async () => {
+    const { fixture, el } = await render(
+      status({ connected: true, reason: null, accountEmail: EMAIL }),
+    );
+    fixture.componentRef.setInput('returnTo', 'settings');
+    await fixture.whenStable();
+    q(el, 'reconnect')!.click();
+    expect(setup.connectGoogle).toHaveBeenCalledWith('settings');
   });
 
   it('connected: shows the account; Disconnect posts and reloads the status', async () => {
