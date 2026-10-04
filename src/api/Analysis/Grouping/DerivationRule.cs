@@ -2,13 +2,15 @@ namespace GmailOrganiser.Analysis.Grouping;
 
 /// <summary>One representative's validated LLM decision (an invalid output is passed as <c>null</c>).</summary>
 /// <param name="ReplaceLabels">Current labels the answer replaces; null is none.</param>
+/// <param name="DocumentTypeLabel">The document-type label; null is none.</param>
 public sealed record RepresentativeOutput(
     string TopicLabel,
     bool NeedsAction,
     bool ToBeDeleted,
     bool UnsubscribeSuggested,
     double Confidence,
-    IReadOnlyList<string>? ReplaceLabels = null);
+    IReadOnlyList<string>? ReplaceLabels = null,
+    string? DocumentTypeLabel = null);
 
 /// <summary>Whether a group's remaining members get a derived suggestion.</summary>
 public abstract record Derivation;
@@ -23,6 +25,9 @@ public sealed record Agreed(
 {
     /// <summary>The replaced labels every representative named, ordinal-sorted.</summary>
     public IReadOnlyList<string> ReplaceLabels { get; init; } = [];
+
+    /// <summary>The document-type label every representative named (as the first wrote it); null when none did.</summary>
+    public string? DocumentTypeLabel { get; init; }
 }
 
 /// <summary>Representatives disagree or one has no valid output: every remaining member goes to the LLM individually.</summary>
@@ -33,8 +38,8 @@ public sealed record Mixed : Derivation
 
 /// <summary>
 /// Epic #22 safety rule: derive only when every representative (at least two) has a valid output and all agree on
-/// all decision fields, the replaced labels included (same set, ordinal). One invalid representative makes the group
-/// mixed rather than deriving from a partial sample.
+/// all decision fields, the replaced labels (same set, ordinal) and the document-type label (case-insensitive, none
+/// equals none) included. One invalid representative makes the group mixed rather than deriving from a partial sample.
 /// </summary>
 public static class DerivationRule
 {
@@ -53,11 +58,13 @@ public static class DerivationRule
 
         var first = valid[0];
         var label = first.TopicLabel.Trim();
+        var documentType = Normalised(first.DocumentTypeLabel);
         var agree = valid.All(o =>
             string.Equals(o.TopicLabel.Trim(), label, StringComparison.OrdinalIgnoreCase)
             && o.NeedsAction == first.NeedsAction
             && o.ToBeDeleted == first.ToBeDeleted
-            && SameSet(o.ReplaceLabels, first.ReplaceLabels));
+            && SameSet(o.ReplaceLabels, first.ReplaceLabels)
+            && string.Equals(Normalised(o.DocumentTypeLabel), documentType, StringComparison.OrdinalIgnoreCase));
         if (!agree)
         {
             return Mixed.Instance;
@@ -67,8 +74,11 @@ public static class DerivationRule
         return new Agreed(label, first.NeedsAction, first.ToBeDeleted, valid.Any(o => o.UnsubscribeSuggested), confidence)
         {
             ReplaceLabels = Set(first.ReplaceLabels),
+            DocumentTypeLabel = documentType,
         };
     }
+
+    private static string? Normalised(string? label) => string.IsNullOrWhiteSpace(label) ? null : label.Trim();
 
     private static bool SameSet(IReadOnlyList<string>? a, IReadOnlyList<string>? b) => Set(a).SequenceEqual(Set(b), StringComparer.Ordinal);
 

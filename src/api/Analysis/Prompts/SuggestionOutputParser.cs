@@ -28,8 +28,10 @@ public static class SuggestionOutputParser
 
     /// <param name="currentLabels">Each email's current personal label names, the only entries <c>replaceLabels</c>
     /// may hold; an email missing here has none.</param>
+    /// <param name="documentTypeParent">The document-type parent label; null turns <c>documentTypeLabel</c> off.</param>
     public static ParsedSuggestions Parse(
-        string? raw, IReadOnlySet<string> expectedIds, IReadOnlyDictionary<string, IReadOnlyList<string>>? currentLabels = null)
+        string? raw, IReadOnlySet<string> expectedIds, IReadOnlyDictionary<string, IReadOnlyList<string>>? currentLabels = null,
+        string? documentTypeParent = null)
     {
         ArgumentNullException.ThrowIfNull(expectedIds);
         var valid = new List<SuggestionOutput>();
@@ -37,6 +39,7 @@ public static class SuggestionOutputParser
         var dropped = new List<string>();
         var current = currentLabels ?? new Dictionary<string, IReadOnlyList<string>>();
         FilterCriteriaOutput? filter = null;
+        var parent = string.IsNullOrWhiteSpace(documentTypeParent) ? null : documentTypeParent.Trim();
 
         var document = ReadFirstValue(raw ?? string.Empty, out var candidates);
         if (document is null)
@@ -67,7 +70,7 @@ public static class SuggestionOutputParser
             {
                 try
                 {
-                    filter = ReadItem(item, expectedIds, current, errors, dropped, filter, answered, accepted, valid);
+                    filter = ReadItem(item, expectedIds, current, parent, errors, dropped, filter, answered, accepted, valid);
                 }
                 catch (InvalidOperationException)
                 {
@@ -80,7 +83,7 @@ public static class SuggestionOutputParser
     }
 
     private static FilterCriteriaOutput? ReadItem(JsonElement item, IReadOnlySet<string> expectedIds,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> current, List<string> errors, List<string> dropped,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> current, string? parent, List<string> errors, List<string> dropped,
         FilterCriteriaOutput? filter, HashSet<string> answered, HashSet<string> accepted, List<SuggestionOutput> valid)
     {
         if (item.ValueKind != JsonValueKind.Object)
@@ -108,7 +111,7 @@ public static class SuggestionOutputParser
         {
             errors.Add($"Duplicate id '{id}': first valid answer kept.");
         }
-        else if (ReadSuggestion(id, item, current.GetValueOrDefault(id) ?? [], errors, dropped) is { } suggestion)
+        else if (ReadSuggestion(id, item, current.GetValueOrDefault(id) ?? [], parent, errors, dropped) is { } suggestion)
         {
             accepted.Add(id);
             valid.Add(suggestion);
@@ -193,7 +196,7 @@ public static class SuggestionOutputParser
     }
 
     private static SuggestionOutput? ReadSuggestion(
-        string id, JsonElement item, IReadOnlyList<string> current, List<string> errors, List<string> dropped)
+        string id, JsonElement item, IReadOnlyList<string> current, string? parent, List<string> errors, List<string> dropped)
     {
         var count = errors.Count;
         var label = ReadString(item, "topicLabel")?.Trim();
@@ -221,7 +224,7 @@ public static class SuggestionOutputParser
         return errors.Count > count
             ? null
             : new SuggestionOutput(id, label!, isNewLabel, needsAction, toBeDeleted, unsubscribe, confidence,
-                Cut(reason!, MaxReasonLength))
+                Cut(reason!, MaxReasonLength), ReadDocumentTypeLabel(id, item, label!, parent, dropped))
             {
                 ReplaceLabels = replaceLabels,
             };
@@ -270,6 +273,56 @@ public static class SuggestionOutputParser
         }
 
         return labels.Count == 0 ? [] : labels;
+    }
+
+    /// <summary>
+    /// The optional <c>documentTypeLabel</c>: exactly one segment directly under <paramref name="parent"/>
+    /// (case-insensitive, returned with the parent as configured), not the topic label. Absent, null or blank is null, as
+    /// is anything with the parent off; any other value is dropped with a note in <paramref name="dropped"/> and the
+    /// email's suggestion stays valid.
+    /// </summary>
+    private static string? ReadDocumentTypeLabel(string id, JsonElement item, string topicLabel, string? parent, List<string> dropped)
+    {
+        if (parent is null || !item.TryGetProperty("documentTypeLabel", out var element) || element.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            return Ignored("not a string");
+        }
+
+        var value = element.GetString()!.Trim();
+        if (value.Length == 0)
+        {
+            return null;
+        }
+
+        if (!LabelPath.IsValid(value))
+        {
+            return Ignored("not a valid label path");
+        }
+
+        var prefix = parent + "/";
+        if (!value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || value.AsSpan(prefix.Length).Contains('/'))
+        {
+            return Ignored("not one level below the document-type parent");
+        }
+
+        if (string.Equals(value, topicLabel, StringComparison.OrdinalIgnoreCase))
+        {
+            return Ignored("same as topicLabel");
+        }
+
+        var label = prefix + value[prefix.Length..];
+        return LabelPath.IsValid(label) ? label : Ignored("not a valid label path");
+
+        string? Ignored(string reason)
+        {
+            dropped.Add($"Email '{id}': 'documentTypeLabel' ignored ({reason}).");
+            return null;
+        }
     }
 
     /// <inheritdoc cref="LabelPath.IsValid"/>
