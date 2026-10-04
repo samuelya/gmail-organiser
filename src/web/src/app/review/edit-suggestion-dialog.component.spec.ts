@@ -37,6 +37,8 @@ function suggestion(id: string, overrides: Partial<SuggestionDto> = {}): Suggest
     replaceLabels: [],
     currentLabels: [],
     labelChange: 'add',
+    documentTypeLabel: null,
+    documentTypeIsNew: false,
     ...overrides,
   };
 }
@@ -60,6 +62,8 @@ function group(members: SuggestionDto[], truncated = false): ReviewGroupDto {
     truncated,
     replaceLabels: [],
     labelChange: 'add',
+    documentTypeLabel: null,
+    documentTypeIsNew: false,
   };
 }
 
@@ -69,9 +73,13 @@ describe('EditSuggestionDialog', () => {
   function setup(
     edit: (id: string, o: EditSuggestionRequest) => Observable<SuggestionDto> = (id) =>
       of(suggestion(id)),
+    documentTypeParent: string | null = null,
   ) {
     const api = { edit: vi.fn(edit) };
-    const labelsApi = { labels: vi.fn(() => of(labels)), refresh: vi.fn(() => of(labels)) };
+    const all = documentTypeParent
+      ? [...labels, { id: 'D1', name: 'Docs/Invoice', type: 'user' }]
+      : labels;
+    const labelsApi = { labels: vi.fn(() => of(all)), refresh: vi.fn(() => of(all)) };
     TestBed.configureTestingModule({
       providers: [
         MatReviewEditDialog,
@@ -80,7 +88,8 @@ describe('EditSuggestionDialog', () => {
         {
           provide: SettingsService,
           useValue: {
-            getSettings: () => of({ actionLabelName: 'Act', deleteLabelName: 'Bin' }),
+            getSettings: () =>
+              of({ actionLabelName: 'Act', deleteLabelName: 'Bin', documentTypeParent }),
           },
         },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
@@ -144,6 +153,54 @@ describe('EditSuggestionDialog', () => {
     settle();
     expect(q('edit-label-error')!.textContent).toContain('At most five levels.');
     expect(api.edit).not.toHaveBeenCalled();
+  });
+
+  it('hides the document type without a parent and sends none', () => {
+    const { api, dialog } = setup();
+    dialog.editMember(suggestion('a', { documentTypeLabel: 'Docs/Invoice' })).subscribe();
+    settle();
+    expect(q('edit-document-type')).toBeNull();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls[0][1]).not.toHaveProperty('documentTypeLabel');
+  });
+
+  it('sends the document type only when changed, None as ""', async () => {
+    const { api, dialog } = setup(undefined, 'Docs');
+    dialog.editMember(suggestion('a', { documentTypeLabel: 'Docs/Invoice' })).subscribe();
+    dialog.editMember(suggestion('b', { documentTypeLabel: 'Docs/Invoice' })).subscribe();
+    settle();
+    // The autocomplete trigger writes the input's value a microtask later.
+    await Promise.resolve();
+    const [first, second] = all('edit-document-type') as HTMLInputElement[];
+    expect(first.value).toBe('Invoice');
+    expect(all('edit-document-type-hint')[0].textContent).toContain('Existing label under Docs');
+    second.value = '';
+    second.dispatchEvent(new Event('input'));
+    settle();
+    all('edit-save').forEach((b) => b.click());
+    settle();
+    expect(api.edit.mock.calls[0][1]).not.toHaveProperty('documentTypeLabel');
+    expect(api.edit.mock.calls[1][1].documentTypeLabel).toBe('');
+  });
+
+  it('makes free text a new child of the parent and refuses a nested one', () => {
+    const { api, dialog } = setup(undefined, 'Docs');
+    dialog.editGroup('news@example.com', group([suggestion('a'), suggestion('b')])).subscribe();
+    settle();
+    type('edit-document-type', 'A/B');
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(q('edit-document-type-error')!.textContent).toContain("One level under Docs: no '/'.");
+    expect(api.edit).not.toHaveBeenCalled();
+    type('edit-document-type', ' Contract ');
+    expect(q('edit-document-type-hint')!.textContent).toContain('New: Contract under Docs');
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => c[1].documentTypeLabel)).toEqual([
+      'Docs/Contract',
+      'Docs/Contract',
+    ]);
   });
 
   it('disables To-Be-Deleted for a protected member and never sends it', () => {

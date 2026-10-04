@@ -63,6 +63,8 @@ const member = (id: string, over: Partial<SuggestionDto> = {}): SuggestionDto =>
   replaceLabels: [],
   currentLabels: [],
   labelChange: 'add',
+  documentTypeLabel: null,
+  documentTypeIsNew: false,
   ...over,
 });
 
@@ -84,6 +86,8 @@ const group = (groupKey: string | null, members = [member('s1')]): ReviewGroupDt
   truncated: false,
   replaceLabels: [],
   labelChange: 'add',
+  documentTypeLabel: null,
+  documentTypeIsNew: false,
 });
 
 const detail = (

@@ -65,6 +65,14 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           @if (s.topicLabel) {
             <span class="badge">{{ s.topicLabel }}</span>
           }
+          @if (s.documentTypeLabel) {
+            <span class="badge" data-testid="document-type"
+              >{{ s.documentTypeLabel }}
+              @if (s.documentTypeIsNew) {
+                <span class="new" data-testid="document-type-new">new</span>
+              }
+            </span>
+          }
           @if (s.needsAction) {
             <span class="badge">{{ labels().action }}</span>
           }
@@ -160,6 +168,11 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
     }
     .skipped {
       color: var(--mat-sys-error);
+    }
+    .new {
+      margin-left: 0.25rem;
+      font-weight: 600;
+      color: var(--mat-sys-primary);
     }
     .claude-hint {
       color: var(--mat-sys-tertiary);
