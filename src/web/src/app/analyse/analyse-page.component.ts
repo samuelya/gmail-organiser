@@ -52,6 +52,7 @@ import {
   MAX_SENDER_LENGTH,
   parseAnalyseParams,
   queueOrder,
+  SCOPE_OPTIONS,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
 import { GroupingPreview } from './grouping-preview.component';
@@ -107,6 +108,9 @@ export function selectionOf(v: FormValue): AnalysisSelection | null {
     .label {
       font: var(--mat-sys-label-large);
     }
+    .muted {
+      color: var(--mat-sys-on-surface-variant);
+    }
     .banner {
       background: var(--mat-sys-error-container);
       color: var(--mat-sys-on-error-container);
@@ -159,6 +163,10 @@ export class AnalysePage {
   readonly selection = computed(() => selectionOf(this.formValue()));
   readonly isCustom = computed(() => this.formValue().preset === 'custom');
   readonly isSender = computed(() => this.formValue().scope === 'sender');
+  readonly scopes = SCOPE_OPTIONS;
+  readonly scopeHelp = computed(
+    () => SCOPE_OPTIONS.find((o) => o.value === this.formValue().scope)?.help ?? null,
+  );
 
   readonly preview = signal<GroupingPreviewDto | null>(null);
   readonly previewLoading = signal(false);

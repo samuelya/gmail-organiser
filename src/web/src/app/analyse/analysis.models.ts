@@ -3,7 +3,7 @@ import { JobDto, JobProgress, progressPercent } from '../core/jobs.models';
 import { humanise } from '../dashboard/fetch.models';
 
 /** The scopes the Analyse page starts; the API also has `messages`, used by Review. */
-export type AnalysisScope = 'inbox' | 'all' | 'sender';
+export type AnalysisScope = 'inbox' | 'all' | 'labelled' | 'sender';
 
 /** `AnalysisRunStatus` as the API writes it; a paused job's run stays `running`. */
 export type AnalysisRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -75,6 +75,8 @@ export interface AnalysisSummaryDto {
   totalLlmCalls: number;
   totalMessagesCovered: number;
   savedPercent: number;
+  /** Mail with a personal label that no run has analysed yet: the labelled phase's backlog. */
+  labelledNotAnalysed: number;
 }
 
 /** `analysis_run`, the job type a run enqueues. */
@@ -87,11 +89,20 @@ export const FINISHED_RUNS_SHOWN = 20;
 export const ACTIVE_RUNS_LIMIT = 200;
 export const MAX_SENDER_LENGTH = 320;
 
-const SCOPES: readonly AnalysisScope[] = ['inbox', 'all', 'sender'];
+/** The Analyse page's scope options, in toggle order; `help` is shown under the toggle when set. */
+export const SCOPE_OPTIONS: readonly { value: AnalysisScope; label: string; help?: string }[] = [
+  { value: 'inbox', label: 'Inbox' },
+  { value: 'all', label: 'All mail' },
+  {
+    value: 'labelled',
+    label: 'Already labelled',
+    help: 'Mail that already has a label and has not been analysed',
+  },
+  { value: 'sender', label: 'Sender' },
+];
+const SCOPES: readonly AnalysisScope[] = SCOPE_OPTIONS.map((o) => o.value);
 const SCOPE_LABELS: Record<string, string> = {
-  inbox: 'Inbox',
-  all: 'All mail',
-  sender: 'Sender',
+  ...Object.fromEntries(SCOPE_OPTIONS.map((o) => [o.value, o.label])),
   messages: 'Selected emails',
 };
 

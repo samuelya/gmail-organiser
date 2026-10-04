@@ -60,6 +60,9 @@ const member = (id: string, over: Partial<SuggestionDto> = {}): SuggestionDto =>
   status: 'pending',
   edited: false,
   protected: false,
+  replaceLabels: [],
+  currentLabels: [],
+  labelChange: 'add',
   ...over,
 });
 
@@ -79,6 +82,8 @@ const group = (groupKey: string | null, members = [member('s1')]): ReviewGroupDt
   reason: '',
   members,
   truncated: false,
+  replaceLabels: [],
+  labelChange: 'add',
 });
 
 const detail = (

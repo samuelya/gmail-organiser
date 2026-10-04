@@ -9,8 +9,9 @@ import {
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import { FormArray, FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import {
   MAT_DIALOG_DATA,
   MatDialog,
@@ -29,6 +30,8 @@ import { LabelDto } from './labels.models';
 import { labelPathValidator, labelPlacement, LabelsService } from './labels.service';
 import { LabelTreePicker } from './label-tree-picker.component';
 import {
+  changedReplaceLabels,
+  currentLabelsOf,
   DEFAULT_FLAG_LABELS,
   editableMembers,
   editRequest,
@@ -46,6 +49,10 @@ export interface EditSuggestionDialogData {
   members: SuggestionDto[];
   /** A group edit; `truncated` when the card does not list every member. */
   group: { display: string; truncated: boolean } | null;
+  /** The members' current labels (their union for a group), one "Replace" checkbox each. */
+  currentLabels: string[];
+  /** The labels applying replaces now: their checkboxes start checked. */
+  replaceLabels: string[];
 }
 
 /** A member whose save failed, with the server's reason. */
@@ -64,6 +71,7 @@ export const EDIT_PROGRESS_THRESHOLD = 20;
   imports: [
     LabelTreePicker,
     MatButtonModule,
+    MatCheckboxModule,
     MatDialogModule,
     MatFormFieldModule,
     MatInputModule,
@@ -99,7 +107,14 @@ export class EditSuggestionDialog {
     toBeDeleted: new FormControl(this.data.current.toBeDeleted && !this.allProtected(), {
       nonNullable: true,
     }),
+    /** One per `data.currentLabels`, checked = replaced. */
+    replace: new FormArray(
+      this.data.currentLabels.map(
+        (l) => new FormControl(this.data.replaceLabels.includes(l), { nonNullable: true }),
+      ),
+    ),
   });
+  private readonly initialReplace = this.checkedReplaceLabels();
 
   readonly flagLabels = toSignal(
     inject(SettingsService)
@@ -163,7 +178,9 @@ export class EditSuggestionDialog {
       this.form.markAllAsTouched();
       return;
     }
-    const outcome = this.form.getRawValue();
+    const { topicLabel, needsAction, toBeDeleted } = this.form.getRawValue();
+    const outcome = { topicLabel, needsAction, toBeDeleted };
+    const replaceLabels = changedReplaceLabels(this.initialReplace, this.checkedReplaceLabels());
     const failures: EditFailure[] = [];
     let labelError: string | null = null;
     this.setSaving(true);
@@ -172,7 +189,7 @@ export class EditSuggestionDialog {
     from(this.data.members.filter((m) => !this.saved.has(m.id)))
       .pipe(
         concatMap((m) =>
-          this.review.edit(m.id, editRequest(m, outcome)).pipe(
+          this.review.edit(m.id, editRequest(m, outcome, replaceLabels)).pipe(
             map(() => ({ member: m, err: null as unknown })),
             catchError((err: unknown) => of({ member: m, err })),
           ),
@@ -200,6 +217,11 @@ export class EditSuggestionDialog {
         complete: () =>
           failures.length ? this.failed(failures, labelError) : this.ref.close(true),
       });
+  }
+
+  private checkedReplaceLabels(): string[] {
+    const checked = this.form.controls.replace.getRawValue();
+    return this.data.currentLabels.filter((_, i) => checked[i]);
   }
 
   cancel(): void {
@@ -262,6 +284,8 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       },
       members: editableMembers(group.members),
       group: { display: group.display, truncated: group.truncated },
+      currentLabels: currentLabelsOf(editableMembers(group.members)),
+      replaceLabels: group.replaceLabels,
     });
   }
 
@@ -274,6 +298,8 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       },
       members: [suggestion],
       group: null,
+      currentLabels: suggestion.currentLabels,
+      replaceLabels: suggestion.replaceLabels,
     });
   }
 
