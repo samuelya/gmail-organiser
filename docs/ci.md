@@ -56,7 +56,7 @@ docker build -f src/api/Dockerfile --build-arg WITH_CLAUDE=true -t gmail-organis
 
 Not part of CI, by decision: it moves into a workflow only if an escaped defect shows review plus unit tests are not enough.
 
-Precondition: the API runs with `GMAIL_FAKE=true` on 5181 (the `GmailOrganiser.Api` launch profile) against the dev db. The spec checks `/healthz` first and stops with a clear message if the API is not up. It starts `ng serve` on 4200 itself (or reuses one already running) and is safe to rerun on the same database.
+Precondition: the API runs with `GMAIL_FAKE=true` and `LLM_FAKE=true` (deterministic fake models, no Ollama) on 5181 (the `GmailOrganiser.Api` launch profile) against the dev db. The spec checks `/healthz` first and stops with a clear message if the API is not up. It starts `ng serve` on 4200 itself (or reuses one already running) and is safe to rerun on the same database.
 
 ```sh
 npx playwright install chromium   # once, into the user cache

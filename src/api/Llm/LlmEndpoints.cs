@@ -1,21 +1,46 @@
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Llm;
 
 public static class LlmEndpoints
 {
+    /// <summary>
+    /// Registers the Ollama catalog and client factory; with <see cref="LlmOptions.UseFake"/> the catalog is
+    /// <see cref="FakeOllamaCatalog"/> (chosen at resolution time) and the factory hands out the <c>Llm/Fake</c> clients.
+    /// </summary>
     public static IServiceCollection AddLlm(this IServiceCollection services)
     {
-        services.AddOptions<LlmOptions>().BindConfiguration(LlmOptions.SectionName);
+        services.AddOptions<LlmOptions>()
+            .BindConfiguration(LlmOptions.SectionName)
+            .Configure<IConfiguration>((o, configuration) =>
+            {
+                var value = configuration[LlmOptions.FakeEnvironmentKey];
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return;
+                }
+
+                o.UseFake = bool.TryParse(value.Trim(), out var useFake)
+                    ? useFake
+                    : throw new InvalidOperationException($"{LlmOptions.FakeEnvironmentKey} must be 'true' or 'false'.");
+            });
         services.AddHttpClient(OllamaHttp.ClientName);
         services.TryAddSingleton(TimeProvider.System);
-        services.AddScoped<IOllamaCatalog, OllamaCatalog>();
+        services.AddScoped<OllamaCatalog>();
+        services.AddScoped<IOllamaCatalog>(sp => UseFake(sp)
+            ? new FakeOllamaCatalog()
+            : sp.GetRequiredService<OllamaCatalog>());
+        services.AddHostedService<LlmFakeNotice>();
         services.AddScoped<ILlmClientFactory, LlmClientFactory>();
         services.AddScoped<LlmModelTester>();
         return services;
     }
+
+    private static bool UseFake(IServiceProvider sp) => sp.GetRequiredService<IOptions<LlmOptions>>().Value.UseFake;
 
     /// <summary>Maps <see cref="LlmNotConfiguredException"/> from any endpoint to a 409 ProblemDetails.</summary>
     public static IApplicationBuilder UseLlmNotConfiguredProblem(this IApplicationBuilder app) =>

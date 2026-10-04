@@ -76,12 +76,12 @@
           <dl class="m-0 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
             <div>
               <dt>Inbox</dt>
-              <dd data-testid="inbox-fetched">{{ s.inboxFetched | countOf: s.inboxTotal }}</dd>
+              <dd data-testid="inbox-stored">{{ s.inboxStored | countOf: s.inboxTotal }}</dd>
             </div>
             <div>
               <dt>All mail</dt>
-              <dd data-testid="all-mail-fetched">
-                {{ s.allMailFetched | countOf: s.allMailTotal }}
+              <dd data-testid="all-mail-stored">
+                {{ s.allMailStored | countOf: s.allMailTotal }}
               </dd>
             </div>
             <div>
@@ -157,6 +157,24 @@
                 </button>
               }
             }
+          </div>
+
+          <div class="flex flex-col items-start gap-1">
+            <button
+              mat-stroked-button
+              type="button"
+              (click)="resync()"
+              [disabled]="resyncDisabled() || busy()"
+              aria-describedby="dashboard-resync-hint"
+              data-testid="resync"
+            >
+              <mat-icon aria-hidden="true">sync</mat-icon>
+              Resync labels
+            </button>
+            <span id="dashboard-resync-hint" class="muted text-sm" data-testid="resync-hint">
+              Refreshes labels and read state of stored mail from Gmail. Downloads no content and
+              changes nothing in Gmail.
+            </span>
           </div>
         }
       }
@@ -235,6 +253,9 @@
           @if (row.job.progress; as p) {
             <span class="muted text-sm" data-testid="job-progress-text">
               {{ p.done | countOf: p.total }}
+              @if (p.message) {
+                · {{ p.message }}
+              }
             </span>
           }
         </div>

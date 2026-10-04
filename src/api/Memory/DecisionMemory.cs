@@ -6,6 +6,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
 using Pgvector;
 using Pgvector.EntityFrameworkCore;
 
@@ -183,7 +184,9 @@ public sealed partial class DecisionMemory(
                 return null;
             }
 
-            return new Embedded(model, [.. embeddings.Select(e => new Vector(e.Vector))]);
+            // The generator's own model wins: with LLM_FAKE the vectors are the fake's, not the Settings model's.
+            var madeBy = generator.GetService<EmbeddingGeneratorMetadata>()?.DefaultModelId ?? model;
+            return new Embedded(madeBy, [.. embeddings.Select(e => new Vector(e.Vector))]);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {

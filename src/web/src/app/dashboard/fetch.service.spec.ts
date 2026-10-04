@@ -33,4 +33,13 @@ describe('FetchService', () => {
     resumed.flush({ jobId: 'job-2' });
     expect(ids).toEqual(['job-1', 'job-2']);
   });
+
+  it('resyncLabels posts to /api/fetch/labels/resync and returns the job id', () => {
+    let id = '';
+    service.resyncLabels().subscribe((r) => (id = r.jobId));
+    const req = http.expectOne({ method: 'POST', url: '/api/fetch/labels/resync' });
+    expect(req.request.body).toBeNull();
+    req.flush({ jobId: 'job-3' }, { status: 202, statusText: 'Accepted' });
+    expect(id).toBe('job-3');
+  });
 });

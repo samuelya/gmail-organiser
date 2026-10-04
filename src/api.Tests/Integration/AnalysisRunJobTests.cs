@@ -8,6 +8,7 @@ using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;

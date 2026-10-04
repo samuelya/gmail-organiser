@@ -42,6 +42,7 @@ public sealed class SenderFetchJob(
     public const string JobType = FetchJobTypes.Sender;
     public const string Queue = JobQueues.Fetch;
     private const string ProgressMessage = "Fetching sender";
+    private const string CompletedMessage = "Sender fetch complete";
 
     public string Type => JobType;
 
@@ -74,7 +75,7 @@ public sealed class SenderFetchJob(
 
             if (chunk.NextPageToken is null)
             {
-                await ctx.CompleteAsync(cursor, new JobProgress(cursor.Fetched, cursor.Fetched, ProgressMessage), _ => Task.CompletedTask, ct);
+                await ctx.CompleteAsync(cursor, new JobProgress(cursor.Fetched, cursor.Fetched, CompletedMessage), _ => Task.CompletedTask, ct);
                 return;
             }
 

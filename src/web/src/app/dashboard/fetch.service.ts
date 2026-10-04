@@ -16,4 +16,9 @@ export class FetchService {
   startMailboxFetch(): Observable<StartFetchResponse> {
     return this.http.post<StartFetchResponse>('/api/fetch/mailbox/start', null);
   }
+
+  /** Starts the label resync of stored mail, or answers with the one already queued or running. */
+  resyncLabels(): Observable<StartFetchResponse> {
+    return this.http.post<StartFetchResponse>('/api/fetch/labels/resync', null);
+  }
 }

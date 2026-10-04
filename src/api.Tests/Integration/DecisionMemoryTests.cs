@@ -3,6 +3,8 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
@@ -10,6 +12,7 @@ using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Pgvector;
 using Pgvector.EntityFrameworkCore;
@@ -127,6 +130,26 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
 
         settings.Current = settings.Current with { EmbeddingModel = EmbeddingModel };
         (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(1);
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Decisions_purged_during_the_embed_call_end_the_pass_without_an_error()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Approved, Now));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        // The hook runs inside the embed call, like a purge committing while Ollama answers.
+        embeddings.Rejects = _ =>
+        {
+            using var purge = postgres.CreateDbContext();
+            purge.Decisions.ExecuteDelete();
+            return false;
+        };
+
         (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
     }
 
@@ -251,6 +274,26 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         hints.Select(h => (h.TopicLabel, h.Outcome)).ShouldBe([("Shopping", "approved"), ("Offers", "rejected")]);
         hints[0].Similarity.ShouldBe(1, 1e-5);
         hints[1].Similarity.ShouldBe(1.0); // exact-sender fill
+    }
+
+    [Fact]
+    public async Task With_llm_fake_vectors_are_recorded_under_the_fake_model_not_the_settings_model()
+    {
+        var message = Message("f1", Shop, "Weekly offer 7", "Synthetic deals");
+        await using var db = postgres.CreateDbContext();
+        db.Messages.Add(message);
+        await db.SaveChangesAsync(Ct);
+        var factory = new LlmClientFactory(
+            new StubHttpClientFactory(new StubOllamaHandler()), settings, Options.Create(new LlmOptions { UseFake = true }));
+        var memory = new DecisionMemory(db, factory, settings, NullLogger<DecisionMemory>.Instance);
+        var decision = Decision(Shop, "Shopping", DecisionOutcome.Approved, Now);
+
+        await memory.EmbedAsync([decision], Ct);
+        var vectors = await memory.EmbedMessagesAsync([message], Ct);
+
+        decision.EmbeddingModel.ShouldBe(FakeOllamaCatalog.EmbeddingModel);
+        vectors!.Model.ShouldBe(FakeOllamaCatalog.EmbeddingModel);
+        settings.Current.EmbeddingModel.ShouldBe(EmbeddingModel);
     }
 
     [Fact]

@@ -42,6 +42,7 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:${WEB_PORT:-5180}}
       GMAIL_FAKE: ${GMAIL_FAKE:-false}
+      LLM_FAKE: ${LLM_FAKE:-false}
       # From `claude setup-token`; only the Claude Code CLI reads it (inherited by its process), the api never logs it.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       # Attachment reading (not on the Settings page); the defaults match the code's.

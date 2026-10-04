@@ -1,4 +1,5 @@
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.Fake;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Tests.Fakes;

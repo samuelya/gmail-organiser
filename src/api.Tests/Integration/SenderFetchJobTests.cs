@@ -98,10 +98,10 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         (await db.Senders.SingleAsync(Ct)).TotalCount.ShouldBe(AliceCount);
         (await db.FetchState.SingleAsync(Ct)).AccountEmail.ShouldBe(FakeGmailClient.AccountEmail);
 
-        // Running checkpoints report an unknown total; completion reports total = fetched.
+        // Running checkpoints report an unknown total; completion reports total = fetched and reads as finished.
         var progress = Progress(jobId);
         progress.ShouldContain(new JobProgress(ChunkSize, null, "Fetching sender"));
-        progress[^1].ShouldBe(new JobProgress(AliceCount, AliceCount, "Fetching sender"));
+        progress[^1].ShouldBe(new JobProgress(AliceCount, AliceCount, "Sender fetch complete"));
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         await using var db = postgres.CreateDbContext();
         var job = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == jobId, Ct);
         job.Status.ShouldBe(JobStatus.Completed);
-        job.ToDto().Progress.ShouldBe(new JobProgress(0, 0, "Fetching sender"));
+        job.ToDto().Progress.ShouldBe(new JobProgress(0, 0, "Sender fetch complete"));
         (await db.Messages.CountAsync(Ct)).ShouldBe(0);
     }
 
@@ -158,7 +158,7 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         var progress = Progress(jobId);
         progress.ShouldAllBe(p => p.Total == null || p.Done <= p.Total);
         progress[..^1].ShouldAllBe(p => p.Total == null);
-        progress[^1].ShouldBe(new JobProgress(DaveCount, DaveCount, "Fetching sender"));
+        progress[^1].ShouldBe(new JobProgress(DaveCount, DaveCount, "Sender fetch complete"));
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         var progress = Progress(jobId);
         progress.ShouldContain(new JobProgress(100 + ChunkSize, null, "Fetching sender"));
         progress[..^1].ShouldAllBe(p => p.Total == null);
-        progress[^1].ShouldBe(new JobProgress(AliceCount, AliceCount, "Fetching sender"));
+        progress[^1].ShouldBe(new JobProgress(AliceCount, AliceCount, "Sender fetch complete"));
     }
 
     [Fact]

@@ -1,9 +1,16 @@
 namespace GmailOrganiser.Llm;
 
-/// <summary>HTTP timeouts for Ollama, bound from the <c>Llm</c> configuration section.</summary>
+/// <summary>
+/// HTTP timeouts for Ollama, bound from the <c>Llm</c> configuration section; <c>LLM_FAKE</c> (from <c>.env</c>)
+/// overrides <see cref="UseFake"/>.
+/// </summary>
 public sealed class LlmOptions
 {
     public const string SectionName = "Llm";
+    public const string FakeEnvironmentKey = "LLM_FAKE";
+
+    /// <summary>Run the whole app against the deterministic fakes in <c>Llm/Fake</c>, without Ollama.</summary>
+    public bool UseFake { get; set; }
 
     /// <summary>For <c>/api/tags</c>, <c>/api/show</c> and <c>/api/version</c>.</summary>
     public int CatalogTimeoutSeconds { get; set; } = 10;
