@@ -10,7 +10,8 @@ internal static class ReviewVerdictValidation
 {
     /// <summary>
     /// <paramref name="documentType"/> is an <c>alternative</c>'s document-type change, checked as the review edit
-    /// checks it (<see cref="DocumentTypeEdit.Validate"/>) against <paramref name="parent"/>; unchanged otherwise.
+    /// checks it (<see cref="DocumentTypeEdit.Validate"/>) against <paramref name="parent"/>; unchanged otherwise. A bare
+    /// leaf (no '/') is taken as a child of the parent.
     /// </summary>
     public static string? Validate(ReviewVerdictInput v, string? parent, out DocumentTypeChange documentType)
     {
@@ -22,11 +23,19 @@ internal static class ReviewVerdictValidation
 
         if (v.Verdict != ReviewVerdict.Alternative)
         {
-            return null;
+            return v.DocumentTypeLabel is null
+                ? null
+                : "document_type_label is only for 'alternative': to change the document type, answer 'alternative' with topic_label.";
+        }
+
+        var requested = v.DocumentTypeLabel?.Trim();
+        if (parent is not null && requested is { Length: > 0 } && !requested.Contains('/'))
+        {
+            requested = $"{parent}/{requested}";
         }
 
         var errors = new Dictionary<string, string[]>();
-        documentType = DocumentTypeEdit.Validate(v.DocumentTypeLabel, parent, v.TopicLabel!.Trim(), errors);
+        documentType = DocumentTypeEdit.Validate(requested, parent, v.TopicLabel!.Trim(), errors);
         return errors.TryGetValue(DocumentTypeEdit.Field, out var messages) ? $"Document-type label: {messages[0]}" : null;
     }
 

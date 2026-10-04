@@ -17,6 +17,9 @@ public enum ExternalReviewResult
     /// <summary>The stored alternative's label is not a valid label path.</summary>
     InvalidVerdict,
 
+    /// <summary>The stored alternative's document type is not one level under the current document-type parent (or it is off).</summary>
+    InvalidDocumentType,
+
     /// <summary>
     /// Pending suggestions are left, but none can take Claude's outcome: it would mark protected mail to-be-deleted, or
     /// (for <c>agree</c>) no member has the outcome Claude reviewed any more.

@@ -127,8 +127,9 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
         [Description("For 'alternative': the label path to use instead.")] string? topic_label = null,
         [Description("For 'alternative': whether the mail needs action by the user.")] bool? needs_action = null,
         [Description("For 'alternative': whether the mail can be marked to be deleted.")] bool? to_be_deleted = null,
-        [Description("For 'alternative': the document-type label, one level under documentTypeParent from get_label_tree; "
-            + "omit to keep the local one, empty string for none.")] string? document_type_label = null,
+        [Description("Only for 'alternative': the document-type label as a full label path, documentTypeParent from "
+            + "get_label_tree, '/', and the type name (a bare name is put under documentTypeParent); omit to keep each "
+            + "email's own type, empty string for none.")] string? document_type_label = null,
         [Description("Optional Gmail filter criteria: a JSON object as text, or plain text of at most 500 characters.")] string? filter_criteria = null,
         [Description("Optional: the model you are.")] string? model = null,
         CancellationToken cancellationToken = default)

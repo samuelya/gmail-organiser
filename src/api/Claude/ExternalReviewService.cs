@@ -192,11 +192,13 @@ public sealed class ExternalReviewService(
     /// <c>→ Cancelled</c> and <see cref="ReviewVerdictResult.AlreadyDecided"/>). The reasoning is truncated, not rejected; an
     /// <c>alternative</c> needs a valid label path (missing flags count as false). For <c>agree</c> the outcome shown
     /// now (the pending suggestion's, or the group card's) is stored as the one Claude agreed with; an <c>alternative</c>
-    /// without a document type keeps the one shown.
+    /// without a document type keeps each member's.
     /// </summary>
     public async Task<(ReviewVerdictResult Result, string? Reason)> SubmitVerdictAsync(Guid id, ReviewVerdictInput verdict, CancellationToken ct)
     {
-        var parent = verdict.DocumentTypeLabel is null ? null : (await settings.GetAsync(ct)).DocumentTypeParent;
+        var parent = verdict is { Verdict: ReviewVerdict.Alternative, DocumentTypeLabel: not null }
+            ? (await settings.GetAsync(ct)).DocumentTypeParent
+            : null;
         if (ReviewVerdictValidation.Validate(verdict, parent, out var documentType) is { } invalid)
         {
             return (ReviewVerdictResult.Invalid, invalid);
@@ -227,7 +229,8 @@ public sealed class ExternalReviewService(
 
         var outcome = verdict.Verdict switch
         {
-            ReviewVerdict.Alternative => await AlternativeAsync(row, verdict, documentType, ct),
+            ReviewVerdict.Alternative => new GroupOutcome(
+                verdict.TopicLabel!.Trim(), verdict.NeedsAction ?? false, verdict.ToBeDeleted ?? false, null, documentType.Label),
             ReviewVerdict.Agree => await ShownOutcomeAsync(row, ct),
             _ => null,
         };
@@ -237,6 +240,7 @@ public sealed class ExternalReviewService(
         row.VerdictNeedsAction = outcome?.NeedsAction;
         row.VerdictToBeDeleted = outcome?.ToBeDeleted;
         row.VerdictDocumentTypeLabel = outcome?.DocumentTypeLabel;
+        row.VerdictDocumentTypeSet = outcome is not null && (verdict.Verdict == ReviewVerdict.Agree || documentType.IsSet);
         row.VerdictFilterCriteria = string.IsNullOrWhiteSpace(verdict.FilterCriteria) ? null : verdict.FilterCriteria;
         row.Reasoning = Truncate(verdict.Reasoning.Trim(), MaxReasoningLength);
         row.Reviewer = verdict.Reviewer;
@@ -291,19 +295,6 @@ public sealed class ExternalReviewService(
         return await NotifyChangedAsync(changed, r => r.BatchId == batchId && r.Status == ExternalReviewStatus.Reviewed, ct);
     }
 
-    /// <summary>
-    /// Claude's alternative; an unchanged document type is the one shown, and none where it is the alternative's topic
-    /// label (as the edit drops it).
-    /// </summary>
-    private async Task<GroupOutcome> AlternativeAsync(
-        ExternalReviewRow row, ReviewVerdictInput verdict, DocumentTypeChange documentType, CancellationToken ct)
-    {
-        var label = verdict.TopicLabel!.Trim();
-        var type = documentType.IsSet ? documentType.Label : (await ShownOutcomeAsync(row, ct))?.DocumentTypeLabel;
-        return new GroupOutcome(label, verdict.NeedsAction ?? false, verdict.ToBeDeleted ?? false, null,
-            DocumentTypeEdit.IsTopic(type, label) ? null : type);
-    }
-
     /// <summary>The outcome the target shows now (what Claude reviewed); null when nothing is pending.</summary>
     private async Task<GroupOutcome?> ShownOutcomeAsync(ExternalReviewRow row, CancellationToken ct) =>
         row.TargetType == ExternalReviewTarget.Group
@@ -339,11 +330,25 @@ public sealed class ExternalReviewService(
             ? new GroupOutcome(label, row.VerdictNeedsAction ?? false, row.VerdictToBeDeleted ?? false, null, row.VerdictDocumentTypeLabel)
             : null;
 
+        // An alternative's document type is checked again: the parent setting may have changed since Claude's verdict.
+        var documentType = !alternative || !row.VerdictDocumentTypeSet ? DocumentTypeChange.Unchanged
+            : row.VerdictDocumentTypeLabel is { } type ? DocumentTypeChange.To(type)
+            : DocumentTypeChange.Clear;
+        if (documentType.Label is { } set)
+        {
+            var errors = new Dictionary<string, string[]>();
+            DocumentTypeEdit.Validate(set, (await settings.GetAsync(ct)).DocumentTypeParent, row.VerdictTopicLabel, errors);
+            if (errors.Count > 0)
+            {
+                return ExternalReviewResult.InvalidDocumentType;
+            }
+        }
+
         // Claude never sees the replaced labels: an alternative removes none, an agree keeps them as shown. An alternative
-        // sets the verdict's document type; an agree approves the members whose type is the one Claude reviewed.
+        // sets the verdict's document type, or keeps each member's (dropped where it is the new topic label); an agree
+        // approves the members whose type is the one Claude reviewed.
         var edit = alternative
-            ? new GroupEdit(outcome!.TopicLabel, outcome.NeedsAction, outcome.ToBeDeleted, [],
-                outcome.DocumentTypeLabel is { } type ? DocumentTypeChange.To(type) : DocumentTypeChange.Clear)
+            ? new GroupEdit(outcome!.TopicLabel, outcome.NeedsAction, outcome.ToBeDeleted, [], documentType)
             : null;
         GroupDecisionResponse response;
         if (row.TargetType == ExternalReviewTarget.Suggestion)

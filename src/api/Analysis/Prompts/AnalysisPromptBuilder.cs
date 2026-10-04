@@ -14,7 +14,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     public const string BodyStart = "<email_body>";
     public const string BodyEnd = "</email_body>";
     public const string MemoryHeading = "Similar past decisions by the person:";
-    public const int MaxDocumentTypes = 50;
+    public const int MaxDocumentTypes = DocumentTypePath.MaxChildren;
     public const string DocumentTypesOff = "Document-type labels are switched off: always set `documentTypeLabel` to null.";
 
     /// <summary>
@@ -112,16 +112,9 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             return DocumentTypesOff;
         }
 
-        var prefix = parent.Trim() + "/";
-        var children = labels
-            .Where(l => l.Length > prefix.Length && l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !l.AsSpan(prefix.Length).Contains('/'))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.Ordinal)
-            .Take(MaxDocumentTypes)
-            .Select(l => $"`{OneLine(l)}`")
-            .ToList();
+        var children = DocumentTypePath.Children(parent, labels).Select(l => $"`{OneLine(l)}`").ToList();
         var existing = children.Count == 0 ? "none yet" : string.Join(", ", children);
-        return $"Document-type labels live under `{OneLine(prefix[..^1])}`. Existing: {existing}.";
+        return $"Document-type labels live under `{OneLine(parent.Trim())}`. Existing: {existing}.";
     }
 
     private static string RenderMemory(IReadOnlyList<MemoryHint> memory)
