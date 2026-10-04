@@ -17,7 +17,7 @@ import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { catchError, filter, finalize, map, Observable, of, switchMap, tap } from 'rxjs';
+import { catchError, filter, finalize, map, merge, Observable, of, switchMap, tap } from 'rxjs';
 import { analysisJobsKey } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { ExternalReviewDto } from '../core/claude.models';
@@ -36,6 +36,7 @@ import {
   repends,
 } from './alternative.models';
 import { ApplyTracker } from './apply-tracker';
+import { CardReanalyse } from './card-reanalyse';
 import { openBulkApprove } from './bulk-approve-dialog.component';
 import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
@@ -81,7 +82,7 @@ import { SenderList } from './sender-list.component';
     SelectionActions,
     SenderList,
   ],
-  providers: [ApplyTracker],
+  providers: [ApplyTracker, CardReanalyse],
   templateUrl: './review-page.component.html',
   styles: `
     .muted {
@@ -159,6 +160,8 @@ export class ReviewPage {
 
   /** The apply batch's job and its outcome. */
   readonly apply = inject(ApplyTracker);
+  /** Per-member and per-card "Re-analyse": the run's ids, until it ends. */
+  readonly reanalyse = inject(CardReanalyse);
 
   readonly approvedCount = computed(() => this.detail()?.sender.approved ?? 0);
   readonly restPattern = computed(() => {
@@ -251,7 +254,9 @@ export class ReviewPage {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((item) => this.onClaudeChange(item));
 
-    this.apply.finished.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => this.refresh());
+    merge(this.apply.finished, this.reanalyse.finished)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.refresh());
     // Updates may have been missed while disconnected.
     effect(() => {
       if (this.jobs.reconnects() > 0) untracked(() => this.refresh());
@@ -431,13 +436,8 @@ export class ReviewPage {
   private reportGroup(verb: string, r: GroupDecisionResponse): void {
     this.skipped.set(new Set(r.skipped));
     const changed = `${verb} ${r.changed} ${r.changed === 1 ? 'suggestion' : 'suggestions'}.`;
-    this.snackBar.open(
-      r.skipped.length ? `${changed} ${skippedMessage(r.skipped.length)}` : changed,
-      'Dismiss',
-      {
-        duration: r.skipped.length ? 10_000 : 4000,
-      },
-    );
+    const message = r.skipped.length ? `${changed} ${skippedMessage(r.skipped.length)}` : changed;
+    this.snackBar.open(message, 'Dismiss', { duration: r.skipped.length ? 10_000 : 4000 });
   }
 
   private afterEdit(saved: Observable<boolean>): void {

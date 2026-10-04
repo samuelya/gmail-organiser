@@ -2,11 +2,14 @@ import { ChangeDetectionStrategy, Component, computed, input, output, signal } f
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP } from '../analyse/compare-run';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import { AlternativeCompare } from './alternative-compare.component';
 import { AlternativeTarget } from './alternative.models';
+import { CARD_TOO_LARGE_TOOLTIP } from './card-reanalyse';
 import { ClaudeVerdict } from './claude-verdict.component';
 import { LabelChangeChip } from './label-change-chip.component';
 import { MemberRow } from './member-row.component';
@@ -33,6 +36,7 @@ export const MEMBERS_STEP = 20;
     MatButtonModule,
     MatCardModule,
     MatIconModule,
+    MatProgressSpinnerModule,
     MatTooltipModule,
     MemberRow,
   ],
@@ -144,6 +148,26 @@ export const MEMBERS_STEP = 20;
             </button>
           }
           <button
+            mat-stroked-button
+            type="button"
+            [disabled]="reanalyseTooltip() !== null || busy()"
+            [disabledInteractive]="true"
+            [matTooltip]="reanalyseTooltip() ?? 'Re-analyse with the current prompt'"
+            (click)="reanalyseGroup.emit(g)"
+            data-testid="group-reanalyse"
+          >
+            @if (cardReanalysing()) {
+              <mat-spinner
+                diameter="18"
+                aria-label="Re-analysing"
+                data-testid="group-reanalysing"
+              />
+            } @else {
+              <mat-icon aria-hidden="true">refresh</mat-icon>
+            }
+            Re-analyse
+          </button>
+          <button
             mat-button
             type="button"
             class="ml-auto"
@@ -164,6 +188,9 @@ export const MEMBERS_STEP = 20;
                 [selected]="selected().has(m.id)"
                 [skipped]="skipped().has(m.id)"
                 [busy]="busy()"
+                [runActive]="runActive()"
+                [reanalysing]="!reanalysingCard() && reanalysing().has(m.id)"
+                (reanalyse)="reanalyseMember.emit(m)"
                 (approve)="approveMember.emit(m)"
                 (reject)="rejectMember.emit(m)"
                 (edit)="editMember.emit(m)"
@@ -240,6 +267,12 @@ export class GroupCard {
   readonly selected = input<ReadonlySet<string>>(new Set());
   readonly skipped = input<ReadonlySet<string>>(new Set());
   readonly busy = input(false);
+  /** An analysis run is queued or running: "Re-analyse" waits. */
+  readonly runActive = input(false);
+  /** Suggestion ids of the re-analysis started on this page, until its run ends. */
+  readonly reanalysing = input<ReadonlySet<string>>(new Set());
+  /** That re-analysis was started from a whole card rather than one member. */
+  readonly reanalysingCard = input(false);
   readonly approveAll = output<void>();
   readonly rejectAll = output<void>();
   /** The #120 edit dialog hook: the page opens it for this group. */
@@ -248,6 +281,9 @@ export class GroupCard {
   readonly rejectMember = output<SuggestionDto>();
   readonly editMember = output<SuggestionDto>();
   readonly toggleMember = output<SuggestionDto>();
+  /** "Re-analyse" of every loaded member, any status. */
+  readonly reanalyseGroup = output<ReviewGroupDto>();
+  readonly reanalyseMember = output<SuggestionDto>();
   /** A Claude item of the card or one of its members changed. A message analysed on its own shows its item on the card only. */
   readonly claudeChange = output<ExternalReviewDto>();
   /** "Use new" / "Keep current" on the card's or a member's re-analysis result. */
@@ -264,5 +300,15 @@ export class GroupCard {
   /** Applied members can no longer change. */
   readonly actionable = computed(() => this.group().members.some((m) => m.status !== 'applied'));
   readonly pending = computed(() => this.group().members.some((m) => m.status === 'pending'));
+  /** Why "Re-analyse" is off (a tooltip), `null` when it may run. */
+  readonly reanalyseTooltip = computed(() => {
+    if (this.runActive()) return RUN_ACTIVE_TOOLTIP;
+    if (this.group().members.length > MAX_COMPARE) return CARD_TOO_LARGE_TOOLTIP;
+    return null;
+  });
+  readonly cardReanalysing = computed(() => {
+    const ids = this.reanalysing();
+    return this.reanalysingCard() && this.group().members.some((m) => ids.has(m.id));
+  });
   readonly claude = computed(() => claudeCardTarget(this.senderAddress(), this.group()));
 }
