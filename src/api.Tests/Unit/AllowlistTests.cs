@@ -32,10 +32,10 @@ public sealed class AllowlistTests
     }
 
     [Fact]
-    public void The_domain_is_the_part_after_the_last_at_sign_lower_cased()
+    public void The_domain_is_the_part_after_the_last_at_sign()
     {
-        Allowlist.DomainOf("\"a@b\"@Mail.Example.COM").ShouldBe("mail.example.com");
-        Allowlist.DomainOf("no-at").ShouldBe("");
+        List.Reason("\"a@example.org\"@mail.example.com").ShouldBe(Allowlist.DomainReason);
+        List.Reason("\"a@example.com\"@example.org").ShouldBeNull();
     }
 
     private static Dictionary<string, string[]> Validate(params string?[] domains) =>
@@ -45,10 +45,21 @@ public sealed class AllowlistTests
     [Fact]
     public void Valid_domains_pass_and_are_normalised_without_duplicates()
     {
-        Validate(" Example.COM ", "mail.example.org", "example.com", "localhost").ShouldBeEmpty();
+        Validate(" Example.COM ", "mail.example.org", "example.com", "example.net.", "bücher.example").ShouldBeEmpty();
         Validate().ShouldBeEmpty();
         SettingsValidation.NormaliseDomains([" Example.COM ", "mail.example.org", "example.com"])
             .ShouldBe(["example.com", "mail.example.org"]);
+    }
+
+    [Fact]
+    public void A_trailing_dot_or_an_IDN_is_stored_as_a_stored_address_carries_the_domain()
+    {
+        SettingsValidation.NormaliseDomains(["Example.com.", "Bücher.Example", "xn--bcher-kva.example"])
+            .ShouldBe(["example.com", "xn--bcher-kva.example"]);
+
+        var allowlist = new Allowlist(new HashSet<string>(), SettingsValidation.NormaliseDomains(["example.com.", "bücher.example"]));
+        allowlist.Reason("a@example.com").ShouldBe(Allowlist.DomainReason);
+        allowlist.Reason("a@shop.xn--bcher-kva.example").ShouldBe(Allowlist.DomainReason);
     }
 
     [Theory]
@@ -61,6 +72,10 @@ public sealed class AllowlistTests
     [InlineData("exa mple.com")]
     [InlineData("192.0.2.1")]
     [InlineData("-example.com")]
+    [InlineData("com")]
+    [InlineData("localhost")]
+    [InlineData("example.com..")]
+    [InlineData(".")]
     [InlineData(null)]
     public void An_entry_that_is_not_a_domain_is_a_field_error_naming_it(string? domain)
     {

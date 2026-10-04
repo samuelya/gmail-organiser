@@ -61,10 +61,11 @@ public static class SettingsValidation
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
-    // A document-type label is one level below its parent, so the parent leaves room for it in Gmail's limits.
     public const int MaxAllowlistedDomains = 500;
     public const int MaxDomainLength = 253;
     public const string AllowlistedDomainsField = "protection.allowlistedDomains";
+
+    // A document-type label is one level below its parent, so the parent leaves room for it in Gmail's limits.
     public const int MaxDocumentTypeParentLength = 200;
     public const int MaxDocumentTypeParentSegments = 4;
     public const string DocumentTypeParentField = "documentTypeParent";
@@ -186,25 +187,51 @@ public static class SettingsValidation
         KeepInInboxLabels = [.. (value.KeepInInboxLabels ?? []).Select(l => l.Trim())],
     };
 
-    /// <summary>Trims and lower-cases validated domains, dropping duplicates.</summary>
+    /// <summary>The validated domains in their stored form (<see cref="CanonicalDomain"/>), dropping duplicates.</summary>
     public static IReadOnlyList<string> NormaliseDomains(IEnumerable<string> domains) =>
-        [.. domains.Select(d => d.Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal)];
+        [.. domains.Select(d => CanonicalDomain(d)!).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// The domain as a stored address carries it: trimmed, one trailing dot dropped, an IDN in punycode, lower-case.
+    /// Null when it is not a host name of at least two labels (a bare TLD or <c>localhost</c> would cover too much).
+    /// </summary>
+    public static string? CanonicalDomain(string? value)
+    {
+        var domain = value?.Trim() ?? "";
+        domain = domain.EndsWith('.') ? domain[..^1] : domain;
+        if (domain.Length == 0 || domain.EndsWith('.') || domain.Contains('@'))
+        {
+            return null;
+        }
+
+        try
+        {
+            domain = new IdnMapping().GetAscii(domain).ToLowerInvariant();
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+
+        return domain.Length <= MaxDomainLength && domain.Contains('.') && Uri.CheckHostName(domain) == UriHostNameType.Dns
+            ? domain
+            : null;
+    }
 
     private static void ValidateAllowlistedDomains(Dictionary<string, string[]> errors, IReadOnlyList<string?> domains)
     {
         // Duplicates are dropped, so the cap counts distinct entries.
-        if (domains.Select(d => d?.Trim().ToLowerInvariant()).Distinct(StringComparer.Ordinal).Count() > MaxAllowlistedDomains)
+        if (domains.Select(d => CanonicalDomain(d) ?? d).Distinct(StringComparer.Ordinal).Count() > MaxAllowlistedDomains)
         {
             errors[AllowlistedDomainsField] = [$"At most {MaxAllowlistedDomains} domains."];
             return;
         }
 
-        var bad = domains.FirstOrDefault(d => d?.Trim() is not { Length: > 0 and <= MaxDomainLength } domain
-            || domain.Contains('@') || Uri.CheckHostName(domain) != UriHostNameType.Dns);
-        if (bad is not null || domains.Any(d => d is null))
+        var bad = domains.Select((d, i) => (Value: d, Index: i)).FirstOrDefault(d => CanonicalDomain(d.Value) is null, (null, -1));
+        if (bad.Index >= 0)
         {
             errors[AllowlistedDomainsField] =
-                [$"'{bad ?? "null"}' is not a domain: a host name such as example.com, without '@', at most {MaxDomainLength} characters."];
+                [$"'{bad.Value ?? "null"}' is not a domain: a host name such as example.com, without '@', at most {MaxDomainLength} characters."];
         }
     }
 

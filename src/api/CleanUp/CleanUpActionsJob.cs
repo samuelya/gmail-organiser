@@ -119,6 +119,8 @@ public sealed partial class CleanUpActionsJob(
                 break;
             }
 
+            // Fresh settings: the locked re-check reads them as stored now, so the new plan must agree with it.
+            settings = await settingsStore.GetAsync(ct);
             plan = await PlanAsync(cursor, settings, ct);
             total = Done(cursor) + plan.Sum(c => c.MessageIds.Length);
         }
@@ -183,7 +185,9 @@ public sealed partial class CleanUpActionsJob(
                 var messages = await db.Messages
                     .FromSql($"SELECT * FROM messages WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
                     .ToListAsync(t);
-                var allowlist = await AllowlistLoader.LoadAsync(db, settings, t);
+                // Both halves as stored now: an address or a domain allowlisted since the job started is honoured.
+                var allowlist = await AllowlistLoader.LoadAsync(
+                    db, await settingsStore.GetAsync(t), [.. messages.Select(m => m.FromAddress).Distinct()], t);
                 if (messages.Count != ids.Length || messages.Any(m => !Fits(m)))
                 {
                     throw new PlanChangedException();

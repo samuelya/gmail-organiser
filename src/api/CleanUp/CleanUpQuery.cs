@@ -2,6 +2,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -98,11 +99,12 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
         var senders = await db.Senders.AsNoTracking()
             .Where(s => addresses.Contains(s.Address))
             .ToDictionaryAsync(s => s.Address, StringComparer.Ordinal, ct);
-        var domains = Allowlist.Empty with { Domains = settings.Protection.AllowlistedDomains };
+        var domains = settings.Protection.AllowlistedDomains;
         return new PagedDto<CleanupSenderDto>(
             rows.ConvertAll(r => new CleanupSenderDto(
                 r.Address, senders.GetValueOrDefault(r.Address)?.DisplayName, r.Count, r.ProtectedCount, r.OldestAt, r.NewestAt,
-                senders.GetValueOrDefault(r.Address)?.Allowlisted == true || domains.Reason(r.Address) is not null)),
+                senders.GetValueOrDefault(r.Address)?.Allowlisted == true,
+                Allowlist.CoversDomain(domains, new SenderAddress(r.Address, null).Domain))),
             page, pageSize, total);
     }
 
@@ -121,7 +123,7 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
             .Skip((page - 1) * pageSize).Take(pageSize)
             .ToListAsync(ct);
         var settings = await settingsStore.GetAsync(ct);
-        var allowlist = await AllowlistLoader.LoadAsync(db, settings, ct);
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, [address], ct);
         return new PagedDto<CleanupMessageDto>(
             rows.ConvertAll(m => new CleanupMessageDto(
                 m.Id, m.Subject, m.Snippet, m.InternalDate, m.SizeEstimate,
@@ -136,14 +138,16 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
     private IQueryable<Flagged> Flag(IQueryable<MessageRow> messages, ProtectionSettings rules)
     {
         var (attachments, starred, important, replied) = (rules.Attachments, rules.Starred, rules.Important, rules.RepliedThreads);
-        // Allowlist.CoversDomain: addresses are lower-case and entries hold no '@', so a suffix match is a domain match.
+        // Allowlist.Reason: addresses are lower-case and entries hold no '@', so on an address with an '@' a suffix
+        // match is a match on the part after the last '@'. A From without '@' has no domain and never matches.
         var domains = rules.AllowlistedDomains.ToArray();
         return messages.Select(m => new Flagged
         {
             FromAddress = m.FromAddress,
             InternalDate = m.InternalDate,
             Protected = db.Senders.Any(s => s.Address == m.FromAddress && s.Allowlisted)
-                || domains.Any(d => m.FromAddress.EndsWith("@" + d) || m.FromAddress.EndsWith("." + d))
+                || (m.FromAddress.Contains("@")
+                    && domains.Any(d => m.FromAddress.EndsWith("@" + d) || m.FromAddress.EndsWith("." + d)))
                 || (attachments && m.HasAttachment)
                 || (starred && m.LabelIds.Contains(MessageProtection.StarredLabel))
                 || (important && m.LabelIds.Contains(MessageProtection.ImportantLabel))

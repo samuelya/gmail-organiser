@@ -153,6 +153,8 @@ public sealed partial class ApplyActionsJob(
                 return;
             }
 
+            // Fresh settings: the locked re-check reads them as stored now, so the new plan must agree with it.
+            settings = await settingsStore.GetAsync(ct);
             plan = await PlanAsync(cursor, settings, ct);
             total = cursor.MessagesDone + plan.Messages;
         }
@@ -248,7 +250,9 @@ public sealed partial class ApplyActionsJob(
                     throw new PlanChangedException();
                 }
 
-                var allowlisted = await AllowlistLoader.LoadAsync(db, settings, t);
+                // Both halves as stored now: an address or a domain allowlisted since the job started is honoured.
+                var allowlisted = await AllowlistLoader.LoadAsync(
+                    db, await settingsStore.GetAsync(t), [.. messages.Values.Select(m => m.FromAddress).Distinct()], t);
                 var now = time.GetUtcNow();
                 foreach (var suggestion in locked)
                 {

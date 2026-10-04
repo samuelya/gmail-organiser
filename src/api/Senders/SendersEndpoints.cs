@@ -64,7 +64,7 @@ public static class SendersEndpoints
             : TypedResults.Ok(await SenderQuery.ToDtoAsync(sender, await DomainsAsync(settings, ct), db, ct));
     }
 
-    /// <summary>The allowlisted domains only: the DTO reads its address flag from the row.</summary>
-    private static async Task<Allowlist> DomainsAsync(ISettingsStore settings, CancellationToken ct) =>
-        Allowlist.Empty with { Domains = (await settings.GetAsync(ct)).Protection.AllowlistedDomains };
+    /// <summary>The allowlisted domains: the DTO reads its address flag from the row.</summary>
+    private static async Task<IReadOnlyList<string>> DomainsAsync(ISettingsStore settings, CancellationToken ct) =>
+        (await settings.GetAsync(ct)).Protection.AllowlistedDomains;
 }

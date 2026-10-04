@@ -81,8 +81,8 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
         return errors.Count > 0 ? null : new SenderQuery(term, p, size, sortBy!.Value, descending!.Value);
     }
 
-    /// <param name="allowlist">Only its domains are read, for <see cref="SenderDto.AllowlistedByDomain"/>.</param>
-    public async Task<PagedDto<SenderDto>> ExecuteAsync(AppDbContext db, Allowlist allowlist, CancellationToken ct)
+    /// <param name="allowlistedDomains"><c>protection.allowlistedDomains</c>, for <see cref="SenderDto.AllowlistedByDomain"/>.</param>
+    public async Task<PagedDto<SenderDto>> ExecuteAsync(AppDbContext db, IReadOnlyList<string> allowlistedDomains, CancellationToken ct)
     {
         var senders = Filter(db.Senders.AsNoTracking(), Search);
         if (Allowlisted is { } allowlisted)
@@ -94,19 +94,21 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
         var rows = await Order(senders).Skip((Page - 1) * PageSize).Take(PageSize).ToListAsync(ct);
         var fetchJobs = rows.Count == 0 ? [] : await ActiveSenderFetchJobsAsync(db, ct);
 
-        return new PagedDto<SenderDto>(rows.ConvertAll(s => ToDto(s, allowlist, fetchJobs)), Page, PageSize, total);
+        return new PagedDto<SenderDto>(rows.ConvertAll(s => ToDto(s, allowlistedDomains, fetchJobs)), Page, PageSize, total);
     }
 
     /// <summary>One sender with its active fetch job.</summary>
-    public static async Task<SenderDto> ToDtoAsync(SenderRow sender, Allowlist allowlist, AppDbContext db, CancellationToken ct) =>
-        ToDto(sender, allowlist, await ActiveSenderFetchJobsAsync(db, ct));
+    public static async Task<SenderDto> ToDtoAsync(
+        SenderRow sender, IReadOnlyList<string> allowlistedDomains, AppDbContext db, CancellationToken ct) =>
+        ToDto(sender, allowlistedDomains, await ActiveSenderFetchJobsAsync(db, ct));
 
     /// <summary>The sender without its fetch job.</summary>
-    public static SenderDto ToDto(SenderRow s, Allowlist allowlist) => ToDto(s, allowlist, []);
+    public static SenderDto ToDto(SenderRow s, IReadOnlyList<string> allowlistedDomains) => ToDto(s, allowlistedDomains, []);
 
-    private static SenderDto ToDto(SenderRow s, Allowlist allowlist, List<(string Target, JobDto Job)> fetchJobs) => new(
+    private static SenderDto ToDto(
+        SenderRow s, IReadOnlyList<string> allowlistedDomains, List<(string Target, JobDto Job)> fetchJobs) => new(
         s.Address, s.Domain, s.DisplayName, s.TotalCount, s.AnalysedCount, s.AppliedCount, s.LastSeenAt, s.Allowlisted,
-        allowlist.CoversDomain(s.Domain),
+        Allowlist.CoversDomain(allowlistedDomains, s.Domain),
         fetchJobs.Find(j => j.Target.Equals(s.Address, StringComparison.OrdinalIgnoreCase)
             || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job,
         s.UnsubscribedAt);

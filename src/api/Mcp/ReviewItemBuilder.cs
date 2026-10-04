@@ -108,7 +108,8 @@ public sealed class ReviewItemBuilder(
 
         var allLabels = await labels.LabelsAsync(ct);
         var names = allLabels.ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
-        var maxChars = (await settings.GetAsync(ct)).AnalysisBodyMaxChars;
+        var current = await settings.GetAsync(ct);
+        var maxChars = current.AnalysisBodyMaxChars;
         var samples = new List<SampleMessageDto>(messages.Count);
         foreach (var m in messages)
         {
@@ -129,8 +130,7 @@ public sealed class ReviewItemBuilder(
         return new ReviewItemDetailDto(
             item,
             SnakeCaseEnumConverter<ExternalReviewStatus>.ToDb(row.Status),
-            sender is null ? null : SenderQuery.ToDto(
-                sender, Allowlist.Empty with { Domains = (await settings.GetAsync(ct)).Protection.AllowlistedDomains }),
+            sender is null ? null : SenderQuery.ToDto(sender, current.Protection.AllowlistedDomains),
             samples,
             await labels.NamesAsync(AnalysisPromptBuilder.MaxLabelTreeEntries, ct),
             similar);

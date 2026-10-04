@@ -1,4 +1,6 @@
 using GmailOrganiser.Data;
+using GmailOrganiser.Gmail;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,26 +17,30 @@ public sealed record Allowlist(IReadOnlySet<string> Addresses, IReadOnlyList<str
 
     public static readonly Allowlist Empty = new(new HashSet<string>(StringComparer.Ordinal), []);
 
-    /// <summary>Why <paramref name="address"/> is allowlisted, or null when it is not.</summary>
+    /// <summary>Why <paramref name="address"/> (lower-case, as stored) is allowlisted, or null when it is not.</summary>
     public string? Reason(string address) =>
         Addresses.Contains(address) ? SenderReason
-        : CoversDomain(DomainOf(address)) ? DomainReason
+        : CoversDomain(Domains, new SenderAddress(address, null).Domain) ? DomainReason
         : null;
 
-    /// <summary>Whether <paramref name="domain"/> equals a listed domain or is a subdomain of one.</summary>
-    public bool CoversDomain(string domain) =>
-        domain.Length > 0 && Domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal));
-
-    /// <summary>The part after the last <c>@</c>, lower-cased; empty when there is none.</summary>
-    public static string DomainOf(string address) =>
-        address.LastIndexOf('@') is var at and >= 0 ? address[(at + 1)..].ToLowerInvariant() : "";
+    /// <summary>Whether <paramref name="domain"/> equals one of <paramref name="domains"/> or is a subdomain of one.</summary>
+    public static bool CoversDomain(IReadOnlyList<string> domains, string domain) =>
+        domain.Length > 0 && domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal));
 }
 
 public static class AllowlistLoader
 {
     /// <summary>The allowlisted addresses (<c>senders.allowlisted</c>) and the domains in <paramref name="settings"/>.</summary>
-    public static async Task<Allowlist> LoadAsync(AppDbContext db, AppSettings settings, CancellationToken ct) =>
-        new((await db.Senders.AsNoTracking().Where(s => s.Allowlisted).Select(s => s.Address).ToListAsync(ct))
-                .ToHashSet(StringComparer.Ordinal),
+    public static Task<Allowlist> LoadAsync(AppDbContext db, AppSettings settings, CancellationToken ct) =>
+        LoadAsync(db, settings, db.Senders.AsNoTracking().Where(s => s.Allowlisted), ct);
+
+    /// <summary>As above, reading only the allowlisted addresses among <paramref name="addresses"/>.</summary>
+    public static Task<Allowlist> LoadAsync(
+        AppDbContext db, AppSettings settings, IReadOnlyCollection<string> addresses, CancellationToken ct) =>
+        LoadAsync(db, settings, db.Senders.AsNoTracking().Where(s => s.Allowlisted && addresses.Contains(s.Address)), ct);
+
+    private static async Task<Allowlist> LoadAsync(
+        AppDbContext db, AppSettings settings, IQueryable<SenderRow> allowlisted, CancellationToken ct) =>
+        new((await allowlisted.Select(s => s.Address).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal),
             settings.Protection.AllowlistedDomains);
 }

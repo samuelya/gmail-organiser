@@ -117,7 +117,7 @@ public sealed class SenderPatternService(
         }
 
         var settings = await settingsStore.GetAsync(ct);
-        var allowlist = await AllowlistLoader.LoadAsync(db, settings, ct);
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, [address], ct);
         var rules = settings.Protection;
         var now = time.GetUtcNow();
         var ids = new Guid[messages.Count];
