@@ -83,6 +83,9 @@ export interface SetupStatus {
 
 export const GOOGLE_CONNECT_URL = '/api/auth/google/start';
 
+/** The page the OAuth callback returns to (`returnTo` on the start endpoint). */
+export type ConnectReturnTo = 'setup' | 'settings';
+
 /** Full-page navigation (the OAuth start endpoint redirects to Google, so it can't be an XHR call). */
 export const NAVIGATE_TO = new InjectionToken<(url: string) => void>('NAVIGATE_TO', {
   providedIn: 'root',
@@ -133,8 +136,13 @@ export class SetupService {
     this.settings$ = of(settings);
   }
 
-  /** Leaves the app for Google's consent screen; the API redirects back to `/setup?gmail=…`. */
-  connectGoogle(): void {
-    this.navigateTo(GOOGLE_CONNECT_URL);
+  /**
+   * Leaves the app for Google's consent screen; the API redirects back to `/<returnTo>?gmail=…`.
+   * The wizard sends no param (the API defaults to setup).
+   */
+  connectGoogle(returnTo: ConnectReturnTo = 'setup'): void {
+    this.navigateTo(
+      returnTo === 'setup' ? GOOGLE_CONNECT_URL : `${GOOGLE_CONNECT_URL}?returnTo=${returnTo}`,
+    );
   }
 }

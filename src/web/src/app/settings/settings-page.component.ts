@@ -1,7 +1,9 @@
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   inject,
   OnInit,
   signal,
@@ -21,9 +23,14 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSnackBar } from '@angular/material/snack-bar';
+import { ActivatedRoute, Router } from '@angular/router';
 import { PageHeader } from '../layout/page-header';
 import { GoogleClientSettings, SetupService } from '../setup/setup.service';
-import { ConnectGmailStep } from '../setup/steps/connect-gmail-step.component';
+import {
+  ConnectGmailStep,
+  ConnectResult,
+  parseConnectResult,
+} from '../setup/steps/connect-gmail-step.component';
 import { GoogleClientStep } from '../setup/steps/google-client-step.component';
 import { ModelsStep } from '../setup/steps/models-step.component';
 import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
@@ -95,6 +102,12 @@ export class SettingsPage implements OnInit {
   private readonly settingsApi = inject(SettingsService);
   private readonly snackBar = inject(MatSnackBar);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+
+  /** Set when the OAuth callback redirected back here (`/settings?gmail=…`); read once. */
+  readonly connectResult: ConnectResult | null;
 
   readonly chunk = FETCH_CHUNK;
   readonly fetchLoaded = signal(false);
@@ -138,6 +151,24 @@ export class SettingsPage implements OnInit {
 
   /** `null` until loaded, and on an older API without protection rules, which hides the section. */
   readonly protection = signal<ProtectionSettings | null>(null);
+
+  constructor() {
+    const params = this.route.snapshot.queryParamMap;
+    this.connectResult = parseConnectResult(params.get('gmail'), params.get('reason'));
+    if (this.connectResult) {
+      // Cleared so a refresh doesn't show the result again.
+      void this.router.navigate([], {
+        relativeTo: this.route,
+        queryParams: {},
+        replaceUrl: true,
+      });
+      afterNextRender(() =>
+        this.host.nativeElement
+          .querySelector('[data-testid="section-gmail"]')
+          ?.scrollIntoView?.({ block: 'start' }),
+      );
+    }
+  }
 
   ngOnInit(): void {
     this.settingsApi
