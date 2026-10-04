@@ -4,6 +4,7 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, Router, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { FiltersTab } from './filters-tab.component';
+import { LabelsTab } from './labels-tab.component';
 import { RulesPage } from './rules-page.component';
 
 @Component({
@@ -15,6 +16,9 @@ class FiltersTabStub {
   readonly proposeHandled = output<void>();
 }
 
+@Component({ selector: 'app-labels-tab', template: '<p data-testid="labels-stub"></p>' })
+class LabelsTabStub {}
+
 describe('RulesPage', () => {
   async function render(url: string) {
     TestBed.configureTestingModule({
@@ -24,8 +28,8 @@ describe('RulesPage', () => {
       ],
     });
     TestBed.overrideComponent(RulesPage, {
-      remove: { imports: [FiltersTab] },
-      add: { imports: [FiltersTabStub] },
+      remove: { imports: [FiltersTab, LabelsTab] },
+      add: { imports: [FiltersTabStub, LabelsTabStub] },
     });
     const harness = await RouterTestingHarness.create();
     await harness.navigateByUrl(url);
@@ -55,6 +59,7 @@ describe('RulesPage', () => {
     await harness.fixture.whenStable();
     expect(router.url).toBe('/rules?tab=labels');
     expect(selected().textContent).toContain('Labels');
+    expect(harness.routeNativeElement!.querySelector('[data-testid="labels-stub"]')).not.toBeNull();
   });
 
   it('drops ?propose= once the preview opened', async () => {

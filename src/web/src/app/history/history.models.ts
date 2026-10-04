@@ -6,7 +6,7 @@ export const DEFAULT_HISTORY_PAGE_SIZE = 25;
 /** `ActionBatchDto`: one History entry, a set of Gmail changes undone together. */
 export interface ActionBatchDto {
   id: string;
-  /** `apply`, `apply_rest`, `auto_archive` or `undo` (snake_case). */
+  /** `apply`, `apply_rest`, `auto_archive`, `undo`, `trash`, `unmark`, `filter_labels`, `label_merge` or `label_plan` (snake_case). */
   kind: string;
   description: string;
   messageCount: number;
@@ -52,6 +52,8 @@ const KIND_LABELS: Readonly<Record<string, string>> = {
   apply: 'Apply',
   apply_rest: 'Apply rest',
   auto_archive: 'Auto-archive',
+  label_merge: 'Label merge',
+  label_plan: 'Label plan',
   undo: 'Undo',
 };
 

@@ -1,8 +1,8 @@
-import { HttpClient, provideHttpClient, withInterceptors } from '@angular/common/http';
+import { HttpClient, HttpContext, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { API_UNREACHABLE, errorInterceptor } from './error.interceptor';
+import { API_UNREACHABLE, errorInterceptor, QUIET_STATUSES } from './error.interceptor';
 
 describe('errorInterceptor', () => {
   let open: ReturnType<typeof vi.fn>;
@@ -62,6 +62,15 @@ describe('errorInterceptor', () => {
     http.get('/api/thing').subscribe({ error: (e) => errors.push(e) });
     backend.expectOne('/api/thing').error(new ProgressEvent('error'), { status: 0 });
     expect(open.mock.calls[0][0]).toBe(API_UNREACHABLE);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('stays quiet for the statuses the caller handles', () => {
+    const errors: unknown[] = [];
+    const context = new HttpContext().set(QUIET_STATUSES, [404]);
+    http.get('/api/thing', { context }).subscribe({ error: (e) => errors.push(e) });
+    backend.expectOne('/api/thing').flush(null, { status: 404, statusText: 'Not Found' });
+    expect(open).not.toHaveBeenCalled();
     expect(errors).toHaveLength(1);
   });
 });

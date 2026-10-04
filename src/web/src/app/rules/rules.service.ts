@@ -1,7 +1,9 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
+import { QUIET_STATUSES } from '../core/error.interceptor';
 import { PagedDto } from '../core/paging.models';
+import { LabelPlanApplyDto, LabelPlanDto, UpdatePlanItemRequest } from './label-plan.models';
 import {
   FilterDto,
   FilterEdit,
@@ -13,7 +15,7 @@ import {
   PROPOSALS_PAGE_SIZE,
 } from './rules.models';
 
-/** Gmail filters: the synced snapshot, delete / restore, proposals, preview and create. */
+/** Gmail filters (the synced snapshot, delete / restore, proposals, preview, create) and the label plan. */
 @Injectable({ providedIn: 'root' })
 export class RulesService {
   private readonly http = inject(HttpClient);
@@ -53,7 +55,38 @@ export class RulesService {
   create(request: FilterRequest): Observable<FilterDto> {
     return this.http.post<FilterDto>('/api/rules/filters', request);
   }
+
+  /** The newest plan that is not discarded; `404` (no snackbar) when there is none. */
+  latestPlan(): Observable<LabelPlanDto> {
+    const context = new HttpContext().set(QUIET_STATUSES, [404]);
+    return this.http.get<LabelPlanDto>(`${PLANS}/latest`, { context });
+  }
+
+  /** Builds a new draft and discards the previous one; `503` / `502` when Gmail is unavailable. */
+  createPlan(): Observable<LabelPlanDto> {
+    return this.http.post<LabelPlanDto>(PLANS, null);
+  }
+
+  /** `400` for an invalid name or target, `409` once the plan is not a draft. */
+  updateItem(planId: string, itemId: string, request: UpdatePlanItemRequest): Observable<LabelPlanDto> {
+    return this.http.patch<LabelPlanDto>(
+      `${PLANS}/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`,
+      request,
+    );
+  }
+
+  /** Starts the `label_plan_apply` job; `409` unless the plan is a draft with an accepted item. */
+  applyPlan(planId: string): Observable<LabelPlanApplyDto> {
+    return this.http.post<LabelPlanApplyDto>(`${PLANS}/${encodeURIComponent(planId)}/apply`, null);
+  }
+
+  /** `409` once the plan is being applied or applied. */
+  discardPlan(planId: string): Observable<LabelPlanDto> {
+    return this.http.post<LabelPlanDto>(`${PLANS}/${encodeURIComponent(planId)}/discard`, null);
+  }
 }
+
+const PLANS = '/api/rules/labels/plans';
 
 /**
  * The dialog's form value for a request: the first label is the label path, a second one that is

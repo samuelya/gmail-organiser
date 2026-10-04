@@ -1,6 +1,7 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
+import { QUIET_STATUSES } from '../core/error.interceptor';
 import { FilterRequest } from './rules.models';
 import { filterEdit, filterRequest, filterRequestProblem, RulesService } from './rules.service';
 
@@ -60,6 +61,24 @@ describe('RulesService', () => {
     const create = http.expectOne('/api/rules/filters');
     expect(create.request.method).toBe('POST');
     expect(create.request.body).toEqual(suggested);
+  });
+
+  it('calls the label plan endpoints, the latest quietly on 404', () => {
+    const base = '/api/rules/labels/plans';
+    service.latestPlan().subscribe({ error: () => undefined });
+    const latest = http.expectOne(`${base}/latest`);
+    expect(latest.request.context.get(QUIET_STATUSES)).toEqual([404]);
+    latest.flush(null, { status: 404, statusText: 'Not Found' });
+
+    service.createPlan().subscribe();
+    expect(http.expectOne({ method: 'POST', url: base }).request.body).toBeNull();
+    service.updateItem('p 1', 'i-1', { status: 'accepted' }).subscribe();
+    const patch = http.expectOne({ method: 'PATCH', url: `${base}/p%201/items/i-1` });
+    expect(patch.request.body).toEqual({ status: 'accepted' });
+    service.applyPlan('p-1').subscribe();
+    http.expectOne({ method: 'POST', url: `${base}/p-1/apply` }).flush({ jobId: 'j-1' });
+    service.discardPlan('p-1').subscribe();
+    http.expectOne({ method: 'POST', url: `${base}/p-1/discard` });
   });
 });
 

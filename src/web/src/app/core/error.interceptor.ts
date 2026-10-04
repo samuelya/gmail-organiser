@@ -1,4 +1,4 @@
-import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
+import { HttpContextToken, HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { catchError, throwError } from 'rxjs';
@@ -10,12 +10,18 @@ interface ProblemDetails {
   detail?: string;
 }
 
+/** Statuses the caller handles itself (e.g. a `404` that means "none yet"): no snackbar for them. */
+export const QUIET_STATUSES = new HttpContextToken<readonly number[]>(() => []);
+
 /** Shows API errors in a snackbar and rethrows them so callers can still react. */
 export const errorInterceptor: HttpInterceptorFn = (req, next) => {
   const snackBar = inject(MatSnackBar);
   return next(req).pipe(
     catchError((error: unknown) => {
-      if (error instanceof HttpErrorResponse) {
+      if (
+        error instanceof HttpErrorResponse &&
+        !req.context.get(QUIET_STATUSES).includes(error.status)
+      ) {
         snackBar.open(errorMessage(error), 'Dismiss', { duration: 6000 });
       }
       return throwError(() => error);
