@@ -82,6 +82,49 @@ public sealed partial class UndoActionsJobTests
         Labels("a00").ShouldBe(applied, ignoreOrder: true);
     }
 
+    [Fact]
+    public async Task An_edit_after_accepting_keeps_the_applied_delete_label_replaced_but_never_adds_one()
+    {
+        await SeedAsync(("a00", "Synthetic/First", false, true), ("a01", "Synthetic/First", false, true), ("a02", "Synthetic/First", false, false));
+        await ApplyAndRunAsync();
+        var names = (await h.Gmail.Inner.ListLabelsAsync(Ct)).ToDictionary(l => l.Name, l => l.Id);
+        string[] carried = [.. Labels("a02"), names[DeleteLabel]];
+        h.Gmail.Inner.SetLabels("a02", carried);
+        string sender;
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Messages.Where(m => m.Id == "a02").ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, carried), Ct);
+            sender = (await db.Messages.SingleAsync(m => m.Id == "a00", Ct)).FromAddress;
+        }
+
+        Guid[] ids = [await AddAlternativeAsync("a00", "Synthetic/Second"), await AddAlternativeAsync("a01", "Synthetic/Second"),
+            await AddAlternativeAsync("a02", "Synthetic/Second")];
+        (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest(ids, null))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var card = (await GetAsync<ReviewSenderDetailDto>($"/api/review/senders/{sender}")).Groups.SelectMany(g => g.Members).Single(m => m.Id == ids[0]);
+
+        // The card's own list, delete label included, and a list without it: both keep removing it.
+        (await h.PutAsync($"/api/review/suggestions/{ids[0]}", new EditSuggestionRequest("Synthetic/Second", false, false, [.. card.ReplaceLabels])))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await h.PutAsync($"/api/review/suggestions/{ids[1]}", new EditSuggestionRequest("Synthetic/Second", false, false, ["Synthetic/First"])))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+        // a02 carries the delete label but its applied outcome never set it: naming it is adding one.
+        var added = await h.PutAsync($"/api/review/suggestions/{ids[2]}", new EditSuggestionRequest("Synthetic/Second", false, false, ["Synthetic/First", DeleteLabel]));
+        added.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await added.Content.ReadAsStringAsync(Ct)).ShouldContain(DeleteLabel);
+
+        await ApplyAndRunAsync();
+        names = (await h.Gmail.Inner.ListLabelsAsync(Ct)).ToDictionary(l => l.Name, l => l.Id);
+        foreach (var id in new[] { "a00", "a01" })
+        {
+            Labels(id).ShouldContain(names["Synthetic/Second"]);
+            Labels(id).ShouldNotContain(names["Synthetic/First"]);
+            Labels(id).ShouldNotContain(names[DeleteLabel]);
+        }
+
+        (await GetAsync<PagedDto<CleanupMessageDto>>($"/api/clean-up/senders/{sender}/messages")).Items
+            .ShouldNotContain(m => m.Id == "a00" || m.Id == "a01");
+    }
+
     private async Task<Guid> AddAlternativeAsync(string messageId, string topic)
     {
         await using var db = postgres.CreateDbContext();
