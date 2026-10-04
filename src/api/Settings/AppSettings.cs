@@ -28,6 +28,11 @@ public sealed record AppSettings
     /// it renames nothing in Gmail and re-labels nothing already stored; mail under the old label leaves the Clean-up list.
     /// </summary>
     public string DeleteLabelName { get; init; } = "To-Be-Deleted";
+
+    /// <summary>
+    /// Parent label of document-type labels; null = feature off. Renaming touches nothing in Gmail or stored data.
+    /// </summary>
+    public string? DocumentTypeParent { get; init; }
     public string? GoogleClientId { get; init; }
 
     /// <summary>Data Protection ciphertext of the Google OAuth client secret; never returned by the API.</summary>

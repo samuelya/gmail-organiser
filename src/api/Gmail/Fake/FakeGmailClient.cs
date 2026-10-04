@@ -158,6 +158,15 @@ public sealed partial class FakeGmailClient : IGmailClient
         }
     }
 
+    /// <summary>Renames the user label <paramref name="labelId"/> outside the app; messages keep it (same id).</summary>
+    public void RenameLabel(string labelId, string name)
+    {
+        lock (gate)
+        {
+            labels.Rename(labelId, name);
+        }
+    }
+
     /// <summary>Replaces the labels of <paramref name="id"/> and records the <c>labelAdded</c>/<c>labelRemoved</c> deltas.</summary>
     public void SetLabels(string id, IReadOnlyList<string> labelIds)
     {

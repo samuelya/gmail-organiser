@@ -1,5 +1,6 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Settings;
 
 namespace GmailOrganiser.Review;
@@ -10,7 +11,8 @@ public sealed record ActionPlan(IReadOnlyList<string> Add, IReadOnlyList<string>
 /// <summary>
 /// Turns an approved suggestion into label changes (DESIGN §6.3 outcome table): topic label, plus the action label and
 /// staying in the inbox when it needs action, plus the delete label when deletable; everything else leaves the inbox.
-/// A protected message (§6.4) never gets the delete label, whichever way it was asked for. Pure.
+/// A protected message (§6.4) never gets the delete label, whichever way it was asked for. The replaced labels
+/// (labelled phase) are removed when the message carries them: user labels only, never one the plan adds. Pure.
 /// </summary>
 public static class ActionPlanner
 {
@@ -22,9 +24,16 @@ public static class ActionPlanner
 
     /// <param name="labelIds">Label path to Gmail label id (case-insensitive): the topic label, the action label when
     /// the suggestion needs action and the delete label when it is deletable and not protected.</param>
+    /// <param name="removable">Ids of the personal labels Gmail has now; a replaced label not in it (deleted, or now
+    /// the action or delete label) is skipped. Null removes no replaced label.</param>
     /// <exception cref="KeyNotFoundException">A label the plan needs is missing from <paramref name="labelIds"/>.</exception>
     public static ActionPlan Plan(
-        SuggestionRow suggestion, MessageRow message, IReadOnlyDictionary<string, string> labelIds, AppSettings settings, bool senderAllowlisted)
+        SuggestionRow suggestion,
+        MessageRow message,
+        IReadOnlyDictionary<string, string> labelIds,
+        AppSettings settings,
+        bool senderAllowlisted,
+        IReadOnlySet<string>? removable = null)
     {
         var protectedReason = MessageProtection.Reason(message, senderAllowlisted, settings.Protection);
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
@@ -50,10 +59,17 @@ public static class ActionPlanner
         }
 
         var current = new HashSet<string>(message.LabelIds, StringComparer.Ordinal);
-        string[] remove = suggestion.NeedsAction ? [] : [InboxLabel];
+        var replaced = suggestion.ReplaceLabelIds
+            .Where(id => removable?.Contains(id) == true && GmailLabelIds.IsUser(id) && !add.Contains(id, StringComparer.Ordinal));
+        List<string> remove = [.. replaced];
+        if (!suggestion.NeedsAction)
+        {
+            remove.Add(InboxLabel);
+        }
+
         return new ActionPlan(
             [.. add.Distinct(StringComparer.Ordinal).Where(id => !current.Contains(id) && !Untouched.Contains(id))],
-            [.. remove.Where(id => current.Contains(id) && !Untouched.Contains(id))],
+            [.. remove.Distinct(StringComparer.Ordinal).Where(id => current.Contains(id) && !Untouched.Contains(id))],
             note);
     }
 }
