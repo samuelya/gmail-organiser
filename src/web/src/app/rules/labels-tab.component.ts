@@ -17,7 +17,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
-import { catchError, filter, Observable, of, Subject, switchMap } from 'rxjs';
+import { catchError, concatMap, filter, map, Observable, of, Subject, switchMap } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
 import { isActiveJob, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
@@ -106,6 +106,12 @@ export class LabelsTab {
 
   /** Each reload cancels the one in flight, so a stale plan never lands last. */
   private readonly reloads = new Subject<void>();
+  /** Item edits run one at a time, so each response (the whole plan) includes every earlier edit. */
+  private readonly edits = new Subject<{
+    planId: string;
+    itemId: string;
+    request: UpdatePlanItemRequest;
+  }>();
   /** Apply jobs whose end already reloaded the plan. */
   private readonly finishedJobIds = new Set<string>();
 
@@ -130,6 +136,25 @@ export class LabelsTab {
       .labels()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({ next: (labels) => this.labels.set(labels), error: () => undefined });
+    this.edits
+      .pipe(
+        concatMap(({ planId, itemId, request }) =>
+          this.rules.updateItem(planId, itemId, request).pipe(
+            map((updated): { itemId: string; updated: LabelPlanDto | null } => ({
+              itemId,
+              updated,
+            })),
+            catchError(() => of({ itemId, updated: null })),
+          ),
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe(({ itemId, updated }) => {
+        this.setBusy(itemId, false);
+        // 400 / 409 show in a snackbar; the reload resets the item's controls to the stored state.
+        if (updated) this.plan.set(updated);
+        else this.reload();
+      });
 
     // The apply job ended (completed, failed or cancelled): the plan shows each item's outcome.
     effect(() => {
@@ -186,20 +211,7 @@ export class LabelsTab {
     const plan = this.plan();
     if (!plan || this.busy().has(item.id)) return;
     this.setBusy(item.id, true);
-    this.rules
-      .updateItem(plan.id, item.id, request)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (updated) => {
-          this.setBusy(item.id, false);
-          this.plan.set(updated);
-        },
-        // 400 / 409 show in a snackbar; the reload resets the item's controls to the stored state.
-        error: () => {
-          this.setBusy(item.id, false);
-          this.reload();
-        },
-      });
+    this.edits.next({ planId: plan.id, itemId: item.id, request });
   }
 
   apply(): void {
@@ -227,7 +239,10 @@ export class LabelsTab {
       });
   }
 
-  /** The job may refuse while a merge chunk is in flight (409, shown in a snackbar). */
+  /**
+   * The job may refuse while a merge chunk is in flight (409, shown in a snackbar). The cancel
+   * returns once the plan is back to draft, which the job's own cancelled event can precede.
+   */
   cancelApply(): void {
     const job = this.job();
     if (!job || this.cancelling()) return;
@@ -235,7 +250,13 @@ export class LabelsTab {
     this.jobs
       .cancel(job.id)
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({ error: () => this.cancelling.set(false) });
+      .subscribe({
+        next: () => {
+          this.cancelling.set(false);
+          this.reload();
+        },
+        error: () => this.cancelling.set(false),
+      });
   }
 
   discard(): void {

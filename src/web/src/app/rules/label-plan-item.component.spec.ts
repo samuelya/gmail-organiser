@@ -91,6 +91,20 @@ describe('LabelPlanItem', () => {
     expect(host.updates).toEqual([{ proposedName: 'Topic/Gamma' }]);
   });
 
+  it('keeps an unsaved name when the plan update leaves the stored name alone', async () => {
+    const { fixture, q, host } = await render(planItem());
+    const input = q<HTMLInputElement>('plan-item-name')!;
+    input.value = 'Topic/Typed';
+    input.dispatchEvent(new Event('input'));
+    host.item.set(planItem({ status: 'accepted' }));
+    await fixture.whenStable();
+    expect(q<HTMLInputElement>('plan-item-name')!.value).toBe('Topic/Typed');
+
+    host.item.set(planItem({ status: 'accepted', proposedName: 'Topic/Saved' }));
+    await fixture.whenStable();
+    expect(q<HTMLInputElement>('plan-item-name')!.value).toBe('Topic/Saved');
+  });
+
   it('picks a merge target by path and emits its id', async () => {
     const { fixture, el, q, host } = await render(
       planItem({

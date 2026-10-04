@@ -156,6 +156,63 @@ describe('LabelsTab', () => {
     expect(q('plan-apply')!.textContent).toContain('Apply accepted (1)');
   });
 
+  it('runs item edits one at a time so the last response holds both', async () => {
+    const { fixture, el } = await render(() => of(plan()));
+    const first = new Subject<LabelPlanDto>();
+    const second = new Subject<LabelPlanDto>();
+    rules['updateItem'].mockReturnValueOnce(first).mockReturnValueOnce(second);
+    const accept = (kind: string) =>
+      el
+        .querySelector<HTMLButtonElement>(
+          `[data-kind="${kind}"] [data-testid="plan-item-accept"] button`,
+        )!
+        .click();
+    accept('nest');
+    accept('empty');
+    await fixture.whenStable();
+    expect(rules['updateItem']).toHaveBeenCalledTimes(1);
+
+    first.next(plan({ items: [planItem({ status: 'accepted' }), plan().items[1]] }));
+    first.complete();
+    await fixture.whenStable();
+    expect(rules['updateItem']).toHaveBeenCalledTimes(2);
+    expect(rules['updateItem']).toHaveBeenLastCalledWith('p-1', 'i-2', { status: 'accepted' });
+    second.next(
+      plan({
+        items: [planItem({ status: 'accepted' }), { ...plan().items[1], status: 'accepted' }],
+      }),
+    );
+    second.complete();
+    await fixture.whenStable();
+    expect(el.querySelector('[data-testid="plan-apply"]')!.textContent).toContain(
+      'Apply accepted (2)',
+    );
+  });
+
+  it('reloads the plan once a cancel returns, even after the job already ended', async () => {
+    const applying = plan({ status: 'applying', jobId: 'j-1' });
+    const { fixture, q } = await render(() => of(applying));
+    held.set(new Map([['j-1', job({ status: 'paused' })]]));
+    await fixture.whenStable();
+    const cancel = new Subject<void>();
+    vi.mocked(TestBed.inject(JobsService).cancel).mockReturnValue(cancel);
+    q('plan-cancel')!.click();
+    await fixture.whenStable();
+    expect(q<HTMLButtonElement>('plan-cancel')!.disabled).toBe(true);
+
+    // The cancelled event lands first and its reload still sees the plan applying.
+    held.set(new Map([['j-1', job({ status: 'cancelled', version: 2 })]]));
+    await fixture.whenStable();
+    rules['latestPlan'].mockClear();
+    rules['latestPlan'].mockImplementation(() => of(plan()));
+    cancel.next();
+    cancel.complete();
+    await fixture.whenStable();
+    expect(rules['latestPlan']).toHaveBeenCalledTimes(1);
+    expect(q('plan-progress')).toBeNull();
+    expect(q<HTMLButtonElement>('plan-review')!.disabled).toBe(false);
+  });
+
   it('applies, follows the job progress and reloads the plan when it ends', async () => {
     const draft = plan({ items: [planItem({ status: 'accepted' }), plan().items[1]] });
     const applying = plan({ ...draft, status: 'applying', jobId: 'j-1' });

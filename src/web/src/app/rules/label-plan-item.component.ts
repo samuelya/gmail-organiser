@@ -151,9 +151,9 @@ export class LabelPlanItem {
   readonly proposal = proposalText;
   readonly name = new FormControl('', { nonNullable: true, validators: labelPathValidator });
   private readonly nameValue = toSignal(this.name.valueChanges, { initialValue: '' });
-  readonly nameChanged = computed(
-    () => this.nameValue().trim() !== (this.item().proposedName ?? ''),
-  );
+  /** Changes only when the stored name does, not when a plan update replaces the item object. */
+  private readonly proposedName = computed(() => this.item().proposedName ?? '');
+  readonly nameChanged = computed(() => this.nameValue().trim() !== this.proposedName());
   readonly picking = signal(false);
   readonly decision = computed(() => {
     const status = this.item().status;
@@ -161,8 +161,8 @@ export class LabelPlanItem {
   });
 
   constructor() {
-    // A saved edit or a reloaded plan replaces the item: show its name.
-    effect(() => this.name.setValue(this.item().proposedName ?? ''));
+    // A saved or reloaded name replaces the input; other plan updates keep an unsaved edit.
+    effect(() => this.name.setValue(this.proposedName()));
   }
 
   decide(status: 'accepted' | 'rejected'): void {
