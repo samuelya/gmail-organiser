@@ -273,6 +273,8 @@ export interface ProtectionSettings {
   starred: boolean;
   important: boolean;
   repliedThreads: boolean;
+  /** Mail from these domains, or their subdomains, is never marked for deletion (#203). */
+  allowlistedDomains: string[];
 }
 
 /** The protection field of `SettingsDto`; absent on an older API. */
@@ -285,7 +287,41 @@ export interface ProtectionUpdate {
   protection?: Partial<ProtectionSettings>;
 }
 
-export type ProtectionRule = keyof ProtectionSettings;
+export type ProtectionRule = Exclude<keyof ProtectionSettings, 'allowlistedDomains'>;
+
+/** The API's limits for `protection.allowlistedDomains`. */
+export const MAX_ALLOWLISTED_DOMAINS = 500;
+const MAX_DOMAIN_LENGTH = 253;
+const HOST_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
+/**
+ * A domain as the API stores it, or null where it answers 400: trimmed, one trailing dot dropped,
+ * lower-case, an international name in punycode; a host name with a dot, no `@`, not an IP.
+ */
+export function normaliseAllowlistDomain(value: string): string | null {
+  let domain = value.trim();
+  if (domain.endsWith('.')) domain = domain.slice(0, -1);
+  if (!domain || domain.includes('@') || /[\s/:?#\\[\]]/.test(domain)) return null;
+  try {
+    // The URL parser applies the same IDNA mapping as the API's IdnMapping.
+    domain = new URL(`http://${domain}`).hostname;
+  } catch {
+    return null;
+  }
+  if (domain.length > MAX_DOMAIN_LENGTH || !HOST_NAME.test(domain)) return null;
+  // An all-numeric last label is an IPv4 address, which the API rejects.
+  return /\.\d+$/.test(domain) ? null : domain;
+}
+
+export function isAllowlistDomain(value: string): boolean {
+  return normaliseAllowlistDomain(value) !== null;
+}
+
+/** The listed domain that covers `domain`: itself, or a parent domain; null when none does. */
+export function coveringDomain(domain: string, listed: readonly string[]): string | null {
+  const host = domain.toLowerCase();
+  return listed.find((d) => host === d || host.endsWith(`.${d}`)) ?? null;
+}
 
 /** Label and one-line hint per rule, in the API's order. */
 export const PROTECTION_RULES: readonly { key: ProtectionRule; label: string; hint: string }[] = [

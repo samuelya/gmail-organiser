@@ -20,6 +20,7 @@ const sender = (over: Partial<SenderDto> = {}): SenderDto => ({
   appliedCount: 1,
   lastSeenAt: '2026-01-01T00:00:00Z',
   allowlisted: false,
+  allowlistedByDomain: false,
   activeFetchJob: null,
   unsubscribedAt: null,
   ...over,
@@ -42,8 +43,13 @@ describe('SendersPage allowlist toggle', () => {
     fetchFromSender: ReturnType<typeof vi.fn>;
     setAllowlisted: ReturnType<typeof vi.fn>;
   };
+  let settings: { getSettings: () => unknown; saveProtection: ReturnType<typeof vi.fn> };
 
-  async function render(row: SenderDto) {
+  async function render(row: SenderDto, allowlistedDomains: string[] = []) {
+    settings = {
+      getSettings: () => of({ protection: { allowlistedDomains } }),
+      saveProtection: vi.fn(),
+    };
     api = {
       list: vi.fn(() => of({ items: [row], page: 1, pageSize: 50, total: 1 })),
       fetchFromSender: vi.fn(),
@@ -54,7 +60,7 @@ describe('SendersPage allowlist toggle', () => {
         provideRouter([{ path: 'senders', component: SendersPage }]),
         { provide: JobsService, useValue: new FakeJobs() },
         { provide: SendersService, useValue: api },
-        { provide: SettingsService, useValue: { getSettings: () => of({}) } },
+        { provide: SettingsService, useValue: settings },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
@@ -102,5 +108,54 @@ describe('SendersPage allowlist toggle', () => {
     await harness.fixture.whenStable();
     expect(q('allowlisted-chip')).toBeNull();
     expect((q('allowlist-sender') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('allowlists the domain, disables the action meanwhile and reloads the page', async () => {
+    const { harness, q } = await render(sender());
+    const saved = new Subject<unknown>();
+    settings.saveProtection.mockReturnValue(saved);
+    expect(q('allowlist-domain')!.getAttribute('aria-label')).toBe('Allowlist domain example.com');
+    expect(q('allowlisted-domain-chip')).toBeNull();
+
+    q('allowlist-domain')!.click();
+    await harness.fixture.whenStable();
+    expect(settings.saveProtection).toHaveBeenCalledWith({
+      protection: { allowlistedDomains: ['example.com'] },
+    });
+    expect((q('allowlist-domain') as HTMLButtonElement).disabled).toBe(true);
+
+    api.list.mockReturnValue(
+      of({ items: [sender({ allowlistedByDomain: true })], page: 1, pageSize: 50, total: 1 }),
+    );
+    saved.next({ protection: { allowlistedDomains: ['example.com'] } });
+    saved.complete();
+    await harness.fixture.whenStable();
+    expect(api.list).toHaveBeenCalledTimes(2);
+    expect(q('allowlisted-domain-chip')?.textContent).toContain('Allowlisted (domain)');
+    expect(q('allowlist-domain')!.getAttribute('aria-label')).toBe(
+      'Remove example.com from allowlist',
+    );
+    // The per-address toggle stays available.
+    expect((q('allowlist-sender') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('removes the listed parent domain covering the sender', async () => {
+    const { harness, q } = await render(
+      sender({ domain: 'mail.example.com', allowlistedByDomain: true }),
+      ['example.org', 'example.com'],
+    );
+    settings.saveProtection.mockReturnValue(
+      of({ protection: { allowlistedDomains: ['example.org'] } }),
+    );
+    expect(q('allowlisted-domain-chip')).not.toBeNull();
+    expect(q('allowlist-domain')!.getAttribute('aria-label')).toBe(
+      'Remove example.com from allowlist',
+    );
+
+    q('allowlist-domain')!.click();
+    await harness.fixture.whenStable();
+    expect(settings.saveProtection).toHaveBeenCalledWith({
+      protection: { allowlistedDomains: ['example.org'] },
+    });
   });
 });
