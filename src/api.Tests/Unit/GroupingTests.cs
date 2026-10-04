@@ -9,7 +9,7 @@ namespace GmailOrganiser.Tests.Unit;
 public sealed class GroupingTests
 {
     private static readonly DateTimeOffset Start = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    private static readonly IReadOnlySet<string> NoAllowlist = new HashSet<string>();
+    private static readonly Allowlist NoAllowlist = Allowlist.Empty;
     private static readonly GroupingSettings Defaults = GroupingSettings.From(new AppSettings());
     private static readonly ProtectionSettings AllRules = new();
 
@@ -207,7 +207,7 @@ public sealed class GroupingTests
         members[3].LabelIds = ["INBOX", MessageProtection.StarredLabel];
         members[5].LabelIds = [MessageProtection.ImportantLabel];
         members[7].FromAddress = "trusted@example.com";
-        var allowlist = new HashSet<string> { "trusted@example.com" };
+        var allowlist = new Allowlist(new HashSet<string> { "trusted@example.com" }, []);
 
         var picked = RepresentativePicker.Pick(GroupOf(members), 3, allowlist, AllRules);
 
@@ -242,7 +242,7 @@ public sealed class GroupingTests
         m.HasAttachment = attachment;
         m.LabelIds = starred ? ["INBOX", "STARRED"] : ["INBOX"];
 
-        MessageProtection.IsProtected(m, allowlisted, AllRules).ShouldBe(expected);
+        MessageProtection.IsProtected(m, allowlisted ? new Allowlist(new HashSet<string> { m.FromAddress }, []) : Allowlist.Empty, AllRules).ShouldBe(expected);
     }
 
     private static RepresentativeOutput Out(
