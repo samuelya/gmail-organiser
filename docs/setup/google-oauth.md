@@ -80,7 +80,8 @@ in your local run configuration's environment (never in the committed `launchSet
 `GmailOrganiser.Api` launch profile sets `GMAIL_FAKE=true`, which uses a synthetic in-memory mailbox; set
 `GMAIL_FAKE=false` in your local run configuration to connect the real account.
 
-Then connect Gmail from the setup wizard, sign in, and allow the three permissions.
+Then connect Gmail from the setup wizard, sign in, and allow the three permissions. Later, **Settings → Gmail
+connection** shows the connected account, with **Reconnect** and **Disconnect**.
 
 ## 6. Publish the app to "In production"
 
@@ -103,10 +104,10 @@ permissions. Check that the app name is the one you created, and that the accoun
 |---|---|---|
 | Google error page `Error 400: redirect_uri_mismatch` | The redirect URI the app sent isn't registered on the client. | Add the exact URI from step 4 for the way you're running (4200 IDE, 5180 or your `WEB_PORT` compose). Check `APP_BASE_URL` if you changed it. Changes can take a few minutes to apply. |
 | The app reports `missing_scopes` after connecting | You unticked a permission on the consent screen, or a scope is missing from step 3. | Make sure all three scopes are added in the console, then connect again and leave every permission ticked. Nothing is stored until all three are granted. |
-| The app reports `reauth_required` | Google refused the stored refresh token (`invalid_grant`): it was revoked, the password changed, or the app was still in *Testing* and the 7-day limit passed. | Publish the app (step 6) if you haven't, then connect Gmail again from the setup wizard. |
+| The app reports `reauth_required` | Google refused the stored refresh token (`invalid_grant`): it was revoked, the password changed, or the app was still in *Testing* and the 7-day limit passed. | Publish the app (step 6) if you haven't, then press **Connect Gmail** under **Settings → Gmail connection**. |
 | `access_denied` | You clicked **Cancel** on the Google screen, or your address isn't a test user while the app is in *Testing*. | Add yourself as a test user or publish the app, then connect again. |
 | `state_mismatch` | The sign-in took too long or was started in another tab. | Start connecting again from the same tab. |
 | `exchange_failed` | Google rejected the code exchange, usually a wrong client secret. | Re-enter the client ID and secret (wizard or `.env`) and try again. |
 
 To revoke access at any time: [Google Account → Security → Third-party apps](https://myaccount.google.com/connections),
-or disconnect Gmail in the app.
+or **Disconnect** under **Settings → Gmail connection**.

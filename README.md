@@ -3,7 +3,7 @@
 A self-hosted, single-user Gmail organiser. A local LLM running in [Ollama](https://ollama.com/) reads your mail in
 batches you start, and suggests labels, clean-up of low-value mail and Gmail filters. You review every suggestion and
 approve what gets applied. It runs on your own machine with your own Google Cloud project; an optional second opinion
-from Claude via MCP is planned.
+from Claude (over MCP) can check the local model's suggestions, filter findings and label plans.
 
 ## Safety promises
 
@@ -14,6 +14,17 @@ from Claude via MCP is planned.
   approve them, and every applied change is logged so it can be undone.
 - **Local only.** The web UI is bound to `127.0.0.1`, the LLM runs on your host, and your OAuth client, tokens and
   mail stay on your machine. Secrets are kept in `.env` or encrypted in the local database.
+
+## Screenshots
+
+All images show the synthetic `example.com` mailbox of the fake development stack, not real mail.
+
+| | |
+|---|---|
+| ![Dashboard: mailbox counts and recent jobs](docs/images/dashboard.png) | ![Analyse: start a batch and follow its runs](docs/images/analyse.png) |
+| ![Review: approve, edit or discard grouped suggestions](docs/images/review.png) | ![Clean-up: mail labelled To-Be-Deleted, moved to Trash on request](docs/images/clean-up.png) |
+| ![Senders: per-sender counts and protection](docs/images/senders.png) | ![Rules: Gmail filters, findings and label review](docs/images/rules.png) |
+| ![History: applied changes with undo](docs/images/history.png) | ![Settings: Google, Ollama, labels, Claude review](docs/images/settings.png) |
 
 ## Quick start (Docker compose)
 
@@ -99,8 +110,31 @@ Build, test and CI commands: [docs/ci.md](docs/ci.md).
 - [Claude review setup](docs/setup/claude-review.md): `WITH_CLAUDE`, `claude setup-token`, Claude Desktop config.
 - [Apps Script setup](docs/setup/apps-script.md): daily auto-archive in Google's cloud: paste the script and CONFIG,
   dry run, daily trigger, updates.
+- [CI](docs/ci.md): workflows, required checks, build and test commands, end-to-end tests and screenshots.
 - [Design](docs/DESIGN.md): architecture, workflows, data model.
+
+## Status (v1.0)
+
+What it does:
+
+- **Fetch** the Inbox or All Mail, then incrementally from Gmail's history.
+- **Analyse** mail in batches you start, with a local model in Ollama; re-analyse single emails and compare runs.
+- **Review, apply and undo:** approve, edit or discard grouped suggestions; every applied change can be undone.
+- **Clean-up** to Trash only, with sender protection and unsubscribe links.
+- **Filters and labels:** sync Gmail filters, review them for duplicates and overlaps, review the label structure.
+- **Apps Script archiving:** a daily script in your Google account archives handled mail.
+- **Claude second opinion** (optional) on suggestions, filter findings and label plans.
+- **Settings:** Google client, Gmail connection (reconnect when Google revokes access), Ollama and models.
+
+What it does not do:
+
+- More than one Gmail account (issue #67).
+- Permanent deletion: never; "Delete" moves mail to Trash.
+- Act on its own: nothing is applied to Gmail without your approval.
 
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+Gmail and Google are trademarks of Google LLC. This project is independent and is not affiliated with or endorsed by
+Google.

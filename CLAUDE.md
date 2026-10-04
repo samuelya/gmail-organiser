@@ -63,4 +63,5 @@ Cost = context × turns. Keep both small.
 
 ## Build & Test
 
-To be filled in by the M1 foundation issue with the real commands (build, lint, run a single test, compose up). CI and required checks: `docs/ci.md` (created with the first workflow).
+Build, lint, single-test, end-to-end and image commands, workflows and required checks: `docs/ci.md`.
+Compose up and the IDE run: `README.md` (Quick start, Development from the IDE).
