@@ -48,12 +48,16 @@ export class RulesClaude {
     return this.items().get(`finding:${id}`) ?? null;
   }
 
-  /** Keeps the newest item per target; a change to the item on show replaces it. */
+  /**
+   * Keeps the newest item per target; a change to the item on show replaces it unless it is an older copy (a list
+   * response or a POST reply that arrives after a live change).
+   */
   patch(item: ExternalReviewDto): void {
     const key = ruleTargetKey(item);
     if (!key) return;
     const current = this.items().get(key);
     if (current && current.id !== item.id && current.createdAt > item.createdAt) return;
+    if (current && current.id === item.id && isStale(current, item)) return;
     const next = new Map(this.items());
     next.set(key, item);
     this.items.set(next);
@@ -69,4 +73,14 @@ export class RulesClaude {
         error: () => undefined,
       });
   }
+}
+
+/**
+ * True when `next` is an older copy of `current`. Reviewed and resolved never move back; within one attempt queued
+ * comes before running. A retry moves unavailable or cancelled back to queued, so those may be replaced.
+ */
+function isStale(current: ExternalReviewDto, next: ExternalReviewDto): boolean {
+  if (current.resolvedAt) return !next.resolvedAt;
+  if (current.status === 'reviewed') return next.status !== 'reviewed';
+  return current.status === 'running' && next.status === 'queued';
 }

@@ -62,12 +62,25 @@ export function verdictText(item: ExternalReviewDto, labels: FlagLabels): string
   }
 }
 
-/** A label plan alternative's paths as an indented list: each path's last part at its depth. */
+/**
+ * A label plan alternative's paths as an indented tree: parents before children (siblings by name), each label's own
+ * name at its depth, and any parent Claude left out added so no label shows without its ancestors.
+ */
 export function structureRows(paths: readonly string[]): { name: string; depth: number }[] {
-  return paths.map((path) => {
+  const all = new Map<string, string[]>();
+  for (const path of paths) {
     const parts = path.split('/');
-    return { name: parts[parts.length - 1], depth: parts.length - 1 };
-  });
+    for (let i = 1; i <= parts.length; i++) all.set(parts.slice(0, i).join('/'), parts.slice(0, i));
+  }
+  return [...all.values()]
+    .sort((a, b) => {
+      for (let i = 0; i < Math.min(a.length, b.length); i++) {
+        const c = a[i].localeCompare(b[i]);
+        if (c !== 0) return c;
+      }
+      return a.length - b.length;
+    })
+    .map((parts) => ({ name: parts[parts.length - 1], depth: parts.length - 1 }));
 }
 
 export function resolutionText(item: ExternalReviewDto): string {
