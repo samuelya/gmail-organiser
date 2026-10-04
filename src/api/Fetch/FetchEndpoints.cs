@@ -90,7 +90,8 @@ public static class FetchEndpoints
 
     /// <summary>
     /// 202 with a new job; 200 with the active one, or with the latest failed or paused one after resuming it from its
-    /// cursor; 409 when the local data belongs to another account or Gmail is not connected.
+    /// cursor; 409 when the local data belongs to another account, Gmail is not connected or another fetch-queue job
+    /// (mailbox, incremental or sender fetch) is queued, running or paused.
     /// </summary>
     private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartLabelResyncAsync(
         ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
@@ -101,6 +102,21 @@ public static class FetchEndpoints
         }
 
         var latest = await LatestJobAsync(db, [LabelResyncJob.JobType], ct);
+        if (latest is { Status: JobStatus.Queued or JobStatus.Running })
+        {
+            return TypedResults.Ok(new StartFetchResponse(latest.Id));
+        }
+
+        // The fetch status reports only the mailbox and incremental fetch; a resync never starts or resumes beside another fetch.
+        if (await db.Jobs.AnyAsync(
+            j => j.Queue == JobQueues.Fetch && j.Type != LabelResyncJob.JobType && JobRow.Active.Contains(j.Status), ct))
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Fetch in progress",
+                detail: "Another fetch is queued, running or paused; let it finish or cancel it before resyncing labels.");
+        }
+
         if (latest is { Status: JobStatus.Failed or JobStatus.Paused }
             && await jobs.ResumeAsync(latest.Id, ct) == JobActionResult.Ok)
         {
@@ -183,7 +199,7 @@ public static class FetchEndpoints
             })
             .SingleAsync(ct);
         var state = counts.State;
-        var latest = await LatestJobAsync(db, [MailboxFetchJob.JobType, IncrementalFetchJob.JobType, LabelResyncJob.JobType], ct);
+        var latest = await LatestJobAsync(db, [MailboxFetchJob.JobType, IncrementalFetchJob.JobType], ct);
         var check = AccountGuard.Compare(state.AccountEmail, (await tokens.GetAsync(ct))?.AccountEmail);
         var totals = await totalsReader.GetAsync(refresh: false, ct);
 

@@ -341,7 +341,7 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
-    public async Task Labels_resync_twice_returns_202_then_200_with_the_same_job_shown_as_the_active_fetch_job()
+    public async Task Labels_resync_twice_returns_202_then_200_with_the_same_job_kept_out_of_the_fetch_status()
     {
         await using var host = FakeGmailHost();
 
@@ -352,9 +352,56 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         second.StatusCode.ShouldBe(HttpStatusCode.OK);
         var id = (await first.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
         (await second.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId.ShouldBe(id);
-        var job = (await StatusAsync(host)).ActiveJob.ShouldNotBeNull();
-        job.Id.ShouldBe(id);
-        job.Type.ShouldBe(LabelResyncJob.JobType);
+        (await StatusAsync(host)).ActiveJob.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(FetchJobTypes.Mailbox, JobStatus.Running)]
+    [InlineData(FetchJobTypes.Incremental, JobStatus.Queued)]
+    [InlineData(FetchJobTypes.Sender, JobStatus.Paused)]
+    public async Task Labels_resync_while_another_fetch_queue_job_is_active_is_a_409_problem(string type, JobStatus status)
+    {
+        await using var host = FakeGmailHost();
+        await AddJobAsync(NewJob(type, status, null, null));
+        var paused = await AddJobAsync(NewJob(LabelResyncJob.JobType, JobStatus.Paused, null, null));
+
+        var response = await PostStartAsync(host, "/api/fetch/labels/resync");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadFromJsonAsync<ProblemDetails>(Ct)).ShouldNotBeNull().Title.ShouldBe("Fetch in progress");
+        await using var db = postgres.CreateDbContext();
+        (await db.Jobs.CountAsync(j => j.Type == LabelResyncJob.JobType, Ct)).ShouldBe(1);
+        (await db.Jobs.SingleAsync(j => j.Id == paused, Ct)).Status.ShouldBe(JobStatus.Paused);
+    }
+
+    [Fact]
+    public async Task Status_shows_the_running_mailbox_fetch_not_a_newer_queued_resync()
+    {
+        await using var host = FakeGmailHost();
+        var running = await AddMailboxJobAsync(JobStatus.Running, null, null);
+        var resync = NewJob(LabelResyncJob.JobType, JobStatus.Queued, null, null);
+        resync.CreatedAt = resync.CreatedAt.AddMinutes(1);
+        await AddJobAsync(resync);
+
+        var status = await StatusAsync(host);
+
+        status.ActiveJob.ShouldNotBeNull().Id.ShouldBe(running);
+        status.FailedJob.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Status_keeps_the_failed_mailbox_job_when_a_newer_resync_failed()
+    {
+        await using var host = FakeGmailHost();
+        var failed = await AddMailboxJobAsync(JobStatus.Failed, null, "Gmail unavailable");
+        var resync = NewJob(LabelResyncJob.JobType, JobStatus.Failed, null, "Gmail unavailable");
+        resync.CreatedAt = resync.CreatedAt.AddMinutes(1);
+        await AddJobAsync(resync);
+
+        var status = await StatusAsync(host);
+
+        status.ActiveJob.ShouldBeNull();
+        status.FailedJob.ShouldNotBeNull().Id.ShouldBe(failed);
     }
 
     [Fact]
@@ -377,10 +424,12 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         job.Error.ShouldBe("Gmail unavailable");
     }
 
-    private async Task<Guid> AddMailboxJobAsync(JobStatus status, string? cursor, string? error)
+    private Task<Guid> AddMailboxJobAsync(JobStatus status, string? cursor, string? error) =>
+        AddJobAsync(NewJob(MailboxFetchJob.JobType, status, cursor, error));
+
+    private async Task<Guid> AddJobAsync(JobRow row)
     {
         await using var db = postgres.CreateDbContext();
-        var row = NewJob(MailboxFetchJob.JobType, status, cursor, error);
         db.Jobs.Add(row);
         await db.SaveChangesAsync(Ct);
         return row.Id;
