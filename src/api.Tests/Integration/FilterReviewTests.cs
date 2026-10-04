@@ -82,13 +82,14 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
         var review = await CoveredReviewAsync();
 
         review.FilterCount.ShouldBe(5);
+        // Filters first seen together are checked in id order, and the fake's new filter ids are random.
         review.Findings.Select(f => (f.Kind, f.Fix.Kind)).ShouldBe(
         [
             (FilterFindingKind.DeletedLabel, FilterFixKind.Delete),
             (FilterFindingKind.DeletedLabel, FilterFixKind.DropLabel),
             (FilterFindingKind.NoRecentMatches, FilterFixKind.Delete),
             (FilterFindingKind.Mergeable, FilterFixKind.Merge),
-        ]);
+        ], ignoreOrder: true);
         review.Findings.ShouldAllBe(f => f.Status == FilterFindingStatus.Open && f.Filters.Count == f.FilterIds.Count);
         Find(review, FilterFindingKind.NoRecentMatches).FilterIds.ShouldBe(["fake-filter-2"]);
         Find(review, FilterFindingKind.Mergeable).Description.ShouldContain("Example");
@@ -115,7 +116,7 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
         applied.AppliedAt.ShouldNotBeNull();
         var gmail = await Gmail.ListFiltersAsync(Ct);
         gmail.ShouldNotContain(f => finding.FilterIds.Contains(f.Id));
-        var merged = gmail.Where(f => f.Criteria.From == $"{News} OR {Shop}").ShouldHaveSingleItem();
+        var merged = gmail.Where(f => IsMerged(f)).ShouldHaveSingleItem();
         merged.Action.AddLabelIds.ShouldBe(["Label_1"]);
         await using var db = postgres.CreateDbContext();
         (await db.Filters.Where(r => finding.FilterIds.Contains(r.Id)).ToListAsync(Ct)).ShouldAllBe(r => r.DeletedByApp);
@@ -151,7 +152,7 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
         (applied.Status, applied.Error).ShouldBe((FilterFindingStatus.Applied, null));
         var gmail = await Gmail.ListFiltersAsync(Ct);
         gmail.ShouldNotContain(f => finding.FilterIds.Contains(f.Id));
-        gmail.Count(f => f.Criteria.From == $"{News} OR {Shop}").ShouldBe(1);
+        gmail.Count(f => IsMerged(f)).ShouldBe(1);
     }
 
     [Fact]
@@ -227,8 +228,9 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
             (await db.FilterFindings.SingleAsync(f => f.Id == finding.Id, Ct)).Status.ShouldBe(FilterFindingStatus.Open);
         }
 
-        next.Findings.ShouldNotContain(f => f.FilterIds.Intersect(finding.FilterIds).Any());
-        next.Findings.ShouldNotContain(f => f.Kind == FilterFindingKind.Mergeable);
+        var fresh = next.Findings.Where(f => f.ReviewId == next.Id).ToList();
+        fresh.ShouldNotContain(f => f.FilterIds.Intersect(finding.FilterIds).Any());
+        fresh.ShouldNotContain(f => f.Kind == FilterFindingKind.Mergeable);
         (await PostAsync($"/api/rules/filters/findings/{finding.Id}/dismiss")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await ApplyAsync(finding.Id, HttpStatusCode.OK)).Status.ShouldBe(FilterFindingStatus.Applied);
     }
@@ -239,14 +241,58 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
         var finding = Find(await CreateReviewAsync(), FilterFindingKind.Mergeable);
         Gmail.FailNext(HttpStatusCode.BadRequest, 1, afterCalls: 2);
         (await PostAsync($"/api/rules/filters/findings/{finding.Id}/apply")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
-        var created = (await Gmail.ListFiltersAsync(Ct)).Single(f => f.Criteria.From == $"{News} OR {Shop}");
+        var created = (await Gmail.ListFiltersAsync(Ct)).Single(f => IsMerged(f));
         (await Client().DeleteAsync($"/api/rules/filters/{created.Id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
         (await ApplyAsync(finding.Id, HttpStatusCode.OK)).Status.ShouldBe(FilterFindingStatus.Applied);
 
         var gmail = await Gmail.ListFiltersAsync(Ct);
         gmail.ShouldNotContain(f => finding.FilterIds.Contains(f.Id));
-        gmail.Where(f => f.Criteria.From == $"{News} OR {Shop}").ShouldHaveSingleItem().Id.ShouldNotBe(created.Id);
+        gmail.Where(f => IsMerged(f)).ShouldHaveSingleItem().Id.ShouldNotBe(created.Id);
+    }
+
+    [Fact]
+    public async Task Latest_carries_over_a_half_applied_finding_of_an_earlier_review_so_it_can_be_resumed()
+    {
+        var finding = Find(await CreateReviewAsync(), FilterFindingKind.Mergeable);
+        Gmail.FailNext(HttpStatusCode.BadRequest, 1, afterCalls: 2);
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/apply")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        var next = await CreateReviewAsync();
+        var latest = await Client().GetFromJsonAsync<FilterReviewDto>("/api/rules/filters/reviews/latest", Ct);
+
+        latest.ShouldNotBeNull().Id.ShouldBe(next.Id);
+        var carried = latest.Findings.Single(f => f.Id == finding.Id);
+        (carried.ReviewId, carried.Status).ShouldBe((finding.ReviewId, FilterFindingStatus.Open));
+        carried.ReviewId.ShouldNotBe(next.Id);
+        next.Findings.ShouldContain(f => f.Id == finding.Id);
+        (await ApplyAsync(carried.Id, HttpStatusCode.OK)).Status.ShouldBe(FilterFindingStatus.Applied);
+        (await Client().GetFromJsonAsync<FilterReviewDto>("/api/rules/filters/reviews/latest", Ct))
+            .ShouldNotBeNull().Findings.ShouldNotContain(f => f.Id == finding.Id);
+    }
+
+    [Fact]
+    public async Task A_failed_re_create_after_the_created_filter_is_gone_keeps_the_finding_half_applied()
+    {
+        var finding = Find(await CreateReviewAsync(), FilterFindingKind.Mergeable);
+        Gmail.FailNext(HttpStatusCode.BadRequest, 1, afterCalls: 2);
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/apply")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        var created = (await Gmail.ListFiltersAsync(Ct)).Single(f => IsMerged(f));
+        (await Client().DeleteAsync($"/api/rules/filters/{created.Id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        Gmail.FailNext(HttpStatusCode.BadRequest, 1);
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/apply")).StatusCode.ShouldNotBe(HttpStatusCode.OK);
+
+        var failed = await GetFindingAsync(finding);
+        (failed.Status, failed.Error is null).ShouldBe((FilterFindingStatus.Open, false));
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/dismiss")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        await CreateReviewAsync();
+        (await GetFindingAsync(finding)).Status.ShouldBe(FilterFindingStatus.Open);
+
+        (await ApplyAsync(finding.Id, HttpStatusCode.OK)).Status.ShouldBe(FilterFindingStatus.Applied);
+        var gmail = await Gmail.ListFiltersAsync(Ct);
+        gmail.ShouldNotContain(f => finding.FilterIds.Contains(f.Id));
+        gmail.Count(f => IsMerged(f)).ShouldBe(1);
     }
 
     [Fact]
@@ -287,6 +333,10 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
         (await dismiss).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await review).StatusCode.ShouldBe(HttpStatusCode.Created);
     }
+
+    /// <summary>The merge of the two sender filters, whichever order the merge put the senders in.</summary>
+    private static bool IsMerged(GmailFilter f) =>
+        f.Criteria.From?.Split(" OR ").Order(StringComparer.Ordinal).SequenceEqual([News, Shop]) == true;
 
     private static FilterFindingDto Find(FilterReviewDto review, FilterFindingKind kind, FilterFixKind? fix = null) =>
         review.Findings.Single(f => f.Kind == kind && (fix is null || f.Fix.Kind == fix));

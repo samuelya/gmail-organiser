@@ -36,14 +36,18 @@ public sealed class FilterReviewService(
     /// <summary>The advisory lock key that serialises finding applies, dismissals and supersedes.</summary>
     public const long ApplyLockKey = 0x6672_6170_706C;
 
-    /// <summary>Open findings an apply has created a filter for but not finished.</summary>
+    /// <summary>Open findings an apply has started but not finished: it created a filter or deleted one.</summary>
     private static readonly Expression<Func<FilterFindingRow, bool>> InProgress =
-        f => f.Status == FilterFindingStatus.Open && f.CreatedFilterId != null;
+        f => f.Status == FilterFindingStatus.Open && (f.CreatedFilterId != null || f.DeletedFilterIds.Count > 0);
+
+    /// <summary>Open findings no apply has touched; a new review supersedes them.</summary>
+    private static readonly Expression<Func<FilterFindingRow, bool>> NotStarted =
+        f => f.Status == FilterFindingStatus.Open && f.CreatedFilterId == null && f.DeletedFilterIds.Count == 0;
 
     /// <summary>
     /// Syncs the snapshot, refreshes the labels, checks the active filters and stores the findings; open findings of
-    /// earlier reviews become superseded, except half-applied ones (<see cref="FilterFindingRow.CreatedFilterId"/> set),
-    /// whose filters the new review leaves out. Every Gmail read happens before the first write.
+    /// earlier reviews become superseded, except half-applied ones (<see cref="IsStarted"/>), whose filters the
+    /// new review leaves out and which the returned review carries over. Every Gmail read happens before the first write.
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -56,7 +60,8 @@ public sealed class FilterReviewService(
         var active = await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct);
         var busy = (await db.FilterFindings.AsNoTracking().Where(InProgress)
                 .Select(f => new { f.FilterIds, f.CreatedFilterId }).ToListAsync(ct))
-            .SelectMany(f => f.FilterIds.Append(f.CreatedFilterId!)).ToHashSet(StringComparer.Ordinal);
+            .SelectMany(f => f.CreatedFilterId is { } created ? f.FilterIds.Append(created) : f.FilterIds)
+            .ToHashSet(StringComparer.Ordinal);
         var checkedFilters = active.Where(r => !busy.Contains(r.Id)).ToList();
         var now = time.GetUtcNow();
         var counts = await RecentCountsAsync(checkedFilters, now.AddDays(-days), ct);
@@ -88,20 +93,20 @@ public sealed class FilterReviewService(
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({CreateLockKey})", ct);
         await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({ApplyLockKey})", ct);
-        await db.FilterFindings.Where(f => f.Status == FilterFindingStatus.Open && f.CreatedFilterId == null)
+        await db.FilterFindings.Where(NotStarted)
             .ExecuteUpdateAsync(s => s.SetProperty(f => f.Status, FilterFindingStatus.Superseded), ct);
         db.FilterReviews.Add(review);
         db.FilterFindings.AddRange(findings);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return await ToDtoAsync(review, findings, Names(labels), ct);
+        return await ToDtoAsync(review, findings, Names(labels), ct, carryOver: true);
     }
 
-    /// <summary>The newest review, or null.</summary>
+    /// <summary>The newest review, or null; it carries over the half-applied findings of earlier reviews.</summary>
     public async Task<FilterReviewDto?> LatestAsync(CancellationToken ct) =>
         await db.FilterReviews.AsNoTracking().OrderByDescending(r => r.CreatedAt).ThenByDescending(r => r.Id).FirstOrDefaultAsync(ct)
             is { } review
-            ? await ToDtoAsync(review, null, null, ct)
+            ? await ToDtoAsync(review, null, null, ct, carryOver: true)
             : null;
 
     public async Task<FilterReviewDto?> GetAsync(Guid id, CancellationToken ct) =>
@@ -133,10 +138,10 @@ public sealed class FilterReviewService(
             return NotOpen(finding);
         }
 
-        if (finding.CreatedFilterId is not null)
+        if (IsStarted(finding))
         {
             return FindingResult.Conflict(
-                "Finding is half applied", "Its new filter exists and some originals are not deleted yet; apply it again to finish.");
+                "Finding is half applied", "An apply has changed some of its filters but not all; apply it again to finish.");
         }
 
         finding.Status = FilterFindingStatus.Dismissed;
@@ -254,6 +259,9 @@ public sealed class FilterReviewService(
         await db.SaveChangesAsync(CancellationToken.None);
     }
 
+    /// <summary>Whether an apply has created or deleted a filter for the finding; only a re-apply finishes it then.</summary>
+    private static bool IsStarted(FilterFindingRow finding) => finding.CreatedFilterId is not null || finding.DeletedFilterIds.Count > 0;
+
     private static FindingResult NotOpen(FilterFindingRow finding) =>
         FindingResult.Conflict("Finding is not open", $"The finding is {finding.Status.ToString().ToLowerInvariant()}.");
 
@@ -321,9 +329,17 @@ public sealed class FilterReviewService(
     }
 
     private async Task<FilterReviewDto> ToDtoAsync(
-        FilterReviewRow review, List<FilterFindingRow>? findings, Dictionary<string, string>? names, CancellationToken ct)
+        FilterReviewRow review, List<FilterFindingRow>? findings, Dictionary<string, string>? names, CancellationToken ct,
+        bool carryOver = false)
     {
         findings ??= await db.FilterFindings.AsNoTracking().Where(f => f.ReviewId == review.Id).OrderBy(f => f.Id).ToListAsync(ct);
+        if (carryOver)
+        {
+            // Half-applied findings of earlier reviews stay open (never superseded), so they are listed here to be resumed.
+            findings = [.. findings, .. await db.FilterFindings.AsNoTracking().Where(InProgress)
+                .Where(f => f.ReviewId != review.Id).OrderBy(f => f.Id).ToListAsync(ct)];
+        }
+
         names ??= await snapshot.LabelNamesAsync(ct);
         var ids = findings.SelectMany(f => f.FilterIds).Distinct().ToList();
         var rows = await db.Filters.AsNoTracking().Where(r => ids.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
@@ -352,7 +368,7 @@ public sealed class FilterReviewService(
 
         return new FilterFindingDto(
             f.Id, f.Kind, f.FilterIds, [.. f.FilterIds.Where(rows.ContainsKey).Select(i => FilterSnapshot.ToDto(rows[i], names))],
-            f.Description, new FilterFixDto(fix.Kind, fix.DeleteFilterIds, create), f.Status, f.AppliedAt, f.Error);
+            f.Description, new FilterFixDto(fix.Kind, fix.DeleteFilterIds, create), f.Status, f.AppliedAt, f.Error, f.ReviewId);
     }
 
     private static Dictionary<string, string> Names(IReadOnlyList<GmailLabel> labels) =>
