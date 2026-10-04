@@ -42,12 +42,40 @@
     <mat-hint>Mail you approve for deletion gets this label; "Delete" moves it to Trash.</mat-hint>
   </mat-form-field>
 
+  <mat-form-field subscriptSizing="dynamic">
+    <mat-label>Document-type parent (optional)</mat-label>
+    <input
+      matInput
+      formControlName="documentTypeParent"
+      autocomplete="off"
+      [errorStateMatcher]="parentMatcher"
+      data-testid="documentTypeParent"
+    />
+    @if (documentTypeParent.hasError('maxlength')) {
+      <mat-error>Must be at most {{ maxParentLength }} characters.</mat-error>
+    } @else if (documentTypeParent.hasError('maxLevels')) {
+      <mat-error>Must have at most {{ maxParentLevels }} '/'-separated parts.</mat-error>
+    } @else if (documentTypeParent.hasError('labelPath')) {
+      <mat-error>Use '/' only between parts; no part may be blank.</mat-error>
+    } @else if (documentTypeParent.hasError('server')) {
+      <mat-error data-testid="document-type-parent-server-error">{{
+        documentTypeParent.getError('server')
+      }}</mat-error>
+    } @else if (form.hasError('parentClash')) {
+      <mat-error data-testid="parent-clash-error"
+        >Must differ from the action and delete labels and not sit under or above them.</mat-error
+      >
+    }
+    <mat-hint>
+      Bills, receipts and similar documents get a second label under this parent, for example
+      &lt;parent&gt;/Electricity. Empty turns document-type labels off. Renaming touches nothing in
+      Gmail.
+    </mat-hint>
+  </mat-form-field>
+
   <p class="help m-0 text-sm" data-testid="labels-rename-hint">
     Renaming does not touch Gmail or mail already labelled: new suggestions use the new name.
   </p>
-  @if (formError(); as error) {
-    <p class="labels-error m-0 text-sm" role="alert" data-testid="labels-form-error">{{ error }}</p>
-  }
 
   <div>
     <button
