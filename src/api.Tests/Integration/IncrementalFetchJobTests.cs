@@ -52,12 +52,7 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
     public async ValueTask DisposeAsync()
     {
         await host.DisposeAsync();
-        await using var db = postgres.CreateDbContext();
-        await db.FetchState.ExecuteUpdateAsync(s => s
-            .SetProperty(r => r.AccountEmail, (string?)null)
-            .SetProperty(r => r.MailboxPhase, MailboxPhase.NotStarted)
-            .SetProperty(r => r.PageToken, (string?)null)
-            .SetProperty(r => r.LastHistoryId, (string?)null));
+        await postgres.ResetFetchStateAsync();
     }
 
     [Fact]

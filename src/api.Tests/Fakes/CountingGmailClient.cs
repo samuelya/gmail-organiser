@@ -4,7 +4,7 @@ using GmailOrganiser.Gmail.Fake;
 
 namespace GmailOrganiser.Tests.Fakes;
 
-/// <summary>Records every call to the wrapped <see cref="FakeGmailClient"/> and runs a hook after each metadata or history call.</summary>
+/// <summary>Records every call to the wrapped <see cref="FakeGmailClient"/> and runs a hook after each metadata, labels or history call.</summary>
 public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 {
     public FakeGmailClient Inner => inner;
@@ -184,9 +184,18 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return result;
     }
 
-    public Task<IReadOnlyList<GmailMessageLabels>> GetMessagesLabelsAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    /// <summary>Runs after the n-th (1-based) labels-only call returned.</summary>
+    public Func<int, Task>? AfterLabels { get; set; }
+
+    public async Task<IReadOnlyList<GmailMessageLabels>> GetMessagesLabelsAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {
         LabelsCalls.Enqueue([.. ids]);
-        return inner.GetMessagesLabelsAsync(ids, ct);
+        var result = await inner.GetMessagesLabelsAsync(ids, ct);
+        if (AfterLabels is { } hook)
+        {
+            await hook(LabelsCalls.Count);
+        }
+
+        return result;
     }
 }

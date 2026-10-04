@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Fetch;
 
-/// <summary>Mailbox fetch start and status. Pause, resume and cancel are the generic <c>/api/jobs/{id}/...</c> endpoints.</summary>
+/// <summary>Mailbox fetch start, labels resync and status. Pause, resume and cancel are the generic <c>/api/jobs/{id}/...</c> endpoints.</summary>
 public static class FetchEndpoints
 {
     public static IEndpointRouteBuilder MapFetchEndpoints(this IEndpointRouteBuilder endpoints)
@@ -16,6 +16,7 @@ public static class FetchEndpoints
         group.MapPost("/incremental", StartIncrementalAsync).RequireAccountMatch();
         group.MapGet("/status", GetStatusAsync);
         group.MapPost("/sender", StartSenderAsync).RequireAccountMatch();
+        group.MapPost("/labels/resync", StartLabelResyncAsync).RequireAccountMatch();
         return endpoints;
     }
 
@@ -85,6 +86,44 @@ public static class FetchEndpoints
         }
 
         return await EnqueueAsync(jobs, IncrementalFetchJob.JobType, IncrementalFetchJob.Queue, ct);
+    }
+
+    /// <summary>
+    /// 202 with a new job; 200 with the active one, or with the latest failed or paused one after resuming it from its
+    /// cursor; 409 when the local data belongs to another account, Gmail is not connected or another fetch-queue job
+    /// (mailbox, incremental or sender fetch) is queued, running or paused.
+    /// </summary>
+    private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartLabelResyncAsync(
+        ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
+    {
+        if (!await IsConnectedAsync(tokens, ct))
+        {
+            return GmailNotConnected("Connect Gmail in Setup before resyncing labels.");
+        }
+
+        var latest = await LatestJobAsync(db, [LabelResyncJob.JobType], ct);
+        if (latest is { Status: JobStatus.Queued or JobStatus.Running })
+        {
+            return TypedResults.Ok(new StartFetchResponse(latest.Id));
+        }
+
+        // The fetch status reports only the mailbox and incremental fetch; a resync never starts or resumes beside another fetch.
+        if (await db.Jobs.AnyAsync(
+            j => j.Queue == JobQueues.Fetch && j.Type != LabelResyncJob.JobType && JobRow.Active.Contains(j.Status), ct))
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Fetch in progress",
+                detail: "Another fetch is queued, running or paused; let it finish or cancel it before resyncing labels.");
+        }
+
+        if (latest is { Status: JobStatus.Failed or JobStatus.Paused }
+            && await jobs.ResumeAsync(latest.Id, ct) == JobActionResult.Ok)
+        {
+            return TypedResults.Ok(new StartFetchResponse(latest.Id));
+        }
+
+        return await EnqueueAsync(jobs, LabelResyncJob.JobType, LabelResyncJob.Queue, ct);
     }
 
     private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> EnqueueAsync(

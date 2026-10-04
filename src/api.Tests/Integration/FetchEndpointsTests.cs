@@ -28,21 +28,19 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         await db.Messages.ExecuteDeleteAsync();
         await db.Senders.ExecuteDeleteAsync();
         await db.OAuthTokens.ExecuteDeleteAsync();
-        await db.FetchState.ExecuteUpdateAsync(s => s
-            .SetProperty(r => r.AccountEmail, (string?)null)
-            .SetProperty(r => r.MailboxPhase, MailboxPhase.NotStarted)
-            .SetProperty(r => r.PageToken, (string?)null)
-            .SetProperty(r => r.InboxFetched, 0)
-            .SetProperty(r => r.AllMailFetched, 0)
-            .SetProperty(r => r.MessagesTotal, (long?)null)
-            .SetProperty(r => r.InboxTotal, (long?)null)
-            .SetProperty(r => r.AllMailTotal, (long?)null)
-            .SetProperty(r => r.LastHistoryId, (string?)null)
-            .SetProperty(r => r.StartedAt, (DateTimeOffset?)null)
-            .SetProperty(r => r.CompletedAt, (DateTimeOffset?)null));
+        await postgres.ResetFetchStateAsync();
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    /// <summary>Removes the jobs these tests queue and resets fetch_state, so later classes in the collection start clean.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Jobs.ExecuteDeleteAsync();
+        }
+
+        await postgres.ResetFetchStateAsync();
+    }
 
     [Fact]
     public async Task Status_before_any_fetch_is_not_started_with_zeros_and_the_Gmail_totals()
@@ -336,6 +334,70 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
+    public async Task Labels_resync_twice_returns_202_then_200_with_the_same_job_kept_out_of_the_fetch_status()
+    {
+        await using var host = FakeGmailHost();
+
+        var first = await PostStartAsync(host, "/api/fetch/labels/resync");
+        var second = await PostStartAsync(host, "/api/fetch/labels/resync");
+
+        first.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var id = (await first.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
+        (await second.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId.ShouldBe(id);
+        (await StatusAsync(host)).ActiveJob.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(FetchJobTypes.Mailbox, JobStatus.Running)]
+    [InlineData(FetchJobTypes.Incremental, JobStatus.Queued)]
+    [InlineData(FetchJobTypes.Sender, JobStatus.Paused)]
+    public async Task Labels_resync_while_another_fetch_queue_job_is_active_is_a_409_problem(string type, JobStatus status)
+    {
+        await using var host = FakeGmailHost();
+        await AddJobAsync(NewJob(type, status, null, null));
+        var paused = await AddJobAsync(NewJob(LabelResyncJob.JobType, JobStatus.Paused, null, null));
+
+        var response = await PostStartAsync(host, "/api/fetch/labels/resync");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadFromJsonAsync<ProblemDetails>(Ct)).ShouldNotBeNull().Title.ShouldBe("Fetch in progress");
+        await using var db = postgres.CreateDbContext();
+        (await db.Jobs.CountAsync(j => j.Type == LabelResyncJob.JobType, Ct)).ShouldBe(1);
+        (await db.Jobs.SingleAsync(j => j.Id == paused, Ct)).Status.ShouldBe(JobStatus.Paused);
+    }
+
+    [Fact]
+    public async Task Status_shows_the_running_mailbox_fetch_not_a_newer_queued_resync()
+    {
+        await using var host = FakeGmailHost();
+        var running = await AddMailboxJobAsync(JobStatus.Running, null, null);
+        var resync = NewJob(LabelResyncJob.JobType, JobStatus.Queued, null, null);
+        resync.CreatedAt = resync.CreatedAt.AddMinutes(1);
+        await AddJobAsync(resync);
+
+        var status = await StatusAsync(host);
+
+        status.ActiveJob.ShouldNotBeNull().Id.ShouldBe(running);
+        status.FailedJob.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Status_keeps_the_failed_mailbox_job_when_a_newer_resync_failed()
+    {
+        await using var host = FakeGmailHost();
+        var failed = await AddMailboxJobAsync(JobStatus.Failed, null, "Gmail unavailable");
+        var resync = NewJob(LabelResyncJob.JobType, JobStatus.Failed, null, "Gmail unavailable");
+        resync.CreatedAt = resync.CreatedAt.AddMinutes(1);
+        await AddJobAsync(resync);
+
+        var status = await StatusAsync(host);
+
+        status.ActiveJob.ShouldBeNull();
+        status.FailedJob.ShouldNotBeNull().Id.ShouldBe(failed);
+    }
+
+    [Fact]
     public async Task Status_reports_the_failed_mailbox_job_and_ignores_other_fetch_queue_jobs()
     {
         await using var host = FakeGmailHost();
@@ -355,10 +417,12 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         job.Error.ShouldBe("Gmail unavailable");
     }
 
-    private async Task<Guid> AddMailboxJobAsync(JobStatus status, string? cursor, string? error)
+    private Task<Guid> AddMailboxJobAsync(JobStatus status, string? cursor, string? error) =>
+        AddJobAsync(NewJob(MailboxFetchJob.JobType, status, cursor, error));
+
+    private async Task<Guid> AddJobAsync(JobRow row)
     {
         await using var db = postgres.CreateDbContext();
-        var row = NewJob(MailboxFetchJob.JobType, status, cursor, error);
         db.Jobs.Add(row);
         await db.SaveChangesAsync(Ct);
         return row.Id;
