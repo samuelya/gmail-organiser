@@ -51,14 +51,13 @@ public sealed class LabelResyncJobTests(ApiFactory factory, PostgresFixture post
     public async ValueTask DisposeAsync()
     {
         await host.DisposeAsync();
-        await using var db = postgres.CreateDbContext();
-        await db.Jobs.ExecuteDeleteAsync();
-        await db.Settings.ExecuteDeleteAsync();
-        await db.FetchState.ExecuteUpdateAsync(s => s
-            .SetProperty(r => r.AccountEmail, (string?)null)
-            .SetProperty(r => r.MailboxPhase, MailboxPhase.NotStarted)
-            .SetProperty(r => r.PageToken, (string?)null)
-            .SetProperty(r => r.LastHistoryId, (string?)null));
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Jobs.ExecuteDeleteAsync();
+            await db.Settings.ExecuteDeleteAsync();
+        }
+
+        await postgres.ResetFetchStateAsync();
     }
 
     [Fact]

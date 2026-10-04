@@ -48,8 +48,9 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
             await db.Messages.ExecuteDeleteAsync();
             await db.Senders.ExecuteDeleteAsync();
             await db.Settings.ExecuteDeleteAsync();
-            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.AccountEmail, (string?)null));
         }
+
+        await postgres.ResetFetchStateAsync();
 
         host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
         {
@@ -68,8 +69,12 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
     public async ValueTask DisposeAsync()
     {
         await host.DisposeAsync();
-        await using var db = postgres.CreateDbContext();
-        await db.Settings.ExecuteDeleteAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Settings.ExecuteDeleteAsync();
+        }
+
+        await postgres.ResetFetchStateAsync();
     }
 
     [Fact]

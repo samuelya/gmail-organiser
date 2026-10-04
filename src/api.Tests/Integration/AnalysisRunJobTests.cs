@@ -252,6 +252,7 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
 
     public async ValueTask InitializeAsync()
     {
+        await postgres.ResetFetchStateAsync();
         await using (var db = postgres.CreateDbContext())
         {
             await db.Suggestions.ExecuteDeleteAsync();
@@ -261,7 +262,6 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
             await db.Messages.ExecuteDeleteAsync();
             await db.Senders.ExecuteDeleteAsync();
             await db.Settings.ExecuteDeleteAsync();
-            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.AccountEmail, (string?)null));
             var seed = Seed();
             db.Messages.AddRange(seed.Select(m => new MessageRow
             {
@@ -306,8 +306,12 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
     public async ValueTask DisposeAsync()
     {
         await host.DisposeAsync();
-        await using var db = postgres.CreateDbContext();
-        await db.Settings.ExecuteDeleteAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Settings.ExecuteDeleteAsync();
+        }
+
+        await postgres.ResetFetchStateAsync();
     }
 
     public async Task SetChatModelAsync(string? model)

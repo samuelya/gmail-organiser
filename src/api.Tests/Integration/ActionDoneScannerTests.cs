@@ -41,16 +41,8 @@ public sealed class ActionDoneScannerTests(ApiFactory factory, PostgresFixture p
         await SettingsAsync(on: true);
     }
 
-    /// <summary>Leaves fetch_state as migrated, for the later classes in the collection.</summary>
-    public async ValueTask DisposeAsync()
-    {
-        await h.DisposeAsync();
-        await using var db = postgres.CreateDbContext();
-        await db.FetchState.ExecuteUpdateAsync(s => s
-            .SetProperty(r => r.AccountEmail, (string?)null)
-            .SetProperty(r => r.MailboxPhase, MailboxPhase.NotStarted)
-            .SetProperty(r => r.LastHistoryId, (string?)null));
-    }
+    /// <summary>The harness leaves fetch_state as migrated, for the later classes in the collection.</summary>
+    public ValueTask DisposeAsync() => h.DisposeAsync();
 
     [Fact]
     public async Task Removing_the_action_label_archives_once_and_the_batch_can_be_undone()

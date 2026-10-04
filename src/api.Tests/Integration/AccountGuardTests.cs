@@ -275,11 +275,11 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
 
     private async Task ResetAsync()
     {
-        await using var db = postgres.CreateDbContext();
-        await db.Jobs.ExecuteDeleteAsync();
-        await db.FetchState.ExecuteUpdateAsync(s => s
-            .SetProperty(r => r.AccountEmail, (string?)null)
-            .SetProperty(r => r.MailboxPhase, MailboxPhase.NotStarted)
-            .SetProperty(r => r.PageToken, (string?)null));
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Jobs.ExecuteDeleteAsync();
+        }
+
+        await postgres.ResetFetchStateAsync();
     }
 }

@@ -1,4 +1,5 @@
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
 
@@ -28,6 +29,29 @@ public sealed class PostgresFixture : IAsyncLifetime
         var options = new DbContextOptionsBuilder<AppDbContext>();
         AppDbContext.Configure(options, ConnectionString);
         return new AppDbContext(options.Options);
+    }
+
+    /// <summary>
+    /// Puts the singleton <c>fetch_state</c> row back to its migration seed, every column. Classes that write the row
+    /// call it on set-up and tear-down, so no class sees another's fetch state.
+    /// </summary>
+    public async Task ResetFetchStateAsync()
+    {
+        await using var db = CreateDbContext();
+        var seed = new FetchStateRow { UpdatedAt = DateTimeOffset.UnixEpoch };
+        await db.FetchState.ExecuteUpdateAsync(s => s
+            .SetProperty(r => r.AccountEmail, seed.AccountEmail)
+            .SetProperty(r => r.MailboxPhase, seed.MailboxPhase)
+            .SetProperty(r => r.PageToken, seed.PageToken)
+            .SetProperty(r => r.InboxFetched, seed.InboxFetched)
+            .SetProperty(r => r.AllMailFetched, seed.AllMailFetched)
+            .SetProperty(r => r.MessagesTotal, seed.MessagesTotal)
+            .SetProperty(r => r.InboxTotal, seed.InboxTotal)
+            .SetProperty(r => r.AllMailTotal, seed.AllMailTotal)
+            .SetProperty(r => r.LastHistoryId, seed.LastHistoryId)
+            .SetProperty(r => r.StartedAt, seed.StartedAt)
+            .SetProperty(r => r.CompletedAt, seed.CompletedAt)
+            .SetProperty(r => r.UpdatedAt, seed.UpdatedAt));
     }
 
     public ValueTask DisposeAsync() => container.DisposeAsync();
