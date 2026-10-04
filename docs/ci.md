@@ -15,7 +15,7 @@ GitHub Actions, `.github/workflows/`. Every workflow has `permissions: contents:
 
 A new push to a PR cancels that PR's previous run.
 
-Release: `git tag vX.Y.Z && git push origin vX.Y.Z` on `main`; Publish pushes both images and passes `VERSION=X.Y.Z` to the api image, which `/healthz` and the Settings footer show (a manual run and a local build show `0.0.0-dev`). GHCR packages start private. Steps: "Release checklist" below.
+Release: `git tag vX.Y.Z && git push origin vX.Y.Z` on `main`; Publish pushes both images and passes `VERSION=X.Y.Z` to the api image, which `/healthz` and the Settings footer show (a manual run and a local build show the `Directory.Build.props` version). GHCR packages start private. Steps: "Release checklist" below.
 
 ## Required checks
 

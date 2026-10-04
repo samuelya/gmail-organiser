@@ -83,8 +83,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          # Tag runs: the semver without the leading v (api /healthz version); manual runs keep the Dockerfile default.
+          # Tag runs: the semver without the leading v (api /healthz version); manual runs pass none and keep the Directory.Build.props version.
           build-args: |
-            VERSION=${{ github.ref_type == 'tag' && steps.meta.outputs.version || '0.0.0-dev' }}
+            VERSION=${{ github.ref_type == 'tag' && steps.meta.outputs.version || '' }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
