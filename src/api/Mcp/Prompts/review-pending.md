@@ -13,6 +13,9 @@ Steps:
      when the label tree has a `documentTypeParent`, you may also set `document_type_label` as a full label path `<documentTypeParent>/<Name>` (one of `documentTypes`, or a new one directly under the parent; `""` for none; omit it to keep each email's own type). Only `alternative` takes a `document_type_label`;
    - `needs_human` when you are unsure, the samples disagree, or the decision depends on something only the user knows.
    Give `reasoning` in at most 3 short sentences. If `submit_review` answers `ok: false`, read the `reason`, move on to the next item and do not retry it.
+   Items of type `filter_finding` and `label_plan` are not emails:
+   - `filter_finding`: `get_review_item` returns the finding, its proposed `fix` and the filters concerned (call `get_filters` once for the other filters if needed). Answer with `submit_review`: `agree` when the fix is right, `alternative` with `filter_criteria` (the filter you propose instead, as JSON or plain text) and no `topic_label`, or `needs_human`.
+   - `label_plan`: `get_review_item` returns the plan and the label tree (as `get_label_plan` does). Answer with `submit_taxonomy_feedback` (not `submit_review`): `plan_id` is the item's `labelPlanId`, `comments` your feedback, and `alternative_structure` (full label paths) only when you recommend a different structure.
 6. End with a one-line summary: how many items you agreed with, changed and left to the user.
 
 Rules:
