@@ -73,13 +73,23 @@ describe('RulesClaude', () => {
   });
 
   it('keeps a live reviewed item when the reconnect reload returns it still running', () => {
-    const reload = new Subject<{ items: ExternalReviewDto[]; page: number; pageSize: number; total: number }>();
+    const reload = new Subject<{
+      items: ExternalReviewDto[];
+      page: number;
+      pageSize: number;
+      total: number;
+    }>();
     const service = setup([ruleReview({ id: 'a', status: 'running' })]);
     list.mockReturnValue(reload);
     reconnects.set(1);
     TestBed.tick();
     changes.next(ruleReview({ id: 'a', status: 'reviewed', reviewedAt: '2026-01-01T00:05:00Z' }));
-    reload.next({ items: [ruleReview({ id: 'a', status: 'running' })], page: 1, pageSize: 100, total: 1 });
+    reload.next({
+      items: [ruleReview({ id: 'a', status: 'running' })],
+      page: 1,
+      pageSize: 100,
+      total: 1,
+    });
     expect(service.forFinding('f1')?.status).toBe('reviewed');
   });
 
