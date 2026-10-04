@@ -88,7 +88,7 @@ import { LabelPlanItemDto, proposalText, UpdatePlanItemRequest } from './label-p
       <p class="muted m-0 text-sm" data-testid="plan-item-rationale">{{ i.rationale }}</p>
 
       @if (i.kind === 'nest' && editable()) {
-        <form class="flex flex-wrap items-start gap-2" (ngSubmit)="saveName()">
+        <form class="flex flex-wrap items-start gap-2" (submit)="saveName($event)">
           <mat-form-field class="min-w-64 flex-1" subscriptSizing="dynamic">
             <mat-label>New name</mat-label>
             <input matInput [formControl]="name" data-testid="plan-item-name" />
@@ -169,7 +169,8 @@ export class LabelPlanItem {
     this.update.emit({ status });
   }
 
-  saveName(): void {
+  saveName(event: Event): void {
+    event.preventDefault();
     if (this.name.invalid || !this.nameChanged()) return;
     this.update.emit({ proposedName: this.name.value.trim() });
   }

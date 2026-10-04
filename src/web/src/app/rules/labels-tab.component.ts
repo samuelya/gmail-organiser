@@ -90,8 +90,12 @@ export class LabelsTab {
     const items = this.plan()?.items ?? [];
     return PLAN_KINDS.map((kind) => ({ kind, items: items.filter((i) => i.kind === kind) }));
   });
-  readonly accepted = computed(() => this.plan()?.items.filter((i) => i.status === 'accepted').length ?? 0);
-  readonly failed = computed(() => this.plan()?.items.filter((i) => i.status === 'failed').length ?? 0);
+  readonly accepted = computed(
+    () => this.plan()?.items.filter((i) => i.status === 'accepted').length ?? 0,
+  );
+  readonly failed = computed(
+    () => this.plan()?.items.filter((i) => i.status === 'failed').length ?? 0,
+  );
   /** The apply job while the plan is being applied. */
   readonly job = computed(() => {
     const plan = this.plan();

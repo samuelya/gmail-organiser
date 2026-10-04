@@ -68,7 +68,11 @@ export class RulesService {
   }
 
   /** `400` for an invalid name or target, `409` once the plan is not a draft. */
-  updateItem(planId: string, itemId: string, request: UpdatePlanItemRequest): Observable<LabelPlanDto> {
+  updateItem(
+    planId: string,
+    itemId: string,
+    request: UpdatePlanItemRequest,
+  ): Observable<LabelPlanDto> {
     return this.http.patch<LabelPlanDto>(
       `${PLANS}/${encodeURIComponent(planId)}/items/${encodeURIComponent(itemId)}`,
       request,
