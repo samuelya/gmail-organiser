@@ -9,7 +9,7 @@ import { JobDto } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { LabelDto } from '../review/labels.models';
 import { LabelsService } from '../review/labels.service';
-import { planItem } from './label-plan-item.component.spec';
+import { planItem } from './label-plan.testing';
 import { LabelPlanDto } from './label-plan.models';
 import { LabelsTab } from './labels-tab.component';
 import { RulesService } from './rules.service';

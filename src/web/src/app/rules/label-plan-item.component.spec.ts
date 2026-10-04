@@ -4,23 +4,8 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter } from '@angular/router';
 import { LabelDto } from '../review/labels.models';
 import { LabelPlanItem } from './label-plan-item.component';
+import { planItem } from './label-plan.testing';
 import { LabelPlanItemDto, UpdatePlanItemRequest } from './label-plan.models';
-
-export const planItem = (over: Partial<LabelPlanItemDto> = {}): LabelPlanItemDto => ({
-  id: 'i-1',
-  kind: 'nest',
-  labelId: 'L1',
-  labelName: 'Topic-Alpha',
-  messageCount: 12,
-  proposedName: 'Topic/Alpha',
-  targetLabelId: null,
-  targetLabelName: null,
-  affectedFilterIds: [],
-  rationale: 'Synthetic rationale.',
-  status: 'proposed',
-  error: null,
-  ...over,
-});
 
 const labels: LabelDto[] = [
   { id: 'L1', name: 'Topic-Alpha', type: 'user' },
