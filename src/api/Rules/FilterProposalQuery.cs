@@ -31,13 +31,14 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
             .ThenBy(s => s.Address)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
-            .Select(s => new { s.Address, s.DisplayName, s.TotalCount, s.Allowlisted })
+            .Select(s => new { s.Address, s.DisplayName, s.TotalCount })
             .ToListAsync(ct);
 
         string[] addresses = [.. senders.Select(s => s.Address)];
         var found = await patterns.GetManyAsync(addresses, ct);
         var listIds = await patterns.CommonListIdsAsync(addresses, ct);
         var settings = await settingsStore.GetAsync(ct);
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, addresses, ct);
         var items = new List<FilterProposalDto>();
         foreach (var sender in senders)
         {
@@ -50,7 +51,7 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
 
             items.Add(new FilterProposalDto(
                 sender.Address, sender.DisplayName, sender.TotalCount, listIds.GetValueOrDefault(sender.Address), pattern,
-                Suggest(sender.Address, pattern, settings.DeleteLabelName, sender.Allowlisted)));
+                Suggest(sender.Address, pattern, settings.DeleteLabelName, allowlist)));
         }
 
         return new PagedDto<FilterProposalDto>(items, page, pageSize, total);
@@ -59,12 +60,13 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
     /// <summary>
     /// Labels the sender's mail with its topic label and skips the inbox unless it needs action; a to-be-deleted
     /// pattern adds the delete label instead, skips the inbox and leaves mail with attachments alone. An allowlisted
-    /// sender is protected (MessageProtection), so it never gets the delete label: its proposal is the topic label.
+    /// sender or domain is protected (MessageProtection), so it never gets the delete label: its proposal is the topic label.
     /// </summary>
-    public static FilterSuggestionDto Suggest(string address, SenderPatternDto pattern, string deleteLabelName, bool allowlisted)
+    public static FilterSuggestionDto Suggest(string address, SenderPatternDto pattern, string deleteLabelName, Allowlist allowlist)
     {
         ArgumentNullException.ThrowIfNull(pattern);
-        var delete = pattern.ToBeDeleted == true && !allowlisted;
+        ArgumentNullException.ThrowIfNull(allowlist);
+        var delete = pattern.ToBeDeleted == true && allowlist.Reason(address) is null;
         var criteria = new FilterCriteriaDto(address, null, null, null, delete ? "has:attachment" : null, null, null, null, null);
         var action = delete
             ? new FilterActionRequest([deleteLabelName], SkipInbox: true, MarkRead: false)

@@ -61,6 +61,10 @@ public static class SettingsValidation
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
+    public const int MaxAllowlistedDomains = 500;
+    public const int MaxDomainLength = 253;
+    public const string AllowlistedDomainsField = "protection.allowlistedDomains";
+
     // A document-type label is one level below its parent, so the parent leaves room for it in Gmail's limits.
     public const int MaxDocumentTypeParentLength = 200;
     public const int MaxDocumentTypeParentSegments = 4;
@@ -135,6 +139,11 @@ public static class SettingsValidation
             ValidateAppsScript(errors, appsScript);
         }
 
+        if (request.Protection?.AllowlistedDomains is { } domains)
+        {
+            ValidateAllowlistedDomains(errors, domains);
+        }
+
         ValidateLabelNames(errors, request, current ?? new AppSettings());
         return errors;
     }
@@ -177,6 +186,54 @@ public static class SettingsValidation
         Rules = [.. (value.Rules ?? []).Select(r => r with { Label = r.Label.Trim() })],
         KeepInInboxLabels = [.. (value.KeepInInboxLabels ?? []).Select(l => l.Trim())],
     };
+
+    /// <summary>The validated domains in their stored form (<see cref="CanonicalDomain"/>), dropping duplicates.</summary>
+    public static IReadOnlyList<string> NormaliseDomains(IEnumerable<string> domains) =>
+        [.. domains.Select(d => CanonicalDomain(d)!).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// The domain as a stored address carries it: trimmed, one trailing dot dropped, an IDN in punycode, lower-case.
+    /// Null when it is not a host name of at least two labels (a bare TLD or <c>localhost</c> would cover too much).
+    /// </summary>
+    public static string? CanonicalDomain(string? value)
+    {
+        var domain = value?.Trim() ?? "";
+        domain = domain.EndsWith('.') ? domain[..^1] : domain;
+        if (domain.Length == 0 || domain.EndsWith('.') || domain.Contains('@'))
+        {
+            return null;
+        }
+
+        try
+        {
+            domain = new IdnMapping().GetAscii(domain).ToLowerInvariant();
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+
+        return domain.Length <= MaxDomainLength && domain.Contains('.') && Uri.CheckHostName(domain) == UriHostNameType.Dns
+            ? domain
+            : null;
+    }
+
+    private static void ValidateAllowlistedDomains(Dictionary<string, string[]> errors, IReadOnlyList<string?> domains)
+    {
+        // Duplicates are dropped, so the cap counts distinct entries.
+        if (domains.Select(d => CanonicalDomain(d) ?? d).Distinct(StringComparer.Ordinal).Count() > MaxAllowlistedDomains)
+        {
+            errors[AllowlistedDomainsField] = [$"At most {MaxAllowlistedDomains} domains."];
+            return;
+        }
+
+        var bad = domains.Select((d, i) => (Value: d, Index: i)).FirstOrDefault(d => CanonicalDomain(d.Value) is null, (null, -1));
+        if (bad.Index >= 0)
+        {
+            errors[AllowlistedDomainsField] =
+                [$"'{bad.Value ?? "null"}' is not a domain: a host name such as example.com, without '@', at most {MaxDomainLength} characters."];
+        }
+    }
 
     // A rule's label need not exist in Gmail yet: the script skips missing labels.
     private static void ValidateAppsScript(Dictionary<string, string[]> errors, AppsScriptSettings request)

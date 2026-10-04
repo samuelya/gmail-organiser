@@ -10,7 +10,7 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// </summary>
 public static class RepresentativePicker
 {
-    public static IReadOnlyList<string> Pick(MessageGroup group, int k, IReadOnlySet<string> allowlistedSenders, ProtectionSettings rules)
+    public static IReadOnlyList<string> Pick(MessageGroup group, int k, Allowlist allowlist, ProtectionSettings rules)
     {
         // Oldest first, so an index is a position on the group's timeline.
         var byDate = group.Members.OrderBy(m => m.InternalDate).ThenBy(m => m.Id, StringComparer.Ordinal).ToList();
@@ -19,7 +19,7 @@ public static class RepresentativePicker
 
         for (var i = 0; i < byDate.Count; i++)
         {
-            if (MessageProtection.IsProtected(byDate[i], allowlistedSenders, rules))
+            if (MessageProtection.IsProtected(byDate[i], allowlist, rules))
             {
                 picked.Add(i);
             }

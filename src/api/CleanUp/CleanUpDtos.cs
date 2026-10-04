@@ -6,6 +6,8 @@ namespace GmailOrganiser.CleanUp;
 /// <param name="Protected">Of <paramref name="Messages"/>, those Delete skips unless asked to include them.</param>
 public sealed record CleanupSummaryDto(int Messages, int Senders, int Protected);
 
+/// <param name="Allowlisted">The address itself is allowlisted (#178).</param>
+/// <param name="AllowlistedByDomain">The sender's domain, or a parent domain, is in <c>protection.allowlistedDomains</c> (#203).</param>
 public sealed record CleanupSenderDto(
     string Address,
     string? DisplayName,
@@ -13,7 +15,8 @@ public sealed record CleanupSenderDto(
     int ProtectedCount,
     DateTimeOffset? OldestAt,
     DateTimeOffset? NewestAt,
-    bool Allowlisted);
+    bool Allowlisted,
+    bool AllowlistedByDomain);
 
 /// <param name="ProtectedReason">Why Delete skips the message (<c>MessageProtection.Reason</c>); null when it does not.</param>
 public sealed record CleanupMessageDto(
