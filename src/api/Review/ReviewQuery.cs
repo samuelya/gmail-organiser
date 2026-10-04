@@ -22,12 +22,16 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     public const int DefaultGroupPageSize = 20;
     public const int MaxGroupPageSize = 50;
 
-    /// <summary>Parses <c>pending|approved|rejected</c> (default pending); null when invalid.</summary>
+    /// <summary>
+    /// Parses <c>pending|approved|rejected|applied</c> (default pending); null when invalid. <c>applied</c> is for the
+    /// read paths and the alternative decisions only; the review decisions never act on applied mail.
+    /// </summary>
     public static SuggestionStatus? ParseStatus(string? value) => value?.Trim().ToLowerInvariant() switch
     {
         null or "" or "pending" => SuggestionStatus.Pending,
         "approved" => SuggestionStatus.Approved,
         "rejected" => SuggestionStatus.Rejected,
+        "applied" => SuggestionStatus.Applied,
         _ => null,
     };
 
@@ -60,6 +64,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         {
             SuggestionStatus.Approved => counts.Where(c => c.Approved > 0).OrderByDescending(c => c.Approved),
             SuggestionStatus.Rejected => counts.Where(c => c.Rejected > 0).OrderByDescending(c => c.Rejected),
+            SuggestionStatus.Applied => counts.Where(c => c.Applied > 0).OrderByDescending(c => c.Applied),
             _ => counts.Where(c => c.Pending > 0).OrderByDescending(c => c.Pending),
         };
 

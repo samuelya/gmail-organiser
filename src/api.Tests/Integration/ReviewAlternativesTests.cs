@@ -122,6 +122,57 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Applied_suggestions_with_an_alternative_are_listed_and_accepted_by_group()
+    {
+        var shopIds = Enumerable.Range(0, 10).Select(i => $"a{i:00}").ToArray();
+        await using (var db = postgres.CreateDbContext())
+        {
+            foreach (var id in shopIds)
+            {
+                await AnalysisRunHarness.DecideAsync(db, id, SuggestionStatus.Applied);
+            }
+        }
+
+        var senders = await (await h.GetAsync("/api/review/senders?status=applied&hasAlternative=true")).Content.ReadFromJsonAsync<PagedDto<ReviewSenderDto>>(Ct);
+        var shop = senders!.Items.ShouldHaveSingleItem();
+        (shop.Address, shop.Applied, senders.Total).ShouldBe((AnalysisRunHarness.Shop, 10, 1L));
+        (await h.GetAsync("/api/review/senders?status=APPLIED")).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var response = await h.GetAsync($"/api/review/senders/{AnalysisRunHarness.Shop}?status=applied&hasAlternative=true");
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var group = (await response.Content.ReadFromJsonAsync<ReviewSenderDetailDto>(Ct))!.Groups.ShouldHaveSingleItem();
+        (group.Size, group.Alternative!.Count).ShouldBe((10, 10));
+        (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldBeEmpty();
+
+        var groupRef = new GroupRef(AnalysisRunHarness.Shop, group.GroupKey!, "applied");
+        (await DecideAsync("accept", new AlternativeDecisionRequest(null, [groupRef]))).ShouldBe(new AlternativeDecisionResponse(10, 0, 0));
+        await using var check = postgres.CreateDbContext();
+        (await check.Suggestions.CountAsync(s => shopIds.Contains(s.MessageId) && s.Status == SuggestionStatus.Pending && s.TopicLabel == Compared, Ct))
+            .ShouldBe(10);
+    }
+
+    [Fact]
+    public async Task Review_decisions_still_refuse_applied_suggestions()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await AnalysisRunHarness.DecideAsync(db, "a00", SuggestionStatus.Applied);
+            await AnalysisRunHarness.DecideAsync(db, "a01", SuggestionStatus.Applied);
+        }
+
+        var ids = await IdsAsync("a00", "a01");
+        (await h.PostWithoutBodyAsync($"/api/review/suggestions/{ids[0]}/approve")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await h.PostWithoutBodyAsync($"/api/review/suggestions/{ids[0]}/reject")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await h.PutAsync($"/api/review/suggestions/{ids[0]}", new EditSuggestionRequest("Synthetic", false, false))).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await h.PostAsync("/api/review/analyse-individually", new AnalyseIndividuallyRequest(ids))).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        var reject = await h.PostAsync("/api/review/groups/reject", new GroupDecisionRequest(AnalysisRunHarness.Shop, await GroupKeyAsync("a00")));
+        (await reject.Content.ReadFromJsonAsync<GroupDecisionResponse>(Ct))!.Changed.ShouldBe(8);
+
+        await using var check = postgres.CreateDbContext();
+        (await check.Suggestions.CountAsync(s => ids.Contains(s.Id) && s.Status == SuggestionStatus.Applied, Ct)).ShouldBe(2);
+    }
+
+    [Fact]
     public async Task Discard_only_deletes_the_alternative()
     {
         var ids = await IdsAsync("b00");
@@ -275,7 +326,9 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
         (await h.PostAsync("/api/review/alternatives/discard", new AlternativeDecisionRequest([], []))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest(null, [new GroupRef(" ", "key")])))
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
-        (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Shop, "key", "applied")])))
+        (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Shop, "key", "archived")])))
+            .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await h.PostAsync("/api/claude/reviews", new CreateExternalReviewsRequest(null, [new GroupRef(AnalysisRunHarness.Shop, "key", "applied")], null)))
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([.. Enumerable.Range(0, 1001).Select(_ => Guid.NewGuid())], null)))
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);

@@ -51,7 +51,7 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
         (await ListAsync("/api/review/senders?search=%25")).Total.ShouldBe(0);
         var paged = await ListAsync("/api/review/senders?page=2&pageSize=2");
         (paged.Total, paged.Items.ShouldHaveSingleItem().Address).ShouldBe((3, AnalysisRunHarness.Billing));
-        (await h.GetAsync("/api/review/senders?status=applied")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await h.GetAsync("/api/review/senders?status=archived")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.GetAsync("/api/review/senders?pageSize=0")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 

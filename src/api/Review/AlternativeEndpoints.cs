@@ -33,7 +33,7 @@ public static class AlternativeEndpoints
             errors["suggestionIds"] = [$"At most {AlternativeService.MaxTargets} ids."];
         }
 
-        var groups = GroupRefs.Normalise(request.Groups, AlternativeService.MaxTargets, errors);
+        var groups = GroupRefs.Normalise(request.Groups, AlternativeService.MaxTargets, errors, allowApplied: true);
         return errors.Count > 0
             ? TypedResults.ValidationProblem(errors)
             : TypedResults.Ok(await decide(request.SuggestionIds ?? [], groups, ct));
