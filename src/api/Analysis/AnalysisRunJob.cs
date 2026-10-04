@@ -157,7 +157,7 @@ public sealed partial class AnalysisRunJob(
     }
 
     private sealed record Plan(
-        IReadOnlyList<MessageGroup> Individual, IReadOnlyList<MessageGroup> Groups, IReadOnlySet<string> Allowlisted, AnalysisRunCursor Cursor);
+        IReadOnlyList<MessageGroup> Individual, IReadOnlyList<MessageGroup> Groups, Allowlist Allowlisted, AnalysisRunCursor Cursor);
 
     /// <summary>
     /// The frozen candidates still to cover, newest first: not failed, without a suggestion of this run and still
@@ -192,12 +192,7 @@ public sealed partial class AnalysisRunJob(
             };
         }
 
-        var addresses = candidates.Select(m => m.FromAddress).Distinct().ToArray();
-        var allowlisted = (await db.Senders.AsNoTracking()
-                .Where(s => s.Allowlisted && addresses.Contains(s.Address))
-                .Select(s => s.Address)
-                .ToListAsync(ct))
-            .ToHashSet(StringComparer.Ordinal);
+        var allowlisted = await AllowlistLoader.LoadAsync(db, settings, ct);
 
         var individual = (cursor.IndividualIds ?? []).ToHashSet(StringComparer.Ordinal);
         var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode };
@@ -347,7 +342,7 @@ public sealed partial class AnalysisRunJob(
         IChatClient Chat,
         IReadOnlyList<string> LabelTree,
         PersonalLabels Labels,
-        IReadOnlySet<string> Allowlisted,
+        Allowlist Allowlisted,
         AttachmentPolicySnapshot Attachments);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]

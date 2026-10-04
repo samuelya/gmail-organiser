@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
@@ -24,13 +25,16 @@ public sealed class CleanUpService(AppDbContext db, CleanUpQuery query, ISetting
             return null;
         }
 
-        var rules = (await settingsStore.GetAsync(ct)).Protection;
+        var settings = await settingsStore.GetAsync(ct);
         var rows = await CleanUpQuery.Selected(db, label, selection)
-            .Select(m => new MessageRow { Id = m.Id, FromAddress = m.FromAddress, LabelIds = m.LabelIds, HasAttachment = m.HasAttachment })
+            .Select(m => new MessageRow
+            {
+                Id = m.Id, FromAddress = m.FromAddress, LabelIds = m.LabelIds, HasAttachment = m.HasAttachment, ThreadReplied = m.ThreadReplied,
+            })
             .AsNoTracking()
             .ToListAsync(ct);
-        var allowlisted = await CleanUpQuery.AllowlistedAsync(db, rows.Select(r => r.FromAddress), ct);
-        var queued = rows.Count(m => CleanUpActionsJob.Covers(kind, includeProtected, m, allowlisted, rules));
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, ct);
+        var queued = rows.Count(m => CleanUpActionsJob.Covers(kind, includeProtected, m, allowlist, settings.Protection));
         if (queued == 0)
         {
             return null;

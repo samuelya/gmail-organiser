@@ -171,7 +171,7 @@ public sealed partial class ApplyActionsJob(
             .Join(db.Messages.AsNoTracking(), s => s.MessageId, m => m.Id, (s, m) => new { Suggestion = s, Message = m })
             .OrderBy(x => x.Suggestion.Id)
             .ToListAsync(ct);
-        var allowlisted = await AllowlistedAsync(rows.Select(r => r.Message.FromAddress), ct);
+        var allowlisted = await AllowlistLoader.LoadAsync(db, settings, ct);
         var valid = rows.Where(r => LabelResolver.IsValid(r.Suggestion.TopicLabel)).ToList();
         invalidLabels = rows.Count - valid.Count;
         if (settings.Protection.RepliedThreads)
@@ -205,7 +205,7 @@ public sealed partial class ApplyActionsJob(
         var removable = personal.Keys.ToHashSet(StringComparer.Ordinal);
         var items = valid.Select(r => new PlannedItem(
             r.Suggestion,
-            ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress), removable)));
+            ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted, removable)));
         var chunks = LabelChunks.Group(items, i => i.Plan.Add, i => i.Plan.Remove, gmailOptions.Value.BatchModifyMaxIds)
             .Select(c => new PlannedChunk(c.Items, c.Add, c.Remove))
             .ToList();
@@ -248,12 +248,12 @@ public sealed partial class ApplyActionsJob(
                     throw new PlanChangedException();
                 }
 
-                var allowlisted = await AllowlistedAsync(messages.Values.Select(m => m.FromAddress), t);
+                var allowlisted = await AllowlistLoader.LoadAsync(db, settings, t);
                 var now = time.GetUtcNow();
                 foreach (var suggestion in locked)
                 {
                     var message = messages[suggestion.MessageId];
-                    var fresh = Replan(suggestion, message, plan, settings, allowlisted.Contains(message.FromAddress));
+                    var fresh = Replan(suggestion, message, plan, settings, allowlisted);
                     if (!Sorted(fresh.Add).SequenceEqual(chunk.Add) || !Sorted(fresh.Remove).SequenceEqual(chunk.Remove))
                     {
                         throw new PlanChangedException();
@@ -289,7 +289,7 @@ public sealed partial class ApplyActionsJob(
     }
 
     /// <summary>The plan for a locked row; a label the earlier plan did not resolve (it was not needed then) means it changed.</summary>
-    private static ActionPlan Replan(SuggestionRow suggestion, MessageRow message, Plan plan, AppSettings settings, bool allowlisted)
+    private static ActionPlan Replan(SuggestionRow suggestion, MessageRow message, Plan plan, AppSettings settings, Allowlist allowlisted)
     {
         try
         {
@@ -299,13 +299,6 @@ public sealed partial class ApplyActionsJob(
         {
             throw new PlanChangedException();
         }
-    }
-
-    private async Task<HashSet<string>> AllowlistedAsync(IEnumerable<string> senders, CancellationToken ct)
-    {
-        var addresses = senders.Distinct(StringComparer.Ordinal).ToArray();
-        return (await db.Senders.Where(s => s.Allowlisted && addresses.Contains(s.Address)).Select(s => s.Address).ToListAsync(ct))
-            .ToHashSet(StringComparer.Ordinal);
     }
 
     /// <summary>Adds a label this batch created to the batch, so undo (#113) can tell it from the user's own.</summary>
