@@ -2,8 +2,9 @@ namespace GmailOrganiser.Jobs;
 
 /// <summary>
 /// Vetoes runs of one job type. Register with <c>services.AddKeyedScoped&lt;IJobRunGuard, TGuard&gt;(jobType)</c>;
-/// <see cref="JobRunner"/> asks it before the handler runs and <see cref="JobContext"/> again at every checkpoint, so a
-/// condition that changes mid-run (e.g. a reconnect to another account) stops the job at its next checkpoint.
+/// <see cref="JobRunner"/> asks it before the handler runs and <see cref="JobContext"/> again at every checkpoint and
+/// wherever the handler calls <see cref="JobContext.EnsureMayWriteAsync"/>, so a condition that changes mid-run (e.g. a
+/// reconnect to another account) stops the job before its next write.
 /// </summary>
 public interface IJobRunGuard
 {

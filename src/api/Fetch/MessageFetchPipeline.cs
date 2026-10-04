@@ -95,15 +95,22 @@ public sealed partial class MessageFetchPipeline(
     }
 
     /// <summary>Fetches metadata for <paramref name="ids"/>, upserts it and refreshes the affected senders.</summary>
-    public async Task<int> UpsertByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
-        (await StoreAsync(ids, refresh: false, ct)).Stored;
+    public Task<int> UpsertByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) => UpsertByIdsAsync(ids, null, ct);
+
+    /// <summary>
+    /// As <see cref="UpsertByIdsAsync(IReadOnlyList{string}, CancellationToken)"/>; <paramref name="beforeWrite"/> runs
+    /// after the Gmail read and before the first write, so a throw leaves the chunk unwritten.
+    /// </summary>
+    public async Task<int> UpsertByIdsAsync(
+        IReadOnlyList<string> ids, Func<CancellationToken, Task>? beforeWrite, CancellationToken ct) =>
+        (await StoreAsync(ids, refresh: false, beforeWrite, ct)).Stored;
 
     /// <summary>
     /// Re-reads <paramref name="ids"/> and upserts them, which overwrites their labels. Ids Gmail no longer knows are
     /// marked deleted; ids not stored yet that are in Spam or Trash are skipped, as the mailbox fetch never lists them.
     /// </summary>
     public Task<RefreshResult> RefreshByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
-        StoreAsync(ids, refresh: true, ct);
+        StoreAsync(ids, refresh: true, null, ct);
 
     /// <summary>
     /// Re-reads only the labels of <paramref name="ids"/> (<c>format=minimal</c>) and writes <c>label_ids</c>, the
@@ -111,7 +118,15 @@ public sealed partial class MessageFetchPipeline(
     /// is inserted. Ids Gmail no longer knows are marked deleted. The senders of every row read are recomputed, as after an
     /// upsert, so a full fetch still repairs stale sender counts.
     /// </summary>
-    public async Task<RefreshResult> RefreshLabelsByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    public Task<RefreshResult> RefreshLabelsByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
+        RefreshLabelsByIdsAsync(ids, null, ct);
+
+    /// <summary>
+    /// As <see cref="RefreshLabelsByIdsAsync(IReadOnlyList{string}, CancellationToken)"/>; <paramref name="beforeWrite"/>
+    /// runs after the Gmail read and before the first write, so a throw leaves the chunk unwritten.
+    /// </summary>
+    public async Task<RefreshResult> RefreshLabelsByIdsAsync(
+        IReadOnlyList<string> ids, Func<CancellationToken, Task>? beforeWrite, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(ids);
         var unique = ids.Distinct(StringComparer.Ordinal).ToList();
@@ -121,6 +136,11 @@ public sealed partial class MessageFetchPipeline(
         }
 
         var labels = await gmail.GetMessagesLabelsAsync(unique, ct);
+        if (beforeWrite is not null)
+        {
+            await beforeWrite(ct);
+        }
+
         var deleted = await MarkDeletedCoreAsync([.. unique.Except(labels.Select(l => l.Id), StringComparer.Ordinal)], ct);
         var byId = labels.ToDictionary(l => l.Id, StringComparer.Ordinal);
         var live = labels.Select(l => l.Id).ToList();
@@ -147,7 +167,8 @@ public sealed partial class MessageFetchPipeline(
         return new RefreshResult(rows.Count, deleted.Count);
     }
 
-    private async Task<RefreshResult> StoreAsync(IReadOnlyList<string> ids, bool refresh, CancellationToken ct)
+    private async Task<RefreshResult> StoreAsync(
+        IReadOnlyList<string> ids, bool refresh, Func<CancellationToken, Task>? beforeWrite, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(ids);
         var unique = ids.Distinct(StringComparer.Ordinal).ToList();
@@ -157,6 +178,11 @@ public sealed partial class MessageFetchPipeline(
         }
 
         var metadata = await gmail.GetMessagesMetadataAsync(unique, ct);
+        if (beforeWrite is not null)
+        {
+            await beforeWrite(ct);
+        }
+
         List<string> deleted = [];
         if (refresh)
         {
