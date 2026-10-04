@@ -146,10 +146,11 @@ public static class RulesSummaryPromptBuilder
     {
         var labels = f.Action.AddLabels.Count == 0
             ? "-"
-            : string.Join(", ", f.Action.AddLabels.Select(l => l.Name is { } name ? OneLine(name) : "(deleted label)"));
-        return $"criteria: {OneLine(f.CriteriaSummary)} | adds labels: {labels} | skips inbox: {YesNo(f.Action.SkipInbox)}"
+            : string.Join(", ", f.Action.AddLabels.Select(l => l.Name is { } name ? OneLine(name) : "(unknown label)"));
+        var line = $"criteria: {OneLine(f.CriteriaSummary)} | adds labels: {labels} | skips inbox: {YesNo(f.Action.SkipInbox)}"
             + $" | marks read: {YesNo(f.Action.MarkRead)} | forwards: {YesNo(f.Action.Forwards)}"
             + $" | created by this app: {YesNo(f.CreatedByApp)}";
+        return f.DeletedAt is null ? line : line + " | deleted: yes";
     }
 
     private static string Ids(IReadOnlyList<string> ids) => ids.Count == 0 ? "-" : string.Join(", ", ids.Select(OneLine));

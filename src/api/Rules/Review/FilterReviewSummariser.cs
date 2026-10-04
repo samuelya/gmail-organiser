@@ -55,7 +55,14 @@ public sealed class FilterReviewSummariser(
             return new SummaryResult(SummaryOutcome.NotConfigured);
         }
 
-        var names = await snapshot.LabelNamesAsync(ct);
+        // Without the label catalog every label would read as deleted and the model would call the fixes broken.
+        if (await snapshot.TryLabelNamesAsync(ct) is not { } names)
+        {
+            review.SummaryError = "Gmail labels could not be read (Gmail not connected or rate-limited); try again later.";
+            await db.SaveChangesAsync(CancellationToken.None);
+            return new SummaryResult(SummaryOutcome.Ok, await reviews.GetAsync(id, CancellationToken.None));
+        }
+
         var ids = findings.SelectMany(f => f.FilterIds.Concat(f.ReadFix().DeleteFilterIds)).Distinct().ToList();
         var filters = (await db.Filters.AsNoTracking().Where(r => ids.Contains(r.Id)).ToListAsync(ct))
             .OrderBy(r => ids.IndexOf(r.Id)).Select(r => FilterSnapshot.ToDto(r, names)).ToList();

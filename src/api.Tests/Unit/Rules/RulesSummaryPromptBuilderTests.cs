@@ -25,7 +25,7 @@ public sealed class RulesSummaryPromptBuilderTests
         var user = messages[1].Text;
         user.ShouldNotContain("{{");
         user.ShouldContain("- id: f1 | criteria: from:a@example.com | adds labels: Synthetic/Shop");
-        user.ShouldContain("adds labels: (deleted label)");
+        user.ShouldContain("adds labels: (unknown label)");
         user.ShouldContain(
             "- finding 1 | kind: mergeable | status: open | filters: f1, f2 | description: Two sender filters with one action."
             + " | fix: merge; creates a filter (criteria: from:(a@example.com OR b@example.com)");
@@ -59,6 +59,17 @@ public sealed class RulesSummaryPromptBuilderTests
 
         user.Split('\n').ShouldNotContain(l => l.StartsWith("- finding", StringComparison.Ordinal));
         user.ShouldContain("Synthetic News");
+    }
+
+    [Fact]
+    public void A_filter_deleted_since_the_review_is_marked()
+    {
+        var gone = Filter("f2", "from:b@example.com", "Synthetic/News") with { DeletedAt = Seen };
+
+        var user = RulesSummaryPromptBuilder.Build([Filter("f1", "from:a@example.com", "Synthetic/Shop"), gone], [])[1].Text;
+
+        user.Split('\n').Single(l => l.StartsWith("- id: f1 ", StringComparison.Ordinal)).ShouldNotContain("deleted: yes");
+        user.Split('\n').Single(l => l.StartsWith("- id: f2 ", StringComparison.Ordinal)).ShouldEndWith(" | deleted: yes");
     }
 
     [Theory]

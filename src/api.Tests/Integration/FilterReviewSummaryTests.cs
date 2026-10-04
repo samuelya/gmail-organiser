@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Rules;
@@ -43,22 +44,38 @@ public sealed class FilterReviewSummaryTests(ApiFactory factory, PostgresFixture
             await db.Settings.ExecuteDeleteAsync(Ct);
             db.Messages.Add(new MessageRow
             {
-                Id = "m1", ThreadId = "t1", FromAddress = "news@example.com", Subject = Subject, Snippet = Snippet,
-                InternalDate = Now.AddDays(-1), LabelIds = ["INBOX"], FetchedAt = Now, UpdatedAt = Now,
+                Id = "m1",
+                ThreadId = "t1",
+                FromAddress = "news@example.com",
+                Subject = Subject,
+                Snippet = Snippet,
+                InternalDate = Now.AddDays(-1),
+                LabelIds = ["INBOX"],
+                FetchedAt = Now,
+                UpdatedAt = Now,
             });
             var criteria = new GmailFilterCriteria(From: "news@example.com");
             db.Filters.Add(new FilterRow
             {
-                Id = FilterId, Criteria = FilterRow.WriteCriteria(criteria), Action = FilterRow.WriteAction(new GmailFilterAction(["Label_1"], [])),
-                CriteriaSummary = FilterSnapshot.Summarise(criteria), FirstSeenAt = Now, LastSeenAt = Now, UpdatedAt = Now,
+                Id = FilterId,
+                Criteria = FilterRow.WriteCriteria(criteria),
+                Action = FilterRow.WriteAction(new GmailFilterAction(["Label_1"], [])),
+                CriteriaSummary = FilterSnapshot.Summarise(criteria),
+                FirstSeenAt = Now,
+                LastSeenAt = Now,
+                UpdatedAt = Now,
             });
             db.FilterReviews.AddRange(
                 new FilterReviewRow { Id = reviewId, CreatedAt = Now, FilterCount = 1, FindingCount = 1 },
                 new FilterReviewRow { Id = Guid.CreateVersion7(), CreatedAt = Now.AddMinutes(-1), FilterCount = 1 });
             var finding = new FilterFindingRow
             {
-                Id = Guid.CreateVersion7(), ReviewId = reviewId, Kind = FilterFindingKind.NoRecentMatches, FilterIds = [FilterId],
-                Description = "No message from the last 90 days matches this filter.", Status = FilterFindingStatus.Open,
+                Id = Guid.CreateVersion7(),
+                ReviewId = reviewId,
+                Kind = FilterFindingKind.NoRecentMatches,
+                FilterIds = [FilterId],
+                Description = "No message from the last 90 days matches this filter.",
+                Status = FilterFindingStatus.Open,
             };
             finding.WriteFix(new FilterFix(FilterFixKind.Delete, [FilterId]));
             db.FilterFindings.Add(finding);
@@ -98,6 +115,38 @@ public sealed class FilterReviewSummaryTests(ApiFactory factory, PostgresFixture
         prompt.ShouldNotContain(Snippet);
         prompt.ShouldNotContain(Subject);
         request.Messages[0].Text.ShouldNotContain("news@example.com");
+        prompt.ShouldNotContain("(unknown label)");
+        request.Messages[1].Text.ShouldNotContain("deleted: yes");
+    }
+
+    [Fact]
+    public async Task Unreadable_labels_are_a_recorded_failure_without_a_model_call()
+    {
+        chat.Enqueue("First summary of the findings.");
+        var first = await SummariseAsync(HttpStatusCode.OK);
+        await host.Services.GetRequiredService<FakeTokenStore>().DeleteAsync(Ct);
+
+        var failed = await SummariseAsync(HttpStatusCode.OK);
+
+        failed.SummaryError.ShouldNotBeNull().ShouldContain("labels could not be read");
+        (failed.Summary, failed.SummarisedAt).ShouldBe((first.Summary, first.SummarisedAt));
+        chat.Requests.ShouldHaveSingleItem();
+    }
+
+    [Fact]
+    public async Task A_filter_deleted_since_the_review_is_marked_in_the_prompt()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Filters.Where(f => f.Id == FilterId).ExecuteUpdateAsync(s => s.SetProperty(f => f.DeletedAt, Now), Ct);
+        }
+
+        chat.Enqueue("The filter is already gone.");
+        await SummariseAsync(HttpStatusCode.OK);
+
+        var prompt = chat.Requests.ShouldHaveSingleItem().Messages[1].Text;
+        prompt.ShouldContain($"- id: {FilterId} | criteria: from:news@example.com");
+        prompt.ShouldContain("| deleted: yes");
     }
 
     [Fact]
