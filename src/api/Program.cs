@@ -13,6 +13,7 @@ using GmailOrganiser.Llm;
 using GmailOrganiser.Mcp;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
+using GmailOrganiser.Rules;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Setup;
@@ -36,6 +37,7 @@ builder.Services.AddMemory();
 builder.Services.AddReview();
 builder.Services.AddClaude();
 builder.Services.AddCleanUp();
+builder.Services.AddRules();
 builder.Services.AddUnsubscribe();
 builder.Services.AddMcpServer();
 
@@ -73,6 +75,7 @@ app.MapHistoryEndpoints();
 app.MapCleanUpEndpoints();
 app.MapClaudeReviewEndpoints();
 app.MapUnsubscribeEndpoints();
+app.MapRulesEndpoints();
 app.MapMcpServer();
 app.MapHub<JobsHub>(JobsHub.Path);
 

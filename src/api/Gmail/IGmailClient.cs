@@ -107,6 +107,25 @@ public interface IGmailClient
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task BatchModifyAsync(
         IReadOnlyList<string> ids, IReadOnlyList<string> addLabelIds, IReadOnlyList<string> removeLabelIds, CancellationToken ct);
+
+    /// <summary>Every filter of the account (<c>users.settings.filters.list</c>; Gmail caps an account at 1000).</summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<IReadOnlyList<GmailFilter>> ListFiltersAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Creates a filter. Not idempotent: only rate limits are retried, so a lost response can leave a duplicate that the
+    /// next filter sync lists. A thin I/O seam: callers write the action (undo) log.
+    /// </summary>
+    /// <exception cref="ArgumentException">Empty criteria or action, or a forwarding action.</exception>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<GmailFilter> CreateFilterAsync(GmailFilterCriteria criteria, GmailFilterAction action, CancellationToken ct);
+
+    /// <summary>Deletes filter <paramref name="id"/>; a filter Gmail no longer has counts as deleted.</summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task DeleteFilterAsync(string id, CancellationToken ct);
 }
 
 /// <summary>Gmail's limits the app's callers must respect.</summary>

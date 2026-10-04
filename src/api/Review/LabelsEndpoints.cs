@@ -32,10 +32,7 @@ public static class LabelsEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
         }
     }
-
-    private static ProblemHttpResult GmailNotConnected(GmailNotConnectedException ex) =>
-        TypedResults.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Gmail not connected", detail: ex.Message);
 }
