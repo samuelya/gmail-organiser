@@ -3,6 +3,9 @@ namespace GmailOrganiser.Claude;
 /// <summary>A Claude review item; enums are snake_case. <c>GroupDisplay</c> is the group card's title, computed on read.</summary>
 /// <param name="VerdictDocumentTypeSet">False: accepting keeps each member's document type; <c>VerdictDocumentTypeLabel</c> is null.</param>
 /// <param name="AlternativeStructure">A label plan's <c>alternative</c>: the label paths Claude proposes.</param>
+/// <param name="VerdictFilterCriteria">
+/// Claude's proposed filter criteria as text: a Gmail query as given, or structured criteria as compact JSON.
+/// </param>
 public sealed record ExternalReviewDto(
     Guid Id,
     string TargetType,
@@ -26,7 +29,8 @@ public sealed record ExternalReviewDto(
     DateTimeOffset? ResolvedAt,
     Guid? LabelPlanId = null,
     Guid? FindingId = null,
-    IReadOnlyList<string>? AlternativeStructure = null);
+    IReadOnlyList<string>? AlternativeStructure = null,
+    string? VerdictFilterCriteria = null);
 
 /// <summary>
 /// At least one field; <c>RunId</c> expands to the run's groups with pending members. <c>LabelPlanId</c> must be a

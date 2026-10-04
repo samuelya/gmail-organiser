@@ -265,6 +265,10 @@ public sealed class McpRulesToolsTests(ApiFactory factory, PostgresFixture postg
             row.VerdictFilterCriteria.ShouldBe("\"from:news@example.com older_than:1y\"");
         }
 
+        var dto = await GetAsync(item);
+        dto.Verdict.ShouldBe("alternative");
+        dto.VerdictFilterCriteria.ShouldBe("from:news@example.com older_than:1y");
+
         (await PostAsync($"/api/claude/reviews/{item}/accept", new { })).StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
