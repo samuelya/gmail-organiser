@@ -1,4 +1,6 @@
+import { AbstractControl, ValidationErrors } from '@angular/forms';
 import { AppSettings } from '../setup/setup.service';
+import { labelPathError } from '../review/labels.service';
 
 /** `AnalysisGroupingMode` as the API serialises it. */
 export type AnalysisGroupingMode = 'off' | 'sender_subject' | 'auto';
@@ -20,12 +22,16 @@ export interface AnalysisSettings {
   analysisPromptTemplate: string | null;
 }
 
-/** The full `SettingsDto`: the setup, analysis, attachment, Claude review and protection fields. */
+/**
+ * The full `SettingsDto`: the setup, analysis, attachment, Claude review, protection and Apps Script
+ * fields.
+ */
 export type SettingsDto = AppSettings &
   AnalysisSettings &
   AttachmentsSettingsDto &
   ClaudeSettingsDto &
-  ProtectionSettingsDto;
+  ProtectionSettingsDto &
+  AppsScriptSettingsDto;
 
 /**
  * The analysis part of `UpdateSettingsRequest`: only changed fields are sent; an empty prompt
@@ -295,3 +301,103 @@ export const PROTECTION_RULES: readonly { key: ProtectionRule; label: string; hi
     hint: 'Emails in a thread you replied to are never marked for deletion.',
   },
 ];
+
+/** `ArchiveRule`: archive inbox threads with `label` once their last message is `days` old (#210). */
+export interface ArchiveRule {
+  label: string;
+  days: number;
+}
+
+/** `AppsScriptSettings` (`appsScript` in `GET /api/settings`): the auto-archive script's config. */
+export interface AppsScriptSettings {
+  rules: ArchiveRule[];
+  /** Archive labelled inbox threads that no longer carry the action label. */
+  actionDoneArchive: boolean;
+  /** Labels whose threads the script never archives. */
+  keepInInboxLabels: string[];
+  /** The script only logs what it would archive. */
+  dryRun: boolean;
+}
+
+/** The Apps Script field of `SettingsDto`; absent on an older API. */
+export interface AppsScriptSettingsDto {
+  appsScript?: AppsScriptSettings;
+}
+
+/** The Apps Script part of `UpdateSettingsRequest`: the block is replaced whole, so always send all of it. */
+export interface AppsScriptUpdate {
+  appsScript: AppsScriptSettings;
+}
+
+/** `GET /api/rules/apps-script/config`: the script's `CONFIG` block for the saved settings. */
+export interface AppsScriptConfigDto {
+  scriptVersion: number;
+  config: string;
+  generatedAt: string;
+}
+
+/** The API's `SettingsValidation` limits for the Apps Script block. */
+export const ARCHIVE_RULE_DAYS: Range = { min: 1, max: 3650, step: 1, integer: true };
+export const MAX_ARCHIVE_RULES = 100;
+export const MAX_KEEP_IN_INBOX_LABELS = 50;
+
+/** The API's `ScriptSearchableLabel`: what the script's `label:` search can match. */
+const SCRIPT_SEARCHABLE_LABEL = /^[\p{L}\p{N}_/][\p{L}\p{N}_/ -]*$/u;
+
+/** Why the API would refuse `path` as an Apps Script label, or null when it is valid. */
+export function scriptLabelError(path: string): string | null {
+  const error = labelPathError(path);
+  if (error) return error;
+  return SCRIPT_SEARCHABLE_LABEL.test(path.trim())
+    ? null
+    : "Only letters, digits, spaces, '_', '-' and '/', not starting with '-'.";
+}
+
+/** Gmail matches labels ignoring case and searches "A B" as "A-B": equal keys are the same label. */
+export function scriptLabelKey(path: string): string {
+  return path.trim().replace(/ /g, '-').toLowerCase();
+}
+
+/** The two configurable label names of `SettingsDto` (#198). */
+export interface LabelSettings {
+  actionLabelName: string;
+  deleteLabelName: string;
+}
+
+/** The label part of `UpdateSettingsRequest`: omitted names stay unchanged. */
+export type LabelSettingsUpdate = Partial<LabelSettings>;
+
+/** Same bound as the API's `MaxLabelNameLength`. */
+export const MAX_LABEL_NAME_LENGTH = 225;
+
+/** The API field a document-type parent clash comes back under; this page has no field for it. */
+export const DOCUMENT_TYPE_PARENT_FIELD = 'documentTypeParent';
+
+/**
+ * A Gmail label path: `/`-separated segments, none blank, no leading or trailing `/`. Blank is left
+ * to `Validators.required`; the API checks the rest (system labels, segment count and length).
+ */
+export function labelPathValidator(control: AbstractControl<string>): ValidationErrors | null {
+  const value = control.value?.trim() ?? '';
+  if (!value) return null;
+  return value.split('/').every((segment) => segment.trim().length > 0)
+    ? null
+    : { labelPath: true };
+}
+
+/** The action and delete labels must differ ignoring case, as Gmail label names do; set on the group. */
+export function labelsDifferValidator(group: AbstractControl): ValidationErrors | null {
+  const { actionLabelName, deleteLabelName } = group.value as Partial<LabelSettings>;
+  const action = actionLabelName?.trim().toLowerCase();
+  const del = deleteLabelName?.trim().toLowerCase();
+  return action && del && action === del ? { labelsMatch: true } : null;
+}
+
+/** `PurgeRequest.ConfirmationWord`: what the user types to purge local data. */
+export const PURGE_CONFIRMATION_WORD = 'purge';
+
+/** `PurgeResponse` from `POST /api/settings/purge`. */
+export interface PurgeResponse {
+  tables: string[];
+  purgedAt: string;
+}

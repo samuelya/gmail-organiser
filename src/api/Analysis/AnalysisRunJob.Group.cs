@@ -133,7 +133,7 @@ public sealed partial class AnalysisRunJob
 
         var decision = DerivationRule.Decide(
             [.. representatives.Select(m => outputs.TryGetValue(m.Id, out var o)
-                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence)
+                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels)
                 : null)],
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
@@ -147,7 +147,10 @@ public sealed partial class AnalysisRunJob
         var isNewLabel = outputs.Values.Any(o => o.IsNewLabel && string.Equals(o.TopicLabel.Trim(), agreed.TopicLabel, StringComparison.OrdinalIgnoreCase));
         var derived = new SuggestionOutput(
             "", agreed.TopicLabel, isNewLabel, agreed.NeedsAction, agreed.ToBeDeleted, agreed.UnsubscribeSuggested, agreed.Confidence,
-            $"Same as {outputs.Count} analysed emails of this group");
+            $"Same as {outputs.Count} analysed emails of this group")
+        {
+            ReplaceLabels = agreed.ReplaceLabels,
+        };
         foreach (var m in others)
         {
             if (agreed.ToBeDeleted && MessageProtection.IsProtected(m, context.Allowlisted, context.Settings.Protection))
@@ -269,9 +272,11 @@ public sealed partial class AnalysisRunJob
             Mixed: false);
     }
 
-    // ReplaceLabels is parsed but not stored yet (#196); storing and applying it comes next.
+    /// <summary>The replaced labels resolve to the ids this message carries: a derived member without one loses nothing.</summary>
     private static SuggestionRow Row(
-        RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson) => new()
+        RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson)
+    {
+        var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
             MessageId = message.Id,
@@ -290,4 +295,7 @@ public sealed partial class AnalysisRunJob
             Model = context.Run.Model,
             PromptVersion = context.Run.PromptVersion,
         };
+        row.SetReplaced(context.Labels.Carried(message, output.ReplaceLabels, output.TopicLabel));
+        return row;
+    }
 }

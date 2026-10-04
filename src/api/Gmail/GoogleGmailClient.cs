@@ -144,6 +144,13 @@ public sealed partial class GoogleGmailClient(
         }, ct), ct);
     }
 
+    public async Task<IReadOnlyList<GmailLabelTotal>> GetLabelsMessagesTotalAsync(IReadOnlyList<string> labelIds, CancellationToken ct)
+    {
+        var fetched = await GetInBatchesAsync(labelIds, GmailMetadataBatch.SendLabelTotalsAsync, l => l.Id, ct);
+        logger.LogDebug("Fetched totals for {Fetched} of {Requested} Gmail labels", fetched.Count, labelIds.Count);
+        return fetched;
+    }
+
     public Task<HistoryPage> ListHistoryAsync(string startHistoryId, string? pageToken, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(startHistoryId);

@@ -104,11 +104,42 @@ public sealed class ActionPlannerTests
         allowlisted.Note.ShouldBe("protected: allowlisted sender");
     }
 
-    private static ActionPlan Plan(SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null) =>
-        ActionPlanner.Plan(suggestion, message, Ids, settings ?? Settings, allowlisted);
+    private static readonly HashSet<string> Removable = new(StringComparer.Ordinal) { "Label_7", "Label_8", "L1", "CATEGORY_UPDATES" };
 
-    private static SuggestionRow Suggestion(string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false) => new()
+    [Fact]
+    public void Replaced_labels_the_message_carries_are_removed_with_the_inbox()
     {
+        var plan = Plan(Suggestion(replace: ["Label_7", "Label_8"]), Message("INBOX", "Label_7"), removable: Removable);
+
+        plan.Add.ShouldBe(["L1"]);
+        plan.Remove.ShouldBe(["Label_7", "INBOX"]);
+    }
+
+    [Fact]
+    public void Replaced_labels_never_remove_a_system_label_an_added_label_or_one_gmail_no_longer_has()
+    {
+        var plan = Plan(
+            Suggestion(replace: ["L1", "CATEGORY_UPDATES", "Label_9"], needsAction: true),
+            Message("INBOX", "L1", "CATEGORY_UPDATES", "Label_9"),
+            removable: Removable);
+
+        plan.Add.ShouldBe(["L2"]);
+        plan.Remove.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Without_the_label_list_nothing_replaced_is_removed()
+    {
+        Plan(Suggestion(replace: ["Label_7"]), Message("INBOX", "Label_7")).Remove.ShouldBe(["INBOX"]);
+    }
+
+    private static ActionPlan Plan(
+        SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null, HashSet<string>? removable = null) =>
+        ActionPlanner.Plan(suggestion, message, Ids, settings ?? Settings, allowlisted, removable);
+
+    private static SuggestionRow Suggestion(string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false, string[]? replace = null) => new()
+    {
+        ReplaceLabelIds = replace ?? [],
         Id = Guid.NewGuid(),
         MessageId = "m1",
         SenderAddress = "sender@example.com",

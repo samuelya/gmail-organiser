@@ -1,13 +1,19 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Analysis.Prompts;
+using GmailOrganiser.Gmail;
+using GmailOrganiser.Review;
 
 namespace GmailOrganiser.Settings;
 
 /// <summary>Input checks for the settings endpoints; each returns field errors for a validation ProblemDetails.</summary>
 public static class SettingsValidation
 {
+    // Mirrors SEARCHABLE_LABEL_ in scripts/apps-script/auto-archive.gs: the script skips any other label name.
+    private static readonly Regex ScriptSearchableLabel = new(@"^[\p{L}\p{N}_/][\p{L}\p{N}_/ -]*\z", RegexOptions.CultureInvariant);
+
     public const int MaxModelNameLength = 200;
     public const int MaxUrlLength = 2048;
     public const int MaxClientIdLength = 256;
@@ -47,8 +53,25 @@ public static class SettingsValidation
     public const int MaxClaudeMaxItemsPerRun = 50;
     public const int MinClaudeMaxTurns = 10;
     public const int MaxClaudeMaxTurns = 300;
+    public const int MaxLabelNameLength = GmailLimits.LabelNameMaxLength;
+    public const int MaxAppsScriptRules = 100;
+    public const int MinArchiveRuleDays = 1;
+    public const int MaxArchiveRuleDays = 3650;
+    public const int MaxKeepInInboxLabels = 50;
+    public const string LabelNamesClashField = "deleteLabelName";
+    public const string LabelNamesClashMessage = "Must differ from the action label.";
 
-    public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request)
+    // A document-type label is one level below its parent, so the parent leaves room for it in Gmail's limits.
+    public const int MaxDocumentTypeParentLength = 200;
+    public const int MaxDocumentTypeParentSegments = 4;
+    public const string DocumentTypeParentField = "documentTypeParent";
+    public const string DocumentTypeParentClashMessage = "Must differ from the action and delete labels.";
+
+    /// <summary>
+    /// Checks <paramref name="request"/>; the label names must differ from each other, so a name sent alone is compared with the
+    /// other name in <paramref name="current"/> (the defaults when omitted).
+    /// </summary>
+    public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request, AppSettings? current = null)
     {
         var errors = new Dictionary<string, string[]>();
         if (request.OllamaBaseUrl is { } url && !IsHttpUrl(url))
@@ -107,6 +130,12 @@ public static class SettingsValidation
             ValidateAttachments(errors, attachments);
         }
 
+        if (request.AppsScript is { } appsScript)
+        {
+            ValidateAppsScript(errors, appsScript);
+        }
+
+        ValidateLabelNames(errors, request, current ?? new AppSettings());
         return errors;
     }
 
@@ -142,6 +171,57 @@ public static class SettingsValidation
     /// <summary>Trims a prompt template; a blank template clears the override so the built-in one applies.</summary>
     public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
 
+    /// <summary>Trims the label names of a validated block; a missing list becomes empty.</summary>
+    public static AppsScriptSettings NormaliseAppsScript(AppsScriptSettings value) => value with
+    {
+        Rules = [.. (value.Rules ?? []).Select(r => r with { Label = r.Label.Trim() })],
+        KeepInInboxLabels = [.. (value.KeepInInboxLabels ?? []).Select(l => l.Trim())],
+    };
+
+    // A rule's label need not exist in Gmail yet: the script skips missing labels.
+    private static void ValidateAppsScript(Dictionary<string, string[]> errors, AppsScriptSettings request)
+    {
+        // The JSON body can carry nulls the non-nullable annotations don't rule out.
+        var rules = request.Rules ?? [];
+        var keep = request.KeepInInboxLabels ?? [];
+        if (rules.Count > MaxAppsScriptRules)
+        {
+            errors["appsScript.rules"] = [$"At most {MaxAppsScriptRules} rules."];
+        }
+        else
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < rules.Count; i++)
+            {
+                var field = $"appsScript.rules[{i}]";
+                if (rules[i] is not { } rule)
+                {
+                    errors[field] = ["Required."];
+                    continue;
+                }
+
+                // The script searches "A B" as "A-B", so the two would be one rule.
+                if (CheckScriptLabelName(errors, $"{field}.label", rule.Label ?? "") && !seen.Add(rule.Label!.Trim().Replace(' ', '-')))
+                {
+                    errors[$"{field}.label"] = ["Each label may have one rule."];
+                }
+
+                CheckRange(errors, $"{field}.days", rule.Days, MinArchiveRuleDays, MaxArchiveRuleDays);
+            }
+        }
+
+        if (keep.Count > MaxKeepInInboxLabels)
+        {
+            errors["appsScript.keepInInboxLabels"] = [$"At most {MaxKeepInInboxLabels} labels."];
+            return;
+        }
+
+        for (var i = 0; i < keep.Count; i++)
+        {
+            CheckScriptLabelName(errors, $"appsScript.keepInInboxLabels[{i}]", keep[i] ?? "");
+        }
+    }
+
     private static void ValidateAttachments(Dictionary<string, string[]> errors, UpdateAttachmentSettingsRequest request)
     {
         CheckRange(errors, "attachments.maxBytes", request.MaxBytes, MinAttachmentMaxBytes, MaxAttachmentMaxBytes);
@@ -176,6 +256,121 @@ public static class SettingsValidation
                 errors[$"{field}.enabled"] = ["Archive attachments (zip, 7z, rar, tar, gz) are never read and cannot be enabled."];
             }
         }
+    }
+
+    private static void ValidateLabelNames(Dictionary<string, string[]> errors, UpdateSettingsRequest request, AppSettings current)
+    {
+        var actionOk = CheckLabelName(errors, "actionLabelName", request.ActionLabelName);
+        var deleteOk = CheckLabelName(errors, "deleteLabelName", request.DeleteLabelName);
+        var parentOk = CheckDocumentTypeParent(errors, request.DocumentTypeParent);
+        var effective = current with
+        {
+            ActionLabelName = request.ActionLabelName?.Trim() ?? current.ActionLabelName,
+            DeleteLabelName = request.DeleteLabelName?.Trim() ?? current.DeleteLabelName,
+            DocumentTypeParent = request.DocumentTypeParent is null ? current.DocumentTypeParent : NormaliseDocumentTypeParent(request.DocumentTypeParent),
+        };
+        if (actionOk && deleteOk && parentOk && LabelNameClashes(request, effective) is { } clash)
+        {
+            foreach (var (field, messages) in clash)
+            {
+                errors[field] = messages;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The clash errors of <paramref name="merged"/>'s label names when <paramref name="request"/> sends any of them, else
+    /// <c>null</c>: the action and delete labels must differ, and the document-type parent must not equal, contain or sit
+    /// under either (Gmail label names are case-insensitive).
+    /// </summary>
+    public static Dictionary<string, string[]>? LabelNameClashes(UpdateSettingsRequest request, AppSettings merged)
+    {
+        if (request.ActionLabelName is null && request.DeleteLabelName is null && request.DocumentTypeParent is null)
+        {
+            return null;
+        }
+
+        if (LabelNamesClash(merged.ActionLabelName, merged.DeleteLabelName))
+        {
+            return new() { [LabelNamesClashField] = [LabelNamesClashMessage] };
+        }
+
+        return merged.DocumentTypeParent is { } parent
+            && (PathsOverlap(parent, merged.ActionLabelName) || PathsOverlap(parent, merged.DeleteLabelName))
+            ? new() { [DocumentTypeParentField] = [DocumentTypeParentClashMessage] }
+            : null;
+    }
+
+    /// <summary>Gmail label names are case-insensitive, so the action and delete labels must differ ignoring case.</summary>
+    public static bool LabelNamesClash(string actionLabelName, string deleteLabelName) =>
+        string.Equals(actionLabelName, deleteLabelName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Trimmed, or <c>null</c> (feature off) when blank.</summary>
+    public static string? NormaliseDocumentTypeParent(string value) => value.Trim() is { Length: > 0 } trimmed ? trimmed : null;
+
+    private static bool PathsOverlap(string a, string b) =>
+        string.Equals(a, b, StringComparison.OrdinalIgnoreCase)
+        || a.StartsWith(b + "/", StringComparison.OrdinalIgnoreCase)
+        || b.StartsWith(a + "/", StringComparison.OrdinalIgnoreCase);
+
+    // Blank is "off"; otherwise a valid label path short and shallow enough to take one more level.
+    private static bool CheckDocumentTypeParent(Dictionary<string, string[]> errors, string? value)
+    {
+        if (value is null || NormaliseDocumentTypeParent(value) is not { } name)
+        {
+            return true;
+        }
+
+        string? error = name.Length > MaxDocumentTypeParentLength ? $"Must be at most {MaxDocumentTypeParentLength} characters."
+            : name.Split('/').Length > MaxDocumentTypeParentSegments ? $"Must have at most {MaxDocumentTypeParentSegments} '/'-separated parts."
+            : LabelPath.IsReserved(name) ? "Must not be a Gmail system label."
+            : !LabelResolver.IsValid(name) ? "Must be a valid Gmail label: '/'-separated parts of at most 100 characters, none blank or a system label."
+            : null;
+        if (error is not null)
+        {
+            errors[DocumentTypeParentField] = [error];
+        }
+
+        return error is null;
+    }
+
+    // Trimmed, non-empty, a valid user label path with no Gmail system label name at any level, at most 225 characters.
+    /// <summary>A Gmail label name the Apps Script can also search for: letters, digits, '_', '/', ' ' and '-', not leading with ' ' or '-'.</summary>
+    private static bool CheckScriptLabelName(Dictionary<string, string[]> errors, string field, string value)
+    {
+        if (!CheckLabelName(errors, field, value))
+        {
+            return false;
+        }
+
+        if (ScriptSearchableLabel.IsMatch(value.Trim()))
+        {
+            return true;
+        }
+
+        errors[field] = ["The Apps Script can only use labels of letters, digits, spaces, '_', '-' and '/', not starting with '-'."];
+        return false;
+    }
+
+    private static bool CheckLabelName(Dictionary<string, string[]> errors, string field, string? value)
+    {
+        if (value is null)
+        {
+            return true;
+        }
+
+        var name = value.Trim();
+        string? error = name.Length == 0 ? "Required."
+            : name.Length > MaxLabelNameLength ? $"Must be at most {MaxLabelNameLength} characters."
+            : LabelPath.IsReserved(name) ? "Must not be a Gmail system label."
+            : !LabelResolver.IsValid(name) ? "Must be a valid Gmail label: up to five '/'-separated parts of at most 100 characters, none blank or a system label."
+            : null;
+        if (error is not null)
+        {
+            errors[field] = [error];
+        }
+
+        return error is null;
     }
 
     private static void CheckRange(Dictionary<string, string[]> errors, string field, int? value, int min, int max)

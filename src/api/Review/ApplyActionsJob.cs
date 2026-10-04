@@ -198,13 +198,24 @@ public sealed partial class ApplyActionsJob(
         var labelIds = valid.Count == 0
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : await labels.EnsureAsync(paths, (label, _) => RecordCreatedAsync(cursor.BatchId, label), ct);
+        // Ids, not names: a replaced label renamed in Gmail since analysis is still removed; a deleted one is skipped.
+        var personal = valid.Any(r => r.Suggestion.ReplaceLabelIds.Length > 0)
+            ? PersonalLabels.From(await catalog.GetAsync(ct), settings).Names
+            : new Dictionary<string, string>(StringComparer.Ordinal);
+        var removable = personal.Keys.ToHashSet(StringComparer.Ordinal);
         var items = valid.Select(r => new PlannedItem(
-            r.Suggestion, ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress))));
+            r.Suggestion,
+            ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress), removable)));
         var chunks = LabelChunks.Group(items, i => i.Plan.Add, i => i.Plan.Remove, gmailOptions.Value.BatchModifyMaxIds)
             .Select(c => new PlannedChunk(c.Items, c.Add, c.Remove))
             .ToList();
         var names = labelIds.GroupBy(p => p.Value).ToDictionary(g => g.Key, g => g.First().Key, StringComparer.Ordinal);
-        return new Plan(chunks, labelIds, names);
+        foreach (var (id, name) in personal)
+        {
+            names.TryAdd(id, name);
+        }
+
+        return new Plan(chunks, labelIds, removable, names);
     }
 
     /// <summary>
@@ -242,7 +253,7 @@ public sealed partial class ApplyActionsJob(
                 foreach (var suggestion in locked)
                 {
                     var message = messages[suggestion.MessageId];
-                    var fresh = Replan(suggestion, message, plan.LabelIds, settings, allowlisted.Contains(message.FromAddress));
+                    var fresh = Replan(suggestion, message, plan, settings, allowlisted.Contains(message.FromAddress));
                     if (!Sorted(fresh.Add).SequenceEqual(chunk.Add) || !Sorted(fresh.Remove).SequenceEqual(chunk.Remove))
                     {
                         throw new PlanChangedException();
@@ -278,12 +289,11 @@ public sealed partial class ApplyActionsJob(
     }
 
     /// <summary>The plan for a locked row; a label the earlier plan did not resolve (it was not needed then) means it changed.</summary>
-    private static ActionPlan Replan(
-        SuggestionRow suggestion, MessageRow message, IReadOnlyDictionary<string, string> labelIds, AppSettings settings, bool allowlisted)
+    private static ActionPlan Replan(SuggestionRow suggestion, MessageRow message, Plan plan, AppSettings settings, bool allowlisted)
     {
         try
         {
-            return ActionPlanner.Plan(suggestion, message, labelIds, settings, allowlisted);
+            return ActionPlanner.Plan(suggestion, message, plan.LabelIds, settings, allowlisted, plan.Removable);
         }
         catch (KeyNotFoundException)
         {
@@ -370,9 +380,13 @@ public sealed partial class ApplyActionsJob(
     private sealed record PlannedChunk(IReadOnlyList<PlannedItem> Items, string[] Add, string[] Remove);
 
     /// <param name="LabelIds">Label path to id (case-insensitive), as resolved for this plan.</param>
+    /// <param name="Removable">Ids of the personal labels Gmail had when planned; the replaced labels apply may remove.</param>
     /// <param name="Names">Label id to the path it was resolved from, for the log's display names.</param>
     private sealed record Plan(
-        IReadOnlyList<PlannedChunk> Chunks, IReadOnlyDictionary<string, string> LabelIds, IReadOnlyDictionary<string, string> Names)
+        IReadOnlyList<PlannedChunk> Chunks,
+        IReadOnlyDictionary<string, string> LabelIds,
+        IReadOnlySet<string> Removable,
+        IReadOnlyDictionary<string, string> Names)
     {
         public int Messages => Chunks.Sum(c => c.Items.Count);
     }

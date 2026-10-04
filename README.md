@@ -97,6 +97,8 @@ Build, test and CI commands: [docs/ci.md](docs/ci.md).
   "In production".
 - [Ollama setup](docs/setup/ollama.md): install, models, `host.docker.internal` on macOS and Linux.
 - [Claude review setup](docs/setup/claude-review.md): `WITH_CLAUDE`, `claude setup-token`, Claude Desktop config.
+- [Apps Script setup](docs/setup/apps-script.md): daily auto-archive in Google's cloud: paste the script and CONFIG,
+  dry run, daily trigger, updates.
 - [Design](docs/DESIGN.md): architecture, workflows, data model.
 
 ## Licence

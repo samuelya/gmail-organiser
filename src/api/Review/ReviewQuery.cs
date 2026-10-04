@@ -143,9 +143,8 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         }
 
         var claude = await ClaudeLookupAsync(address, loaded, ct);
-        var labelNames = loaded.Any(x => GroupKey.LabelIds(x.Stats.Key).Count > 0)
-            ? (await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct)).Names
-            : null;
+        var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
+        var labelNames = personal.IsUnavailable ? null : personal.Names;
         foreach (var (g, members) in loaded)
         {
             groups.Add(ToGroup(g, outcomes[g.Key], members, allowlisted, claude, labelNames));
@@ -193,11 +192,23 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         && ((settings.ClaudeSuggestLowConfidence && confidence < settings.ClaudeSuggestThreshold)
             || (settings.ClaudeSuggestNewLabels && isNewLabel));
 
-    public static SuggestionDto ToDto(SuggestionRow s, MessageRow m, bool senderAllowlisted, ProtectionSettings rules) =>
-        ToDto(s, m, senderAllowlisted, rules, null, false);
+    /// <param name="labelNames">Personal label names by id (<see cref="PersonalLabels.Names"/>) for the current labels; null lists none.</param>
+    public static SuggestionDto ToDto(
+        SuggestionRow s, MessageRow m, bool senderAllowlisted, ProtectionSettings rules, IReadOnlyDictionary<string, string>? labelNames = null) =>
+        ToDto(s, m, senderAllowlisted, rules, labelNames, null, false);
 
     public static SuggestionDto ToDto(
-        SuggestionRow s, MessageRow m, bool senderAllowlisted, ProtectionSettings rules, ExternalReviewDto? claudeReview, bool suggestedForClaude) => new(
+        SuggestionRow s,
+        MessageRow m,
+        bool senderAllowlisted,
+        ProtectionSettings rules,
+        IReadOnlyDictionary<string, string>? labelNames,
+        ExternalReviewDto? claudeReview,
+        bool suggestedForClaude)
+    {
+        var current = CurrentLabels(m, labelNames);
+        var replaced = Replaced(s, m, labelNames);
+        return new SuggestionDto(
         s.Id,
         s.MessageId,
         m.Subject,
@@ -214,8 +225,31 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         SnakeCaseEnumConverter<SuggestionStatus>.ToDb(s.Status),
         s.Edited,
         MessageProtection.IsProtected(m, senderAllowlisted, rules),
+        replaced,
+        current,
+        LabelChanges.For(s.TopicLabel, replaced, current),
         claudeReview,
         suggestedForClaude);
+    }
+
+    /// <summary>
+    /// The names of the replaced labels apply would remove now: those the message still carries, never the topic label,
+    /// and (when the label list is known) only personal labels Gmail still has. Distinct and ordinal-sorted.
+    /// </summary>
+    private static string[] Replaced(SuggestionRow s, MessageRow m, IReadOnlyDictionary<string, string>? labelNames) =>
+        [.. s.Replaced(labelNames)
+            .Where(l => m.LabelIds.Contains(l.Id, StringComparer.Ordinal)
+                && (labelNames is null || labelNames.ContainsKey(l.Id))
+                && !string.Equals(l.Name.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(l => l.Name)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)];
+
+    /// <summary>The message's personal label names, distinct and ordinal-sorted.</summary>
+    private static string[] CurrentLabels(MessageRow m, IReadOnlyDictionary<string, string>? labelNames) =>
+        labelNames is null
+            ? []
+            : [.. m.LabelIds.Select(id => labelNames.GetValueOrDefault(id)).OfType<string>().Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
 
     /// <summary>
     /// The newest not-cancelled Claude review item per listed suggestion and per group of the page: one query per
@@ -283,6 +317,14 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         var key = newest.S.GroupKey;
         var display = GroupDisplay(newest.M.Subject, key, labelNames);
         var settings = claude.Settings;
+        var dtos = members.Select(x => ToDto(
+                x.S, x.M, allowlisted, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
+                IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))
+            .ToList();
+        var changes = dtos.Select(d => d.LabelChange).Distinct().ToList();
+        var change = changes.Count == 1 ? changes[0]
+            : changes.Any(c => c is LabelChange.Move or LabelChange.Relabel) ? LabelChange.Relabel
+            : LabelChange.Add;
         return new ReviewGroupDto(
             key,
             display,
@@ -297,9 +339,10 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
             stats.ConfidenceMin,
             stats.ConfidenceMax,
             representative.S.Reason,
-            [.. members.Select(x => ToDto(
-                x.S, x.M, allowlisted, settings.Protection, claude.Suggestions.GetValueOrDefault(x.S.Id), IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))],
+            dtos,
             members.Count < stats.Size,
+            [.. dtos.SelectMany(d => d.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
+            change,
             key is null ? null : claude.Groups.GetValueOrDefault(key),
             IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0));
     }

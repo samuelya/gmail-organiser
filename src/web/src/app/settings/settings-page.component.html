@@ -80,6 +80,14 @@
     </mat-card-content>
   </mat-card>
 
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-labels">
+    <mat-card-content data-testid="section-labels">
+      <h2 id="settings-labels" class="section-title">Labels</h2>
+      <p class="section-hint">The Gmail labels the organiser applies for action and deletion.</p>
+      <app-labels-settings [settings]="labels()" />
+    </mat-card-content>
+  </mat-card>
+
   <mat-card appearance="outlined" role="region" aria-labelledby="settings-analysis">
     <mat-card-content data-testid="section-analysis">
       <h2 id="settings-analysis" class="section-title">Analysis</h2>
@@ -123,6 +131,16 @@
     </mat-card>
   }
 
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-apps-script">
+    <mat-card-content data-testid="section-apps-script">
+      <h2 id="settings-apps-script" class="section-title">Apps Script</h2>
+      <p class="section-hint">
+        Time-based archiving by the script that runs in your Google account.
+      </p>
+      <app-apps-script-settings />
+    </mat-card-content>
+  </mat-card>
+
   @if (claude(); as claudeSettings) {
     <mat-card appearance="outlined" role="region" aria-labelledby="settings-claude">
       <mat-card-content data-testid="section-claude">
@@ -137,4 +155,12 @@
       </mat-card-content>
     </mat-card>
   }
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-data">
+    <mat-card-content data-testid="section-data">
+      <h2 id="settings-data" class="section-title">Data</h2>
+      <p class="section-hint">The local copy of what the organiser fetched and produced.</p>
+      <app-data-settings />
+    </mat-card-content>
+  </mat-card>
 </div>

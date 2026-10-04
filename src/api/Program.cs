@@ -14,6 +14,7 @@ using GmailOrganiser.Mcp;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Rules;
+using GmailOrganiser.Rules.Labels;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Setup;
@@ -76,6 +77,8 @@ app.MapCleanUpEndpoints();
 app.MapClaudeReviewEndpoints();
 app.MapUnsubscribeEndpoints();
 app.MapRulesEndpoints();
+app.MapLabelPlanEndpoints();
+app.MapAppsScriptEndpoints();
 app.MapMcpServer();
 app.MapHub<JobsHub>(JobsHub.Path);
 

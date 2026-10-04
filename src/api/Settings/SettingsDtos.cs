@@ -32,7 +32,9 @@ public sealed record SettingsDto(
     int ClaudeMaxItemsPerRun,
     int ClaudeMaxTurns,
     string? ClaudeModel,
-    bool ClaudeTokenSet)
+    bool ClaudeTokenSet,
+    AppsScriptSettings AppsScript,
+    string? DocumentTypeParent)
 {
     /// <param name="claudeTokenSet">Whether <c>CLAUDE_CODE_OAUTH_TOKEN</c> is set; the token itself is never returned.</param>
     public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet) => new(
@@ -67,7 +69,9 @@ public sealed record SettingsDto(
         s.ClaudeMaxItemsPerRun,
         s.ClaudeMaxTurns,
         s.ClaudeModel,
-        claudeTokenSet);
+        claudeTokenSet,
+        s.AppsScript,
+        s.DocumentTypeParent);
 }
 
 /// <summary>Never carries the secret itself.</summary>
@@ -75,7 +79,7 @@ public sealed record GoogleClientDto(string? ClientId, bool SecretSet, bool Lock
 
 /// <summary>
 /// Partial update: <c>null</c> leaves a value unchanged; an empty model name (including <see cref="ClaudeModel"/>) or a
-/// blank prompt template clears it.
+/// blank prompt template or <see cref="DocumentTypeParent"/> clears it. <see cref="AppsScript"/> replaces the whole saved block.
 /// </summary>
 public sealed record UpdateSettingsRequest(
     string? OllamaBaseUrl,
@@ -105,7 +109,11 @@ public sealed record UpdateSettingsRequest(
     int? ClaudeMaxItemsPerRun = null,
     int? ClaudeMaxTurns = null,
     string? ClaudeModel = null,
-    UpdateProtectionSettingsRequest? Protection = null);
+    UpdateProtectionSettingsRequest? Protection = null,
+    string? ActionLabelName = null,
+    string? DeleteLabelName = null,
+    AppsScriptSettings? AppsScript = null,
+    string? DocumentTypeParent = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>

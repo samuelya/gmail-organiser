@@ -60,7 +60,10 @@ export class JobsService {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
   );
   readonly connectionState = this.state.asReadonly();
-  /** Increments after every reconnect or late first connect: REST state may have changed meanwhile. */
+  /**
+   * Increments after every reconnect or late first connect, and after a local-data purge: REST state
+   * may have changed meanwhile, so pages reload what they show.
+   */
   readonly reconnects = this.reconnectCount.asReadonly();
   /** Every `externalReviewChanged`: a Claude review item was created or changed. Missed while disconnected. */
   readonly externalReviewChanges = this.reviewChanges.asObservable();
@@ -71,6 +74,7 @@ export class JobsService {
     this.connection.on('externalReviewChanged', (item: ExternalReviewDto) =>
       this.reviewChanges.next(item),
     );
+    this.connection.on('dataPurged', () => this.onDataPurged());
     this.connection.onreconnecting(() => {
       this.seen.clear();
       this.missedUpdates = true;
@@ -148,6 +152,13 @@ export class JobsService {
       return pruneFinished(next);
     });
     for (const id of snapshotIds) this.seen.add(id);
+  }
+
+  /** Every job and review row is gone: drop the held jobs and tell pages to reload. */
+  private onDataPurged(): void {
+    this.seen.clear();
+    this.byId.set(new Map());
+    this.reconnectCount.update((n) => n + 1);
   }
 
   private onChanged(job: JobDto): void {

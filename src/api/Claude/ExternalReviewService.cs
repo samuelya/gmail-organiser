@@ -365,10 +365,13 @@ public sealed class ExternalReviewService(
         var outcome = row.VerdictTopicLabel is { } label
             ? new GroupOutcome(label, row.VerdictNeedsAction ?? false, row.VerdictToBeDeleted ?? false)
             : null;
+
+        // Claude never sees the replaced labels: an alternative removes none, an agree keeps them as shown.
+        var edit = alternative ? outcome! with { ReplaceLabels = [] } : null;
         GroupDecisionResponse response;
         if (row.TargetType == ExternalReviewTarget.Suggestion)
         {
-            response = await review.ApprovePendingAsync(row.SuggestionId!.Value, alternative ? outcome : null, ct);
+            response = await review.ApprovePendingAsync(row.SuggestionId!.Value, edit, ct);
         }
         else if (outcome is null)
         {
@@ -378,7 +381,7 @@ public sealed class ExternalReviewService(
         else
         {
             response = alternative
-                ? await review.EditGroupAsync(row.SenderAddress, row.GroupKey!, outcome, ct)
+                ? await review.EditGroupAsync(row.SenderAddress, row.GroupKey!, edit!, ct)
                 : await review.DecideGroupAsync(row.SenderAddress, row.GroupKey!, DecisionOutcome.Approved, outcome, ct);
         }
 
