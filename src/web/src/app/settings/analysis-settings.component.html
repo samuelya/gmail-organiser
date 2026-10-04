@@ -111,12 +111,25 @@
 
   <fieldset class="flex flex-col gap-2">
     <legend class="mb-1">Prompt template</legend>
+    <p class="help" aria-live="polite" data-testid="prompt-source">
+      @switch (promptSource()) {
+        @case ('built-in') {
+          Built-in prompt ({{ defaultPrompt()?.version }})
+        }
+        @case ('custom') {
+          Custom prompt
+        }
+        @default {
+          Built-in prompt (not loaded); an empty field uses it
+        }
+      }
+    </p>
     <mat-form-field subscriptSizing="dynamic">
       <mat-label>Analysis prompt</mat-label>
       <textarea
         matInput
         class="prompt"
-        rows="12"
+        rows="20"
         formControlName="analysisPromptTemplate"
         [maxlength]="maxPromptLength"
         data-testid="analysisPromptTemplate"
@@ -127,7 +140,10 @@
       } @else if (prompt.hasError('maxlength')) {
         <mat-error>Use at most {{ maxPromptLength }} characters.</mat-error>
       }
-      <mat-hint>Leave empty to use the built-in prompt.</mat-hint>
+      <mat-hint>
+        Edit to customise. Text identical to the built-in prompt is not saved as custom, so newer
+        built-in versions still apply.
+      </mat-hint>
     </mat-form-field>
     @if (prompt.value.trim() && !prompt.value.includes(emailsPlaceholder)) {
       <p class="help warn" role="alert" data-testid="emails-warning">
@@ -145,19 +161,6 @@
         Reset to default
       </button>
     </div>
-    @if (!prompt.value.trim() && defaultPrompt(); as builtIn) {
-      <details data-testid="default-prompt-details">
-        <summary class="help" id="default-prompt-label">
-          Built-in prompt ({{ builtIn.version }}), used while the field is empty
-        </summary>
-        <pre
-          class="prompt preview"
-          tabindex="0"
-          aria-labelledby="default-prompt-label"
-          data-testid="default-prompt-preview"
-          >{{ builtIn.template }}</pre>
-      </details>
-    }
     <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1" aria-label="Prompt placeholders">
       @for (p of placeholders; track p.name) {
         <dt>

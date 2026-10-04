@@ -241,25 +241,24 @@ describe('SettingsPage', () => {
   });
 
   describe('analysis', () => {
-    it('previews the built-in prompt on load while no override is set', async () => {
+    it('opens the prompt field pre-filled with the built-in prompt', async () => {
       const { q } = await render();
-      expect((q('analysisPromptTemplate') as HTMLTextAreaElement).value).toBe('');
-      expect(q('default-prompt-preview')!.textContent).toBe(PROMPT);
+      expect((q('analysisPromptTemplate') as HTMLTextAreaElement).value).toBe(PROMPT);
+      expect(q('prompt-source')!.textContent!.trim()).toBe('Built-in prompt (test-v1)');
     });
 
-    it('Reset to default clears the field without fetching the prompt again', async () => {
+    it('Reset to default restores the built-in text without fetching the prompt again', async () => {
       const { fixture, q } = await render();
       const prompt = q('analysisPromptTemplate') as HTMLTextAreaElement;
       prompt.value = 'Custom {{emails}}';
       prompt.dispatchEvent(new Event('input'));
       await fixture.whenStable();
-      expect(q('default-prompt-preview')).toBeNull();
+      expect(q('prompt-source')!.textContent!.trim()).toBe('Custom prompt');
 
       q('reset-prompt')!.click();
       await fixture.whenStable();
       http.expectNone({ method: 'GET', url: '/api/analysis/prompt/default' });
-      expect(prompt.value).toBe('');
-      expect(q('default-prompt-preview')!.textContent).toBe(PROMPT);
+      expect(prompt.value).toBe(PROMPT);
     });
 
     it('saves only the changed fields and shows server field errors inline', async () => {
