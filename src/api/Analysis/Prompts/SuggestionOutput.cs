@@ -29,13 +29,15 @@ public sealed record MemoryHint(
     string Outcome,
     double Similarity);
 
+/// <param name="DocumentTypeParent">The document-type parent label; null or blank tells the model the feature is off.</param>
 public sealed record PromptInput(
     IReadOnlyList<EmailForPrompt> Emails,
     IReadOnlyList<string> LabelTree,
     IReadOnlyList<MemoryHint> Memory,
     string? AttachmentsSection,
     string ActionLabel,
-    string DeleteLabel);
+    string DeleteLabel,
+    string? DocumentTypeParent = null);
 
 /// <summary>A validated suggestion for one email; <see cref="Confidence"/> is always within [0, 1].</summary>
 /// <param name="DocumentTypeLabel">The second label under the document-type parent; null when none or the feature is off.</param>
