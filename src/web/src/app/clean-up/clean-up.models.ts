@@ -16,7 +16,10 @@ export interface CleanupSender {
   protectedCount: number;
   oldestAt: string | null;
   newestAt: string | null;
+  /** The address itself is allowlisted. */
   allowlisted: boolean;
+  /** The sender's domain, or a parent domain, is in `protection.allowlistedDomains`. */
+  allowlistedByDomain: boolean;
 }
 
 /** `CleanupMessageDto`: `protectedReason` is null when Delete does not skip the message. */

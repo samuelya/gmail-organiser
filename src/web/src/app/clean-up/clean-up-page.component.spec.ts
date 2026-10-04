@@ -19,6 +19,7 @@ const sender = (over: Partial<CleanupSender> = {}): CleanupSender => ({
   oldestAt: '2026-01-01T00:00:00Z',
   newestAt: '2026-02-01T00:00:00Z',
   allowlisted: false,
+  allowlistedByDomain: false,
   ...over,
 });
 
