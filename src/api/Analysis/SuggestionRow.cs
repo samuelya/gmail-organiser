@@ -77,6 +77,12 @@ public sealed class SuggestionRow
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? DecidedAt { get; set; }
 
+    /// <summary>
+    /// <c>created_at</c> of the latest compare run that wrote an alternative for this suggestion (#309); kept when the
+    /// alternative is discarded or accepted, so an older compare run that resumes later does not write over it.
+    /// </summary>
+    public DateTimeOffset? CompareRunCreatedAt { get; set; }
+
     /// <summary>Sets the replaced labels (id, name); true when the set of ids changed.</summary>
     public bool SetReplaced(IReadOnlyList<(string Id, string Name)> labels)
     {

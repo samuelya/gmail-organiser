@@ -27,7 +27,8 @@ public sealed partial class AnalysisRunJob
     /// <summary>
     /// Replaces the alternatives of the group's suggestions with this run's; a suggestion deleted meanwhile, or one whose
     /// alternative or accepted outcome comes from a run created later (a resumed older run finishing after a newer one),
-    /// counts as skipped. Delete-then-insert by suggestion keeps a repeated group (restart before its commit) from writing twice.
+    /// counts as skipped, as does one whose later-run alternative was discarded (#309). Delete-then-insert by suggestion
+    /// keeps a repeated group (restart before its commit) from writing twice.
     /// </summary>
     private async Task WriteAlternativesAsync(
         AnalysisRunRow run, IReadOnlyDictionary<string, Guid> suggestionIds, List<SuggestionRow> rows, DateTimeOffset now, CancellationToken c)
@@ -39,12 +40,15 @@ public sealed partial class AnalysisRunJob
                 .ToListAsync(c))
             .ToHashSet();
         // Runs freeze their suggestions when created and keep created_at on resume, so the later-created run wins: over
-        // its stored alternative, and over the suggestion itself once that run's alternative was accepted into it.
+        // its stored alternative, over the suggestion itself once that run's alternative was accepted into it, and over a
+        // discarded alternative through the suggestion's compare-run marker.
         var locked = present.ToArray();
         var later = db.AnalysisRuns.Where(r => r.Id != run.Id && r.CreatedAt > run.CreatedAt).Select(r => (Guid?)r.Id);
         var newer = await db.Suggestions
             .Where(s => locked.Contains(s.Id)
-                && (later.Contains(s.RunId) || db.SuggestionAlternatives.Any(a => a.SuggestionId == s.Id && later.Contains(a.RunId))))
+                && (later.Contains(s.RunId)
+                    || s.CompareRunCreatedAt > run.CreatedAt
+                    || db.SuggestionAlternatives.Any(a => a.SuggestionId == s.Id && later.Contains(a.RunId))))
             .Select(s => s.Id)
             .ToListAsync(c);
         present.ExceptWith(newer);
@@ -59,6 +63,8 @@ public sealed partial class AnalysisRunJob
 
         var kept = present.ToArray();
         await db.SuggestionAlternatives.Where(a => kept.Contains(a.SuggestionId)).ExecuteDeleteAsync(c);
+        await db.Suggestions.Where(s => kept.Contains(s.Id))
+            .ExecuteUpdateAsync(u => u.SetProperty(s => s.CompareRunCreatedAt, run.CreatedAt), c);
         foreach (var row in rows)
         {
             if (suggestionIds.TryGetValue(row.MessageId, out var id) && present.Contains(id))
