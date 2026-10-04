@@ -149,7 +149,6 @@ public sealed partial class AnalysisRunJob
             "", agreed.TopicLabel, isNewLabel, agreed.NeedsAction, agreed.ToBeDeleted, agreed.UnsubscribeSuggested, agreed.Confidence,
             $"Same as {outputs.Count} analysed emails of this group")
         {
-            // Apply intersects with what each member carries, so a member without a replaced label loses nothing.
             ReplaceLabels = agreed.ReplaceLabels,
         };
         foreach (var m in others)
@@ -273,8 +272,11 @@ public sealed partial class AnalysisRunJob
             Mixed: false);
     }
 
+    /// <summary>The replaced labels resolve to the ids this message carries: a derived member without one loses nothing.</summary>
     private static SuggestionRow Row(
-        RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson) => new()
+        RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson)
+    {
+        var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
             MessageId = message.Id,
@@ -286,7 +288,6 @@ public sealed partial class AnalysisRunJob
             NeedsAction = output.NeedsAction,
             ToBeDeleted = output.ToBeDeleted,
             UnsubscribeSuggested = output.UnsubscribeSuggested,
-            ReplaceLabels = [.. output.ReplaceLabels],
             // The DB check rejects NaN and out-of-range values; the parser and DerivationRule already clamp, this keeps it so.
             Confidence = double.IsFinite(output.Confidence) ? Math.Clamp(output.Confidence, 0, 1) : 0,
             Reason = output.Reason,
@@ -294,4 +295,7 @@ public sealed partial class AnalysisRunJob
             Model = context.Run.Model,
             PromptVersion = context.Run.PromptVersion,
         };
+        row.SetReplaced(context.Labels.Carried(message, output.ReplaceLabels, output.TopicLabel));
+        return row;
+    }
 }

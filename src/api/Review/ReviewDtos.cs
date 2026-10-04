@@ -14,7 +14,7 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="Mixed">Members disagree on label, needs-action or to-be-deleted (after edits).</param>
 /// <param name="Truncated">Not every member is listed (<see cref="ReviewQuery.MaxMembers"/>, <see cref="ReviewQuery.MaxResponseMembers"/>); the aggregates count them all.</param>
 /// <param name="ReplaceLabels">Union of the listed members' replaced labels, distinct and ordinal-sorted.</param>
-/// <param name="LabelChange">The listed members' label change when they agree, else <see cref="Review.LabelChange.Relabel"/>.</param>
+/// <param name="LabelChange">The listed members' label change when they agree; else relabel when any member replaces a label, add otherwise.</param>
 /// <param name="ClaudeReview">The newest not-cancelled Claude review item for the group.</param>
 /// <param name="SuggestedForClaude">Any member, listed or not, is worth a Claude review (<see cref="ReviewQuery.IsSuggestedForClaude"/>).</param>
 public sealed record ReviewGroupDto(
@@ -38,7 +38,7 @@ public sealed record ReviewGroupDto(
     ExternalReviewDto? ClaudeReview = null,
     bool SuggestedForClaude = false);
 
-/// <param name="ReplaceLabels">Current labels the suggestion replaces; apply removes them.</param>
+/// <param name="ReplaceLabels">Current labels apply removes: the replaced labels the message still carries, never the topic label.</param>
 /// <param name="CurrentLabels">The message's personal (user) label names; empty when Gmail is not reachable.</param>
 /// <param name="ClaudeReview">The newest not-cancelled Claude review item for this suggestion alone (not its group's).</param>
 /// <param name="SuggestedForClaude">Worth a Claude review by the settings (<see cref="ReviewQuery.IsSuggestedForClaude"/>); a UI hint only.</param>
@@ -72,7 +72,7 @@ public sealed record LabelDto(string Id, string Name, string Type);
 public sealed record EditSuggestionRequest(string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, string[]? ReplaceLabels = null);
 
 /// <param name="TopicLabel">Approve only: the outcome the card shows; only members with exactly this outcome are approved.</param>
-/// <param name="ReplaceLabels">Approve only, optional: the approved members' replaced labels, each keeping those it carries.</param>
+/// <param name="ReplaceLabels">Approve only, optional: each approved member keeps only its own replaced labels named here; none are added.</param>
 public sealed record GroupDecisionRequest(
     string? SenderAddress,
     string? GroupKey,

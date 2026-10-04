@@ -54,6 +54,23 @@ public sealed class PersonalLabels
         }
     }
 
+    /// <summary>Whether the label list could not be loaded (<see cref="None"/>): names are unknown, not absent.</summary>
+    public bool IsUnavailable => ReferenceEquals(this, None);
+
+    /// <summary>
+    /// The message's personal labels (id, name) whose name is in <paramref name="names"/> (trimmed, case-insensitive),
+    /// other than <paramref name="topicLabel"/>; id order.
+    /// </summary>
+    public IReadOnlyList<(string Id, string Name)> Carried(MessageRow m, IEnumerable<string> names, string topicLabel)
+    {
+        var wanted = names.Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return [.. IdsOf(m)
+            .Select(id => (Id: id, Name: Names.GetValueOrDefault(id)))
+            .Where(l => l.Name is not null && wanted.Contains(l.Name.Trim())
+                && !string.Equals(l.Name.Trim(), topicLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(l => (l.Id, l.Name!))];
+    }
+
     public bool IsPersonal(string labelId) => GmailLabelIds.IsUser(labelId) && !AppLabelIds.Contains(labelId, StringComparer.Ordinal);
 
     /// <summary>The message's personal label ids, distinct and sorted.</summary>

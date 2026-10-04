@@ -143,7 +143,8 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         }
 
         var claude = await ClaudeLookupAsync(address, loaded, ct);
-        var labelNames = (await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct)).Names;
+        var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
+        var labelNames = personal.IsUnavailable ? null : personal.Names;
         foreach (var (g, members) in loaded)
         {
             groups.Add(ToGroup(g, outcomes[g.Key], members, allowlisted, claude, labelNames));
@@ -206,6 +207,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         bool suggestedForClaude)
     {
         var current = CurrentLabels(m, labelNames);
+        var replaced = Replaced(s, m, labelNames);
         return new SuggestionDto(
         s.Id,
         s.MessageId,
@@ -223,12 +225,25 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         SnakeCaseEnumConverter<SuggestionStatus>.ToDb(s.Status),
         s.Edited,
         MessageProtection.IsProtected(m, senderAllowlisted, rules),
-        s.ReplaceLabels,
+        replaced,
         current,
-        LabelChanges.For(s.TopicLabel, s.ReplaceLabels, current),
+        LabelChanges.For(s.TopicLabel, replaced, current),
         claudeReview,
         suggestedForClaude);
     }
+
+    /// <summary>
+    /// The names of the replaced labels apply would remove now: those the message still carries, never the topic label,
+    /// and (when the label list is known) only personal labels Gmail still has. Distinct and ordinal-sorted.
+    /// </summary>
+    private static string[] Replaced(SuggestionRow s, MessageRow m, IReadOnlyDictionary<string, string>? labelNames) =>
+        [.. s.Replaced(labelNames)
+            .Where(l => m.LabelIds.Contains(l.Id, StringComparer.Ordinal)
+                && (labelNames is null || labelNames.ContainsKey(l.Id))
+                && !string.Equals(l.Name.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+            .Select(l => l.Name)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)];
 
     /// <summary>The message's personal label names, distinct and ordinal-sorted.</summary>
     private static string[] CurrentLabels(MessageRow m, IReadOnlyDictionary<string, string>? labelNames) =>
@@ -307,6 +322,9 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
                 IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))
             .ToList();
         var changes = dtos.Select(d => d.LabelChange).Distinct().ToList();
+        var change = changes.Count == 1 ? changes[0]
+            : changes.Any(c => c is LabelChange.Move or LabelChange.Relabel) ? LabelChange.Relabel
+            : LabelChange.Add;
         return new ReviewGroupDto(
             key,
             display,
@@ -324,7 +342,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
             dtos,
             members.Count < stats.Size,
             [.. dtos.SelectMany(d => d.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
-            changes.Count == 1 ? changes[0] : LabelChange.Relabel,
+            change,
             key is null ? null : claude.Groups.GetValueOrDefault(key),
             IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0));
     }

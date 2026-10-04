@@ -126,26 +126,21 @@ public static class ReviewEndpoints
     }
 
     /// <summary>
-    /// Saves the edited outcome and approves it; 400 on an invalid label path, a missing flag or a replaced label the
-    /// message does not carry, 404, 409 when applied.
+    /// Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied,
+    /// then 400 on a replaced label the message does not carry and 503 when the Gmail label list cannot be loaded.
     /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, CancellationToken ct)
     {
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
         ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
-        if (errors.Count == 0 && request.ReplaceLabels is { } replace)
-        {
-            ReplaceLabelsUnknownErrors(await review.UnknownReplaceLabelsAsync(id, replace, ct), errors);
-        }
-
         return errors.Count > 0
             ? TypedResults.ValidationProblem(errors)
             : await ToResultAsync(review.EditAsync(id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, ct));
     }
 
     /// <summary>Reject takes every pending member; approve needs the card's outcome and takes the members that have it.</summary>
-    private static async Task<Results<Ok<GroupDecisionResponse>, ValidationProblem>> DecideGroupAsync(
+    private static async Task<Results<Ok<GroupDecisionResponse>, ValidationProblem, ProblemHttpResult>> DecideGroupAsync(
         GroupDecisionRequest request, DecisionOutcome outcome, ReviewService review, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
@@ -168,14 +163,22 @@ public static class ReviewEndpoints
             errors["groupKey"] = [$"Required, at most {MaxGroupKeyLength} characters."];
         }
 
-        if (errors.Count == 0 && shown?.ReplaceLabels is { } replace)
+        if (errors.Count > 0)
         {
-            ReplaceLabelsUnknownErrors(await review.UnknownReplaceLabelsAsync(sender!, request.GroupKey!, replace, ct), errors);
+            return TypedResults.ValidationProblem(errors);
         }
 
-        return errors.Count > 0
-            ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await review.DecideGroupAsync(sender!, request.GroupKey!, outcome, shown, ct));
+        if (outcome == DecisionOutcome.Rejected)
+        {
+            return TypedResults.Ok(await review.DecideGroupAsync(sender!, request.GroupKey!, outcome, null, ct));
+        }
+
+        return await review.ApproveGroupAsync(sender!, request.GroupKey!, shown!, ct) switch
+        {
+            (ReviewResult.Ok, { } response) => TypedResults.Ok(response),
+            (ReviewResult.InvalidReplaceLabels, _) => ReplaceLabelsUnknown("no pending email of the group carries"),
+            _ => LabelsUnavailable(),
+        };
     }
 
     /// <summary>Approves pending model suggestions at or above the threshold (and derived/memory ones when asked).</summary>
@@ -230,6 +233,8 @@ public static class ReviewEndpoints
         {
             (ReviewResult.Ok, { } s) => TypedResults.Ok(s),
             (ReviewResult.NotFound, _) => TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Suggestion not found"),
+            (ReviewResult.InvalidReplaceLabels, _) => ReplaceLabelsUnknown("the email does not carry"),
+            (ReviewResult.LabelsUnavailable, _) => LabelsUnavailable(),
             _ => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Already applied",
@@ -270,13 +275,13 @@ public static class ReviewEndpoints
         }
     }
 
-    private static void ReplaceLabelsUnknownErrors(IReadOnlyList<string> unknown, Dictionary<string, string[]> errors)
-    {
-        if (unknown.Count > 0)
-        {
-            errors["replaceLabels"] = [$"Not a current label of the message: {string.Join(", ", unknown)}."];
-        }
-    }
+    private static ValidationProblem ReplaceLabelsUnknown(string what) =>
+        TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["replaceLabels"] = [$"Names a label {what}."] });
+
+    private static ProblemHttpResult LabelsUnavailable() => TypedResults.Problem(
+        statusCode: StatusCodes.Status503ServiceUnavailable,
+        title: "Gmail labels unavailable",
+        detail: "The Gmail label list could not be loaded; nothing was changed. Try again.");
 
     private static Dictionary<string, string[]> AddressError() =>
         new() { ["address"] = [$"At most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters, not blank."] };

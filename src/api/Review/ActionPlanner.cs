@@ -24,8 +24,8 @@ public static class ActionPlanner
 
     /// <param name="labelIds">Label path to Gmail label id (case-insensitive): the topic label, the action label when
     /// the suggestion needs action and the delete label when it is deletable and not protected.</param>
-    /// <param name="replaceLabelIds">Label path to Gmail label id for the suggestion's replaced labels (lookup only);
-    /// a path missing from it no longer exists and is skipped.</param>
+    /// <param name="removable">Ids of the personal labels Gmail has now; a replaced label not in it (deleted, or now
+    /// the action or delete label) is skipped. Null removes no replaced label.</param>
     /// <exception cref="KeyNotFoundException">A label the plan needs is missing from <paramref name="labelIds"/>.</exception>
     public static ActionPlan Plan(
         SuggestionRow suggestion,
@@ -33,7 +33,7 @@ public static class ActionPlanner
         IReadOnlyDictionary<string, string> labelIds,
         AppSettings settings,
         bool senderAllowlisted,
-        IReadOnlyDictionary<string, string>? replaceLabelIds = null)
+        IReadOnlySet<string>? removable = null)
     {
         var protectedReason = MessageProtection.Reason(message, senderAllowlisted, settings.Protection);
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
@@ -59,10 +59,8 @@ public static class ActionPlanner
         }
 
         var current = new HashSet<string>(message.LabelIds, StringComparer.Ordinal);
-        var replaced = suggestion.ReplaceLabels
-            .Select(path => replaceLabelIds?.GetValueOrDefault(path))
-            .OfType<string>()
-            .Where(id => GmailLabelIds.IsUser(id) && !add.Contains(id, StringComparer.Ordinal));
+        var replaced = suggestion.ReplaceLabelIds
+            .Where(id => removable?.Contains(id) == true && GmailLabelIds.IsUser(id) && !add.Contains(id, StringComparer.Ordinal));
         List<string> remove = [.. replaced];
         if (!suggestion.NeedsAction)
         {

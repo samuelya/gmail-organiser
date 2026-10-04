@@ -198,33 +198,24 @@ public sealed partial class ApplyActionsJob(
         var labelIds = valid.Count == 0
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : await labels.EnsureAsync(paths, (label, _) => RecordCreatedAsync(cursor.BatchId, label), ct);
-        var replaceIds = valid.Any(r => r.Suggestion.ReplaceLabels.Length > 0)
-            ? await ReplaceLabelIdsAsync(settings, ct)
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Ids, not names: a replaced label renamed in Gmail since analysis is still removed; a deleted one is skipped.
+        var personal = valid.Any(r => r.Suggestion.ReplaceLabelIds.Length > 0)
+            ? PersonalLabels.From(await catalog.GetAsync(ct), settings).Names
+            : new Dictionary<string, string>(StringComparer.Ordinal);
+        var removable = personal.Keys.ToHashSet(StringComparer.Ordinal);
         var items = valid.Select(r => new PlannedItem(
             r.Suggestion,
-            ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress), replaceIds)));
+            ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress), removable)));
         var chunks = LabelChunks.Group(items, i => i.Plan.Add, i => i.Plan.Remove, gmailOptions.Value.BatchModifyMaxIds)
             .Select(c => new PlannedChunk(c.Items, c.Add, c.Remove))
             .ToList();
-        var names = labelIds.Concat(replaceIds).GroupBy(p => p.Value).ToDictionary(g => g.Key, g => g.First().Key, StringComparer.Ordinal);
-        return new Plan(chunks, labelIds, replaceIds, names);
-    }
-
-    /// <summary>
-    /// Name to id (case-insensitive) of the personal labels Gmail has now, for the replaced labels: never a system
-    /// label nor the action or delete label, and never created. A name Gmail no longer has resolves to nothing.
-    /// </summary>
-    private async Task<Dictionary<string, string>> ReplaceLabelIdsAsync(AppSettings settings, CancellationToken ct)
-    {
-        var personal = PersonalLabels.From(await catalog.GetAsync(ct), settings);
-        var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (id, name) in personal.Names.OrderBy(p => p.Key, StringComparer.Ordinal))
+        var names = labelIds.GroupBy(p => p.Value).ToDictionary(g => g.Key, g => g.First().Key, StringComparer.Ordinal);
+        foreach (var (id, name) in personal)
         {
-            ids.TryAdd(name, id);
+            names.TryAdd(id, name);
         }
 
-        return ids;
+        return new Plan(chunks, labelIds, removable, names);
     }
 
     /// <summary>
@@ -302,7 +293,7 @@ public sealed partial class ApplyActionsJob(
     {
         try
         {
-            return ActionPlanner.Plan(suggestion, message, plan.LabelIds, settings, allowlisted, plan.ReplaceIds);
+            return ActionPlanner.Plan(suggestion, message, plan.LabelIds, settings, allowlisted, plan.Removable);
         }
         catch (KeyNotFoundException)
         {
@@ -389,12 +380,12 @@ public sealed partial class ApplyActionsJob(
     private sealed record PlannedChunk(IReadOnlyList<PlannedItem> Items, string[] Add, string[] Remove);
 
     /// <param name="LabelIds">Label path to id (case-insensitive), as resolved for this plan.</param>
-    /// <param name="ReplaceIds">Replaced label path to id (lookup only, <see cref="ReplaceLabelIdsAsync"/>).</param>
+    /// <param name="Removable">Ids of the personal labels Gmail had when planned; the replaced labels apply may remove.</param>
     /// <param name="Names">Label id to the path it was resolved from, for the log's display names.</param>
     private sealed record Plan(
         IReadOnlyList<PlannedChunk> Chunks,
         IReadOnlyDictionary<string, string> LabelIds,
-        IReadOnlyDictionary<string, string> ReplaceIds,
+        IReadOnlySet<string> Removable,
         IReadOnlyDictionary<string, string> Names)
     {
         public int Messages => Chunks.Sum(c => c.Items.Count);

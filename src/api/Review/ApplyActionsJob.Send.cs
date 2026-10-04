@@ -209,20 +209,42 @@ public sealed partial class ApplyActionsJob
     /// <summary>
     /// Reloads the labels; when one the chunk adds no longer exists, creates its path again (from the log's display
     /// names) and checkpoints the chunk and its log rows with the new id. A user label the chunk removes that no longer
-    /// exists is dropped from the chunk (nothing to remove; Gmail refuses the call otherwise). Null when every label
-    /// still exists.
+    /// exists is dropped from the chunk and its log rows (nothing to remove; Gmail refuses the call otherwise). Null
+    /// when every label still exists.
     /// </summary>
     private async Task<ApplyCursor?> ReResolveLabelsAsync(JobContext ctx, ApplyCursor cursor, int total, CancellationToken ct)
     {
         var pending = cursor.Pending!;
         var existing = (await catalog.RefreshAsync(ct)).Select(l => l.Id).ToHashSet(StringComparer.Ordinal);
-        string[] remove = [.. pending.Remove.Where(id => !GmailLabelIds.IsUser(id) || existing.Contains(id))];
-        var dropped = remove.Length < pending.Remove.Length;
+        var kept = Enumerable.Range(0, pending.Remove.Length)
+            .Where(i => !GmailLabelIds.IsUser(pending.Remove[i]) || existing.Contains(pending.Remove[i]))
+            .ToList();
+        var dropped = kept.Count < pending.Remove.Length;
         if (dropped)
         {
+            string[] remove = [.. kept.Select(i => pending.Remove[i])];
+            var before = pending;
             pending = pending with { Remove = remove };
             cursor = cursor with { Pending = pending };
-            await ctx.CheckpointAsync(cursor, Progress(cursor, total), ct);
+            await ctx.CheckpointAsync(cursor, Progress(cursor, total), async t =>
+            {
+                var rows = await db.ActionLog
+                    .Where(l => l.BatchId == cursor.BatchId && before.MessageIds.Contains(l.MessageId) && l.UndoneByBatchId == null)
+                    .ToListAsync(t);
+                foreach (var row in rows)
+                {
+                    // Display names line up with the chunk's ids (PrepareAsync).
+                    if (row.LabelsRemoved.Length == before.Remove.Length)
+                    {
+                        row.LabelsRemoved = [.. kept.Select(i => row.LabelsRemoved[i])];
+                    }
+
+                    row.LabelIdsAfter = After(row.LabelIdsBefore, before.Add, remove);
+                }
+
+                await db.SaveChangesAsync(t);
+            }, ct);
+            db.ChangeTracker.Clear();
         }
 
         var missing = Enumerable.Range(0, pending.Add.Length).Where(i => !existing.Contains(pending.Add[i])).ToList();

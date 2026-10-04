@@ -44,9 +44,13 @@ public sealed class SuggestionRow
     public bool UnsubscribeSuggested { get; set; }
 
     /// <summary>
-    /// Paths of the message's current personal labels the suggestion replaces (labelled phase, DESIGN §6.3); apply
-    /// removes those the message still carries. Empty for memory and sender-pattern suggestions.
+    /// Ids of the message's personal labels the suggestion replaces (labelled phase, DESIGN §6.3); apply removes those
+    /// the message still carries, so a label renamed in Gmail is still removed. Empty for memory and sender-pattern
+    /// suggestions. Written through <see cref="SetReplaced"/> only.
     /// </summary>
+    public string[] ReplaceLabelIds { get; set; } = [];
+
+    /// <summary>The names of <see cref="ReplaceLabelIds"/> when stored, same order; display only.</summary>
     public string[] ReplaceLabels { get; set; } = [];
 
     /// <summary>
@@ -66,6 +70,19 @@ public sealed class SuggestionRow
     public bool Edited { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? DecidedAt { get; set; }
+
+    /// <summary>Sets the replaced labels (id, name); true when the set of ids changed.</summary>
+    public bool SetReplaced(IReadOnlyList<(string Id, string Name)> labels)
+    {
+        var changed = !labels.Select(l => l.Id).ToHashSet(StringComparer.Ordinal).SetEquals(ReplaceLabelIds);
+        ReplaceLabelIds = [.. labels.Select(l => l.Id)];
+        ReplaceLabels = [.. labels.Select(l => l.Name)];
+        return changed;
+    }
+
+    /// <summary>The replaced labels as (id, name): the current Gmail name when <paramref name="names"/> knows it, else the stored one.</summary>
+    public IReadOnlyList<(string Id, string Name)> Replaced(IReadOnlyDictionary<string, string>? names) =>
+        [.. ReplaceLabelIds.Select((id, i) => (id, names?.GetValueOrDefault(id) ?? (i < ReplaceLabels.Length ? ReplaceLabels[i] : id)))];
 
     /// <summary>
     /// Sets <see cref="Status"/> and mirrors it onto <paramref name="message"/>; the only writer of both.
@@ -111,6 +128,7 @@ public sealed class SuggestionRow
             e.Property(r => r.Source).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionSource>());
             e.Property(r => r.TopicLabel).IsRequired();
             e.Property(r => r.Reason).IsRequired();
+            e.Property(r => r.ReplaceLabelIds).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.ReplaceLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.FilterCriteria).HasColumnType("jsonb");
             e.Property(r => r.Status).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionStatus>());
