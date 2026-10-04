@@ -130,7 +130,17 @@ describe('SettingsPage', () => {
   it('renders the Google, Gmail connection and Ollama sections with the wizard steps', async () => {
     const { el, q } = await render();
     const headings = [...el.querySelectorAll('h2')].map((h) => h.textContent?.trim());
-    expect(headings).toEqual(['Google', 'Gmail connection', 'Ollama', 'Fetch', 'Analysis']);
+    expect(headings).toEqual([
+      'Google',
+      'Gmail connection',
+      'Ollama',
+      'Fetch',
+      'Labels',
+      'Analysis',
+      'Data',
+    ]);
+    expect(q('section-labels')!.querySelector('app-labels-settings')).not.toBeNull();
+    expect(q('section-data')!.querySelector('app-data-settings')).not.toBeNull();
     expect(q('section-google')!.querySelector('app-google-client-step')).not.toBeNull();
     expect(q('section-gmail')!.querySelector('app-connect-gmail-step')).not.toBeNull();
     expect(q('section-ollama')!.querySelector('app-ollama-url-step')).not.toBeNull();

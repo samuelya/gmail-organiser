@@ -30,6 +30,8 @@ import { OllamaUrlStep } from '../setup/steps/ollama-url-step.component';
 import { AnalysisSettingsSection } from './analysis-settings.component';
 import { AttachmentSettingsSection } from './attachment-settings.component';
 import { ClaudeSettingsSection } from './claude-settings.component';
+import { DataSettingsSection } from './data-settings.component';
+import { LabelsSettingsSection } from './labels-settings.component';
 import { ProtectionSettingsSection } from './protection-settings.component';
 import {
   AnalysisSettings,
@@ -39,6 +41,7 @@ import {
   ClaudeSettings,
   ClaudeSettingsDto,
   ClaudeSettingsUpdate,
+  LabelSettings,
   PromptTemplateDto,
   ProtectionSettings,
 } from './settings.models';
@@ -68,6 +71,8 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     AttachmentSettingsSection,
     ClaudeSettingsSection,
     ProtectionSettingsSection,
+    LabelsSettingsSection,
+    DataSettingsSection,
   ],
   templateUrl: './settings-page.component.html',
   styles: `
@@ -109,6 +114,9 @@ export class SettingsPage implements OnInit {
   /** `null` until the Ollama URL is saved here: the models section lists against the saved URL. */
   readonly ollamaUrl = signal<string | null>(null);
 
+  /** `null` until loaded; the labels section saves itself. */
+  readonly labels = signal<LabelSettings | null>(null);
+
   readonly analysis = signal<AnalysisSettings | null>(null);
   /** The saved embedding model; the analysis cluster distance needs one. */
   readonly embeddingModel = signal<string | null>(null);
@@ -138,6 +146,10 @@ export class SettingsPage implements OnInit {
           this.fetchChunkSize.reset(settings.fetchChunkSize);
           this.fetchLoaded.set(true);
           this.embeddingModel.set(settings.embeddingModel);
+          this.labels.set({
+            actionLabelName: settings.actionLabelName,
+            deleteLabelName: settings.deleteLabelName,
+          });
           this.analysis.set(settings);
           this.attachments.set(attachmentsOf(settings));
           this.claude.set(claudeOf(settings));

@@ -127,16 +127,23 @@ public static class ReviewEndpoints
 
     /// <summary>
     /// Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied,
-    /// then 400 on a replaced label the message does not carry and 503 when the Gmail label list cannot be loaded.
+    /// then 400 naming the replaced labels the message does not carry and 503 when the Gmail label list cannot be loaded.
     /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, CancellationToken ct)
     {
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
         ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
-        return errors.Count > 0
-            ? TypedResults.ValidationProblem(errors)
-            : await ToResultAsync(review.EditAsync(id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, ct));
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        var (result, suggestion, unknown) = await review.EditAsync(
+            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, ct);
+        return result == ReviewResult.InvalidReplaceLabels
+            ? ReplaceLabelsUnknown("the email does not carry", unknown)
+            : ToResult((result, suggestion));
     }
 
     /// <summary>Reject takes every pending member; approve needs the card's outcome and takes the members that have it.</summary>
@@ -175,8 +182,8 @@ public static class ReviewEndpoints
 
         return await review.ApproveGroupAsync(sender!, request.GroupKey!, shown!, ct) switch
         {
-            (ReviewResult.Ok, { } response) => TypedResults.Ok(response),
-            (ReviewResult.InvalidReplaceLabels, _) => ReplaceLabelsUnknown("no pending email of the group carries"),
+            (ReviewResult.Ok, { } response, _) => TypedResults.Ok(response),
+            (ReviewResult.InvalidReplaceLabels, _, var unknown) => ReplaceLabelsUnknown("no pending email of the group carries", unknown),
             _ => LabelsUnavailable(),
         };
     }
@@ -228,12 +235,14 @@ public static class ReviewEndpoints
     }
 
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> ToResultAsync(
-        Task<(ReviewResult Result, SuggestionDto? Suggestion)> action) =>
-        await action switch
+        Task<(ReviewResult Result, SuggestionDto? Suggestion)> action) => ToResult(await action);
+
+    private static Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult> ToResult(
+        (ReviewResult Result, SuggestionDto? Suggestion) outcome) =>
+        outcome switch
         {
             (ReviewResult.Ok, { } s) => TypedResults.Ok(s),
             (ReviewResult.NotFound, _) => TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Suggestion not found"),
-            (ReviewResult.InvalidReplaceLabels, _) => ReplaceLabelsUnknown("the email does not carry"),
             (ReviewResult.LabelsUnavailable, _) => LabelsUnavailable(),
             _ => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict,
@@ -275,8 +284,12 @@ public static class ReviewEndpoints
         }
     }
 
-    private static ValidationProblem ReplaceLabelsUnknown(string what) =>
-        TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["replaceLabels"] = [$"Names a label {what}."] });
+    /// <summary>The <c>replaceLabels</c> field error names each unknown label, quoted.</summary>
+    private static ValidationProblem ReplaceLabelsUnknown(string what, IReadOnlyList<string> unknown) =>
+        TypedResults.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["replaceLabels"] = [$"Names labels {what}: {string.Join(", ", unknown.Select(l => $"'{l}'"))}."],
+        });
 
     private static ProblemHttpResult LabelsUnavailable() => TypedResults.Problem(
         statusCode: StatusCodes.Status503ServiceUnavailable,
