@@ -135,7 +135,9 @@ public sealed class ActionPlannerTests
 
     private static ActionPlan Plan(
         SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null, HashSet<string>? removable = null) =>
-        ActionPlanner.Plan(suggestion, message, Ids, settings ?? Settings, allowlisted, removable);
+        ActionPlanner.Plan(
+            suggestion, message, Ids, settings ?? Settings,
+            allowlisted ? new Allowlist(new HashSet<string> { message.FromAddress }, []) : Allowlist.Empty, removable);
 
     private static SuggestionRow Suggestion(string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false, string[]? replace = null) => new()
     {

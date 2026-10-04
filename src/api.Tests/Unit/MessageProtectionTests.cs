@@ -30,8 +30,8 @@ public sealed class MessageProtectionTests
     {
         var m = Msg(flag);
 
-        MessageProtection.Reason(m, senderAllowlisted: false, rules).ShouldBe(expected);
-        MessageProtection.IsProtected(m, senderAllowlisted: false, rules).ShouldBe(expected is not null);
+        MessageProtection.Reason(m, Allowlist.Empty, rules).ShouldBe(expected);
+        MessageProtection.IsProtected(m, Allowlist.Empty, rules).ShouldBe(expected is not null);
     }
 
     [Fact]
@@ -41,9 +41,9 @@ public sealed class MessageProtectionTests
         m.HasAttachment = true;
         m.LabelIds = ["INBOX", MessageProtection.StarredLabel, MessageProtection.ImportantLabel];
 
-        MessageProtection.Reason(m, false, new()).ShouldBe("attachment");
-        MessageProtection.Reason(m, false, new(Attachments: false)).ShouldBe("starred");
-        MessageProtection.Reason(m, false, new(Attachments: false, Starred: false)).ShouldBe("important");
+        MessageProtection.Reason(m, Allowlist.Empty, new()).ShouldBe("attachment");
+        MessageProtection.Reason(m, Allowlist.Empty, new(Attachments: false)).ShouldBe("starred");
+        MessageProtection.Reason(m, Allowlist.Empty, new(Attachments: false, Starred: false)).ShouldBe("important");
     }
 
     [Theory]
@@ -53,9 +53,9 @@ public sealed class MessageProtectionTests
     {
         var m = Msg(flag);
 
-        MessageProtection.Reason(m, senderAllowlisted: true, AllOff).ShouldBe("allowlisted sender");
-        MessageProtection.IsProtected(m, new HashSet<string> { m.FromAddress }, AllOff).ShouldBeTrue();
-        MessageProtection.IsProtected(m, new HashSet<string>(), AllOff).ShouldBeFalse();
+        MessageProtection.Reason(m, new Allowlist(new HashSet<string> { m.FromAddress }, []), AllOff).ShouldBe("allowlisted sender");
+        MessageProtection.Reason(m, new Allowlist(new HashSet<string>(), ["example.com"]), AllOff).ShouldBe("allowlisted domain");
+        MessageProtection.IsProtected(m, Allowlist.Empty, AllOff).ShouldBeFalse();
     }
 
     [Fact]
@@ -64,7 +64,7 @@ public sealed class MessageProtectionTests
         var members = Enumerable.Range(0, 10).Select(i => Msg("none", i)).ToList();
         members[5].LabelIds = ["INBOX", MessageProtection.StarredLabel];
         var group = new MessageGroup("k", "shop@example.com", "d", members.OrderByDescending(m => m.InternalDate).ToList(), [], false);
-        var noAllowlist = new HashSet<string>();
+        var noAllowlist = Allowlist.Empty;
 
         RepresentativePicker.Pick(group, 3, noAllowlist, new()).ShouldContain("m005");
         RepresentativePicker.Pick(group, 3, noAllowlist, new(Starred: false)).ShouldNotContain("m005");

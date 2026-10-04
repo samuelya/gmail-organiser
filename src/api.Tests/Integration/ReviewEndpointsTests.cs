@@ -245,6 +245,25 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
     }
 
     [Fact]
+    public async Task Bulk_approve_skips_a_deletion_from_an_allowlisted_domain()
+    {
+        var deletionId = await IdAsync("b00");
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.Id == deletionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.ToBeDeleted, true), Ct);
+        }
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(x => x with { Protection = x.Protection with { AllowlistedDomains = ["example.com"] } }, Ct);
+        }
+
+        (await BulkAsync(new BulkApproveRequest(null))).ShouldBe((8, 1));
+        (await PostOkAsync($"/api/review/suggestions/{deletionId}/approve")).Protected.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task Analyse_individually_resets_the_members_and_queues_an_ungrouped_messages_run()
     {
         var pending = await IdAsync("a05");

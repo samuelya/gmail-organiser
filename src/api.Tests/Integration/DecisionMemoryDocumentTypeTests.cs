@@ -114,7 +114,7 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
         await using var db = postgres.CreateDbContext();
         var current = await settings.GetAsync(Ct);
         var context = new ShortCircuitContext(
-            current, new HashSet<string>(), new LabelTreeIndex(["Shopping"]), PersonalLabels.From([], current), parent);
+            current, Allowlist.Empty, new LabelTreeIndex(["Shopping"]), PersonalLabels.From([], current), parent);
         var message = Message("m2");
         var group = new MessageGroup(Scope, Shop, "d", [message], [], Individual: false);
         return (await new MemoryShortCircuit(Memory(db)).TryAsync([group], context, Ct))[0];

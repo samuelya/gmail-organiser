@@ -378,6 +378,23 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
+    public async Task A_sender_on_an_allowlisted_domain_is_spared_the_delete_label_too()
+    {
+        await SeedSuggestionsAsync(("b0", "Synthetic/Bills", true, true, SuggestionStatus.Approved));
+        await SyncAsync();
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(s => s with { Protection = s.Protection with { AllowlistedDomains = ["example.com"] } }, Ct);
+        }
+
+        var billing = (await ProposalsAsync()).Items.Single(p => p.SenderAddress == Billing).Suggested;
+
+        billing.Criteria.NegatedQuery.ShouldBeNull();
+        billing.Action.ShouldBe(new FilterActionRequest(["Synthetic/Bills"], SkipInbox: false, MarkRead: false), new ActionComparer());
+    }
+
+    [Fact]
     public async Task Proposals_page_size_is_capped()
     {
         (await host.CreateClient().GetAsync("/api/rules/filters/proposals?pageSize=101", Ct)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);

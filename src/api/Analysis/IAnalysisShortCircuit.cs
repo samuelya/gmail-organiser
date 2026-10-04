@@ -16,13 +16,13 @@ public interface IAnalysisShortCircuit
 }
 
 /// <summary>
-/// The caller's settings snapshot, allowlisted senders, Gmail user label names (<see cref="LabelTreeIndex.Empty"/> when only counting) and the
+/// The caller's settings snapshot, allowlist, Gmail user label names (<see cref="LabelTreeIndex.Empty"/> when only counting) and the
 /// person's own labels (<see cref="PersonalLabels.None"/> when Gmail is not reachable), and the run's document-type
 /// parent (null: the feature is off).
 /// </summary>
 public sealed record ShortCircuitContext(
     AppSettings Settings,
-    IReadOnlySet<string> Allowlisted,
+    Allowlist Allowlisted,
     LabelTreeIndex LabelTree,
     PersonalLabels Labels,
     string? DocumentTypeParent);

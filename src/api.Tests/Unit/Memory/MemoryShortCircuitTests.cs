@@ -46,7 +46,7 @@ public sealed class MemoryShortCircuitTests
         {
             [GroupKey.For(Msg(0))] = new("topic/shop", NeedsAction: false, ToBeDeleted: false, Approvals: 5, Agreement: 1, DocumentTypeLabel: null, DocumentTypeDecided: false),
         });
-        var context = new ShortCircuitContext(Settings, new HashSet<string>(), new LabelTreeIndex(["Topic/Shop"]), Labels, DocumentTypeParent: null);
+        var context = new ShortCircuitContext(Settings, Allowlist.Empty, new LabelTreeIndex(["Topic/Shop"]), Labels, DocumentTypeParent: null);
 
         var results = await new MemoryShortCircuit(memory).TryAsync(
             [
@@ -99,7 +99,7 @@ public sealed class MemoryShortCircuitTests
 
     private static Task<IReadOnlyList<ShortCircuitResult?>> ShortCircuit(string? parent, MemoryPattern pattern, params MessageGroup[] groups) =>
         new MemoryShortCircuit(new PatternMemory(new Dictionary<string, MemoryPattern> { [GroupKey.For(Msg(0))] = pattern }))
-            .TryAsync(groups, new ShortCircuitContext(Settings, new HashSet<string>(), new LabelTreeIndex(["Topic/Shop"]), Labels, parent), Ct);
+            .TryAsync(groups, new ShortCircuitContext(Settings, Allowlist.Empty, new LabelTreeIndex(["Topic/Shop"]), Labels, parent), Ct);
 
     /// <summary>Answers pattern lookups only; the short-circuit calls nothing else.</summary>
     private sealed class PatternMemory(IReadOnlyDictionary<string, MemoryPattern> patterns) : IDecisionMemory
