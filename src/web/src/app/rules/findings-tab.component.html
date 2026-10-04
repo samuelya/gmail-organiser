@@ -83,6 +83,9 @@
             [finding]="f"
             [reviewId]="r.id"
             [busy]="busy().has(f.id)"
+            [claudeMode]="claude.mode()"
+            [claudeReview]="claude.forFinding(f.id)"
+            (claudeChanged)="claude.patch($event)"
             (apply)="apply($event)"
             (dismiss)="dismiss($event)"
           />

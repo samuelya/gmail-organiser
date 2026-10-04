@@ -26,10 +26,13 @@ export type ReviewVerdict = 'agree' | 'alternative' | 'needs_human';
 /** What the user did with a reviewed item. */
 export type ExternalReviewResolution = 'none' | 'accepted_claude' | 'dismissed';
 
-/** `ExternalReviewDto`: one Claude review item for a suggestion or a review group. */
+/** What a Claude review item is about. */
+export type ExternalReviewTarget = 'suggestion' | 'group' | 'label_plan' | 'filter_finding';
+
+/** `ExternalReviewDto`: one Claude review item for a suggestion, a review group, a label plan or a filter finding. */
 export interface ExternalReviewDto {
   id: string;
-  targetType: 'suggestion' | 'group';
+  targetType: ExternalReviewTarget;
   suggestionId: string | null;
   senderAddress: string;
   groupKey: string | null;
@@ -51,6 +54,12 @@ export interface ExternalReviewDto {
   createdAt: string;
   reviewedAt: string | null;
   resolvedAt: string | null;
+  labelPlanId?: string | null;
+  findingId?: string | null;
+  /** A label plan's alternative: the label paths Claude proposes. */
+  alternativeStructure?: string[] | null;
+  /** A finding's alternative: a Gmail query as given, or structured criteria as compact JSON. */
+  verdictFilterCriteria?: string | null;
 }
 
 export interface GroupRef {
@@ -58,11 +67,13 @@ export interface GroupRef {
   groupKey: string;
 }
 
-/** `CreateExternalReviewsRequest`: at least one of the three. */
+/** `CreateExternalReviewsRequest`: at least one field. The plan must be a draft, the findings open. */
 export interface CreateExternalReviewsRequest {
   suggestionIds?: string[];
   groups?: GroupRef[];
   runId?: string;
+  labelPlanId?: string;
+  findingIds?: string[];
 }
 
 export interface CreateExternalReviewsResponse {
@@ -83,6 +94,13 @@ export function isOpenReview(item: ExternalReviewDto | null | undefined): boolea
     item.status === 'running' ||
     (item.status === 'reviewed' && item.resolution === 'none')
   );
+}
+
+/** The Rules page's key for a plan or finding item; null for the Review page's targets. */
+export function ruleTargetKey(item: ExternalReviewDto): string | null {
+  if (item.targetType === 'label_plan' && item.labelPlanId) return `plan:${item.labelPlanId}`;
+  if (item.targetType === 'filter_finding' && item.findingId) return `finding:${item.findingId}`;
+  return null;
 }
 
 /** The snackbar after "Send to Claude". */

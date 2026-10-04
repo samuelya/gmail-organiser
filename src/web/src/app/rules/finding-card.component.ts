@@ -2,13 +2,19 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import { MatButtonModule } from '@angular/material/button';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIconModule } from '@angular/material/icon';
+import { ExternalReviewDto } from '../core/claude.models';
+import { ClaudeVerdict } from '../review/claude-verdict.component';
 import { relativeTime } from '../senders/senders.models';
+import { ClaudeReviewerMode } from '../settings/settings.models';
 import { actionChips, FilterFindingDto, fixView } from './rules.models';
 
-/** One filter-review finding: the filters involved, the proposed fix, and Apply fix / Dismiss while it is open. */
+/**
+ * One filter-review finding: the filters involved, the proposed fix, and while it is open Claude's verdict
+ * ("Send to Claude") and Apply fix / Dismiss.
+ */
 @Component({
   selector: 'app-finding-card',
-  imports: [MatButtonModule, MatChipsModule, MatIconModule],
+  imports: [ClaudeVerdict, MatButtonModule, MatChipsModule, MatIconModule],
   template: `
     @let f = finding();
     <article class="finding flex flex-col gap-3 rounded-lg p-4" data-testid="finding">
@@ -70,6 +76,17 @@ import { actionChips, FilterFindingDto, fixView } from './rules.models';
         </p>
       }
 
+      @if (f.status === 'open' && claudeMode(); as mode) {
+        <app-claude-verdict
+          [mode]="mode"
+          [request]="{ findingIds: [f.id] }"
+          [review]="claudeReview()"
+          [busy]="busy()"
+          [showWhenOff]="true"
+          (changed)="claudeChanged.emit($event)"
+        />
+      }
+
       @if (f.status === 'open') {
         <div class="flex flex-wrap justify-end gap-2">
           <button
@@ -122,6 +139,10 @@ export class FindingCard {
   /** The id of the review on show; a finding from another review was carried over half-applied. */
   readonly reviewId = input.required<string>();
   readonly busy = input(false);
+  /** Null: no Claude panel (resolved findings). */
+  readonly claudeMode = input<ClaudeReviewerMode | null>(null);
+  readonly claudeReview = input<ExternalReviewDto | null>(null);
+  readonly claudeChanged = output<ExternalReviewDto>();
   readonly apply = output<FilterFindingDto>();
   readonly dismiss = output<FilterFindingDto>();
 
