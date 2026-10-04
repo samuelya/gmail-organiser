@@ -51,3 +51,6 @@ public sealed record LabelPlanItemDto(
 /// <param name="ProposedName">A new name for a <c>nest</c> item (a valid label path).</param>
 /// <param name="TargetLabelId">Another user label for a <c>near_duplicate</c> item to merge into.</param>
 public sealed record UpdatePlanItemRequest(string? Status, string? ProposedName, string? TargetLabelId);
+
+/// <param name="JobId">The <c>label_plan_apply</c> job; its progress comes through the jobs hub.</param>
+public sealed record LabelPlanApplyDto(Guid JobId);

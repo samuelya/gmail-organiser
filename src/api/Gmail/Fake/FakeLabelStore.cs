@@ -37,12 +37,27 @@ public sealed class FakeLabelStore
     public void Delete(string id) =>
         labels.RemoveAll(l => l.Type == GmailLabelType.User && string.Equals(l.Id, id, StringComparison.Ordinal));
 
-    /// <summary>Renames the user label <paramref name="id"/>, as the user renaming it in Gmail does; the id stays.</summary>
-    public void Rename(string id, string name)
+    /// <summary>
+    /// Renames the user label <paramref name="id"/>, as the user renaming it in Gmail does; the id stays and nested labels
+    /// keep their names. Null when there is no such user label.
+    /// </summary>
+    /// <exception cref="GmailLabelExistsException">Another label already has <paramref name="name"/> (Gmail's 409).</exception>
+    public GmailLabel? Rename(string id, string name)
     {
         GmailLimits.EnsureValidLabelName(name);
         var index = labels.FindIndex(l => l.Type == GmailLabelType.User && string.Equals(l.Id, id, StringComparison.Ordinal));
+        if (index < 0)
+        {
+            return null;
+        }
+
+        if (labels.Exists(l => !string.Equals(l.Id, id, StringComparison.Ordinal) && string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new GmailLabelExistsException("Another label already has this name.");
+        }
+
         labels[index] = labels[index] with { Name = name };
+        return labels[index];
     }
 
     /// <summary>

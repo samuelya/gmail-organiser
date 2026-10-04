@@ -18,6 +18,12 @@ public enum ActionKind
 
     /// <summary>Labels created for a new Gmail filter (#211): no messages, only <see cref="ActionBatchRow.CreatedLabelIds"/>.</summary>
     FilterLabels,
+
+    /// <summary>A label plan merge (#214): one label moved onto another; the source label is kept, so undo can re-add it.</summary>
+    LabelMerge,
+
+    /// <summary>A label plan rename, empty-label delete or filter retarget (#214): no messages, so History lists it without undo.</summary>
+    LabelPlan,
 }
 
 /// <summary>One History entry (<c>action_batches</c>): the header of a set of <see cref="ActionLogRow"/>s undone together.</summary>
