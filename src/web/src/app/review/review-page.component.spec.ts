@@ -1,6 +1,8 @@
 import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
+import { MatTooltip } from '@angular/material/tooltip';
+import { By } from '@angular/platform-browser';
 import { provideRouter, Router } from '@angular/router';
 import { of, Subject } from 'rxjs';
 import { AnalysisService } from '../analyse/analysis.service';
@@ -9,6 +11,7 @@ import { ClaudeService } from '../core/claude.service';
 import { isActiveJob, JobDto, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { SettingsService } from '../settings/settings.service';
+import { SuggestionAlternativeDto } from './alternative.models';
 import { ReviewPage } from './review-page.component';
 import {
   REVIEW_EDIT_DIALOG,
@@ -131,6 +134,7 @@ describe('ReviewPage', () => {
     pattern: SenderPatternDto = noPattern,
     claudeReviewerMode = 'off',
     groups = [group()],
+    alternatives = 0,
   ) {
     const jobs = new FakeJobs();
     const claude = {
@@ -162,9 +166,11 @@ describe('ReviewPage', () => {
         }),
       ),
       job: vi.fn(() => of(job('completed', { version: 5 }))),
+      acceptAlternatives: vi.fn(() => of({ accepted: 1, discarded: 0, skipped: 0 })),
+      discardAlternatives: vi.fn(() => of({ accepted: 0, discarded: 2, skipped: 0 })),
     };
     const analysis = {
-      summary: vi.fn(() => of({ alternatives: 0 })),
+      summary: vi.fn(() => of({ alternatives })),
       startCompareRun: vi.fn(() => of({ id: 'run-2' })),
     };
     const edit = { editGroup: vi.fn(() => of(true)), editMember: vi.fn(() => of(false)) };
@@ -204,7 +210,28 @@ describe('ReviewPage', () => {
       q('group-expand')!.click();
       await settle();
     };
-    return { fixture, jobs, api, analysis, edit, claude, el, q, all, settle, expand };
+    const tooltip = (id: string) =>
+      fixture.debugElement.query(By.css(`[data-testid="${id}"]`)).injector.get(MatTooltip).message;
+    const tick = async (...indexes: number[]) => {
+      const boxes = el.querySelectorAll<HTMLInputElement>('[data-testid="member-select"] input');
+      indexes.forEach((i) => boxes[i].click());
+      await settle();
+    };
+    return {
+      fixture,
+      jobs,
+      api,
+      analysis,
+      edit,
+      claude,
+      el,
+      q,
+      all,
+      settle,
+      expand,
+      tooltip,
+      tick,
+    };
   }
 
   const dialogButton = (testId: string) =>
@@ -540,5 +567,120 @@ describe('ReviewPage', () => {
     );
     await settle();
     expect(api.sender.mock.calls.length).toBe(calls + 1);
+  });
+
+  const alternative = (over: Partial<SuggestionAlternativeDto> = {}): SuggestionAlternativeDto => ({
+    topicLabel: 'Topic/Beta',
+    documentTypeLabel: null,
+    replaceLabels: [],
+    labelChange: 'add',
+    needsAction: false,
+    toBeDeleted: false,
+    unsubscribeSuggested: false,
+    confidence: 0.8,
+    reason: 'Synthetic new reason',
+    promptVersion: 'v9',
+    model: null,
+    createdAt: '2026-01-02T00:00:00Z',
+    mixed: false,
+    count: 1,
+    ...over,
+  });
+
+  it('re-analyses the ticked members after confirming, then clears the selection', async () => {
+    const { analysis, q, expand, tick, settle } = await render(noPattern, 'off', [
+      group({ members: [member('a'), member('b', { status: 'applied' })] }),
+    ]);
+    await expand();
+    await tick(0, 1);
+    expect(q('reanalyse-selection')!.textContent).toContain('Re-analyse (2)');
+    q('reanalyse-selection')!.click();
+    await settle();
+    const text = document.querySelector('mat-dialog-container')!.textContent!;
+    expect(text).toContain('Re-analyse 2 emails?');
+    expect(text).toContain('memory shortcut is skipped');
+    dialogButton('confirm-ok').click();
+    await settle();
+    expect(analysis.startCompareRun).toHaveBeenCalledWith({ suggestionIds: ['a', 'b'] });
+    expect(snackText()).toContain('Re-analysing 2 messages again');
+    await settle();
+    expect(q('reanalyse-selection')!.textContent).toContain('(0)');
+  });
+
+  it('an applied member can be ticked; Analyse individually then explains it is blocked', async () => {
+    const { api, q, expand, tick, tooltip } = await render(noPattern, 'off', [
+      group({ members: [member('a'), member('b', { status: 'applied' })] }),
+    ]);
+    await expand();
+    await tick(1);
+    expect(q('analyse-individually')!.getAttribute('aria-disabled')).toBe('true');
+    expect(tooltip('analyse-individually')).toBe('Applied emails can only be re-analysed');
+    q('analyse-individually')!.click();
+    expect(api.analyseIndividually).not.toHaveBeenCalled();
+    expect(q('reanalyse-selection')!.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
+  it('Re-analyse is disabled with a tooltip while an analysis run is queued or running', async () => {
+    const { jobs, analysis, q, expand, tick, settle, tooltip } = await render();
+    await expand();
+    await tick(0);
+    jobs.held.set([job('queued', { id: 'job-a', type: 'analysis_run' })]);
+    await settle();
+    expect(q('reanalyse-selection')!.getAttribute('aria-disabled')).toBe('true');
+    expect(tooltip('reanalyse-selection')).toBe('An analysis is running');
+    q('reanalyse-selection')!.click();
+    await settle();
+    expect(document.querySelector('mat-dialog-container')).toBeNull();
+    expect(analysis.startCompareRun).not.toHaveBeenCalled();
+  });
+
+  it('filters by Re-analysed with the count from the summary', async () => {
+    const { api, el, q, settle } = await render(noPattern, 'off', [group()], 4);
+    expect(q('filter-reanalysed')!.textContent).toContain('Re-analysed (4)');
+    el.querySelector<HTMLButtonElement>('[data-testid="filter-reanalysed"] button')!.click();
+    await settle();
+    expect(api.listSenders).toHaveBeenLastCalledWith('pending', '', 1, 25, true);
+    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, true);
+  });
+
+  it('hides the Re-analysed filter while nothing waits', async () => {
+    const { q } = await render();
+    expect(q('filter-reanalysed')).toBeNull();
+  });
+
+  it('Use new on an approved member notes it is pending again; Keep current on a card names the group and tab', async () => {
+    const alt = alternative();
+    const { api, q, all, expand, settle } = await render(noPattern, 'off', [
+      group({
+        alternative: alternative({ count: 1 }),
+        members: [member('a', { status: 'approved', alternative: alt }), member('b')],
+      }),
+    ]);
+    await expand();
+    const compares = all('alternative');
+    expect(compares).toHaveLength(2);
+    compares[1].querySelector<HTMLButtonElement>('[data-testid="alternative-use"]')!.click();
+    await settle();
+    expect(api.acceptAlternatives).toHaveBeenCalledWith({ suggestionIds: ['a'] });
+    expect(snackText()).toContain('Used the new result for 1 suggestion.');
+    expect(q('pending-again')!.textContent).toContain(
+      'pending again: approve it and apply it to change Gmail',
+    );
+
+    compares[0].querySelector<HTMLButtonElement>('[data-testid="alternative-keep"]')!.click();
+    await settle();
+    expect(api.discardAlternatives).toHaveBeenCalledWith({
+      groups: [{ senderAddress: 'news@example.com', groupKey: 'key-1', status: 'pending' }],
+    });
+  });
+
+  it('Use new on a pending member adds no note', async () => {
+    const { q, all, expand, settle } = await render(noPattern, 'off', [
+      group({ members: [member('a', { alternative: alternative() }), member('b')] }),
+    ]);
+    await expand();
+    all('alternative-use')[0].click();
+    await settle();
+    expect(q('pending-again')).toBeNull();
   });
 });
