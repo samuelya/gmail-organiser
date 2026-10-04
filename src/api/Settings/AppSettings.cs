@@ -73,6 +73,9 @@ public sealed record AppSettings
     /// <summary>The protection rule toggles (#176); see <see cref="ProtectionSettings"/>.</summary>
     public ProtectionSettings Protection { get; init; } = new();
 
+    /// <summary>The Apps Script auto-archive config (#210); see <see cref="AppsScriptSettings"/>.</summary>
+    public AppsScriptSettings AppsScript { get; init; } = new();
+
     // Claude review (epic #23); ranges are in SettingsValidation.
     public ClaudeReviewerMode ClaudeReviewerMode { get; init; } = DefaultClaudeReviewerMode;
 

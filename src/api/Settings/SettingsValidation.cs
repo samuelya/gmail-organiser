@@ -50,6 +50,10 @@ public static class SettingsValidation
     public const int MinClaudeMaxTurns = 10;
     public const int MaxClaudeMaxTurns = 300;
     public const int MaxLabelNameLength = GmailLimits.LabelNameMaxLength;
+    public const int MaxAppsScriptRules = 100;
+    public const int MinArchiveRuleDays = 1;
+    public const int MaxArchiveRuleDays = 3650;
+    public const int MaxKeepInInboxLabels = 50;
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
@@ -116,6 +120,11 @@ public static class SettingsValidation
             ValidateAttachments(errors, attachments);
         }
 
+        if (request.AppsScript is { } appsScript)
+        {
+            ValidateAppsScript(errors, appsScript);
+        }
+
         ValidateLabelNames(errors, request, current ?? new AppSettings());
         return errors;
     }
@@ -151,6 +160,56 @@ public static class SettingsValidation
 
     /// <summary>Trims a prompt template; a blank template clears the override so the built-in one applies.</summary>
     public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
+
+    /// <summary>Trims the label names of a validated block; a missing list becomes empty.</summary>
+    public static AppsScriptSettings NormaliseAppsScript(AppsScriptSettings value) => value with
+    {
+        Rules = [.. (value.Rules ?? []).Select(r => r with { Label = r.Label.Trim() })],
+        KeepInInboxLabels = [.. (value.KeepInInboxLabels ?? []).Select(l => l.Trim())],
+    };
+
+    // A rule's label need not exist in Gmail yet: the script skips missing labels.
+    private static void ValidateAppsScript(Dictionary<string, string[]> errors, AppsScriptSettings request)
+    {
+        // The JSON body can carry nulls the non-nullable annotations don't rule out.
+        var rules = request.Rules ?? [];
+        var keep = request.KeepInInboxLabels ?? [];
+        if (rules.Count > MaxAppsScriptRules)
+        {
+            errors["appsScript.rules"] = [$"At most {MaxAppsScriptRules} rules."];
+        }
+        else
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < rules.Count; i++)
+            {
+                var field = $"appsScript.rules[{i}]";
+                if (rules[i] is not { } rule)
+                {
+                    errors[field] = ["Required."];
+                    continue;
+                }
+
+                if (CheckLabelName(errors, $"{field}.label", rule.Label ?? "") && !seen.Add(rule.Label!.Trim()))
+                {
+                    errors[$"{field}.label"] = ["Each label may have one rule."];
+                }
+
+                CheckRange(errors, $"{field}.days", rule.Days, MinArchiveRuleDays, MaxArchiveRuleDays);
+            }
+        }
+
+        if (keep.Count > MaxKeepInInboxLabels)
+        {
+            errors["appsScript.keepInInboxLabels"] = [$"At most {MaxKeepInInboxLabels} labels."];
+            return;
+        }
+
+        for (var i = 0; i < keep.Count; i++)
+        {
+            CheckLabelName(errors, $"appsScript.keepInInboxLabels[{i}]", keep[i] ?? "");
+        }
+    }
 
     private static void ValidateAttachments(Dictionary<string, string[]> errors, UpdateAttachmentSettingsRequest request)
     {
