@@ -157,6 +157,8 @@ public sealed partial class McpSubmitReviewTests : IClassFixture<ApiFactory>, IA
         row.Verdict.ShouldBe(ReviewVerdict.NeedsHuman);
         row.VerdictTopicLabel.ShouldBeNull();
         JsonDocument.Parse(row.VerdictFilterCriteria!).RootElement.GetProperty("from").GetString().ShouldBe("billing.example.com");
+        (await h.Host.CreateClient().GetFromJsonAsync<ExternalReviewDto>($"/api/claude/reviews/{singleItem}", Ct))
+            .ShouldNotBeNull().VerdictFilterCriteria.ShouldBe("""{"from":"billing.example.com"}""");
     }
 
     [Theory]

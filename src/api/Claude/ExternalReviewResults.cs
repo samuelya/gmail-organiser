@@ -32,6 +32,12 @@ public enum CreateExternalReviewsResult
     Ok,
     RunNotFound,
     TooManyTargets,
+
+    /// <summary>The label plan or a finding does not exist.</summary>
+    TargetNotFound,
+
+    /// <summary>The label plan is not a draft, a finding is not open, or one of them has an open item.</summary>
+    TargetConflict,
 }
 
 public enum ReviewVerdictResult

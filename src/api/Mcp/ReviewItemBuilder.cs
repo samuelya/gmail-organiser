@@ -6,6 +6,9 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
+using GmailOrganiser.Rules;
+using GmailOrganiser.Rules.Labels;
+using GmailOrganiser.Rules.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -17,9 +20,13 @@ namespace GmailOrganiser.Mcp;
 public sealed record LocalSuggestionDto(
     string TopicLabel, string? DocumentTypeLabel, bool IsNewLabel, bool NeedsAction, bool ToBeDeleted, double Confidence, string Reason, string Source);
 
-/// <summary>A review item as <c>list_pending_reviews</c> lists it; <c>Local</c> is null when nothing is left to review.</summary>
+/// <summary>
+/// A review item as <c>list_pending_reviews</c> lists it; <c>Local</c> is null when nothing is left to review, and for a
+/// label plan or filter finding, which name their target in <c>LabelPlanId</c> / <c>FindingId</c> instead.
+/// </summary>
 public sealed record PendingReviewDto(
-    Guid Id, string TargetType, string Sender, string? GroupDisplay, int MemberCount, LocalSuggestionDto? Local);
+    Guid Id, string TargetType, string Sender, string? GroupDisplay, int MemberCount, LocalSuggestionDto? Local,
+    Guid? LabelPlanId = null, Guid? FindingId = null);
 
 /// <param name="Status">The status listed: <c>running</c> when any item is running, else <c>queued</c>.</param>
 public sealed record PendingReviewsDto(string Status, IReadOnlyList<PendingReviewDto> Items);
@@ -45,8 +52,13 @@ public sealed class ReviewItemBuilder(
     IDecisionMemory memory,
     IGmailClient gmail,
     ISettingsStore settings,
+    FilterSnapshot filters,
+    FilterReviewService filterReviews,
     ILogger<ReviewItemBuilder> logger)
 {
+    /// <summary>Most filters <c>get_filters</c> returns.</summary>
+    public const int MaxFilters = 300;
+
     public const int DefaultListLimit = 20;
     public const int MaxListLimit = 100;
     public const int MaxSamples = 5;
@@ -60,10 +72,7 @@ public sealed class ReviewItemBuilder(
     public async Task<PendingReviewsDto> ListPendingAsync(int limit, CancellationToken ct)
     {
         limit = Math.Clamp(limit, 1, MaxListLimit);
-        var open = db.ExternalReviews.AsNoTracking().Where(r => db.Suggestions.Any(s => s.Status == SuggestionStatus.Pending
-            && (r.TargetType == ExternalReviewTarget.Suggestion
-                ? s.Id == r.SuggestionId
-                : s.SenderAddress == r.SenderAddress && s.GroupKey == r.GroupKey)));
+        var open = db.ExternalReviews.AsNoTracking().Where(ExternalReviewService.TargetOpen(db));
         var status = await db.ExternalReviews.AnyAsync(r => r.Status == ExternalReviewStatus.Running, ct)
             ? ExternalReviewStatus.Running
             : ExternalReviewStatus.Queued;
@@ -82,6 +91,83 @@ public sealed class ReviewItemBuilder(
 
         return new PendingReviewsDto(SnakeCaseEnumConverter<ExternalReviewStatus>.ToDb(status), items);
     }
+
+    /// <summary>
+    /// <c>get_review_item</c>: a label plan item as <see cref="LabelPlanAsync"/>, a filter finding item with its
+    /// filters, any other item as <see cref="GetAsync"/>; null for an unknown id.
+    /// </summary>
+    public async Task<object?> GetItemAsync(Guid id, bool includeBodies, CancellationToken ct)
+    {
+        var row = await db.ExternalReviews.AsNoTracking().SingleOrDefaultAsync(r => r.Id == id, ct);
+        return row?.TargetType switch
+        {
+            null => null,
+            ExternalReviewTarget.LabelPlan => await LabelPlanAsync(row.LabelPlanId, ct),
+            ExternalReviewTarget.FilterFinding => await FindingItemAsync(row, ct),
+            _ => await GetAsync(id, includeBodies, ct),
+        };
+    }
+
+    /// <summary>
+    /// The plan (the newest <c>draft</c> when <paramref name="planId"/> is null) with the current label tree, which is
+    /// null while Gmail is not connected; null when there is no such plan.
+    /// </summary>
+    public async Task<LabelPlanReviewDto?> LabelPlanAsync(Guid? planId, CancellationToken ct)
+    {
+        var plans = db.LabelPlans.AsNoTracking();
+        var plan = planId is { } id
+            ? await plans.SingleOrDefaultAsync(p => p.Id == id, ct)
+            : await plans.Where(p => p.Status == LabelPlanStatus.Draft).OrderByDescending(p => p.CreatedAt).FirstOrDefaultAsync(ct);
+        if (plan is null)
+        {
+            return null;
+        }
+
+        LabelTreeDto? tree = null;
+        try
+        {
+            tree = await labels.BuildAsync(ct);
+        }
+        catch (GmailNotConnectedException)
+        {
+        }
+
+        return new LabelPlanReviewDto(LabelPlanDto.From(plan), tree);
+    }
+
+    /// <summary>The active filters (at most <see cref="MaxFilters"/>) with the newest filter review's findings.</summary>
+    public async Task<FiltersReviewDto> FiltersAsync(CancellationToken ct)
+    {
+        var list = await filters.ListAsync(includeDeleted: false, ct);
+        var review = await filterReviews.LatestAsync(ct);
+        return new FiltersReviewDto(
+            list.SyncedAt,
+            list.ActiveCount,
+            list.Filters.Count > MaxFilters,
+            [.. list.Filters.Take(MaxFilters).Select(ToMcp)],
+            review is null ? null : new McpFilterReviewDto(review.Id, review.CreatedAt, [.. review.Findings.Select(ToMcp)], review.Summary));
+    }
+
+    private async Task<FilterFindingItemDto?> FindingItemAsync(ExternalReviewRow row, CancellationToken ct)
+    {
+        var reviewId = await db.FilterFindings.AsNoTracking().Where(f => f.Id == row.FilterFindingId)
+            .Select(f => (Guid?)f.ReviewId).SingleOrDefaultAsync(ct);
+        var finding = reviewId is { } id ? (await filterReviews.GetAsync(id, ct))?.Findings.FirstOrDefault(f => f.Id == row.FilterFindingId) : null;
+        return finding is null
+            ? null
+            : new FilterFindingItemDto(
+                ToItem(row, null, [], null), SnakeCaseEnumConverter<ExternalReviewStatus>.ToDb(row.Status), ToMcp(finding),
+                [.. finding.Filters.Select(ToMcp)]);
+    }
+
+    private static McpFindingDto ToMcp(FilterFindingDto f) => new(f.Id, f.Kind, f.FilterIds, f.Description, f.Fix, f.Status);
+
+    private static McpFilterDto ToMcp(FilterDto f) => new(
+        f.Id,
+        f.CriteriaSummary,
+        f.Criteria,
+        new McpFilterActionDto([.. f.Action.AddLabels.Select(l => l.Name ?? $"(missing label {l.Id})")], f.Action.SkipInbox, f.Action.MarkRead),
+        f.CreatedByApp);
 
     /// <summary>The item with its context, or null for an unknown id.</summary>
     public async Task<ReviewItemDetailDto?> GetAsync(Guid id, bool includeBodies, CancellationToken ct)
@@ -144,6 +230,11 @@ public sealed class ReviewItemBuilder(
     /// <summary>The target's suggestions: the pending ones when any are pending, else all of them; newest first.</summary>
     private async Task<List<Member>> MembersAsync(ExternalReviewRow row, CancellationToken ct)
     {
+        if (row.TargetType is not (ExternalReviewTarget.Suggestion or ExternalReviewTarget.Group))
+        {
+            return [];
+        }
+
         var suggestions = row.TargetType == ExternalReviewTarget.Group
             ? db.Suggestions.Where(s => s.SenderAddress == row.SenderAddress && s.GroupKey == row.GroupKey)
             : db.Suggestions.Where(s => s.Id == row.SuggestionId);
@@ -189,7 +280,9 @@ public sealed class ReviewItemBuilder(
         row.SenderAddress,
         display,
         members.Count,
-        local);
+        local,
+        row.LabelPlanId,
+        row.FilterFindingId);
 
     /// <summary>The cleaned body, or null when Gmail cannot return it. Never logged or stored.</summary>
     private async Task<string?> BodyAsync(string messageId, int maxChars, CancellationToken ct)

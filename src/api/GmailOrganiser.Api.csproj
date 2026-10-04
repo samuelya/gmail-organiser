@@ -25,6 +25,7 @@
     <EmbeddedResource Include="Analysis/Prompts/analysis-v4.md" LogicalName="GmailOrganiser.Analysis.Prompts.analysis-v4.md" />
     <EmbeddedResource Include="Analysis/Attachments/image-vision-v1.md" LogicalName="GmailOrganiser.Analysis.Attachments.image-vision-v1.md" />
     <EmbeddedResource Include="Mcp/Prompts/review-pending.md" LogicalName="GmailOrganiser.Mcp.Prompts.review-pending.md" />
+    <EmbeddedResource Include="Mcp/Prompts/review-label-plan.md" LogicalName="GmailOrganiser.Mcp.Prompts.review-label-plan.md" />
     <EmbeddedResource Include="Rules/Prompts/rules-summary-v1.md" LogicalName="GmailOrganiser.Rules.Prompts.rules-summary-v1.md" />
   </ItemGroup>
 </Project>

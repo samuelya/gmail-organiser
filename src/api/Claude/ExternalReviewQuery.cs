@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Review;
@@ -140,5 +141,18 @@ public sealed class ExternalReviewQuery(AppDbContext db)
         SnakeCaseEnumConverter<ExternalReviewResolution>.ToDb(r.Resolution),
         r.CreatedAt,
         r.ReviewedAt,
-        r.ResolvedAt);
+        r.ResolvedAt,
+        r.LabelPlanId,
+        r.FilterFindingId,
+        r.AlternativeStructure is { } structure ? JsonSerializer.Deserialize<string[]>(structure) : null,
+        r.VerdictFilterCriteria is { } criteria ? CriteriaText(criteria) : null);
+
+    /// <summary>The stored jsonb as text: a JSON string unwrapped, anything else compact.</summary>
+    private static string CriteriaText(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.ValueKind == JsonValueKind.String
+            ? doc.RootElement.GetString()!
+            : JsonSerializer.Serialize(doc.RootElement);
+    }
 }

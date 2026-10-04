@@ -29,41 +29,55 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    /// <summary>The tool's arguments and their JSON types, required ones first; must match <see cref="SubmitReview"/>.</summary>
-    private static readonly (string Name, JsonValueKind Kind, bool Required)[] Arguments =
-    [
-        ("id", JsonValueKind.String, true),
-        ("verdict", JsonValueKind.String, true),
-        ("reasoning", JsonValueKind.String, true),
-        ("topic_label", JsonValueKind.String, false),
-        ("needs_action", JsonValueKind.True, false),
-        ("to_be_deleted", JsonValueKind.True, false),
-        ("document_type_label", JsonValueKind.String, false),
-        ("filter_criteria", JsonValueKind.String, false),
-        ("model", JsonValueKind.String, false),
-    ];
+    /// <summary>
+    /// The write tools' arguments and their JSON types, required ones first; must match <see cref="SubmitReview"/> and
+    /// <see cref="RulesTools.SubmitTaxonomyFeedback"/>.
+    /// </summary>
+    private static readonly Dictionary<string, (string Name, JsonValueKind Kind, bool Required)[]> Arguments = new()
+    {
+        [ToolName] =
+        [
+            ("id", JsonValueKind.String, true),
+            ("verdict", JsonValueKind.String, true),
+            ("reasoning", JsonValueKind.String, true),
+            ("topic_label", JsonValueKind.String, false),
+            ("needs_action", JsonValueKind.True, false),
+            ("to_be_deleted", JsonValueKind.True, false),
+            ("document_type_label", JsonValueKind.String, false),
+            ("filter_criteria", JsonValueKind.String, false),
+            ("model", JsonValueKind.String, false),
+        ],
+        [RulesTools.SubmitTaxonomyFeedbackName] =
+        [
+            ("plan_id", JsonValueKind.String, true),
+            ("comments", JsonValueKind.String, true),
+            ("alternative_structure", JsonValueKind.Array, false),
+            ("model", JsonValueKind.String, false),
+        ],
+    };
 
     /// <summary>
-    /// A call-tool filter that checks <c>submit_review</c>'s arguments before the SDK binds them: a missing or mistyped
+    /// A call-tool filter that checks the write tools' arguments before the SDK binds them: a missing or mistyped
     /// argument would otherwise throw in the binding and reach the client as a reason-less error (#186).
     /// </summary>
     public static McpRequestHandler<CallToolRequestParams, CallToolResult> ArgumentFilter(
         McpRequestHandler<CallToolRequestParams, CallToolResult> next) =>
         async (context, ct) =>
         {
-            if (context.Params?.Name != ToolName || CheckArguments(context.Params.Arguments) is not { } reason)
+            if (context.Params?.Name is not { } tool || !Arguments.ContainsKey(tool)
+                || CheckArguments(context.Params.Arguments, tool) is not { } reason)
             {
                 return await next(context, ct);
             }
 
             var tools = ActivatorUtilities.CreateInstance<SubmitTools>(context.Services!);
-            return await tools.RejectArgumentsAsync(context.Params.Arguments, reason, ct);
+            return await tools.RejectArgumentsAsync(context.Params.Arguments, tool, reason, ct);
         };
 
-    /// <summary>Why the arguments don't fit the tool's input schema, or null when they do. Never quotes a value.</summary>
-    internal static string? CheckArguments(IDictionary<string, JsonElement>? arguments)
+    /// <summary>Why the arguments don't fit <paramref name="tool"/>'s input schema, or null when they do. Never quotes a value.</summary>
+    internal static string? CheckArguments(IDictionary<string, JsonElement>? arguments, string tool = ToolName)
     {
-        foreach (var (name, kind, required) in Arguments)
+        foreach (var (name, kind, required) in Arguments[tool])
         {
             if (arguments is null || !arguments.TryGetValue(name, out var value) || value.ValueKind == JsonValueKind.Null)
             {
@@ -77,19 +91,26 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
 
             var fits = kind == JsonValueKind.True
                 ? value.ValueKind is JsonValueKind.True or JsonValueKind.False
-                : value.ValueKind == kind;
+                : value.ValueKind == kind && (kind != JsonValueKind.Array || value.EnumerateArray().All(e => e.ValueKind == JsonValueKind.String));
             if (!fits)
             {
-                return $"Argument '{name}' must be {(kind == JsonValueKind.True ? "a boolean" : "a string")}.";
+                var type = kind switch
+                {
+                    JsonValueKind.True => "a boolean",
+                    JsonValueKind.Array => "an array of strings",
+                    _ => "a string",
+                };
+                return $"Argument '{name}' must be {type}.";
             }
         }
 
         return null;
     }
 
-    private async Task<CallToolResult> RejectArgumentsAsync(IDictionary<string, JsonElement>? arguments, string reason, CancellationToken ct)
+    private async Task<CallToolResult> RejectArgumentsAsync(
+        IDictionary<string, JsonElement>? arguments, string tool, string reason, CancellationToken ct)
     {
-        logger.LogWarning("MCP tool submit_review rejected its arguments: {Reason}", reason);
+        logger.LogWarning("MCP tool {Tool} rejected its arguments: {Reason}", tool, reason);
         var id = arguments?.TryGetValue("id", out var value) == true && value.ValueKind == JsonValueKind.String
             && Guid.TryParse(value.GetString(), out var guid)
             ? guid
@@ -107,7 +128,7 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
             }
             catch (Exception ex)
             {
-                logger.LogWarning("MCP tool submit_review could not look up the item status ({Error})", ex.GetType().Name);
+                logger.LogWarning("MCP tool {Tool} could not look up the item status ({Error})", tool, ex.GetType().Name);
             }
         }
 
@@ -117,7 +138,9 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
     [McpServerTool(Name = ToolName, Title = "Submit a review verdict", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Submits your verdict on one review item from list_pending_reviews, once per item. 'agree' keeps the local "
         + "suggestion; 'alternative' proposes topic_label (a full label path, levels separated by '/') with the "
-        + "needs_action and to_be_deleted flags, and optionally document_type_label; 'needs_human' leaves it to the user. Nothing is applied until the user "
+        + "needs_action and to_be_deleted flags, and optionally document_type_label; 'needs_human' leaves it to the user. "
+        + "For a filter_finding item, 'agree' keeps the proposed fix and 'alternative' proposes filter_criteria instead (no "
+        + "topic_label). A label_plan item takes submit_taxonomy_feedback instead. Nothing is applied until the user "
         + "accepts it in the portal. Returns { ok, status, reason }: with ok=false the verdict was not stored; do not "
         + "retry the same item.")]
     public async Task<CallToolResult> SubmitReview(
@@ -153,7 +176,7 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
         return ToCallToolResult(result);
     }
 
-    private static CallToolResult ToCallToolResult(SubmitReviewResultDto result)
+    internal static CallToolResult ToCallToolResult(SubmitReviewResultDto result)
     {
         var json = JsonSerializer.SerializeToElement(result, Json);
         return new CallToolResult
@@ -182,21 +205,32 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
             return await ResultAsync(guid, false, $"Filter criteria must be JSON or plain text of at most {MaxPlainFilterCriteriaLength} characters.", ct);
         }
 
+        if (await db.ExternalReviews.AnyAsync(r => r.Id == guid && r.TargetType == ExternalReviewTarget.LabelPlan, ct))
+        {
+            return await ResultAsync(guid, false, "A label plan item takes submit_taxonomy_feedback with its plan id, not submit_review.", ct);
+        }
+
         var input = new ReviewVerdictInput(parsed, topicLabel, needsAction, toBeDeleted, criteria, reasoning ?? "", Reviewer, model, documentTypeLabel);
         var (outcome, invalid) = await reviews.SubmitVerdictAsync(guid, input, ct);
-        var reason = outcome switch
-        {
-            ReviewVerdictResult.Ok => null,
-            ReviewVerdictResult.NotFound => "No review item with this id.",
-            ReviewVerdictResult.AlreadyReviewed => "This item is already reviewed.",
-            ReviewVerdictResult.Closed => "This item was cancelled or marked unavailable; nobody is waiting for a verdict.",
-            ReviewVerdictResult.AlreadyDecided => "The user already decided this item's suggestions; skip it.",
-            _ => invalid ?? "Invalid verdict.",
-        };
-        return await ResultAsync(guid, outcome == ReviewVerdictResult.Ok, reason, ct);
+        return await ResultAsync(guid, outcome == ReviewVerdictResult.Ok, Reason(outcome, invalid), ct);
     }
 
-    private async Task<SubmitReviewResultDto> ResultAsync(Guid id, bool ok, string? reason, CancellationToken ct)
+    /// <summary>The client's reason for <paramref name="outcome"/>; null when <c>Ok</c>.</summary>
+    internal static string? Reason(ReviewVerdictResult outcome, string? invalid) => outcome switch
+    {
+        ReviewVerdictResult.Ok => null,
+        ReviewVerdictResult.NotFound => "No review item with this id.",
+        ReviewVerdictResult.AlreadyReviewed => "This item is already reviewed.",
+        ReviewVerdictResult.Closed => "This item was cancelled or marked unavailable; nobody is waiting for a verdict.",
+        ReviewVerdictResult.AlreadyDecided => "The user already decided this item's suggestions, plan or finding; skip it.",
+        _ => invalid ?? "Invalid verdict.",
+    };
+
+    private Task<SubmitReviewResultDto> ResultAsync(Guid id, bool ok, string? reason, CancellationToken ct) =>
+        ResultAsync(db, id, ok, reason, ct);
+
+    /// <summary>The result with the item's status after the call.</summary>
+    internal static async Task<SubmitReviewResultDto> ResultAsync(AppDbContext db, Guid id, bool ok, string? reason, CancellationToken ct)
     {
         var status = await db.ExternalReviews.AsNoTracking().Where(r => r.Id == id).Select(r => (ExternalReviewStatus?)r.Status)
             .SingleOrDefaultAsync(ct);

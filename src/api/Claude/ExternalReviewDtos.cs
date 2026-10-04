@@ -2,6 +2,10 @@ namespace GmailOrganiser.Claude;
 
 /// <summary>A Claude review item; enums are snake_case. <c>GroupDisplay</c> is the group card's title, computed on read.</summary>
 /// <param name="VerdictDocumentTypeSet">False: accepting keeps each member's document type; <c>VerdictDocumentTypeLabel</c> is null.</param>
+/// <param name="AlternativeStructure">A label plan's <c>alternative</c>: the label paths Claude proposes.</param>
+/// <param name="VerdictFilterCriteria">
+/// Claude's proposed filter criteria as text: a Gmail query as given, or structured criteria as compact JSON.
+/// </param>
 public sealed record ExternalReviewDto(
     Guid Id,
     string TargetType,
@@ -22,10 +26,18 @@ public sealed record ExternalReviewDto(
     string Resolution,
     DateTimeOffset CreatedAt,
     DateTimeOffset? ReviewedAt,
-    DateTimeOffset? ResolvedAt);
+    DateTimeOffset? ResolvedAt,
+    Guid? LabelPlanId = null,
+    Guid? FindingId = null,
+    IReadOnlyList<string>? AlternativeStructure = null,
+    string? VerdictFilterCriteria = null);
 
-/// <summary>At least one of the three; <c>RunId</c> expands to the run's groups with pending members.</summary>
-public sealed record CreateExternalReviewsRequest(Guid[]? SuggestionIds, GroupRef[]? Groups, Guid? RunId);
+/// <summary>
+/// At least one field; <c>RunId</c> expands to the run's groups with pending members. <c>LabelPlanId</c> must be a
+/// <c>draft</c> plan and <c>FindingIds</c> <c>open</c> findings, each without an open item.
+/// </summary>
+public sealed record CreateExternalReviewsRequest(
+    Guid[]? SuggestionIds, GroupRef[]? Groups, Guid? RunId, Guid? LabelPlanId = null, Guid[]? FindingIds = null);
 
 /// <param name="Status">
 /// The review list the group card was shown in (<c>pending|approved|rejected</c>, pending when omitted); alternative
@@ -39,6 +51,7 @@ public sealed record ExternalReviewSummaryDto(int Queued, int Running, int Revie
 
 /// <summary>Claude's verdict as the MCP <c>submit_review</c> tool passes it.</summary>
 /// <param name="DocumentTypeLabel">For <c>alternative</c> only: null keeps each member's type, blank clears it.</param>
+/// <param name="AlternativeStructure">For a label plan's <c>alternative</c> only: the proposed label paths.</param>
 public sealed record ReviewVerdictInput(
     ReviewVerdict Verdict,
     string? TopicLabel,
@@ -48,4 +61,5 @@ public sealed record ReviewVerdictInput(
     string Reasoning,
     string Reviewer,
     string? Model,
-    string? DocumentTypeLabel = null);
+    string? DocumentTypeLabel = null,
+    IReadOnlyList<string>? AlternativeStructure = null);
