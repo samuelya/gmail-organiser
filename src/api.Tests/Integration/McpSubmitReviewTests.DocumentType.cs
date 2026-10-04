@@ -186,10 +186,12 @@ public sealed partial class McpSubmitReviewTests
         await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { DocumentTypeParent = parent }, Ct);
     }
 
-    private async Task<Dictionary<string, string?>> TypesAsync()
+    // Sorted by message ID: Shouldly compares dictionaries in enumeration order, and Postgres returns updated rows in any order.
+    private async Task<SortedDictionary<string, string?>> TypesAsync()
     {
         await using var db = postgres.CreateDbContext();
-        return await db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Shop)
+        var rows = await db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Shop)
             .ToDictionaryAsync(s => s.MessageId, s => s.DocumentTypeLabel, Ct);
+        return new SortedDictionary<string, string?>(rows, StringComparer.Ordinal);
     }
 }
