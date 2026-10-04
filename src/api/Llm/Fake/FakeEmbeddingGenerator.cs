@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
 
-namespace GmailOrganiser.Tests.Fakes;
+namespace GmailOrganiser.Llm.Fake;
 
 /// <summary>Deterministic unit vectors derived from a SHA-256 of each input; same text, same vector.</summary>
 public sealed class FakeEmbeddingGenerator(int dimension = 8) : IEmbeddingGenerator<string, Embedding<float>>

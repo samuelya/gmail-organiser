@@ -1,3 +1,4 @@
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Settings;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -29,22 +30,34 @@ public sealed class LlmClientFactory(
     ISettingsStore settings,
     IOptions<LlmOptions> options) : ILlmClientFactory
 {
+    /// <summary>Vector size of the <c>LLM_FAKE=true</c> embeddings.</summary>
+    public const int FakeEmbeddingDimension = 768;
+
     public async Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default)
     {
         var s = await settings.GetAsync(ct);
-        return CreateChatClient(OllamaHttp.Parse(s.OllamaBaseUrl), s.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat));
+        var model = s.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
+        return UseFake ? CreateFakeChatClient() : CreateChatClient(OllamaHttp.Parse(s.OllamaBaseUrl), model);
     }
 
     public async Task<IEmbeddingGenerator<string, Embedding<float>>> CreateEmbeddingGeneratorAsync(CancellationToken ct = default)
     {
         var s = await settings.GetAsync(ct);
-        return CreateEmbeddingGenerator(
-            OllamaHttp.Parse(s.OllamaBaseUrl), s.EmbeddingModel ?? throw new LlmNotConfiguredException(ModelKinds.Embedding));
+        var model = s.EmbeddingModel ?? throw new LlmNotConfiguredException(ModelKinds.Embedding);
+        return UseFake ? CreateFakeEmbeddingGenerator() : CreateEmbeddingGenerator(OllamaHttp.Parse(s.OllamaBaseUrl), model);
     }
 
-    public IChatClient CreateChatClient(Uri baseUrl, string model) => Create(baseUrl, model);
+    public IChatClient CreateChatClient(Uri baseUrl, string model) => UseFake ? CreateFakeChatClient() : Create(baseUrl, model);
 
-    public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) => Create(baseUrl, model);
+    public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) =>
+        UseFake ? CreateFakeEmbeddingGenerator() : Create(baseUrl, model);
+
+    private bool UseFake => options.Value.UseFake;
+
+    // A new fake per call: callers dispose it, and its request log lives no longer than one run.
+    private static FakeChatClient CreateFakeChatClient() => new() { Responder = FakeAnalysisResponder.Answer };
+
+    private static FakeEmbeddingGenerator CreateFakeEmbeddingGenerator() => new(FakeEmbeddingDimension);
 
     // OllamaApiClient implements both IChatClient and IEmbeddingGenerator; its HttpClient comes from IHttpClientFactory,
     // so disposing the client never disposes a pooled handler.

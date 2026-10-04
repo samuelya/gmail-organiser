@@ -3,6 +3,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;

@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Gmail.Fake;
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.Extensions.AI;
