@@ -24,6 +24,14 @@ public interface IGmailClient
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct);
 
+    /// <summary>
+    /// The label ids of <paramref name="ids"/> (<c>format=minimal</c>), in request order. Ids Gmail no longer knows
+    /// are omitted, as in <see cref="GetMessagesMetadataAsync"/>.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<IReadOnlyList<GmailMessageLabels>> GetMessagesLabelsAsync(IReadOnlyList<string> ids, CancellationToken ct);
+
     /// <summary>How many messages carry the label <paramref name="labelId"/> (<c>labels.get</c> <c>messagesTotal</c>).</summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -228,6 +236,9 @@ public sealed record GmailMessageMetadata(
     string? Snippet,
     int SizeEstimate,
     bool HasAttachment);
+
+/// <summary>A message's labels as <c>format=minimal</c> returns them; read state is the <c>UNREAD</c> label.</summary>
+public sealed record GmailMessageLabels(string Id, IReadOnlyList<string> LabelIds);
 
 /// <param name="HistoryId">The mailbox's current history ID when the page was read.</param>
 public sealed record HistoryPage(IReadOnlyList<HistoryRecord> Records, string? NextPageToken, string HistoryId);

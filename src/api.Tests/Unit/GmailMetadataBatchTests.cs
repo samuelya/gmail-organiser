@@ -121,6 +121,27 @@ public sealed class GmailMetadataBatchTests : IDisposable
         limiter.TryAcquire(5, out _).ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task The_labels_batch_asks_for_format_minimal_and_maps_the_label_ids()
+    {
+        string? body = null;
+        handler.Respond = request =>
+        {
+            body = request.Content!.ReadAsStringAsync(Ct).GetAwaiter().GetResult();
+            return Multipart(
+                (HttpStatusCode.OK, """{"id":"m1","threadId":"t-m1","labelIds":["INBOX","UNREAD"]}"""),
+                (HttpStatusCode.OK, """{"id":"m2","threadId":"t-m2"}"""),
+                (HttpStatusCode.NotFound, ErrorJson(HttpStatusCode.NotFound, "notFound")));
+        };
+
+        var attempt = await GmailMetadataBatch.SendLabelsAsync(service, ["m1", "m2", "m3"], Limiter(budget: 15), NullLogger.Instance, Ct);
+
+        body.ShouldNotBeNull().ShouldContain("format=minimal");
+        body.ShouldNotContain("metadataHeaders");
+        attempt.Succeeded.Select(m => $"{m.Id}:{string.Join(',', m.LabelIds)}").ShouldBe(["m1:INBOX,UNREAD", "m2:"]);
+        attempt.Retry.ShouldBeEmpty();
+    }
+
     private Task<GmailBatchAttempt<string, GmailMessageMetadata>> SendAsync(IReadOnlyList<string> ids, GmailQuotaLimiter limiter) =>
         GmailMetadataBatch.SendAsync(service, ids, limiter, NullLogger.Instance, Ct);
 

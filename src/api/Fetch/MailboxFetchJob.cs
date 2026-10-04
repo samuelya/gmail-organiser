@@ -29,9 +29,10 @@ public sealed record MailboxFetchCursor(
 
 /// <summary>
 /// The full mailbox fetch (DESIGN §6.1): Inbox first, then All Mail, in chunks of <see cref="AppSettings.FetchChunkSize"/>,
-/// checkpointing the Gmail page token after every chunk. Progress counts the messages processed in the current phase;
-/// All Mail skips the <c>messages.get</c> of ids the Inbox phase of this run already stored. A resync then re-reads
-/// the stored rows the listing missed: Gmail's 404 marks them deleted, a hit updates their labels (Spam, Trash).
+/// checkpointing the Gmail page token after every chunk. Progress counts the messages handled in the current phase.
+/// Both phases skip ids this run already handled, refresh only the labels (<c>format=minimal</c>) of ids already stored
+/// by any earlier fetch, and fetch full metadata only for new ids. A resync then re-reads the labels of the stored rows
+/// the listing missed: Gmail's 404 marks them deleted, a hit updates their labels (Spam, Trash).
 /// </summary>
 public sealed class MailboxFetchJob(
     IGmailClient gmail,
@@ -128,24 +129,10 @@ public sealed class MailboxFetchJob(
             cursor = inbox ? cursor with { InboxFetched = 0 } : cursor with { AllMailFetched = 0 };
         }
 
-        if (inbox)
-        {
-            var stored = await pipeline.UpsertByIdsAsync(chunk.Ids, ct);
-            await MarkStoredInRunAsync(chunk.Ids, ct);
-            cursor = cursor with { PageToken = chunk.NextPageToken, InboxFetched = cursor.InboxFetched + stored };
-        }
-        else
-        {
-            var toFetch = await ExceptStoredInRunAsync(chunk.Ids, ct);
-            var stored = await pipeline.UpsertByIdsAsync(toFetch, ct);
-            if (cursor.Resync)
-            {
-                await MarkStoredInRunAsync(chunk.Ids, ct);
-            }
-
-            var processed = chunk.Ids.Count - toFetch.Count + stored;
-            cursor = cursor with { PageToken = chunk.NextPageToken, AllMailFetched = cursor.AllMailFetched + processed };
-        }
+        var processed = await StoreChunkAsync(chunk.Ids, ct);
+        cursor = inbox
+            ? cursor with { PageToken = chunk.NextPageToken, InboxFetched = cursor.InboxFetched + processed }
+            : cursor with { PageToken = chunk.NextPageToken, AllMailFetched = cursor.AllMailFetched + processed };
 
         if (chunk.NextPageToken is null)
         {
@@ -181,7 +168,7 @@ public sealed class MailboxFetchJob(
         }
 
         var ids = await unseen.OrderBy(m => m.Id).Select(m => m.Id).Take(chunkSize).ToListAsync(ct);
-        await pipeline.RefreshByIdsAsync(ids, ct);
+        await pipeline.RefreshLabelsByIdsAsync(ids, ct);
         var done = ids.Count < chunkSize;
         cursor = cursor with
         {
@@ -212,13 +199,27 @@ public sealed class MailboxFetchJob(
         db.Database.ExecuteSqlAsync(
             $"INSERT INTO fetch_run_messages (message_id) SELECT unnest({ids.ToArray()}) ON CONFLICT DO NOTHING", ct);
 
-    private async Task<IReadOnlyList<string>> ExceptStoredInRunAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    /// <summary>
+    /// Skips ids this run already handled, refreshes only the labels of ids already stored and fetches full metadata for
+    /// the rest, then records every listed id. A chunk replayed after a crash finds its new ids stored, so it only repeats reads.
+    /// </summary>
+    /// <returns>The listed ids handled: skipped, refreshed or stored (ids Gmail no longer knows are not counted).</returns>
+    private async Task<int> StoreChunkAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {
         var seen = await db.FetchRunMessages
             .Where(r => ids.Contains(r.MessageId))
             .Select(r => r.MessageId)
             .ToHashSetAsync(StringComparer.Ordinal, ct);
-        return [.. ids.Where(id => !seen.Contains(id))];
+        var unseen = ids.Where(id => !seen.Contains(id)).Distinct(StringComparer.Ordinal).ToList();
+        var stored = await db.Messages
+            .Where(m => unseen.Contains(m.Id))
+            .Select(m => m.Id)
+            .ToHashSetAsync(StringComparer.Ordinal, ct);
+
+        var refreshed = await pipeline.RefreshLabelsByIdsAsync([.. unseen.Where(stored.Contains)], ct);
+        var fetched = await pipeline.UpsertByIdsAsync([.. unseen.Where(id => !stored.Contains(id))], ct);
+        await MarkStoredInRunAsync(ids, ct);
+        return ids.Count - unseen.Count + refreshed.Stored + fetched;
     }
 
     /// <summary>Mirrors the cursor to <c>fetch_state</c>; a completed fetch also records where #60 replays from.</summary>

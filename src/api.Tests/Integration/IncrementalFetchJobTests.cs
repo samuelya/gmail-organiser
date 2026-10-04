@@ -178,7 +178,9 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
         gmail.MetadataCalls.Clear();
         await RunNextAsync();
 
-        gmail.MetadataCalls.Last().ShouldBe([Id(1), Id(3)], ignoreOrder: true);
+        // Everything listed is stored already, so the fetch and the reconcile read labels only.
+        gmail.MetadataCalls.ShouldBeEmpty();
+        gmail.LabelsCalls.Last().ShouldBe([Id(1), Id(3)], ignoreOrder: true);
         await using var check = postgres.CreateDbContext();
         (await check.Messages.SingleAsync(m => m.Id == Id(1), Ct)).DeletedInGmail.ShouldBeTrue();
         var trashed = await check.Messages.SingleAsync(m => m.Id == Id(3), Ct);

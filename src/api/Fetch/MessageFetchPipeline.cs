@@ -17,7 +17,7 @@ public sealed record FetchChunkResult(int Stored, string? NextPageToken, long? R
 /// <param name="Restarted">Gmail rejected the caller's page token, so the chunk was listed from the first page.</param>
 public sealed record ListedChunk(IReadOnlyList<string> Ids, string? NextPageToken, long? ResultSizeEstimate, bool Restarted = false);
 
-/// <param name="Stored">Messages upserted.</param>
+/// <param name="Stored">Messages upserted (for a labels-only refresh: stored rows whose labels were re-read).</param>
 /// <param name="Deleted">Stored messages newly marked <c>deleted_in_gmail</c>.</param>
 public sealed record RefreshResult(int Stored, int Deleted);
 
@@ -104,6 +104,48 @@ public sealed partial class MessageFetchPipeline(
     /// </summary>
     public Task<RefreshResult> RefreshByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
         StoreAsync(ids, refresh: true, ct);
+
+    /// <summary>
+    /// Re-reads only the labels of <paramref name="ids"/> (<c>format=minimal</c>) and writes <c>label_ids</c>, the
+    /// derived category and <c>deleted_in_gmail</c> of their stored rows; every other column is untouched and no row
+    /// is inserted. Ids Gmail no longer knows are marked deleted. The senders of every row read are recomputed, as after an
+    /// upsert, so a full fetch still repairs stale sender counts.
+    /// </summary>
+    public async Task<RefreshResult> RefreshLabelsByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        var unique = ids.Distinct(StringComparer.Ordinal).ToList();
+        if (unique.Count == 0)
+        {
+            return new RefreshResult(0, 0);
+        }
+
+        var labels = await gmail.GetMessagesLabelsAsync(unique, ct);
+        var deleted = await MarkDeletedCoreAsync([.. unique.Except(labels.Select(l => l.Id), StringComparer.Ordinal)], ct);
+        var byId = labels.ToDictionary(l => l.Id, StringComparer.Ordinal);
+        var live = labels.Select(l => l.Id).ToList();
+        var rows = await db.Messages.Where(m => live.Contains(m.Id)).ToListAsync(ct);
+        var now = time.GetUtcNow();
+        foreach (var row in rows)
+        {
+            var labelIds = byId[row.Id].LabelIds;
+            var entry = db.Entry(row);
+            row.LabelIds = [.. labelIds];
+            row.Category = MessageUpserter.CategoryOf(labelIds);
+            // The same TRASH rule as MessageUpserter: in Trash is not live, out of Trash is live again.
+            row.DeletedInGmail = labelIds.Contains(MailboxFetchJob.TrashLabelId, StringComparer.OrdinalIgnoreCase);
+            entry.DetectChanges();
+            if (entry.State == EntityState.Modified)
+            {
+                row.UpdatedAt = now;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        await senders.UpdateAsync(rows.Select(r => r.FromAddress).Concat(deleted), ct);
+        db.ChangeTracker.Clear();
+        return new RefreshResult(rows.Count, deleted.Count);
+    }
 
     private async Task<RefreshResult> StoreAsync(IReadOnlyList<string> ids, bool refresh, CancellationToken ct)
     {
