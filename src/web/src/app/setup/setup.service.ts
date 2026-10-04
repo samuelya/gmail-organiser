@@ -4,6 +4,7 @@ import { inject, Injectable, InjectionToken } from '@angular/core';
 import { Observable, of, shareReplay, tap } from 'rxjs';
 import type {
   AnalysisSettingsUpdate,
+  AppsScriptUpdate,
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
   ProtectionUpdate,
@@ -40,7 +41,12 @@ export interface GoogleClientRequest {
  * value stays unchanged and an empty model name clears the model.
  */
 export interface UpdateSettingsRequest
-  extends AnalysisSettingsUpdate, AttachmentsUpdate, ClaudeSettingsUpdate, ProtectionUpdate {
+  extends
+    AnalysisSettingsUpdate,
+    AttachmentsUpdate,
+    ClaudeSettingsUpdate,
+    ProtectionUpdate,
+    Partial<AppsScriptUpdate> {
   ollamaBaseUrl?: string;
   chatModel?: string;
   embeddingModel?: string;
