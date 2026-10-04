@@ -369,7 +369,7 @@ describe('ReviewPage', () => {
   });
 
   it('applies to the rest of the sender after confirming the pattern', async () => {
-    const { api, q, settle } = await render({
+    const { api, jobs, q, settle } = await render({
       topicLabel: 'Topic/Alpha',
       needsAction: true,
       toBeDeleted: false,
@@ -389,6 +389,11 @@ describe('ReviewPage', () => {
     expect(api.applyRest).toHaveBeenCalledWith('news@example.com');
     expect(q('apply-progress')).not.toBeNull();
     expect(snackText()).toContain('Created 4 suggestions');
+    // The apply job's completion snackbar replaces this one, so it carries "Create filter".
+    jobs.held.set([job('completed', { id: 'job-2', version: 2 })]);
+    await settle();
+    await settle();
+    expect(snackText()).toContain('Applied 2 of 4 messages');
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     const action = document.querySelector<HTMLButtonElement>('mat-snack-bar-container button')!;
     expect(action.textContent).toContain('Create filter');

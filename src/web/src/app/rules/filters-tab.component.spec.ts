@@ -1,9 +1,10 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { PagedDto } from '../core/paging.models';
 import { LabelsService } from '../review/labels.service';
+import { ReviewService } from '../review/review.service';
 import { SettingsService } from '../settings/settings.service';
 import { FiltersTab } from './filters-tab.component';
 import { FilterDto, FilterListDto, FilterProposalDto } from './rules.models';
@@ -82,7 +83,10 @@ describe('FiltersTab', () => {
     ReturnType<typeof vi.fn>
   >;
 
+  let review: { pattern: ReturnType<typeof vi.fn> };
+
   async function render(propose?: string, proposals = paged([proposal('news@example.com')])) {
+    review = { pattern: vi.fn(() => of({ ...proposal('x').pattern, topicLabel: 'Topic/Beta' })) };
     api = {
       list: vi.fn((includeDeleted: boolean) =>
         of(
@@ -118,6 +122,7 @@ describe('FiltersTab', () => {
       providers: [
         { provide: RulesService, useValue: api },
         { provide: LabelsService, useValue: { labels: () => of([]), refresh: () => of([]) } },
+        { provide: ReviewService, useValue: review },
         {
           provide: SettingsService,
           useValue: {
@@ -194,13 +199,14 @@ describe('FiltersTab', () => {
     expect(api.list).toHaveBeenCalledTimes(3);
   });
 
-  it('previews a proposal, creates it, drops the proposal and refreshes the table', async () => {
+  it('previews a proposal, creates it, reloads the proposals and refreshes the table', async () => {
     const { q, all, settle } = await render();
     expect(all('proposal')).toHaveLength(1);
     expect(q('proposal-pattern')!.textContent).toContain('Topic/Alpha · Act');
     q('proposal-preview')!.click();
     await settle();
     expect(api.preview).toHaveBeenCalled();
+    api.proposals.mockReturnValue(of(paged([])));
     dialog('preview-create')!.click();
     await settle();
     expect(api.create).toHaveBeenCalledWith(proposal('news@example.com').suggested);
@@ -219,6 +225,47 @@ describe('FiltersTab', () => {
     expect(q('proposals-more')).toBeNull();
   });
 
+  it('reloads proposals from page 1 after a create, so Load more skips none', async () => {
+    const { q, all, settle } = await render(
+      undefined,
+      paged([proposal('a@example.com'), proposal('b@example.com')], 3),
+    );
+    q('proposal-preview')!.click();
+    await settle();
+    // The server dropped a@: page 1 now holds b@ and c@, which page 2 would have skipped.
+    api.proposals.mockReturnValue(
+      of(paged([proposal('b@example.com'), proposal('c@example.com')], 2)),
+    );
+    dialog('preview-create')!.click();
+    await settle();
+    await settle();
+    expect(api.proposals).toHaveBeenLastCalledWith(1);
+    expect(all('proposal').map((p) => p.textContent)).toEqual([
+      expect.stringContaining('b@example.com'),
+      expect.stringContaining('c@example.com'),
+    ]);
+    expect(q('proposals-more')).toBeNull();
+  });
+
+  it('keeps the latest list when an earlier reload answers last', async () => {
+    const { q, all, settle } = await render();
+    const withDeleted = new Subject<FilterListDto>();
+    const activeOnly = new Subject<FilterListDto>();
+    api.list.mockReturnValueOnce(withDeleted).mockReturnValueOnce(activeOnly);
+    const toggle = q('filters-show-deleted')!.querySelector('button')!;
+    toggle.click();
+    await settle();
+    toggle.click();
+    await settle();
+    activeOnly.next(listOf([filterDto()]));
+    withDeleted.next(
+      listOf([filterDto(), filterDto({ id: 'f-2', deletedAt: '2026-01-02T00:00:00Z' })]),
+    );
+    await settle();
+    expect(api.list).toHaveBeenLastCalledWith(false);
+    expect(all('filter-row')).toHaveLength(1);
+  });
+
   it('opens the proposal of ?propose= after the list loads', async () => {
     const { fixture } = await render('NEWS@example.com');
     expect(api.proposals).toHaveBeenCalledWith(1);
@@ -226,9 +273,11 @@ describe('FiltersTab', () => {
     expect(fixture.componentInstance.handled).toBe(1);
   });
 
-  it('opens ?propose= without a proposal with just from', async () => {
+  it('opens ?propose= beyond the first page with from and the approved label as a hint', async () => {
     await render('other@example.com');
+    expect(review.pattern).toHaveBeenCalledWith('other@example.com');
     expect((dialog('preview-from') as HTMLInputElement).value).toBe('other@example.com');
     expect((dialog('preview-label') as HTMLInputElement).value).toBe('');
+    expect(dialog('preview-label-hint')!.textContent).toContain('Topic/Beta');
   });
 });

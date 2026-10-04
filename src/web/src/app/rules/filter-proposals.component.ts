@@ -17,6 +17,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { catchError, map, of } from 'rxjs';
 import { DEFAULT_FLAG_LABELS } from '../review/review.models';
+import { ReviewService } from '../review/review.service';
 import { SettingsService } from '../settings/settings.service';
 import { openFilterPreview } from './filter-preview-dialog.component';
 import { FilterDto, FilterProposalDto, FilterRequest } from './rules.models';
@@ -95,6 +96,7 @@ import { RulesService } from './rules.service';
 })
 export class FilterProposals implements OnInit {
   private readonly rules = inject(RulesService);
+  private readonly review = inject(ReviewService);
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -112,6 +114,8 @@ export class FilterProposals implements OnInit {
   readonly loadFailed = signal(false);
   private readonly pagesLoaded = signal(0);
   readonly nextPage = computed(() => this.pagesLoaded() + 1);
+  /** `propose` opens its dialog once, not on every later reload of page 1. */
+  private proposeOpened = false;
 
   private readonly flags = toSignal(
     inject(SettingsService)
@@ -170,24 +174,37 @@ export class FilterProposals implements OnInit {
     this.openDialog(p.senderAddress, p.suggested);
   }
 
+  /**
+   * Proposals can't be fetched by sender, so one beyond the first page opens with just `from`
+   * plus the sender's approved topic label as a hint.
+   */
   private openProposed(): void {
     const address = this.propose()?.trim();
-    if (!address) return;
+    if (!address || this.proposeOpened) return;
+    this.proposeOpened = true;
     const match = this.items().find((p) => p.senderAddress.toLowerCase() === address.toLowerCase());
     this.proposeHandled.emit();
-    this.openDialog(match?.senderAddress ?? address, match?.suggested ?? null);
+    if (match) {
+      this.openDialog(match.senderAddress, match.suggested);
+      return;
+    }
+    this.review
+      .pattern(address)
+      .pipe(
+        map((pattern) => pattern.topicLabel),
+        catchError(() => of(null)),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((labelHint) => this.openDialog(address, null, labelHint));
   }
 
-  private openDialog(from: string, request: FilterRequest | null): void {
-    openFilterPreview(this.dialog, { from, request })
+  private openDialog(from: string, request: FilterRequest | null, labelHint?: string | null): void {
+    openFilterPreview(this.dialog, { from, request, labelHint })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((filter) => {
         if (!filter) return;
-        const before = this.items().length;
-        this.items.update((items) =>
-          items.filter((p) => p.senderAddress.toLowerCase() !== from.toLowerCase()),
-        );
-        if (this.items().length < before) this.total.update((t) => Math.max(0, t - 1));
+        // The server drops the covered sender, shifting later pages: start again from page 1.
+        this.load(1);
         this.created.emit(filter);
       });
   }

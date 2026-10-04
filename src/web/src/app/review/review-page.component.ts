@@ -133,6 +133,8 @@ export class ReviewPage {
   private readonly fetchedJob = signal<JobDto | null>(null);
   /** Apply jobs already reported; the hub may still hold one as active until its next snapshot. */
   private readonly finishedJobIds = new Set<string>();
+  /** Apply-to-rest jobs whose completion snackbar offers "Create filter" for this sender. */
+  private readonly filterOffers = new Map<string, string>();
   readonly applyJob = computed(() => {
     const id = this.applyJobId();
     if (!id) return null;
@@ -377,23 +379,19 @@ export class ReviewPage {
       )
       .subscribe(() =>
         this.run(this.review.applyRest(address), (r) => {
-          this.track(r.batch?.jobId ?? null);
+          const jobId = r.batch?.jobId ?? null;
+          this.track(jobId);
           const adjusted = r.protectedAdjusted
             ? `; ${r.protectedAdjusted} protected ${r.protectedAdjusted === 1 ? 'message is' : 'messages are'} not marked for deletion`
             : '';
-          this.snackBar
-            .open(
-              `Created ${r.created} ${r.created === 1 ? 'suggestion' : 'suggestions'}${adjusted}.`,
-              'Create filter',
-              { duration: 10_000 },
-            )
-            .onAction()
-            .subscribe(
-              () =>
-                void this.router.navigate(['/rules'], {
-                  queryParams: { propose: r.filterCandidate.from },
-                }),
-            );
+          const created = `Created ${r.created} ${r.created === 1 ? 'suggestion' : 'suggestions'}${adjusted}.`;
+          // The apply job's completion snackbar replaces this one, so the offer moves there.
+          if (jobId) {
+            this.filterOffers.set(jobId, r.filterCandidate.from);
+            this.snackBar.open(created, 'Dismiss', { duration: 10_000 });
+          } else {
+            this.offerFilter(created, r.filterCandidate.from);
+          }
         }),
       );
   }
@@ -433,10 +431,23 @@ export class ReviewPage {
         : job.status === 'cancelled'
           ? `Apply cancelled. ${job.progress?.message ?? ''}`.trim()
           : `Apply failed${job.error ? `: ${job.error}` : '.'}`;
+    const offer = this.filterOffers.get(job.id);
+    this.filterOffers.delete(job.id);
+    if (offer && job.status === 'completed') {
+      this.offerFilter(message, offer);
+      return;
+    }
     this.snackBar
       .open(message, 'History', { duration: 10_000 })
       .onAction()
       .subscribe(() => void this.router.navigate(['/history']));
+  }
+
+  private offerFilter(message: string, from: string): void {
+    this.snackBar
+      .open(message, 'Create filter', { duration: 10_000 })
+      .onAction()
+      .subscribe(() => void this.router.navigate(['/rules'], { queryParams: { propose: from } }));
   }
 
   private reportGroup(verb: string, r: GroupDecisionResponse): void {

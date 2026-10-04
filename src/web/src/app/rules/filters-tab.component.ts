@@ -18,7 +18,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTableModule } from '@angular/material/table';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { filter, switchMap } from 'rxjs';
+import { catchError, filter, of, Subject, switchMap } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
 import { relativeTime } from '../senders/senders.models';
 import { FilterProposals } from './filter-proposals.component';
@@ -201,27 +201,31 @@ export class FiltersTab {
   readonly chips = actionChips;
   readonly trackRow = (_: number, f: FilterDto) => f.id;
 
+  /** Each reload cancels the one in flight, so a stale list (e.g. "Show deleted") never lands last. */
+  private readonly reloads = new Subject<void>();
+
   constructor() {
+    this.reloads
+      .pipe(
+        switchMap(() => this.rules.list(this.showDeleted()).pipe(catchError(() => of(null)))),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((list) => {
+        this.loading.set(false);
+        if (!list) {
+          this.loadFailed.set(true);
+          return;
+        }
+        this.now.set(Date.now());
+        this.list.set(list);
+      });
     this.reload();
   }
 
   reload(): void {
     this.loading.set(true);
     this.loadFailed.set(false);
-    this.rules
-      .list(this.showDeleted())
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (list) => {
-          this.loading.set(false);
-          this.now.set(Date.now());
-          this.list.set(list);
-        },
-        error: () => {
-          this.loading.set(false);
-          this.loadFailed.set(true);
-        },
-      });
+    this.reloads.next();
   }
 
   toggleDeleted(show: boolean): void {

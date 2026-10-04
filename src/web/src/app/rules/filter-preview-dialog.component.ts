@@ -36,6 +36,8 @@ export interface FilterPreviewDialogData {
   /** The proposal's suggested filter; null opens the dialog with just `from` filled. */
   request: FilterRequest | null;
   from: string;
+  /** The sender's approved topic label, shown as a hint when there is no `request`. */
+  labelHint?: string | null;
 }
 
 /** Live preview requests wait this long after the last change. */

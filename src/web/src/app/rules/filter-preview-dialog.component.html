@@ -37,6 +37,10 @@
         <input matInput formControlName="labelPath" data-testid="preview-label" />
         @if (pathError(); as e) {
           <mat-error data-testid="preview-label-error">{{ e }}</mat-error>
+        } @else if (data.labelHint) {
+          <mat-hint data-testid="preview-label-hint"
+            >Approved in Review: {{ data.labelHint }}</mat-hint
+          >
         } @else {
           <mat-hint>Optional; pick an existing label below or type a new path.</mat-hint>
         }
