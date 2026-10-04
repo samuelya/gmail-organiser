@@ -32,7 +32,10 @@ import {
 } from './review.models';
 import { ReviewService } from './review.service';
 
-/** The verdict chip: "Agrees", "Suggests <label> [flags]" or "Needs a human". */
+/**
+ * The verdict chip: "Agrees", "Suggests <label> [flags]" or "Needs a human". An alternative that
+ * changes the document type adds "Document type: <label>" ("none" when it clears it).
+ */
 export function verdictText(item: ExternalReviewDto, labels: FlagLabels): string {
   switch (item.verdict) {
     case 'agree':
@@ -44,7 +47,12 @@ export function verdictText(item: ExternalReviewDto, labels: FlagLabels): string
         item.verdictNeedsAction ? labels.action : null,
         item.verdictToBeDeleted ? labels.delete : null,
       ].filter((f): f is string => !!f);
-      return [`Suggests ${item.verdictTopicLabel ?? ''}`, ...flags.map((f) => `[${f}]`)].join(' ');
+      const text = [`Suggests ${item.verdictTopicLabel ?? ''}`, ...flags.map((f) => `[${f}]`)].join(
+        ' ',
+      );
+      return item.verdictDocumentTypeSet
+        ? `${text} · Document type: ${item.verdictDocumentTypeLabel || 'none'}`
+        : text;
     }
     default:
       return '';

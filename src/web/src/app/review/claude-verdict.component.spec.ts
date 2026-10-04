@@ -34,6 +34,8 @@ const claudeItem = (over: Partial<ExternalReviewDto> = {}): ExternalReviewDto =>
   verdictTopicLabel: null,
   verdictNeedsAction: null,
   verdictToBeDeleted: null,
+  verdictDocumentTypeLabel: null,
+  verdictDocumentTypeSet: false,
   reasoning: null,
   error: null,
   resolution: 'none',
@@ -136,6 +138,26 @@ describe('Claude review helpers', () => {
         labels,
       ),
     ).toBe('Suggests Topic/Beta [Act]');
+    const alternative = claudeItem({ verdict: 'alternative', verdictTopicLabel: 'Topic/Beta' });
+    expect(
+      verdictText(
+        { ...alternative, verdictDocumentTypeLabel: 'Type/Invoice', verdictDocumentTypeSet: true },
+        labels,
+      ),
+    ).toBe('Suggests Topic/Beta · Document type: Type/Invoice');
+    expect(
+      verdictText(
+        { ...alternative, verdictDocumentTypeLabel: null, verdictDocumentTypeSet: true },
+        labels,
+      ),
+    ).toBe('Suggests Topic/Beta · Document type: none');
+    expect(
+      verdictText(
+        { ...alternative, verdictDocumentTypeLabel: '', verdictDocumentTypeSet: true },
+        labels,
+      ),
+    ).toBe('Suggests Topic/Beta · Document type: none');
+    expect(verdictText(alternative, labels)).toBe('Suggests Topic/Beta');
     expect(resolutionText(claudeItem({ resolution: 'accepted_claude' }))).toBe("Accepted Claude's");
     expect(resolutionText(claudeItem({ resolution: 'dismissed' }))).toBe('Kept local');
   });
@@ -239,10 +261,14 @@ describe('ClaudeVerdict', () => {
       verdict: 'alternative',
       verdictTopicLabel: 'Topic/Beta',
       verdictToBeDeleted: true,
+      verdictDocumentTypeLabel: 'Type/Receipt',
+      verdictDocumentTypeSet: true,
       reasoning: 'Synthetic reasoning',
     });
     const { q, claude } = await render(reviewed);
-    expect(q('claude-verdict')!.textContent).toContain('Suggests Topic/Beta [Bin]');
+    expect(q('claude-verdict')!.textContent).toContain(
+      'Suggests Topic/Beta [Bin] · Document type: Type/Receipt',
+    );
     expect(q('claude-reasoning')!.textContent).toContain('Synthetic reasoning');
     q('claude-accept')!.click();
     expect(claude.accept).toHaveBeenCalledWith('r1');

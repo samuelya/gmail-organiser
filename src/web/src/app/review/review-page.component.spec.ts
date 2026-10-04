@@ -459,6 +459,8 @@ describe('ReviewPage', () => {
     verdictTopicLabel: null,
     verdictNeedsAction: null,
     verdictToBeDeleted: null,
+    verdictDocumentTypeLabel: null,
+    verdictDocumentTypeSet: false,
     reasoning: null,
     error: null,
     resolution: 'none',
