@@ -353,10 +353,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("verdict");
 
-                    b.Property<string>("VerdictDocumentTypeLabel")
-                        .HasColumnType("text")
-                        .HasColumnName("verdict_document_type_label");
-
                     b.Property<string>("VerdictFilterCriteria")
                         .HasColumnType("jsonb")
                         .HasColumnName("verdict_filter_criteria");
