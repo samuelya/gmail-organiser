@@ -25,7 +25,8 @@ public sealed partial class AnalysisRunJob
     }
 
     /// <summary>
-    /// Replaces the alternatives of the group's suggestions with this run's; a suggestion deleted meanwhile counts as
+    /// Replaces the alternatives of the group's suggestions with this run's; a suggestion deleted meanwhile, or one whose
+    /// alternative comes from a compare run created later (a resumed older run finishing after a newer one), counts as
     /// skipped. Delete-then-insert by suggestion keeps a repeated group (restart before its commit) from writing twice.
     /// </summary>
     private async Task WriteAlternativesAsync(
@@ -37,6 +38,14 @@ public sealed partial class AnalysisRunJob
                 .SqlQuery<Guid>($"SELECT id AS \"Value\" FROM suggestions WHERE id = ANY({wanted}) ORDER BY id FOR KEY SHARE")
                 .ToListAsync(c))
             .ToHashSet();
+        // Runs freeze their suggestions when created and keep created_at on resume, so the later-created run wins.
+        var locked = present.ToArray();
+        var newer = await db.SuggestionAlternatives
+            .Where(a => locked.Contains(a.SuggestionId)
+                && db.AnalysisRuns.Any(r => r.Id == a.RunId && r.Id != run.Id && r.CreatedAt > run.CreatedAt))
+            .Select(a => a.SuggestionId)
+            .ToListAsync(c);
+        present.ExceptWith(newer);
 
         foreach (var gone in rows.Where(r => !suggestionIds.TryGetValue(r.MessageId, out var id) || !present.Contains(id)))
         {

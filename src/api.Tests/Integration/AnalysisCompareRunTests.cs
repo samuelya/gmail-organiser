@@ -231,14 +231,14 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
-    public async Task Compare_runs_leave_the_analysis_summary_unchanged()
+    public async Task Compare_runs_leave_the_analysis_summary_unchanged_but_for_the_alternatives_count()
     {
         var before = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
         await StartCompareAsync(new CompareRunRequest(null, first.Id));
         await h.RunNextAsync();
 
         var after = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
-        after.ShouldBe(before);
+        after.ShouldBe(before! with { Alternatives = 20 });
     }
 
     [Fact]

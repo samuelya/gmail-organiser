@@ -140,6 +140,6 @@ public sealed class AnalysisRunEndpointsTests(ApiFactory factory, PostgresFixtur
 
         var summary = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
 
-        summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0), 2));
+        summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0), 2, 0));
     }
 }

@@ -5,7 +5,7 @@ namespace GmailOrganiser.Analysis;
 
 /// <summary>
 /// A compare run's answer for one suggestion (<c>suggestion_alternatives</c>), stored next to it and never applied by
-/// the run; at most one per suggestion, the latest compare run wins. Removed with its suggestion; outlives its run.
+/// the run; at most one per suggestion, from the latest-created compare run (#249). Removed with its suggestion; outlives its run.
 /// Columns mean what they mean on <see cref="SuggestionRow"/>.
 /// </summary>
 public sealed class SuggestionAlternativeRow

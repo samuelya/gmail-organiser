@@ -11,6 +11,7 @@ public static class ReviewExtensions
         services.AddScoped<DecisionRecorder>();
         services.AddScoped<ReviewQuery>();
         services.AddScoped<ReviewService>();
+        services.AddScoped<AlternativeService>();
         services.AddScoped<LabelResolver>();
         services.AddScoped<RepliedThreadChecker>();
         services.AddScoped<ApplyService>();
