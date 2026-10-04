@@ -80,3 +80,18 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  apps-script:
+    name: apps-script
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # Loads auto-archive.gs through node:vm with a fake GmailApp; no Google login.
+      - name: Test
+        run: node --test 'scripts/apps-script/*.test.mjs'
