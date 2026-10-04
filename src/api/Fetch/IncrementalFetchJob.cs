@@ -143,8 +143,6 @@ public sealed partial class IncrementalFetchJob(
         return db.FetchState.ExecuteUpdateAsync(set => set
             .SetProperty(f => f.MailboxPhase, MailboxPhase.NotStarted)
             .SetProperty(f => f.PageToken, (string?)null)
-            .SetProperty(f => f.InboxTotal, (long?)null)
-            .SetProperty(f => f.AllMailTotal, (long?)null)
             .SetProperty(f => f.UpdatedAt, now), ct);
     }
 

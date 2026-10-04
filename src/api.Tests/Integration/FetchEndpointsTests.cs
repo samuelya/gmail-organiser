@@ -127,6 +127,36 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         (status.InboxTotal, status.AllMailTotal).ShouldBe((5L, 7L));
     }
 
+    public static TheoryData<string> GmailFailures => ["api-error", "timeout"];
+
+    [Theory]
+    [MemberData(nameof(GmailFailures))]
+    public async Task Status_when_Gmail_fails_is_200_with_the_last_known_totals(string failure)
+    {
+        CountingGmailClient? gmail = null;
+        await using var host = FakeGmailHost().WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+        {
+            services.AddSingleton(sp => gmail = new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>())
+            {
+                ProfileFailure = failure == "timeout"
+                    ? new TaskCanceledException("The request timed out.")
+                    : new Google.GoogleApiException("gmail", "Backend Error") { HttpStatusCode = HttpStatusCode.ServiceUnavailable },
+            });
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
+        }));
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.InboxTotal, 5L).SetProperty(r => r.AllMailTotal, 7L), Ct);
+        }
+
+        var response = await host.CreateClient().GetAsync("/api/fetch/status", Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var status = (await response.Content.ReadFromJsonAsync<FetchStatusDto>(Ct)).ShouldNotBeNull();
+        (status.InboxTotal, status.AllMailTotal).ShouldBe((5L, 7L));
+        gmail.ShouldNotBeNull().ProfileCalls.ShouldBe(1);
+    }
+
     [Fact]
     public async Task Start_without_a_Gmail_connection_is_a_409_problem()
     {

@@ -23,10 +23,13 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
     public int ProfileCalls => profileCalls;
 
+    /// <summary>Thrown by every profile call when set, as a failing Gmail would.</summary>
+    public Exception? ProfileFailure { get; set; }
+
     public Task<GmailProfile> GetProfileAsync(CancellationToken ct)
     {
         Interlocked.Increment(ref profileCalls);
-        return inner.GetProfileAsync(ct);
+        return ProfileFailure is { } failure ? Task.FromException<GmailProfile>(failure) : inner.GetProfileAsync(ct);
     }
 
     /// <summary>Rewrites the n-th (1-based) list call's page, for example its result size estimate.</summary>

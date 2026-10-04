@@ -1,3 +1,4 @@
+using Google;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using Microsoft.EntityFrameworkCore;
@@ -26,7 +27,8 @@ public sealed partial class MailboxTotalsReader(
     /// <summary>
     /// The cached totals of the connected account, measured again when older than <see cref="Ttl"/> or on
     /// <paramref name="refresh"/>. Null when Gmail is not connected, the local data belongs to another account,
-    /// or Gmail can't be read; the caller then uses the last known totals.
+    /// or Gmail can't be read (any API error, rate limit, network error or timeout); the caller then uses the last known
+    /// totals. Only the caller's own cancellation propagates.
     /// </summary>
     public async Task<MailboxTotals?> GetAsync(bool refresh, CancellationToken ct)
     {
@@ -63,7 +65,9 @@ public sealed partial class MailboxTotalsReader(
                 .SetProperty(f => f.AllMailTotal, totals.AllMail), ct);
             return totals;
         }
-        catch (Exception ex) when (ex is GmailNotConnectedException or GmailRateLimitedException or HttpRequestException)
+        catch (Exception ex) when (
+            ex is GmailNotConnectedException or GmailRateLimitedException or HttpRequestException or GoogleApiException
+            || (ex is OperationCanceledException && !ct.IsCancellationRequested))
         {
             LogMeasureFailed(logger, ex.GetType().Name);
             return null;

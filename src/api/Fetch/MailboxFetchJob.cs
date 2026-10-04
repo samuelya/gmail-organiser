@@ -193,7 +193,7 @@ public sealed class MailboxFetchJob(
     }
 
     /// <summary>
-    /// The phase totals that progress and <c>fetch_state</c> both report: a finished phase reports what it fetched, a running
+    /// The phase totals that progress reports: a finished phase reports what it fetched, a running
     /// one at least that (mail arriving during the run can push the count past the start total; the bar never overflows).
     /// </summary>
     private static long InboxTotalOf(MailboxFetchCursor cursor) =>
@@ -232,8 +232,6 @@ public sealed class MailboxFetchJob(
                 .SetProperty(f => f.PageToken, cursor.PageToken)
                 .SetProperty(f => f.InboxFetched, cursor.InboxFetched)
                 .SetProperty(f => f.AllMailFetched, cursor.AllMailFetched)
-                .SetProperty(f => f.InboxTotal, InboxTotalOf(cursor))
-                .SetProperty(f => f.AllMailTotal, AllMailTotalOf(cursor))
                 .SetProperty(f => f.UpdatedAt, now);
             if (completed)
             {
