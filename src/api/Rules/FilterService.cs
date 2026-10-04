@@ -180,8 +180,28 @@ public sealed class FilterService(
             return FilterResult.Conflict("Filter already restored", $"Filter '{id}' was already restored as an active filter.");
         }
 
-        var criteria = row.ReadCriteria();
-        var action = row.ReadAction();
+        return await CreateCheckedAsync(tx, row.ReadCriteria(), row.ReadAction(), id, ct);
+    }
+
+    /// <summary>
+    /// Creates a filter from label ids, as a filter review fix (#213) does, with a restore's checks: no forwarding, a
+    /// criterion and an action, Gmail's limit, and every label still existing.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    /// <exception cref="GoogleApiException">Gmail refused the filter.</exception>
+    public async Task<FilterResult> CreateFromIdsAsync(GmailFilterCriteria criteria, GmailFilterAction action, CancellationToken ct)
+    {
+        await using var tx = await LockAsync(ct);
+        return await CreateCheckedAsync(tx, criteria, action, null, ct);
+    }
+
+    public static FilterCriteriaDto ToCriteriaDto(GmailFilterCriteria c) => new(
+        c.From, c.To, c.Subject, c.Query, c.NegatedQuery, c.HasAttachment, c.ExcludeChats, c.Size, c.SizeComparison?.ToGmailString());
+
+    private async Task<FilterResult> CreateCheckedAsync(
+        IDbContextTransaction tx, GmailFilterCriteria criteria, GmailFilterAction action, string? restoredFrom, CancellationToken ct)
+    {
         if (!string.IsNullOrEmpty(action.Forward))
         {
             return FilterResult.Conflict("Filter forwards mail", "The app never creates a forwarding filter.");
@@ -189,7 +209,7 @@ public sealed class FilterService(
 
         if (!criteria.MatchesMail || action.IsEmpty)
         {
-            return FilterResult.Conflict("Filter cannot be restored", "The stored filter has no criterion or no action.");
+            return FilterResult.Conflict("Filter cannot be created", "The filter has no criterion or no action.");
         }
 
         if (await LimitReachedAsync(ct) is { } full)
@@ -205,11 +225,8 @@ public sealed class FilterService(
 
         var created = await gmail.CreateFilterAsync(criteria, action, ct);
         var names = labels.ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
-        return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(await AddRowAsync(tx, created, id), names));
+        return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(await AddRowAsync(tx, created, restoredFrom), names));
     }
-
-    public static FilterCriteriaDto ToCriteriaDto(GmailFilterCriteria c) => new(
-        c.From, c.To, c.Subject, c.Query, c.NegatedQuery, c.HasAttachment, c.ExcludeChats, c.Size, c.SizeComparison?.ToGmailString());
 
     private async Task<FilterResult?> LimitReachedAsync(CancellationToken ct) =>
         await db.Filters.CountAsync(r => r.DeletedAt == null, ct) >= FilterSnapshot.GmailFilterLimit

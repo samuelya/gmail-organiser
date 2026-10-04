@@ -58,6 +58,8 @@ public static class SettingsValidation
     public const int MinArchiveRuleDays = 1;
     public const int MaxArchiveRuleDays = 3650;
     public const int MaxKeepInInboxLabels = 50;
+    public const int MinRulesStaleFilterDays = 30;
+    public const int MaxRulesStaleFilterDays = 3650;
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
@@ -108,6 +110,7 @@ public static class SettingsValidation
         CheckRange(errors, "claudeRunTimeoutSeconds", request.ClaudeRunTimeoutSeconds, MinClaudeRunTimeoutSeconds, MaxClaudeRunTimeoutSeconds);
         CheckRange(errors, "claudeMaxItemsPerRun", request.ClaudeMaxItemsPerRun, MinClaudeMaxItemsPerRun, MaxClaudeMaxItemsPerRun);
         CheckRange(errors, "claudeMaxTurns", request.ClaudeMaxTurns, MinClaudeMaxTurns, MaxClaudeMaxTurns);
+        CheckRange(errors, "rulesStaleFilterDays", request.RulesStaleFilterDays, MinRulesStaleFilterDays, MaxRulesStaleFilterDays);
         if (request.ClaudeReviewerMode is { } reviewer && !Enum.IsDefined(reviewer))
         {
             errors["claudeReviewerMode"] = ["Must be off, headless_claude_code or claude_desktop."];
