@@ -1,5 +1,5 @@
-using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Claude;
 
 namespace GmailOrganiser.Review;
