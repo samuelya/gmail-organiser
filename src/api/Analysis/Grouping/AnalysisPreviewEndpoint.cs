@@ -53,12 +53,7 @@ public static partial class AnalysisPreviewEndpoint
         }
 
         labels ??= PersonalLabels.None;
-        var addresses = candidates.Select(m => m.FromAddress).Distinct().ToArray();
-        var allowlisted = (await db.Senders.AsNoTracking()
-                .Where(x => x.Allowlisted && addresses.Contains(x.Address))
-                .Select(x => x.Address)
-                .ToListAsync(ct))
-            .ToHashSet(StringComparer.Ordinal);
+        var allowlisted = await AllowlistLoader.LoadAsync(db, settings, ct);
         var groups = await grouper.GroupAsync(candidates, GroupingSettings.From(settings), allowlisted, labels, ct);
 
         // The run's own memory lookup, in one query for all groups: a covered group costs one call per member memory

@@ -34,10 +34,10 @@ public static class ActionPlanner
         MessageRow message,
         IReadOnlyDictionary<string, string> labelIds,
         AppSettings settings,
-        bool senderAllowlisted,
+        Allowlist allowlist,
         IReadOnlySet<string>? removable = null)
     {
-        var protectedReason = MessageProtection.Reason(message, senderAllowlisted, settings.Protection);
+        var protectedReason = MessageProtection.Reason(message, allowlist, settings.Protection);
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
         if (suggestion.DocumentTypeLabel is { } type && LabelResolver.IsValid(type))
         {

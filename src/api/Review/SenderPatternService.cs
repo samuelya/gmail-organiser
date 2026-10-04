@@ -120,8 +120,8 @@ public sealed class SenderPatternService(
             return (ApplyRestStatus.Ok, new ApplyRestResponse(0, 0, null, filter));
         }
 
-        var allowlisted = await db.Senders.AnyAsync(s => s.Address == address && s.Allowlisted, ct);
         var settings = await settingsStore.GetAsync(ct);
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, [address], ct);
         var rules = settings.Protection;
         var now = time.GetUtcNow();
         var ids = new Guid[messages.Count];
@@ -129,7 +129,7 @@ public sealed class SenderPatternService(
         for (var i = 0; i < messages.Count; i++)
         {
             var message = messages[i];
-            var isProtected = MessageProtection.IsProtected(message, allowlisted, rules);
+            var isProtected = MessageProtection.IsProtected(message, allowlist, rules);
             protectedAdjusted += toBeDeleted && isProtected ? 1 : 0;
             var suggestion = new SuggestionRow
             {

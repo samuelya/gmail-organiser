@@ -44,7 +44,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
     public async Task<IReadOnlyList<MessageGroup>> GroupAsync(
         IReadOnlyList<MessageRow> messages,
         GroupingSettings settings,
-        IReadOnlySet<string> allowlistedSenders,
+        Allowlist allowlist,
         PersonalLabels labels,
         CancellationToken ct)
     {
@@ -71,7 +71,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
             // Protected members are never derived: beyond the k newest they go to the model one by one, so a group of
             // protected mail never becomes one oversized prompt.
             var overflow = keyedGroup.Members
-                .Where(m => MessageProtection.IsProtected(m, allowlistedSenders, settings.Protection))
+                .Where(m => MessageProtection.IsProtected(m, allowlist, settings.Protection))
                 .Skip(settings.RepresentativesPerGroup)
                 .ToHashSet();
             result.AddRange(overflow.Select(Single));
@@ -87,7 +87,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
 
             result.Add(group with
             {
-                RepresentativeIds = RepresentativePicker.Pick(group, settings.RepresentativesPerGroup, allowlistedSenders, settings.Protection),
+                RepresentativeIds = RepresentativePicker.Pick(group, settings.RepresentativesPerGroup, allowlist, settings.Protection),
             });
         }
 

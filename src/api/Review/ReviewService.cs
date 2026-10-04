@@ -173,8 +173,7 @@ public sealed partial class ReviewService(
             ArgumentNullException.ThrowIfNull(shown);
         }
 
-        var allowlisted = await db.Senders.AnyAsync(s => s.Address == senderAddress && s.Allowlisted, ct);
-        var rules = await RulesAsync(ct);
+        var (allowlist, rules) = await ProtectionAsync([senderAddress], ct);
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
@@ -186,7 +185,7 @@ public sealed partial class ReviewService(
                 if (outcome == DecisionOutcome.Rejected
                     || (s.TopicLabel == shown!.TopicLabel && s.NeedsAction == shown.NeedsAction && s.ToBeDeleted == shown.ToBeDeleted
                         && s.DocumentTypeLabel == shown.DocumentTypeLabel
-                        && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, rules))))
+                        && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlist, rules))))
                 {
                     if (outcome == DecisionOutcome.Approved)
                     {
@@ -214,9 +213,8 @@ public sealed partial class ReviewService(
     /// </summary>
     public async Task<GroupDecisionResponse> EditGroupAsync(string senderAddress, string groupKey, GroupOutcome outcome, CancellationToken ct)
     {
-        var allowlisted = await db.Senders.AnyAsync(s => s.Address == senderAddress && s.Allowlisted, ct);
         var skipped = new List<Guid>();
-        var edit = await EditToAsync(outcome, allowlisted, skipped, ct);
+        var edit = await EditToAsync(outcome, [senderAddress], skipped, ct);
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
@@ -234,9 +232,10 @@ public sealed partial class ReviewService(
     /// </summary>
     public async Task<GroupDecisionResponse> ApprovePendingAsync(Guid id, GroupOutcome? edit, CancellationToken ct)
     {
-        var allowlisted = await db.Senders.AnyAsync(x => x.Allowlisted && db.Suggestions.Any(s => s.Id == id && s.SenderAddress == x.Address), ct);
         var skipped = new List<Guid>();
-        Func<SuggestionRow, MessageRow, bool> include = edit is null ? (_, _) => true : await EditToAsync(edit, allowlisted, skipped, ct);
+        Func<SuggestionRow, MessageRow, bool> include = edit is null
+            ? (_, _) => true
+            : await EditToAsync(edit, await db.Suggestions.Where(s => s.Id == id).Select(s => s.SenderAddress).ToListAsync(ct), skipped, ct);
         return new GroupDecisionResponse(await ChangeChunkAsync([id], DecisionOutcome.Approved, include, ct), skipped);
     }
 
@@ -265,14 +264,12 @@ public sealed partial class ReviewService(
         var skippedIds = new List<Guid>();
         await foreach (var chunk in ChunksAsync(candidates, ct))
         {
-            var allowlisted = (await db.Senders.AsNoTracking()
-                    .Where(s => s.Allowlisted && db.Suggestions.Any(x => chunk.Contains(x.Id) && x.SenderAddress == s.Address))
-                    .Select(s => s.Address)
-                    .ToListAsync(ct))
-                .ToHashSet(StringComparer.Ordinal);
+            // Per chunk, so a sender allowlisted during a long bulk approve is honoured for the chunks that follow.
+            var senders = await db.Suggestions.Where(s => chunk.Contains(s.Id)).Select(s => s.SenderAddress).Distinct().ToListAsync(ct);
+            var allowlist = await AllowlistLoader.LoadAsync(db, settings, senders, ct);
             approved += await ChangeChunkAsync(chunk, DecisionOutcome.Approved, (s, m) =>
             {
-                if (s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, settings.Protection))
+                if (s.ToBeDeleted && MessageProtection.IsProtected(m, allowlist, settings.Protection))
                 {
                     if (skipped++ < MaxSkippedIds)
                     {
@@ -338,15 +335,15 @@ public sealed partial class ReviewService(
 
     /// <summary>The edit for <see cref="ChangeChunkAsync"/>: skips (and lists) a protected message the outcome would delete.</summary>
     private async Task<Func<SuggestionRow, MessageRow, bool>> EditToAsync(
-        GroupOutcome outcome, bool allowlisted, List<Guid> skipped, CancellationToken ct)
+        GroupOutcome outcome, IReadOnlyCollection<string> senders, List<Guid> skipped, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
         var typeIsNew = outcome.DocumentTypeLabel is { Length: > 0 } type ? await IsNewLabelAsync(type, ct) : null;
-        var rules = await RulesAsync(ct);
+        var (allowlist, rules) = await ProtectionAsync(senders, ct);
         var names = outcome.ReplaceLabels is { Count: > 0 } ? (await PersonalLabelsAsync(ct)).Names : null;
         return (s, m) =>
         {
-            if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, rules))
+            if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlist, rules))
             {
                 if (skipped.Count < MaxSkippedIds)
                 {
@@ -389,7 +386,13 @@ public sealed partial class ReviewService(
     private async Task<PersonalLabels> PersonalLabelsAsync(CancellationToken ct) =>
         await PersonalLabels.LoadAsync(labels, await settingsStore.GetAsync(ct), ct);
 
-    private async Task<ProtectionSettings> RulesAsync(CancellationToken ct) => (await settingsStore.GetAsync(ct)).Protection;
+    /// <summary>The allowlist for <paramref name="senders"/> and the protection rules, from one settings read.</summary>
+    private async Task<(Allowlist Allowlist, ProtectionSettings Rules)> ProtectionAsync(
+        IReadOnlyCollection<string> senders, CancellationToken ct)
+    {
+        var settings = await settingsStore.GetAsync(ct);
+        return (await AllowlistLoader.LoadAsync(db, settings, senders, ct), settings.Protection);
+    }
 
     private static SuggestionStatus ToStatus(DecisionOutcome outcome) =>
         outcome == DecisionOutcome.Approved ? SuggestionStatus.Approved : SuggestionStatus.Rejected;
@@ -413,11 +416,11 @@ public sealed partial class ReviewService(
         }
 
         var message = await db.Messages.SingleAsync(m => m.Id == suggestion.MessageId, ct);
-        var allowlisted = await db.Senders.AnyAsync(s => s.Address == message.FromAddress && s.Allowlisted, ct);
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, [message.FromAddress], ct);
         var rules = settings.Protection;
         if (suggestion.Status == SuggestionStatus.Applied)
         {
-            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlisted, rules, names));
+            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names));
         }
 
         if (needsChange(suggestion))
@@ -436,7 +439,7 @@ public sealed partial class ReviewService(
 
         await tx.CommitAsync(ct);
         decisions.Committed();
-        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlisted, rules, names));
+        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names));
     }
 
     /// <summary>

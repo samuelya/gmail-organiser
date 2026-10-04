@@ -153,20 +153,22 @@ public sealed class ActionPlannerTests
 
     private static ActionPlan Plan(
         SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null, HashSet<string>? removable = null) =>
-        ActionPlanner.Plan(suggestion, message, Ids, settings ?? Settings, allowlisted, removable);
+        ActionPlanner.Plan(
+            suggestion, message, Ids, settings ?? Settings,
+            allowlisted ? new Allowlist(new HashSet<string> { message.FromAddress }, []) : Allowlist.Empty, removable);
 
     private static SuggestionRow Suggestion(
         string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false, string[]? replace = null, string? type = null) => new()
-    {
-        DocumentTypeLabel = type,
-        ReplaceLabelIds = replace ?? [],
-        Id = Guid.NewGuid(),
-        MessageId = "m1",
-        SenderAddress = "sender@example.com",
-        TopicLabel = topic,
-        NeedsAction = needsAction,
-        ToBeDeleted = toBeDeleted,
-    };
+        {
+            DocumentTypeLabel = type,
+            ReplaceLabelIds = replace ?? [],
+            Id = Guid.NewGuid(),
+            MessageId = "m1",
+            SenderAddress = "sender@example.com",
+            TopicLabel = topic,
+            NeedsAction = needsAction,
+            ToBeDeleted = toBeDeleted,
+        };
 
     private static MessageRow Message(params string[] labels) => new() { Id = "m1", FromAddress = "sender@example.com", LabelIds = labels };
 }

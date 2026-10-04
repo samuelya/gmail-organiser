@@ -85,7 +85,7 @@ public sealed class LabelNameSettingsTests
         };
         var message = new MessageRow { Id = "m1", FromAddress = "sender@example.com", LabelIds = ["INBOX"] };
 
-        var plan = ActionPlanner.Plan(suggestion, message, ids, renamed, false);
+        var plan = ActionPlanner.Plan(suggestion, message, ids, renamed, Allowlist.Empty);
 
         plan.Add.ShouldContain("NEW-A");
         plan.Add.ShouldContain("NEW-D");

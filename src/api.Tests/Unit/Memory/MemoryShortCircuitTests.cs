@@ -45,7 +45,7 @@ public sealed class MemoryShortCircuitTests
         {
             [GroupKey.For(Msg(0))] = new("topic/shop", NeedsAction: false, ToBeDeleted: false, Approvals: 5, Agreement: 1),
         });
-        var context = new ShortCircuitContext(Settings, new HashSet<string>(), new LabelTreeIndex(["Topic/Shop"]), Labels);
+        var context = new ShortCircuitContext(Settings, Allowlist.Empty, new LabelTreeIndex(["Topic/Shop"]), Labels);
 
         var results = await new MemoryShortCircuit(memory).TryAsync(
             [
