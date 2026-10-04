@@ -6,12 +6,30 @@ using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Gmail.Auth;
 
-/// <summary>The pending connect flow: the <c>state</c> sent to Google, the PKCE verifier and when the flow expires.</summary>
-public sealed record OAuthPendingFlow(string State, string CodeVerifier, DateTimeOffset ExpiresAt);
+/// <summary>
+/// Where the callback sends the browser back to. Only these values exist, so the redirect is never built from
+/// request input. <see cref="Setup"/> stays 0: a cookie issued before the field existed reads as Setup.
+/// </summary>
+public enum OAuthReturnTo
+{
+    Setup = 0,
+    Settings = 1,
+}
+
+/// <summary>
+/// The pending connect flow: the <c>state</c> sent to Google, the PKCE verifier, when the flow expires and the page
+/// the callback returns to.
+/// </summary>
+public sealed record OAuthPendingFlow(string State, string CodeVerifier, DateTimeOffset ExpiresAt, OAuthReturnTo ReturnTo);
+
+/// <param name="Flow">The flow, or null when the cookie is missing, undecryptable, expired or its state differs.</param>
+/// <param name="ReturnTo">The cookie's return target whenever it decrypts (even if the flow is invalid), else Setup.</param>
+public sealed record OAuthConsumeResult(OAuthPendingFlow? Flow, OAuthReturnTo ReturnTo);
 
 /// <summary>
 /// Keeps the pending flow in one short-lived, HttpOnly, SameSite=Lax cookie encrypted with Data Protection.
-/// Lax is enough: Google's return to the callback is a top-level GET navigation.
+/// Lax is enough: Google's return to the callback is a top-level GET navigation. The return target rides in the same
+/// encrypted payload, so it can't be changed between start and callback.
 /// </summary>
 public sealed class OAuthStateCookie(IDataProtectionProvider dataProtection, TimeProvider time, IOptions<GoogleOAuthOptions> options)
 {
@@ -21,13 +39,14 @@ public sealed class OAuthStateCookie(IDataProtectionProvider dataProtection, Tim
 
     private readonly IDataProtector protector = dataProtection.CreateProtector(ProtectorPurpose);
 
-    public OAuthPendingFlow Issue(HttpContext context)
+    public OAuthPendingFlow Issue(HttpContext context, OAuthReturnTo returnTo)
     {
         var lifetime = options.Value.StateLifetime;
         var flow = new OAuthPendingFlow(
             GoogleAuthorizationRequest.NewRandomValue(),
             GoogleAuthorizationRequest.NewRandomValue(),
-            time.GetUtcNow().Add(lifetime));
+            time.GetUtcNow().Add(lifetime),
+            returnTo);
         var payload = protector.Protect(JsonSerializer.Serialize(flow));
         context.Response.Cookies.Append(CookieName, payload, CookieOptions(context, lifetime));
         return flow;
@@ -35,15 +54,15 @@ public sealed class OAuthStateCookie(IDataProtectionProvider dataProtection, Tim
 
     /// <summary>
     /// Reads and always deletes the cookie (one use only). Returns the flow only when the cookie decrypts, has not
-    /// expired and its state matches <paramref name="state"/>.
+    /// expired and its state matches <paramref name="state"/>; the return target whenever the cookie decrypts.
     /// </summary>
-    public OAuthPendingFlow? Consume(HttpContext context, string? state)
+    public OAuthConsumeResult Consume(HttpContext context, string? state)
     {
         var raw = context.Request.Cookies[CookieName];
         context.Response.Cookies.Delete(CookieName, CookieOptions(context, TimeSpan.Zero));
-        if (string.IsNullOrEmpty(raw) || string.IsNullOrEmpty(state))
+        if (string.IsNullOrEmpty(raw))
         {
-            return null;
+            return new OAuthConsumeResult(null, OAuthReturnTo.Setup);
         }
 
         OAuthPendingFlow? flow;
@@ -53,15 +72,18 @@ public sealed class OAuthStateCookie(IDataProtectionProvider dataProtection, Tim
         }
         catch (Exception ex) when (ex is CryptographicException or JsonException)
         {
-            return null;
+            return new OAuthConsumeResult(null, OAuthReturnTo.Setup);
         }
 
-        if (flow is null || flow.ExpiresAt <= time.GetUtcNow() || !FixedTimeEquals(flow.State, state))
+        if (flow is null)
         {
-            return null;
+            return new OAuthConsumeResult(null, OAuthReturnTo.Setup);
         }
 
-        return flow;
+        // An out-of-range number in the payload can't come from Issue; treat it like any unknown target.
+        var returnTo = Enum.IsDefined(flow.ReturnTo) ? flow.ReturnTo : OAuthReturnTo.Setup;
+        var valid = !string.IsNullOrEmpty(state) && flow.ExpiresAt > time.GetUtcNow() && FixedTimeEquals(flow.State, state);
+        return new OAuthConsumeResult(valid ? flow with { ReturnTo = returnTo } : null, returnTo);
     }
 
     private static bool FixedTimeEquals(string expected, string actual) =>
