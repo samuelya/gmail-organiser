@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, Router } from '@angular/router';
 import { of, Subject } from 'rxjs';
+import { AnalysisService } from '../analyse/analysis.service';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
 import { isActiveJob, JobDto, JobStatus } from '../core/jobs.models';
@@ -162,12 +163,17 @@ describe('ReviewPage', () => {
       ),
       job: vi.fn(() => of(job('completed', { version: 5 }))),
     };
+    const analysis = {
+      summary: vi.fn(() => of({ alternatives: 0 })),
+      startCompareRun: vi.fn(() => of({ id: 'run-2' })),
+    };
     const edit = { editGroup: vi.fn(() => of(true)), editMember: vi.fn(() => of(false)) };
     TestBed.configureTestingModule({
       providers: [
         provideRouter([]),
         { provide: JobsService, useValue: jobs },
         { provide: ReviewService, useValue: api },
+        { provide: AnalysisService, useValue: analysis },
         { provide: REVIEW_EDIT_DIALOG, useValue: edit },
         { provide: ClaudeService, useValue: claude },
         {
@@ -198,7 +204,7 @@ describe('ReviewPage', () => {
       q('group-expand')!.click();
       await settle();
     };
-    return { fixture, jobs, api, edit, claude, el, q, all, settle, expand };
+    return { fixture, jobs, api, analysis, edit, claude, el, q, all, settle, expand };
   }
 
   const dialogButton = (testId: string) =>
@@ -207,10 +213,10 @@ describe('ReviewPage', () => {
 
   it('lists senders, selects the first and renders its groups', async () => {
     const { api, q, all } = await render();
-    expect(api.listSenders).toHaveBeenCalledWith('pending', '', 1, 25);
+    expect(api.listSenders).toHaveBeenCalledWith('pending', '', 1, 25, false);
     expect(all('sender-item')).toHaveLength(2);
     expect(all('sender-count')[0].textContent).toContain('3');
-    expect(api.sender).toHaveBeenCalledWith('news@example.com', 'pending', 1, 20);
+    expect(api.sender).toHaveBeenCalledWith('news@example.com', 'pending', 1, 20, false);
     expect(q('detail-title')!.textContent).toContain('Example News');
     expect(q('group-title')!.textContent).toContain('Weekly digest');
     expect(q('group-origin')!.textContent).toContain('1 analysed by the model · 2 derived');
@@ -226,11 +232,11 @@ describe('ReviewPage', () => {
     const { api, all, el, settle } = await render();
     all('sender-item')[1].click();
     await settle();
-    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20);
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, false);
     el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')[1].click();
     await settle();
-    expect(api.listSenders).toHaveBeenLastCalledWith('approved', '', 1, 25);
-    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'approved', 1, 20);
+    expect(api.listSenders).toHaveBeenLastCalledWith('approved', '', 1, 25, false);
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'approved', 1, 20, false);
   });
 
   it('approves and rejects a member, then re-fetches', async () => {

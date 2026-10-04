@@ -2,6 +2,8 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
+import { MatTooltip } from '@angular/material/tooltip';
+import { By } from '@angular/platform-browser';
 import { convertToParamMap, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
@@ -41,6 +43,7 @@ const job = (status: JobStatus, over: Partial<JobDto> = {}): JobDto => ({
 const run = (over: Partial<AnalysisRunDto> = {}): AnalysisRunDto => ({
   id: 'run-1',
   jobId: 'job-1',
+  kind: 'analyse',
   scope: 'inbox',
   senderAddress: null,
   requestedCount: 20,
@@ -108,6 +111,9 @@ describe('analysis models', () => {
   it('labels the labelled scope in the run list and history', () => {
     expect(runTarget({ scope: 'labelled', senderAddress: null })).toBe('Already labelled');
     expect(isScope('labelled')).toBe(true);
+    expect(runTarget({ kind: 'compare', scope: 'messages', senderAddress: null })).toBe(
+      'Re-analysis: Selected emails',
+    );
   });
 
   it('the deep link drops an invalid count or sender', () => {
@@ -138,6 +144,7 @@ describe('AnalysePage', () => {
     start: ReturnType<typeof vi.fn>;
     listRuns: ReturnType<typeof vi.fn>;
     cancel: ReturnType<typeof vi.fn>;
+    startCompareRun: ReturnType<typeof vi.fn>;
   };
   let active: AnalysisRunDto[];
   let finished: AnalysisRunDto[];
@@ -154,6 +161,7 @@ describe('AnalysePage', () => {
       start: vi.fn(() => of(run({ id: 'run-new', status: 'queued' }))),
       listRuns: vi.fn((isActive: boolean) => of(isActive ? active : finished)),
       cancel: vi.fn(() => of(run({ status: 'cancelled' }))),
+      startCompareRun: vi.fn(() => of(run({ id: 'run-cmp', kind: 'compare', status: 'queued' }))),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -377,5 +385,47 @@ describe('AnalysePage', () => {
     expect(document.querySelector('mat-snack-bar-container')?.textContent).toContain(
       'Sent 2 items to Claude; 1 already open.',
     );
+  });
+
+  it('Re-analyse on a finished run confirms, then starts a re-analysis of that run', async () => {
+    const { harness, component, q, all } = await render();
+    finished.push(run({ status: 'completed', messagesCovered: 12 }), run({ id: 'run-0' }));
+    component.loadRuns();
+    await harness.fixture.whenStable();
+    expect(all('run-reanalyse')).toHaveLength(1);
+    q('run-reanalyse')!.click();
+    await harness.fixture.whenStable();
+    const dialog = document.querySelector('mat-dialog-container')!.textContent ?? '';
+    expect(dialog).toContain('Re-analyse 12 emails?');
+    expect(dialog).toContain('12 emails go to the LLM with the current prompt and settings');
+    expect(dialog).toContain('memory shortcut is skipped (memory hints still apply)');
+    expect(dialog).toContain('Current suggestions stay as they are until you pick');
+    active.push(run({ id: 'run-cmp', kind: 'compare', scope: 'messages', status: 'queued' }));
+    document.querySelector<HTMLButtonElement>('[data-testid="confirm-ok"]')!.click();
+    await harness.fixture.whenStable();
+    expect(api.startCompareRun).toHaveBeenCalledWith({ runId: 'run-1' });
+    expect(all('active-run')[0].textContent).toContain('Re-analysis: Selected emails');
+  });
+
+  it('Re-analyse is disabled with a tooltip while an analysis run is active', async () => {
+    const { harness, component, q } = await render();
+    finished.push(run({ status: 'completed', messagesCovered: 5 }));
+    component.loadRuns();
+    await harness.fixture.whenStable();
+    const tooltip = () =>
+      harness.fixture.debugElement
+        .query(By.css('[data-testid="run-reanalyse"]'))
+        .injector.get(MatTooltip).message;
+    expect(q('run-reanalyse')!.getAttribute('aria-disabled')).not.toBe('true');
+    expect(tooltip()).toBe('');
+    jobs.held.set([job('queued', { id: 'job-9' })]);
+    await harness.fixture.whenStable();
+    const button = q('run-reanalyse')!;
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(tooltip()).toBe('An analysis is running');
+    button.click();
+    await harness.fixture.whenStable();
+    expect(document.querySelector('mat-dialog-container')).toBeNull();
+    expect(api.startCompareRun).not.toHaveBeenCalled();
   });
 });
