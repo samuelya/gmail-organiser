@@ -70,7 +70,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         var queue = new RecordingEmbeddingQueue();
         await using (var db = postgres.CreateDbContext())
         {
-            var recorder = new DecisionRecorder(db, settings, queue, new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
+            var recorder = new DecisionRecorder(db, queue, new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
             await recorder.RecordAsync(Suggestion(message, "Shopping"), message, DecisionOutcome.Approved, Ct);
             await db.SaveChangesAsync(Ct);
             recorder.Committed();
@@ -100,7 +100,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     {
         var message = Message("m1", Shop, "Order 12345 shipped", null);
         await using var db = postgres.CreateDbContext();
-        var recorder = new DecisionRecorder(db, settings, new RecordingEmbeddingQueue { Failure = new InvalidOperationException("synthetic") },
+        var recorder = new DecisionRecorder(db, new RecordingEmbeddingQueue { Failure = new InvalidOperationException("synthetic") },
             new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
         await recorder.RecordAsync(Suggestion(message, "Shopping"), message, DecisionOutcome.Approved, Ct);
 
@@ -268,7 +268,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
 
         var memory = Memory(db);
         var vectors = await memory.EmbedMessagesAsync([query, other, query], Ct);
-        var hints = await memory.FindSimilarAsync([query, other], vectors, DecisionMemory.DefaultSimilarCount, Ct);
+        var hints = await memory.FindSimilarAsync([query, other], vectors, DecisionMemory.DefaultSimilarCount, documentTypeParent: null, Ct);
 
         embeddings.Inputs.Count.ShouldBe(2);
         hints.Select(h => (h.TopicLabel, h.Outcome)).ShouldBe([("Shopping", "approved"), ("Offers", "rejected")]);
@@ -312,7 +312,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         await db.SaveChangesAsync(Ct);
 
         var memory = Memory(db);
-        var hints = await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), DecisionMemory.DefaultSimilarCount, Ct);
+        var hints = await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), DecisionMemory.DefaultSimilarCount, documentTypeParent: null, Ct);
 
         embeddings.Inputs.ShouldBeEmpty();
         hints.Select(h => (h.TopicLabel, h.Similarity)).ShouldBe([("Shopping", 1.0), ("Lists", DecisionMemory.ListMatchSimilarity)]);
@@ -330,10 +330,10 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         await db.SaveChangesAsync(Ct);
 
         var memory = Memory(db);
-        (await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), 5, Ct)).ShouldBeEmpty();
+        (await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), 5, documentTypeParent: null, Ct)).ShouldBeEmpty();
 
         settings.Current = settings.Current with { EmbeddingModel = "previous-embedding-model" };
-        (await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), 5, Ct))
+        (await memory.FindSimilarAsync([query], await memory.EmbedMessagesAsync([query], Ct), 5, documentTypeParent: null, Ct))
             .ShouldHaveSingleItem().TopicLabel.ShouldBe("News");
     }
 
@@ -380,7 +380,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         });
         await db.SaveChangesAsync(Ct);
 
-        var patterns = await Memory(db).FindPatternsAsync([ShopScope, OtherTemplateScope], minApprovals: 3, Ct);
+        var patterns = await Memory(db).FindPatternsAsync([ShopScope, OtherTemplateScope], minApprovals: 3, documentTypeParent: null, Ct);
 
         patterns.ShouldNotContainKey(OtherTemplateScope);
         if (expected is { } approvals)
@@ -403,8 +403,8 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
             Decision(Shop, "Shopping", DecisionOutcome.Approved, Now.AddDays(-1), scopeKey: ShopScope));
         await db.SaveChangesAsync(Ct);
 
-        (await Memory(db).FindPatternsAsync([ShopScope], minApprovals: 3, Ct)).ShouldBeEmpty();
-        (await Memory(db).FindPatternsAsync([ShopScope], minApprovals: 2, Ct)).ShouldContainKey(ShopScope);
+        (await Memory(db).FindPatternsAsync([ShopScope], minApprovals: 3, documentTypeParent: null, Ct)).ShouldBeEmpty();
+        (await Memory(db).FindPatternsAsync([ShopScope], minApprovals: 2, documentTypeParent: null, Ct)).ShouldContainKey(ShopScope);
     }
 
     /// <summary>

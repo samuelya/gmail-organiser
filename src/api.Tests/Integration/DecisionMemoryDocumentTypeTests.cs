@@ -39,16 +39,29 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     [Theory]
-    [InlineData(Parent, true)]
-    [InlineData(null, false)]
-    public async Task Recorder_writes_the_type_label_and_whether_a_parent_was_set(string? parent, bool decided)
+    [InlineData(Parent, null, Parent, true)]
+    [InlineData(null, Parent, null, false)]
+    [InlineData(Parent, "Other", Parent, true)]
+    public async Task Recorder_takes_the_parent_from_the_suggestions_run_not_the_current_settings(
+        string? runParent, string? settingsParent, string? recorded, bool decided)
     {
-        settings.Current = settings.Current with { DocumentTypeParent = parent };
-        await RecordAsync(Message("m1"), "Type/Invoice");
+        settings.Current = settings.Current with { DocumentTypeParent = settingsParent };
+        await RecordAsync(Message("m1"), "Type/Invoice", await RunAsync(runParent));
 
         await using var db = postgres.CreateDbContext();
         var row = await db.Decisions.AsNoTracking().SingleAsync(Ct);
-        (row.DocumentTypeLabel, row.DocumentTypeDecided).ShouldBe(("Type/Invoice", decided));
+        (row.DocumentTypeLabel, row.DocumentTypeParent, row.DocumentTypeDecided).ShouldBe(("Type/Invoice", recorded, decided));
+    }
+
+    [Fact]
+    public async Task Recorder_without_a_run_records_no_parent()
+    {
+        settings.Current = settings.Current with { DocumentTypeParent = Parent };
+        await RecordAsync(Message("m1"), "Type/Invoice", runId: null);
+
+        await using var db = postgres.CreateDbContext();
+        var row = await db.Decisions.AsNoTracking().SingleAsync(Ct);
+        (row.DocumentTypeParent, row.DocumentTypeDecided).ShouldBe((null, false));
     }
 
     [Theory]
@@ -56,14 +69,13 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
     [InlineData(null, null, true)]
     [InlineData("Type/Invoice", null, false)]
     [InlineData("Type/Invoice", "Type/Receipt", false)]
-    public async Task Decided_approvals_must_agree_on_the_type_label(string? latest, string? older, bool agrees)
+    public async Task Approvals_under_the_parent_must_agree_on_the_type_label(string? latest, string? older, bool agrees)
     {
         await using var db = postgres.CreateDbContext();
-        db.Decisions.AddRange(
-            Approval(0, latest, decided: true), Approval(-1, older, decided: true), Approval(-2, older, decided: true));
+        db.Decisions.AddRange(Approval(0, latest, Parent), Approval(-1, older, Parent), Approval(-2, older, Parent));
         await db.SaveChangesAsync(Ct);
 
-        var patterns = await Memory(db).FindPatternsAsync([Scope], minApprovals: 3, Ct);
+        var patterns = await Memory(db).FindPatternsAsync([Scope], minApprovals: 3, Parent, Ct);
 
         patterns.ContainsKey(Scope).ShouldBe(agrees);
         if (agrees)
@@ -77,19 +89,18 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
     {
         await using (var db = postgres.CreateDbContext())
         {
-            db.Decisions.AddRange(Enumerable.Range(1, 20).Select(i => Approval(-i, type: null, decided: false)));
+            db.Decisions.AddRange(Enumerable.Range(1, 20).Select(i => Approval(-i, type: null, parent: null)));
             await db.SaveChangesAsync(Ct);
         }
 
         // Parent off: the old behaviour, no type.
         (await CoverAsync(parent: null)).ShouldNotBeNull().Suggestions.Single().DocumentTypeLabel.ShouldBeNull();
 
-        // Parent on: the latest approval predates it, so the group goes to the model.
-        settings.Current = settings.Current with { DocumentTypeParent = Parent };
+        // Parent on: the latest approval was not decided under it, so the group goes to the model.
         (await CoverAsync(Parent)).ShouldBeNull();
 
-        // One approval with the parent set; the 20 old ones do not contradict it.
-        await RecordAsync(Message("m1"), "Type/Invoice");
+        // One approval of a run made with the parent set; the 20 old ones do not contradict it.
+        await RecordAsync(Message("m1"), "Type/Invoice", await RunAsync(Parent));
         var covered = (await CoverAsync(Parent)).ShouldNotBeNull().Suggestions.Single();
         covered.DocumentTypeLabel.ShouldBe("Type/Invoice");
 
@@ -98,15 +109,47 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
     }
 
     [Fact]
-    public async Task Similar_decision_hints_carry_the_type_label()
+    public async Task A_changed_parent_relearns_the_type_after_one_approval()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.AddRange(Enumerable.Range(1, 20).Select(i => Approval(-i, "Old/Invoice", "Old")));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        (await CoverAsync("Old")).ShouldNotBeNull().Suggestions.Single().DocumentTypeLabel.ShouldBe("Old/Invoice");
+
+        // Under the new parent the old approvals neither answer nor contradict the first one made under it.
+        (await CoverAsync(Parent)).ShouldBeNull();
+        await RecordAsync(Message("m1"), "Type/Invoice", await RunAsync(Parent));
+        (await CoverAsync(Parent)).ShouldNotBeNull().Suggestions.Single().DocumentTypeLabel.ShouldBe("Type/Invoice");
+    }
+
+    [Fact]
+    public async Task Memory_answers_with_the_type_spelled_as_the_parser_stores_it()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.AddRange(Enumerable.Range(1, 3).Select(i => Approval(-i, "type/invoice", "TYPE")));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        (await CoverAsync(Parent)).ShouldNotBeNull().Suggestions.Single().DocumentTypeLabel.ShouldBe("Type/invoice");
+    }
+
+    [Fact]
+    public async Task Similar_decision_hints_carry_the_type_label_and_whether_it_was_decided_under_the_parent()
     {
         await using var db = postgres.CreateDbContext();
-        db.Decisions.AddRange(Approval(0, "Type/Invoice", decided: true), Approval(-1, type: null, decided: true));
+        db.Decisions.AddRange(
+            Approval(0, "Type/Invoice", Parent), Approval(-1, type: null, Parent), Approval(-2, "Old/Invoice", "Old"),
+            Approval(-3, type: null, parent: null));
         await db.SaveChangesAsync(Ct);
 
-        var hints = await Memory(db).FindSimilarAsync([Message("m9")], vectors: null, k: 5, Ct);
+        var hints = await Memory(db).FindSimilarAsync([Message("m9")], vectors: null, k: 5, Parent, Ct);
 
-        hints.Select(h => h.DocumentTypeLabel).ShouldBe(["Type/Invoice", null]);
+        hints.Select(h => (h.DocumentTypeLabel, h.DocumentTypeDecided))
+            .ShouldBe([("Type/Invoice", true), (null, true), ("Old/Invoice", false)]);
     }
 
     private async Task<ShortCircuitResult?> CoverAsync(string? parent)
@@ -120,14 +163,24 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
         return (await new MemoryShortCircuit(Memory(db)).TryAsync([group], context, Ct))[0];
     }
 
-    private async Task RecordAsync(MessageRow message, string? type)
+    private async Task<Guid> RunAsync(string? parent)
+    {
+        await using var db = postgres.CreateDbContext();
+        var run = new AnalysisRunRow { Id = Guid.NewGuid(), Scope = AnalysisScope.Inbox, DocumentTypeParent = parent, CreatedAt = Now };
+        db.AnalysisRuns.Add(run);
+        await db.SaveChangesAsync(Ct);
+        return run.Id;
+    }
+
+    private async Task RecordAsync(MessageRow message, string? type, Guid? runId)
     {
         await using var db = postgres.CreateDbContext();
         var recorder = new DecisionRecorder(
-            db, settings, new RecordingEmbeddingQueue(), new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
+            db, new RecordingEmbeddingQueue(), new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
         var suggestion = new SuggestionRow
         {
             Id = Guid.NewGuid(),
+            RunId = runId,
             MessageId = message.Id,
             SenderAddress = message.FromAddress,
             Source = SuggestionSource.Llm,
@@ -155,7 +208,7 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
         UpdatedAt = Now,
     };
 
-    private static DecisionRow Approval(int days, string? type, bool decided) => new()
+    private static DecisionRow Approval(int days, string? type, string? parent) => new()
     {
         Id = Guid.NewGuid(),
         MessageId = $"old-{Guid.NewGuid():N}",
@@ -164,7 +217,8 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
         ScopeKey = Scope,
         TopicLabel = "Shopping",
         DocumentTypeLabel = type,
-        DocumentTypeDecided = decided,
+        DocumentTypeDecided = parent is not null,
+        DocumentTypeParent = parent,
         Outcome = DecisionOutcome.Approved,
         Source = SuggestionSource.Llm,
         CreatedAt = Now.AddDays(days),

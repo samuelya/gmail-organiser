@@ -69,8 +69,9 @@ public sealed class MemoryShortCircuitTests
     [InlineData(null, "Type/Invoice", false, true, null)]
     [InlineData("Type", null, false, false, null)]
     [InlineData("Type", null, true, true, null)]
-    [InlineData("Type", "type/invoice", true, true, "type/invoice")]
-    [InlineData(" Type ", "Type/Invoice", true, true, "Type/Invoice")]
+    [InlineData("Type", "type/invoice", true, true, "Type/invoice")]
+    [InlineData("Type", " Type/Invoice ", true, true, "Type/Invoice")]
+    [InlineData("Type", "Type/", true, false, null)]
     [InlineData("Type", "Other/Invoice", true, false, null)]
     [InlineData("Type", "Type/Invoice/Paid", true, false, null)]
     public async Task Document_type_follows_the_parent_and_whether_the_pattern_decided_it(
@@ -105,7 +106,7 @@ public sealed class MemoryShortCircuitTests
     private sealed class PatternMemory(IReadOnlyDictionary<string, MemoryPattern> patterns) : IDecisionMemory
     {
         public Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
-            IReadOnlyCollection<string> scopeKeys, int minApprovals, CancellationToken ct) => Task.FromResult(patterns);
+            IReadOnlyCollection<string> scopeKeys, int minApprovals, string? documentTypeParent, CancellationToken ct) => Task.FromResult(patterns);
 
         public Task EmbedAsync(IReadOnlyList<DecisionRow> decisions, CancellationToken ct) => throw new NotSupportedException();
 
@@ -115,6 +116,7 @@ public sealed class MemoryShortCircuitTests
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
-            IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, CancellationToken ct) => throw new NotSupportedException();
+            IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent, CancellationToken ct) =>
+            throw new NotSupportedException();
     }
 }

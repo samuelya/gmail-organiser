@@ -244,8 +244,8 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
 
         await using var scope = h.Services.CreateAsyncScope();
         var memory = scope.ServiceProvider.GetRequiredService<IDecisionMemory>();
-        (await memory.FindPatternsAsync(scopes, minApprovals: 3, Ct)).ShouldBeEmpty();
-        var pattern = (await memory.FindPatternsAsync(scopes, minApprovals: 2, Ct)).ShouldHaveSingleItem().Value;
+        (await memory.FindPatternsAsync(scopes, minApprovals: 3, documentTypeParent: null, Ct)).ShouldBeEmpty();
+        var pattern = (await memory.FindPatternsAsync(scopes, minApprovals: 2, documentTypeParent: null, Ct)).ShouldHaveSingleItem().Value;
         (pattern.TopicLabel, pattern.ToBeDeleted, pattern.Approvals).ShouldBe((Topic, false, 2));
     }
 
