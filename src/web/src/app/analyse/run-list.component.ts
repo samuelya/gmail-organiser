@@ -23,7 +23,7 @@ import { JobsService } from '../core/jobs.service';
 import { humanise } from '../dashboard/fetch.models';
 import { SettingsService } from '../settings/settings.service';
 import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysis.models';
-import { RUN_ACTIVE_TOOLTIP } from './compare-run';
+import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compare-run';
 
 /** Active runs with live progress and Cancel, then the finished runs with their counters and savings. */
 @Component({
@@ -98,9 +98,9 @@ import { RUN_ACTIVE_TOOLTIP } from './compare-run';
               <button
                 mat-button
                 type="button"
-                [disabled]="runActive()"
+                [disabled]="!!reanalyseBlocked(run)"
                 [disabledInteractive]="true"
-                [matTooltip]="runActive() ? runActiveTooltip : ''"
+                [matTooltip]="reanalyseBlocked(run)"
                 (click)="reanalyseRun.emit(run)"
                 [attr.aria-label]="'Re-analyse run ' + target(run)"
                 data-testid="run-reanalyse"
@@ -184,7 +184,11 @@ export class RunList {
   /** "Re-analyse" on a finished run: the page confirms and starts a re-analysis of it. */
   readonly reanalyseRun = output<AnalysisRunDto>();
 
-  readonly runActiveTooltip = RUN_ACTIVE_TOOLTIP;
+  /** Why a run's "Re-analyse" is off (its tooltip), `''` when it may start. */
+  reanalyseBlocked(run: AnalysisRunDto): string {
+    if (this.runActive()) return RUN_ACTIVE_TOOLTIP;
+    return run.messagesCovered > MAX_COMPARE ? RUN_TOO_LARGE_TOOLTIP : '';
+  }
 
   readonly claudeEnabled = computed(() => (this.settings()?.claudeReviewerMode ?? 'off') !== 'off');
   /** Run ids whose "Send run to Claude" is in flight. */

@@ -18,9 +18,16 @@ export function injectAnalysisRunActive(): Signal<boolean> {
   return computed(() => jobs.activeJobs().some((j) => j.type === ANALYSIS_RUN_JOB));
 }
 
-/** The confirm text: what goes to the LLM, with what, and that nothing changes until the user picks. */
-export function compareConfirmMessage(count: number): string {
-  const emails = `${count.toLocaleString()} ${count === 1 ? 'email goes' : 'emails go'}`;
+/** Tooltip of a run's "Re-analyse" when it covers more emails than one re-analysis takes. */
+export const RUN_TOO_LARGE_TOOLTIP = `At most ${MAX_COMPARE.toLocaleString()} emails per re-analysis`;
+
+/**
+ * The confirm text: what goes to the LLM, with what, and that nothing changes until the user picks.
+ * `upTo`: the count is a ceiling (a run's emails; resolved suggestions are left out by the API).
+ */
+export function compareConfirmMessage(count: number, upTo = false): string {
+  const verb = count === 1 ? 'email goes' : 'emails go';
+  const emails = `${upTo ? 'Up to ' : ''}${count.toLocaleString()} ${verb}`;
   return (
     `${emails} to the LLM with the current prompt and settings. ` +
     `The memory shortcut is skipped (memory hints still apply). ` +
@@ -28,11 +35,16 @@ export function compareConfirmMessage(count: number): string {
   );
 }
 
-/** Asks before a re-analysis of `count` emails; emits `true` only when confirmed. */
-export function openCompareConfirm(dialog: MatDialog, count: number): Observable<boolean> {
+/** Asks before a re-analysis of `count` (or `upTo` count) emails; emits `true` only when confirmed. */
+export function openCompareConfirm(
+  dialog: MatDialog,
+  count: number,
+  upTo = false,
+): Observable<boolean> {
+  const noun = count === 1 ? 'email' : 'emails';
   return openConfirm(dialog, {
-    title: `Re-analyse ${count.toLocaleString()} ${count === 1 ? 'email' : 'emails'}?`,
-    message: compareConfirmMessage(count),
+    title: `Re-analyse ${upTo ? 'up to ' : ''}${count.toLocaleString()} ${noun}?`,
+    message: compareConfirmMessage(count, upTo),
     confirm: 'Re-analyse',
   });
 }
@@ -46,8 +58,9 @@ export function confirmCompareRun(
   analysis: AnalysisService,
   request: CompareRunRequest,
   count: number,
+  upTo = false,
 ): Observable<AnalysisRunDto> {
-  return openCompareConfirm(dialog, count).pipe(
+  return openCompareConfirm(dialog, count, upTo).pipe(
     filter((confirmed) => confirmed),
     switchMap(() => analysis.startCompareRun(request)),
   );

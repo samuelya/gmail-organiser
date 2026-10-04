@@ -178,12 +178,10 @@ export class ReviewPage {
       .pipe(
         tap(() => this.sendersLoading.set(true)),
         switchMap((k) =>
-          this.review
-            .listSenders(k.status, k.search, k.page, SENDER_PAGE_SIZE, k.reanalysed)
-            .pipe(
-              orNull(),
-              map((page) => ({ listed: `${k.status}|${k.reanalysed}`, page })),
-            ),
+          this.review.listSenders(k.status, k.search, k.page, SENDER_PAGE_SIZE, k.reanalysed).pipe(
+            orNull(),
+            map((page) => ({ listed: `${k.status}|${k.reanalysed}`, page })),
+          ),
         ),
         takeUntilDestroyed(this.destroyRef),
       )
@@ -222,6 +220,7 @@ export class ReviewPage {
       .subscribe((detail) => {
         this.detailLoading.set(false);
         this.detail.set(detail);
+        this.pruneSelection(detail);
       });
 
     const patternKey = computed(() => ({ address: this.selected(), version: this.version() }));
@@ -466,6 +465,15 @@ export class ReviewPage {
 
   private refresh(): void {
     this.version.update((v) => v + 1);
+  }
+
+  /** Ticks only survive a reload on members still shown: an applied or moved member drops out. */
+  private pruneSelection(detail: ReviewSenderDetailDto | null): void {
+    const current = this.selection();
+    if (current.size === 0) return;
+    const shown = new Set(detail?.groups.flatMap((g) => g.members.map((m) => m.id)) ?? []);
+    const kept = [...current].filter((id) => shown.has(id));
+    if (kept.length !== current.size) this.selection.set(new Set(kept));
   }
 
   private resetDetail(): void {

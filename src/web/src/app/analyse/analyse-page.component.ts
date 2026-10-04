@@ -55,7 +55,7 @@ import {
   SCOPE_OPTIONS,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
-import { confirmCompareRun, injectAnalysisRunActive } from './compare-run';
+import { confirmCompareRun, injectAnalysisRunActive, MAX_COMPARE } from './compare-run';
 import { GroupingPreview } from './grouping-preview.component';
 import { RunList } from './run-list.component';
 
@@ -309,8 +309,9 @@ export class AnalysePage {
 
   /** Re-analyses a finished run's suggestions; the results wait on Review next to the current ones. */
   reanalyse(run: AnalysisRunDto): void {
-    if (this.runActive()) return;
-    confirmCompareRun(this.dialog, this.analysis, { runId: run.id }, run.messagesCovered)
+    if (this.runActive() || run.messagesCovered > MAX_COMPARE) return;
+    // The API takes the run's suggestions still to decide, so the run's count is a ceiling.
+    confirmCompareRun(this.dialog, this.analysis, { runId: run.id }, run.messagesCovered, true)
       .pipe(takeUntilDestroyed(this.destroyRef))
       // The error interceptor shows the server's problem detail (a 409 among them).
       .subscribe({

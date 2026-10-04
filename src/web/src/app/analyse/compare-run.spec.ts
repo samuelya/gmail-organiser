@@ -48,6 +48,11 @@ describe('compare run', () => {
     expect(compareConfirmMessage(3)).toContain('3 emails go to the LLM');
   });
 
+  it('words a ceiling as "up to"', () => {
+    expect(compareConfirmMessage(1, true)).toContain('Up to 1 email goes to the LLM');
+    expect(compareConfirmMessage(12, true)).toContain('Up to 12 emails go to the LLM');
+  });
+
   it('posts the selection or the run once confirmed', () => {
     const backend = TestBed.inject(HttpTestingController);
     const selection = start({ suggestionIds: ['s-1', 's-2'] }, 2);

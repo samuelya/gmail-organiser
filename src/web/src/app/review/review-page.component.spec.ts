@@ -636,6 +636,21 @@ describe('ReviewPage', () => {
     expect(q('reanalyse-selection')!.getAttribute('aria-disabled')).not.toBe('true');
   });
 
+  it('a reload drops ticks on members no longer shown, so an applied one cannot stay ticked', async () => {
+    const { api, q, all, expand, tick, settle } = await render(noPattern, 'off', [
+      group({ members: [member('a'), member('b')] }),
+    ]);
+    await expand();
+    await tick(0, 1);
+    expect(q('analyse-individually')!.textContent).toContain('(2)');
+    // "b" was applied meanwhile: the pending tab no longer lists it.
+    api.sender.mockReturnValue(of(detail([group({ members: [member('a')] })])));
+    all('member-approve')[0].click();
+    await settle();
+    expect(q('analyse-individually')!.textContent).toContain('(1)');
+    expect(q('analyse-individually')!.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
   it('Re-analyse is disabled with a tooltip while an analysis run is queued or running', async () => {
     const { jobs, analysis, q, expand, tick, settle, tooltip } = await render();
     await expand();

@@ -400,8 +400,8 @@ describe('AnalysePage', () => {
     q('run-reanalyse')!.click();
     await harness.fixture.whenStable();
     const dialog = document.querySelector('mat-dialog-container')!.textContent ?? '';
-    expect(dialog).toContain('Re-analyse 12 emails?');
-    expect(dialog).toContain('12 emails go to the LLM with the current prompt and settings');
+    expect(dialog).toContain('Re-analyse up to 12 emails?');
+    expect(dialog).toContain('Up to 12 emails go to the LLM with the current prompt and settings');
     expect(dialog).toContain('memory shortcut is skipped (memory hints still apply)');
     expect(dialog).toContain('Current suggestions stay as they are until you pick');
     active.push(
@@ -418,6 +418,23 @@ describe('AnalysePage', () => {
     expect(api.startCompareRun).toHaveBeenCalledWith({ runId: 'run-1' });
     expect(all('active-run')[0].textContent).toContain('Re-analysis of 12 emails');
     expect(all('active-run')[0].textContent).not.toContain('Selected emails');
+  });
+
+  it('Re-analyse is disabled with a tooltip on a run larger than one re-analysis takes', async () => {
+    const { harness, component, q } = await render();
+    finished.push(run({ status: 'completed', messagesCovered: 1001 }));
+    component.loadRuns();
+    await harness.fixture.whenStable();
+    const button = q('run-reanalyse')!;
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    const tooltip = harness.fixture.debugElement
+      .query(By.css('[data-testid="run-reanalyse"]'))
+      .injector.get(MatTooltip).message;
+    expect(tooltip).toBe(`At most ${(1000).toLocaleString()} emails per re-analysis`);
+    button.click();
+    await harness.fixture.whenStable();
+    expect(document.querySelector('mat-dialog-container')).toBeNull();
+    expect(api.startCompareRun).not.toHaveBeenCalled();
   });
 
   it('Re-analyse is disabled with a tooltip while an analysis run is active', async () => {
