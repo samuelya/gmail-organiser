@@ -35,16 +35,22 @@ export function compareConfirmMessage(count: number, upTo = false): string {
   );
 }
 
-/** Asks before a re-analysis of `count` (or `upTo` count) emails; emits `true` only when confirmed. */
+/**
+ * Asks before a re-analysis of `count` (or `upTo` count) emails; emits `true` only when confirmed.
+ * `note`: one more sentence after the standard text.
+ */
 export function openCompareConfirm(
   dialog: MatDialog,
   count: number,
   upTo = false,
+  note?: string,
 ): Observable<boolean> {
   const noun = count === 1 ? 'email' : 'emails';
   return openConfirm(dialog, {
     title: `Re-analyse ${upTo ? 'up to ' : ''}${count.toLocaleString()} ${noun}?`,
-    message: compareConfirmMessage(count, upTo),
+    message: note
+      ? `${compareConfirmMessage(count, upTo)} ${note}`
+      : compareConfirmMessage(count, upTo),
     confirm: 'Re-analyse',
   });
 }

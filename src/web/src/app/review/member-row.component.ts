@@ -3,7 +3,9 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatIconModule } from '@angular/material/icon';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { RUN_ACTIVE_TOOLTIP } from '../analyse/compare-run';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import { AlternativeCompare } from './alternative-compare.component';
@@ -23,6 +25,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
     MatButtonModule,
     MatCheckboxModule,
     MatIconModule,
+    MatProgressSpinnerModule,
     MatTooltipModule,
   ],
   template: `
@@ -118,9 +121,9 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           />
         }
       </div>
-      <!-- Applied mail is read-only: ticked for re-analysis, decided by Use new / Keep current. -->
-      @if (s.status !== 'applied') {
-        <div class="ml-auto flex shrink-0">
+      <div class="ml-auto flex shrink-0">
+        <!-- Applied mail is read-only: only re-analysis and its Use new / Keep current. -->
+        @if (s.status !== 'applied') {
           @if (s.status !== 'approved') {
             <button
               mat-icon-button
@@ -158,8 +161,24 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           >
             <mat-icon aria-hidden="true">edit</mat-icon>
           </button>
-        </div>
-      }
+        }
+        <button
+          mat-icon-button
+          type="button"
+          [disabled]="busy() || runActive()"
+          [disabledInteractive]="true"
+          (click)="reanalyse.emit()"
+          [matTooltip]="reanalyseTooltip()"
+          [attr.aria-label]="'Re-analyse ' + subject()"
+          data-testid="member-reanalyse"
+        >
+          @if (reanalysing()) {
+            <mat-spinner diameter="20" aria-label="Re-analysing" data-testid="member-reanalysing" />
+          } @else {
+            <mat-icon aria-hidden="true">refresh</mat-icon>
+          }
+        </button>
+      </div>
     </div>
   `,
   styles: `
@@ -210,10 +229,16 @@ export class MemberRow {
   readonly skipped = input(false);
   readonly busy = input(false);
   readonly claudeMode = input<ClaudeReviewerMode>('off');
+  /** An analysis run is queued or running: "Re-analyse" waits. */
+  readonly runActive = input(false);
+  /** This member's own re-analysis is running. */
+  readonly reanalysing = input(false);
   readonly approve = output<void>();
   readonly reject = output<void>();
   readonly edit = output<void>();
   readonly toggleSelect = output<void>();
+  /** "Re-analyse" with the current prompt, any status. */
+  readonly reanalyse = output<void>();
   readonly claudeChange = output<ExternalReviewDto>();
   /** "Use new" / "Keep current" on its re-analysis result. */
   readonly useNew = output<void>();
@@ -225,5 +250,8 @@ export class MemberRow {
   );
   readonly confidence = computed(() => percent(this.suggestion().confidence));
   readonly values = computed(() => memberValues(this.suggestion()));
+  readonly reanalyseTooltip = computed(() =>
+    this.runActive() ? RUN_ACTIVE_TOOLTIP : 'Re-analyse with the current prompt',
+  );
   readonly claudeRequest = computed(() => ({ suggestionIds: [this.suggestion().id] }));
 }
