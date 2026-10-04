@@ -181,6 +181,37 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
     }
 
     [Fact]
+    public async Task A_reconnect_between_a_mailbox_chunk_read_and_its_writes_stores_nothing_of_the_chunk()
+    {
+        await SetLocalAccountAsync(FakeGmailClient.AccountEmail);
+        await using var app = WithCountingGmail(out var gmail);
+        gmail.AfterMetadata = call => call == 1 ? ConnectAsync(app, OtherAccount) : Task.CompletedTask;
+        var started = (await (await PostAsync(app, "/api/fetch/mailbox/start")).Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull();
+
+        await RunAsync(app, started.JobId);
+
+        await AssertRefusedBeforeWritesAsync(started.JobId, gmail);
+    }
+
+    [Fact]
+    public async Task A_reconnect_between_a_sender_chunk_read_and_its_writes_stores_nothing_of_the_chunk()
+    {
+        await SetLocalAccountAsync(FakeGmailClient.AccountEmail);
+        await using var app = WithCountingGmail(out var gmail);
+        gmail.AfterMetadata = call => call == 1 ? ConnectAsync(app, OtherAccount) : Task.CompletedTask;
+        var client = app.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+        var response = await client.PostAsJsonAsync("/api/fetch/sender", new SenderFetchRequest("example.com"), Ct);
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await using (var db = postgres.CreateDbContext())
+        {
+            await RunAsync(app, (await db.Jobs.SingleAsync(Ct)).Id);
+        }
+
+        await AssertRefusedBeforeWritesAsync(null, gmail);
+    }
+
+    [Fact]
     public async Task A_job_on_the_fetch_queue_that_does_not_read_Gmail_runs_while_the_accounts_differ()
     {
         await SetLocalAccountAsync(FakeGmailClient.AccountEmail);
@@ -237,6 +268,34 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
         (await RefusesConnectAsync(OtherAccount)).ShouldBeFalse("the fetch is no longer active");
     }
 
+    /// <summary>A host whose fake Gmail reads the host's token store, so a reconnect switches the account it reports.</summary>
+    private WebApplicationFactory<Program> WithCountingGmail(out CountingGmailClient gmail)
+    {
+        var app = host.WithWebHostBuilder(b => b.ConfigureTestServices(services => services.AddSingleton<IGmailClient>(
+            sp => new CountingGmailClient(new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), TimeProvider.System)))));
+        gmail = (CountingGmailClient)app.Services.GetRequiredService<IGmailClient>();
+        return app;
+    }
+
+    private static async Task RunAsync(WebApplicationFactory<Program> app, Guid jobId)
+    {
+        var runner = ActivatorUtilities.CreateInstance<JobRunner>(app.Services);
+        (await runner.ClaimAsync(Ct)).ShouldBe([jobId]);
+        await runner.RunAsync(jobId, Ct);
+    }
+
+    private async Task AssertRefusedBeforeWritesAsync(Guid? jobId, CountingGmailClient gmail)
+    {
+        gmail.MetadataCalls.Count.ShouldBe(1, "the chunk was read from Gmail");
+        await using var db = postgres.CreateDbContext();
+        var job = await db.Jobs.AsNoTracking().SingleAsync(j => jobId == null || j.Id == jobId, Ct);
+        job.Status.ShouldBe(JobStatus.Failed);
+        job.Error.ShouldBe(AccountGuard.RefuseReason);
+        (await db.Messages.CountAsync(Ct)).ShouldBe(0);
+        (await db.Senders.CountAsync(Ct)).ShouldBe(0);
+        (await db.FetchRunMessages.CountAsync(Ct)).ShouldBe(0);
+    }
+
     private async Task<bool> RefusesConnectAsync(string account)
     {
         await using var scope = host.Services.CreateAsyncScope();
@@ -266,9 +325,11 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
         await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.AccountEmail, account), Ct);
     }
 
-    private Task<HttpResponseMessage> PostAsync(string path)
+    private Task<HttpResponseMessage> PostAsync(string path) => PostAsync(host, path);
+
+    private static Task<HttpResponseMessage> PostAsync(WebApplicationFactory<Program> app, string path)
     {
-        var client = host.CreateClient();
+        var client = app.CreateClient();
         client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
         return client.PostAsync(path, null, Ct);
     }
@@ -278,6 +339,9 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
         await using (var db = postgres.CreateDbContext())
         {
             await db.Jobs.ExecuteDeleteAsync();
+            await db.FetchRunMessages.ExecuteDeleteAsync();
+            await db.Messages.ExecuteDeleteAsync();
+            await db.Senders.ExecuteDeleteAsync();
         }
 
         await postgres.ResetFetchStateAsync();

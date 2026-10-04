@@ -48,6 +48,13 @@ public sealed class JobContext
     }
 
     /// <summary>
+    /// Asks the job type's <see cref="IJobRunGuard"/> before a unit of work's writes, so a condition that changed during
+    /// its reads (e.g. a reconnect to another account) stops the job before it writes, not only at the next checkpoint.
+    /// Throws <see cref="JobRefusedException"/> on a refusal, which ends the run as a checkpoint refusal does.
+    /// </summary>
+    public Task EnsureMayWriteAsync(CancellationToken ct) => EnsureAllowedAsync(ct);
+
+    /// <summary>
     /// Persists cursor and progress in one <c>UPDATE</c> and returns whether the user asked to pause or cancel.
     /// Call only after the unit of work the cursor points past is complete. Asks the job type's <see cref="IJobRunGuard"/>
     /// first: a refusal throws <see cref="JobRefusedException"/> and leaves the cursor at the previous checkpoint.

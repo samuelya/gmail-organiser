@@ -70,8 +70,8 @@ public sealed class MailboxFetchJob(
         while (cursor.Phase is MailboxPhase.Inbox or MailboxPhase.AllMail or MailboxPhase.Reconcile)
         {
             var (next, progress) = cursor.Phase == MailboxPhase.Reconcile
-                ? await ReconcileNextChunkAsync(cursor, ct)
-                : await FetchNextChunkAsync(cursor, ct);
+                ? await ReconcileNextChunkAsync(cursor, ctx, ct)
+                : await FetchNextChunkAsync(cursor, ctx, ct);
             cursor = next;
             if (cursor.Phase == MailboxPhase.Completed)
             {
@@ -116,7 +116,7 @@ public sealed class MailboxFetchJob(
     }
 
     private async Task<(MailboxFetchCursor Cursor, JobProgress Progress)> FetchNextChunkAsync(
-        MailboxFetchCursor cursor, CancellationToken ct)
+        MailboxFetchCursor cursor, JobContext ctx, CancellationToken ct)
     {
         var chunkSize = await ChunkSizeAsync(ct);
         var inbox = cursor.Phase == MailboxPhase.Inbox;
@@ -129,7 +129,7 @@ public sealed class MailboxFetchJob(
             cursor = inbox ? cursor with { InboxFetched = 0 } : cursor with { AllMailFetched = 0 };
         }
 
-        var processed = await StoreChunkAsync(chunk.Ids, ct);
+        var processed = await StoreChunkAsync(chunk.Ids, ctx, ct);
         cursor = inbox
             ? cursor with { PageToken = chunk.NextPageToken, InboxFetched = cursor.InboxFetched + processed }
             : cursor with { PageToken = chunk.NextPageToken, AllMailFetched = cursor.AllMailFetched + processed };
@@ -151,7 +151,7 @@ public sealed class MailboxFetchJob(
     /// so replaying a chunk after a restart only repeats Gmail reads.
     /// </summary>
     private async Task<(MailboxFetchCursor Cursor, JobProgress Progress)> ReconcileNextChunkAsync(
-        MailboxFetchCursor cursor, CancellationToken ct)
+        MailboxFetchCursor cursor, JobContext ctx, CancellationToken ct)
     {
         if (cursor.ReconcileAfter is null)
         {
@@ -168,7 +168,7 @@ public sealed class MailboxFetchJob(
         }
 
         var ids = await unseen.OrderBy(m => m.Id).Select(m => m.Id).Take(chunkSize).ToListAsync(ct);
-        await pipeline.RefreshLabelsByIdsAsync(ids, ct);
+        await pipeline.RefreshLabelsByIdsAsync(ids, ctx.EnsureMayWriteAsync, ct);
         var done = ids.Count < chunkSize;
         cursor = cursor with
         {
@@ -202,9 +202,10 @@ public sealed class MailboxFetchJob(
     /// <summary>
     /// Skips ids this run already handled, refreshes only the labels of ids already stored and fetches full metadata for
     /// the rest, then records every listed id. A chunk replayed after a crash finds its new ids stored, so it only repeats reads.
+    /// The run guard is asked after each Gmail read and before its writes, so a reconnect mid-chunk stores nothing of it.
     /// </summary>
     /// <returns>The listed ids handled: skipped, refreshed or stored (ids Gmail no longer knows are not counted).</returns>
-    private async Task<int> StoreChunkAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    private async Task<int> StoreChunkAsync(IReadOnlyList<string> ids, JobContext ctx, CancellationToken ct)
     {
         var seen = await db.FetchRunMessages
             .Where(r => ids.Contains(r.MessageId))
@@ -216,8 +217,8 @@ public sealed class MailboxFetchJob(
             .Select(m => m.Id)
             .ToHashSetAsync(StringComparer.Ordinal, ct);
 
-        var refreshed = await pipeline.RefreshLabelsByIdsAsync([.. unseen.Where(stored.Contains)], ct);
-        var fetched = await pipeline.UpsertByIdsAsync([.. unseen.Where(id => !stored.Contains(id))], ct);
+        var refreshed = await pipeline.RefreshLabelsByIdsAsync([.. unseen.Where(stored.Contains)], ctx.EnsureMayWriteAsync, ct);
+        var fetched = await pipeline.UpsertByIdsAsync([.. unseen.Where(id => !stored.Contains(id))], ctx.EnsureMayWriteAsync, ct);
         await MarkStoredInRunAsync(ids, ct);
         return ids.Count - unseen.Count + refreshed.Stored + fetched;
     }

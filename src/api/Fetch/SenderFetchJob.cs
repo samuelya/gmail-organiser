@@ -66,7 +66,7 @@ public sealed class SenderFetchJob(
                 cursor = cursor with { Fetched = 0 };
             }
 
-            var stored = await pipeline.UpsertByIdsAsync(chunk.Ids, ct);
+            var stored = await pipeline.UpsertByIdsAsync(chunk.Ids, ctx.EnsureMayWriteAsync, ct);
             cursor = cursor with
             {
                 PageToken = chunk.NextPageToken,
