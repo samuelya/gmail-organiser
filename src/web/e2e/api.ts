@@ -121,7 +121,7 @@ export async function approveAndApplyAll(request: APIRequestContext): Promise<vo
   const apply = await request.post('/api/review/apply', { headers, data: {} });
   expect(apply.ok(), 'POST /api/review/apply').toBe(true);
   const { jobId } = (await apply.json()) as { jobId: string | null };
-  if (jobId) await waitForJob(request, jobId);
+  if (jobId) expect(await waitForJob(request, jobId), 'apply job status').toBe('completed');
 }
 
 /** Reads the Gmail filters into the local snapshot, as the Rules page's Sync does. */
@@ -130,14 +130,18 @@ export async function syncFilters(request: APIRequestContext): Promise<void> {
   expect(response.ok(), 'POST /api/rules/filters/sync').toBe(true);
 }
 
-async function waitForJob(request: APIRequestContext, id: string): Promise<void> {
+/** Waits until the job reaches a terminal status and returns it. */
+async function waitForJob(request: APIRequestContext, id: string): Promise<string> {
+  let status = '';
   await expect
     .poll(
       async () => {
         const job = await request.get(`/api/jobs/${id}`);
-        return ((await job.json()) as { status: string }).status;
+        status = ((await job.json()) as { status: string }).status;
+        return ['completed', 'failed', 'cancelled'].includes(status);
       },
       { timeout: 120_000 },
     )
-    .toMatch(/^(completed|failed|cancelled)$/);
+    .toBe(true);
+  return status;
 }

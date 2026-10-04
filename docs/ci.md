@@ -77,7 +77,7 @@ Other ports: `E2E_BASE_URL=http://localhost:<web>` and `E2E_API_URL=http://local
 
 ### Screenshots
 
-The README images in `docs/images/<page>.png` come from the same fake stack (`GMAIL_FAKE=true`, `LLM_FAKE=true`), so they show only synthetic `example.com` data. With the API up as above, `npm run screenshots` (in `src/web`) picks the fake models, fetches, runs an analysis, approves and applies the first review group in the UI, applies a second run so Clean-up has content, syncs the filters, and overwrites the eight images at 1440×900 in the light theme. It reruns on a reused database, but a fresh one gives the fullest pictures. Not part of CI.
+The README images in `docs/images/<page>.png` come from the same fake stack (`GMAIL_FAKE=true`, `LLM_FAKE=true`), so they show only synthetic `example.com` data. With the API up as above, `npm run screenshots` (in `src/web`) picks the fake models, fetches, runs an analysis, approves and applies the first review group in the UI, applies a second run so Clean-up has content, syncs the filters, and overwrites the eight images at 1440×900 in the light theme. It reruns on a reused database, but a fresh one gives the fullest pictures. On other ports, leave `App__BaseUrl` at its development default so the Settings image shows the default redirect URI (`localhost:4200`). Not part of CI.
 
 ## What CI does not have
 
