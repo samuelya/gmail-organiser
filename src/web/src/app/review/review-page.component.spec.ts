@@ -607,6 +607,22 @@ describe('ReviewPage', () => {
     expect(q('reanalyse-selection')!.textContent).toContain('(0)');
   });
 
+  it('both selection buttons are disabled while a re-analyse is starting', async () => {
+    const { q, expand, tick, settle } = await render();
+    await expand();
+    await tick(0);
+    q('reanalyse-selection')!.click();
+    await settle();
+    expect(document.querySelector('mat-dialog-container')).not.toBeNull();
+    expect(q('analyse-individually')!.getAttribute('aria-disabled')).toBe('true');
+    expect(q('reanalyse-selection')!.getAttribute('aria-disabled')).toBe('true');
+    dialogButton('confirm-cancel').click();
+    await settle();
+    await settle();
+    expect(q('analyse-individually')!.getAttribute('aria-disabled')).not.toBe('true');
+    expect(q('reanalyse-selection')!.getAttribute('aria-disabled')).not.toBe('true');
+  });
+
   it('an applied member can be ticked; Analyse individually then explains it is blocked', async () => {
     const { api, q, expand, tick, tooltip } = await render(noPattern, 'off', [
       group({ members: [member('a'), member('b', { status: 'applied' })] }),

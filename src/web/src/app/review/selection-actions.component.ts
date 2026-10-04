@@ -37,7 +37,7 @@ export const APPLIED_SELECTED_TOOLTIP = 'Applied emails can only be re-analysed'
     <button
       mat-stroked-button
       type="button"
-      [disabled]="!!analyseBlocked() || n === 0"
+      [disabled]="analyseBlocked() !== null || n === 0"
       [disabledInteractive]="true"
       [matTooltip]="analyseBlocked() || ''"
       (click)="analyseIndividually()"
@@ -48,7 +48,7 @@ export const APPLIED_SELECTED_TOOLTIP = 'Applied emails can only be re-analysed'
     <button
       mat-stroked-button
       type="button"
-      [disabled]="!!reanalyseBlocked() || n === 0"
+      [disabled]="reanalyseBlocked() !== null || n === 0"
       [disabledInteractive]="true"
       [matTooltip]="reanalyseBlocked() || ''"
       (click)="reanalyse()"
