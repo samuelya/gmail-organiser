@@ -67,7 +67,9 @@
               <mat-option [value]="label">{{ label }}</mat-option>
             }
           </mat-select>
-          <mat-hint>The auto-archive script archives this label's threads after its rule's days.</mat-hint>
+          <mat-hint
+            >The auto-archive script archives this label's threads after its rule's days.</mat-hint
+          >
         </mat-form-field>
       }
       <mat-slide-toggle formControlName="skipInbox" data-testid="preview-skip-inbox"
@@ -123,7 +125,13 @@
   </form>
 </mat-dialog-content>
 <mat-dialog-actions align="end">
-  <button mat-button type="button" [disabled]="saving()" (click)="cancel()" data-testid="preview-cancel">
+  <button
+    mat-button
+    type="button"
+    [disabled]="saving()"
+    (click)="cancel()"
+    data-testid="preview-cancel"
+  >
     Cancel
   </button>
   <button

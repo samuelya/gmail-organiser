@@ -6,7 +6,10 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { FiltersTab } from './filters-tab.component';
 import { RulesPage } from './rules-page.component';
 
-@Component({ selector: 'app-filters-tab', template: '<p data-testid="filters-stub">{{ propose() }}</p>' })
+@Component({
+  selector: 'app-filters-tab',
+  template: '<p data-testid="filters-stub">{{ propose() }}</p>',
+})
 class FiltersTabStub {
   readonly propose = input<string>();
   readonly proposeHandled = output<void>();

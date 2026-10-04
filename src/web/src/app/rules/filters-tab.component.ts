@@ -99,14 +99,16 @@ import { RulesService } from './rules.service';
                 <th mat-header-cell *matHeaderCellDef>Actions</th>
                 <td mat-cell *matCellDef="let f" class="py-2">
                   <mat-chip-set [attr.aria-label]="'Actions of ' + f.criteriaSummary">
-                    @for (chip of chips(f); track chip) {
+                    @for (chip of chips(f.action); track chip) {
                       <mat-chip data-testid="filter-chip">{{ chip }}</mat-chip>
                     }
                   </mat-chip-set>
                 </td>
               </ng-container>
               <ng-container matColumnDef="app">
-                <th mat-header-cell *matHeaderCellDef><span class="sr-only">Created by the app</span></th>
+                <th mat-header-cell *matHeaderCellDef>
+                  <span class="sr-only">Created by the app</span>
+                </th>
                 <td mat-cell *matCellDef="let f">
                   @if (f.createdByApp) {
                     <mat-icon

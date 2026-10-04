@@ -88,7 +88,10 @@ describe('FiltersTab', () => {
         of(
           listOf(
             includeDeleted
-              ? [filterDto(), filterDto({ id: 'f-2', deletedAt: '2026-01-02T00:00:00Z', deletedByApp: true })]
+              ? [
+                  filterDto(),
+                  filterDto({ id: 'f-2', deletedAt: '2026-01-02T00:00:00Z', deletedByApp: true }),
+                ]
               : [filterDto()],
           ),
         ),
@@ -140,7 +143,9 @@ describe('FiltersTab', () => {
   const dialog = (testId: string) =>
     document.querySelector<HTMLElement>(`mat-dialog-container [data-testid="${testId}"]`);
 
-  afterEach(() => document.querySelectorAll('.cdk-overlay-container').forEach((c) => (c.innerHTML = '')));
+  afterEach(() =>
+    document.querySelectorAll('.cdk-overlay-container').forEach((c) => (c.innerHTML = '')),
+  );
 
   it('lists the filters with the status line, action chips and app icon', async () => {
     const { q, all } = await render();
@@ -199,6 +204,7 @@ describe('FiltersTab', () => {
     dialog('preview-create')!.click();
     await settle();
     expect(api.create).toHaveBeenCalledWith(proposal('news@example.com').suggested);
+    await settle();
     expect(all('proposal')).toHaveLength(0);
     expect(api.list).toHaveBeenCalledTimes(2);
   });

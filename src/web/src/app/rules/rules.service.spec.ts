@@ -35,9 +35,9 @@ describe('RulesService', () => {
 
   it('lists, syncs and pages the proposals', () => {
     service.list(true).subscribe();
-    expect(
-      http.expectOne((r) => r.url === '/api/rules/filters').request.params.toString(),
-    ).toBe('includeDeleted=true');
+    expect(http.expectOne((r) => r.url === '/api/rules/filters').request.params.toString()).toBe(
+      'includeDeleted=true',
+    );
     service.sync().subscribe();
     expect(http.expectOne('/api/rules/filters/sync').request.method).toBe('POST');
     service.proposals(2).subscribe();
@@ -112,6 +112,8 @@ describe('filter request mapping', () => {
     expect(filterRequestProblem(filterRequest({ ...edit, skipInbox: true }))).toContain(
       'criterion',
     );
-    expect(filterRequestProblem(filterRequest({ ...edit, to: 'me@example.com', skipInbox: true }))).toBeNull();
+    expect(
+      filterRequestProblem(filterRequest({ ...edit, to: 'me@example.com', skipInbox: true })),
+    ).toBeNull();
   });
 });

@@ -34,7 +34,13 @@ const preview = (over: Partial<FilterPreviewDto> = {}): FilterPreviewDto => ({
   query: 'from:news@example.com',
   localMatches: 12,
   gmailEstimate: 40,
-  action: { addLabels: [], removeLabelIds: ['INBOX'], skipInbox: true, markRead: false, forwards: false },
+  action: {
+    addLabels: [],
+    removeLabelIds: ['INBOX'],
+    skipInbox: true,
+    markRead: false,
+    forwards: false,
+  },
   createsLabels: ['Topic/Alpha'],
   warnings: [],
   ...over,
@@ -99,7 +105,9 @@ describe('FilterPreviewDialog', () => {
   it('shows why there is no local count and Gmail warnings', async () => {
     const { q, settle } = await render({ request: suggested, from: '' });
     rules.preview.mockReturnValue(
-      of(preview({ localMatches: null, gmailEstimate: null, warnings: ['Gmail is not connected.'] })),
+      of(
+        preview({ localMatches: null, gmailEstimate: null, warnings: ['Gmail is not connected.'] }),
+      ),
     );
     q('preview-mark-read')!.querySelector('button')!.click();
     await new Promise((r) => setTimeout(r, PREVIEW_DEBOUNCE_MS + 50));
@@ -111,8 +119,8 @@ describe('FilterPreviewDialog', () => {
   });
 
   it('debounces typing into one preview', async () => {
-    vi.useFakeTimers();
     const { fixture } = await render({ request: suggested, from: '' });
+    vi.useFakeTimers();
     const subject = fixture.componentInstance.form.controls.subject;
     subject.setValue('a');
     subject.setValue('ab');
@@ -132,10 +140,10 @@ describe('FilterPreviewDialog', () => {
   });
 
   it('adds the archive-rule label when picked', async () => {
-    const { fixture, q, settle } = await render(
-      { request: suggested, from: '' },
-      ['Archive/Weekly', 'Archive/Weekly'],
-    );
+    const { fixture, q, settle } = await render({ request: suggested, from: '' }, [
+      'Archive/Weekly',
+      'Archive/Weekly',
+    ]);
     expect(q('preview-archive')).not.toBeNull();
     expect(fixture.componentInstance.archiveLabels()).toEqual(['Archive/Weekly']);
     fixture.componentInstance.form.controls.archiveLabel.setValue('Archive/Weekly');
