@@ -34,13 +34,27 @@ public sealed class ExternalReviewQuery(AppDbContext db)
         return false;
     }
 
-    /// <summary>Items in <paramref name="status"/> (any when null), newest first.</summary>
-    public async Task<PagedDto<ExternalReviewDto>> ListAsync(ExternalReviewStatus? status, int page, int pageSize, CancellationToken ct)
+    /// <summary>
+    /// Items in <paramref name="status"/> (any when null), for <paramref name="labelPlanId"/> and any of
+    /// <paramref name="findingIds"/> when given, newest first.
+    /// </summary>
+    public async Task<PagedDto<ExternalReviewDto>> ListAsync(
+        ExternalReviewStatus? status, int page, int pageSize, CancellationToken ct, Guid? labelPlanId = null, Guid[]? findingIds = null)
     {
         var items = db.ExternalReviews.AsNoTracking();
         if (status is { } s)
         {
             items = items.Where(r => r.Status == s);
+        }
+
+        if (labelPlanId is { } planId)
+        {
+            items = items.Where(r => r.LabelPlanId == planId);
+        }
+
+        if (findingIds is { Length: > 0 })
+        {
+            items = items.Where(r => r.FilterFindingId != null && findingIds.Contains(r.FilterFindingId.Value));
         }
 
         var total = await items.LongCountAsync(ct);

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GmailOrganiser.Claude;
+using GmailOrganiser.Common;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Mcp;
@@ -126,6 +127,50 @@ public sealed class McpRulesToolsTests(ApiFactory factory, PostgresFixture postg
             var ex = await Should.ThrowAsync<DbUpdateException>(() => db.SaveChangesAsync(Ct));
             ex.InnerException.ShouldBeOfType<PostgresException>().ConstraintName.ShouldBe(index);
         }
+    }
+
+    [Fact]
+    public async Task List_filters_by_label_plan_and_findings_combined_with_status()
+    {
+        var http = host.CreateClient();
+        var items = (await CreateAsync(new(null, null, null, planId, [openFinding]))).Items;
+        var cancelled = Guid.CreateVersion7();
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.ExternalReviews.Add(new ExternalReviewRow
+            {
+                Id = cancelled,
+                TargetType = ExternalReviewTarget.FilterFinding,
+                Status = ExternalReviewStatus.Cancelled,
+                CreatedAt = DateTimeOffset.UtcNow,
+                FilterFindingId = dismissedFinding,
+            });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        (await ListAsync($"labelPlanId={planId}")).ShouldBe([items.Single(i => i.LabelPlanId == planId).Id]);
+        (await ListAsync($"findingId={openFinding}")).ShouldBe([items.Single(i => i.FindingId == openFinding).Id]);
+        (await ListAsync($"findingId={openFinding}&findingId={dismissedFinding}")).Count.ShouldBe(2);
+        (await ListAsync($"findingId={openFinding}&findingId={dismissedFinding}&status=cancelled")).ShouldBe([cancelled]);
+        (await ListAsync($"labelPlanId={planId}&status=reviewed")).ShouldBeEmpty();
+        (await ListAsync($"labelPlanId={planId}&findingId={openFinding}")).ShouldBeEmpty();
+        (await ListAsync($"findingId={Guid.NewGuid()}")).ShouldBeEmpty();
+
+        foreach (var query in new[] { "labelPlanId=nope", $"findingId={openFinding}&findingId=nope", "findingId=", "labelPlanId=" })
+        {
+            var response = await http.GetAsync($"/api/claude/reviews?{query}", Ct);
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest, query);
+        }
+
+        // The cap (100) keeps the request line under Kestrel's 8 KB limit: the cap is accepted, one more is our 400, not a 414.
+        string FindingIds(int count) => string.Join('&', Enumerable.Range(0, count).Select(_ => $"findingId={Guid.NewGuid()}"));
+        (await ListAsync(FindingIds(ClaudeReviewEndpoints.MaxListFindingIds))).ShouldBeEmpty();
+        (await http.GetAsync($"/api/claude/reviews?{FindingIds(ClaudeReviewEndpoints.MaxListFindingIds + 1)}", Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        async Task<List<Guid>> ListAsync(string query) =>
+            (await http.GetFromJsonAsync<PagedDto<ExternalReviewDto>>($"/api/claude/reviews?{query}", Ct)).ShouldNotBeNull()
+            .Items.Select(i => i.Id).ToList();
     }
 
     [Fact]
