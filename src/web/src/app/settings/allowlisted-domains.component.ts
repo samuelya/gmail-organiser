@@ -61,7 +61,7 @@ const DOMAINS_FIELD = 'protection.allowlistedDomains';
           data-testid="domain-input"
         />
       </mat-chip-grid>
-      @if (domains.getError('domain'); as error) {
+      @if (error(); as error) {
         <mat-error data-testid="domain-error">{{ error }}</mat-error>
       }
       <mat-hint
@@ -80,8 +80,16 @@ export class AllowlistedDomains {
   readonly listed = input<readonly string[] | null>(null);
 
   readonly separators = [ENTER, COMMA] as const;
-  /** The saved list, shown as chips; its `domain` error is the field's message. */
-  readonly domains = new FormControl<string[]>([], { nonNullable: true });
+  /** The field's message; kept here so the chip grid's blur re-validation can't clear it. */
+  readonly error = signal<string | null>(null);
+  /** The saved list, shown as chips; invalid while there is a message. */
+  readonly domains = new FormControl<string[]>([], {
+    nonNullable: true,
+    validators: () => {
+      const message = this.error();
+      return message ? { domain: message } : null;
+    },
+  });
   readonly saving = signal(false);
 
   constructor() {
@@ -118,24 +126,25 @@ export class AllowlistedDomains {
       event.chipInput.clear();
       return;
     }
-    this.save(next, () => event.chipInput.clear());
+    this.save(next, 'Allowlisted domains saved', () => event.chipInput.clear());
   }
 
   remove(domain: string): void {
     if (this.saving()) return;
     this.save(
       this.domains.value.filter((d) => d !== domain),
-      () =>
-        this.snackBar.open(`${domain} removed from the allowlist`, undefined, { duration: 3000 }),
+      `${domain} removed from the allowlist`,
     );
   }
 
-  /** Typing again drops the last message; the list has no validators of its own. */
+  /** Typing again drops the last message. */
   clearError(): void {
-    if (this.domains.hasError('domain')) this.domains.updateValueAndValidity();
+    if (this.error() === null) return;
+    this.error.set(null);
+    this.domains.updateValueAndValidity();
   }
 
-  private save(next: string[], done: () => void): void {
+  private save(next: string[], message: string, done?: () => void): void {
     this.saving.set(true);
     this.settingsApi
       .saveProtection({ protection: { allowlistedDomains: next } })
@@ -143,9 +152,10 @@ export class AllowlistedDomains {
       .subscribe({
         next: (settings) => {
           this.saving.set(false);
+          this.error.set(null);
           this.domains.setValue(settings.protection?.allowlistedDomains ?? next);
-          done();
-          this.snackBar.open('Allowlisted domains saved', undefined, { duration: 3000 });
+          done?.();
+          this.snackBar.open(message, undefined, { duration: 3000 });
         },
         error: (error: unknown) => {
           this.saving.set(false);
@@ -157,7 +167,8 @@ export class AllowlistedDomains {
   }
 
   private showError(message: string): void {
-    this.domains.setErrors({ domain: message });
+    this.error.set(message);
+    this.domains.updateValueAndValidity();
     this.domains.markAsTouched();
   }
 }

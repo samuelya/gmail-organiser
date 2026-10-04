@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { AllowlistedDomains } from './allowlisted-domains.component';
 import { coveringDomain, normaliseAllowlistDomain } from './settings.models';
 
@@ -104,6 +105,37 @@ describe('AllowlistedDomains', () => {
       expect(q<HTMLInputElement>('domain-input')!.value).toBe(value);
     },
   );
+
+  it('keeps the message when the field loses focus', async () => {
+    await render();
+    await type('user@example.com');
+    const input = q<HTMLInputElement>('domain-input')!;
+    input.dispatchEvent(new FocusEvent('blur'));
+    await new Promise((resolve) => setTimeout(resolve));
+    await fixture.whenStable();
+    expect(q('domain-error')?.textContent).toContain('is not a domain');
+    expect(fixture.componentInstance.domains.hasError('domain')).toBe(true);
+  });
+
+  it('drops the message when typing again', async () => {
+    await render();
+    await type('localhost');
+    const input = q<HTMLInputElement>('domain-input')!;
+    input.value = 'example.org';
+    input.dispatchEvent(new Event('input'));
+    await fixture.whenStable();
+    expect(q('domain-error')).toBeNull();
+  });
+
+  it('shows the removal message, not the generic one', async () => {
+    await render(['example.com', 'example.org']);
+    const open = vi.spyOn(TestBed.inject(MatSnackBar), 'open');
+    el.querySelector<HTMLElement>('[data-testid="domain-remove"]')!.click();
+    await fixture.whenStable();
+    http.expectOne(isPut).flush({ protection: { allowlistedDomains: ['example.org'] } });
+    await fixture.whenStable();
+    expect(open.mock.calls.map((c) => c[0])).toEqual(['example.com removed from the allowlist']);
+  });
 
   it('removes a chip and saves the rest', async () => {
     await render(['example.com', 'example.org']);
