@@ -17,6 +17,14 @@ namespace GmailOrganiser.Review;
 public sealed record GroupOutcome(
     string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels = null, string? DocumentTypeLabel = null);
 
+/// <summary>
+/// An edit of a group's members (or one suggestion) to an outcome. Unlike <see cref="GroupOutcome"/>, which matches
+/// members by their document type, <paramref name="DocumentType"/> says what the edit does to it.
+/// </summary>
+/// <param name="ReplaceLabels">As in <see cref="GroupOutcome"/>.</param>
+public sealed record GroupEdit(
+    string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels, DocumentTypeChange DocumentType);
+
 public enum ReviewResult
 {
     Ok,
@@ -30,6 +38,9 @@ public enum ReviewResult
 
     /// <summary>The replaced labels need the Gmail label list, and it cannot be loaded now.</summary>
     LabelsUnavailable,
+
+    /// <summary>The edit would make the topic label the same as the document-type label it keeps.</summary>
+    DocumentTypeIsTopic,
 }
 
 /// <summary>
@@ -37,13 +48,14 @@ public enum ReviewResult
 /// lock, then changes the status through <see cref="SuggestionRow.SetStatus"/> and records one decision in the same
 /// transaction, so a concurrent apply is never overwritten. Nothing here touches Gmail. Endpoints validate first.
 /// </summary>
-public sealed class ReviewService(
+public sealed partial class ReviewService(
     AppDbContext db,
     DecisionRecorder decisions,
     AnalysisRunService runs,
     LabelCatalog labels,
     ISettingsStore settingsStore,
-    TimeProvider time)
+    TimeProvider time,
+    ILogger<ReviewService> logger)
 {
     /// <summary>Rows per transaction for group and bulk decisions.</summary>
     public const int ChunkSize = 1000;
@@ -60,18 +72,28 @@ public sealed class ReviewService(
 
     /// <summary>
     /// Changes the outcome, marks the suggestion edited and approves it; allowed in any status but applied.
-    /// <c>IsNewLabel</c> follows the Gmail label list; without a Gmail connection a changed label counts as new.
+    /// <c>IsNewLabel</c> and <c>DocumentTypeIsNew</c> follow the Gmail label list; without a Gmail connection a changed
+    /// label counts as new. <paramref name="documentType"/> is <see cref="DocumentTypeEdit.Validate"/>d and stored in
+    /// Gmail's spelling; a topic label equal to the document type the suggestion keeps is
+    /// <see cref="ReviewResult.DocumentTypeIsTopic"/>.
     /// <paramref name="replaceLabels"/> (null: unchanged) are current labels of the message, by name; one it does not
     /// carry is <see cref="ReviewResult.InvalidReplaceLabels"/> with the names it does not carry in <c>Unknown</c>,
     /// no label list <see cref="ReviewResult.LabelsUnavailable"/>.
     /// </summary>
     public async Task<(ReviewResult Result, SuggestionDto? Suggestion, IReadOnlyList<string> Unknown)> EditAsync(
-        Guid id, string topicLabel, bool needsAction, bool toBeDeleted, IReadOnlyList<string>? replaceLabels, CancellationToken ct)
+        Guid id, string topicLabel, bool needsAction, bool toBeDeleted, IReadOnlyList<string>? replaceLabels,
+        DocumentTypeChange documentType, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(topicLabel, ct);
+        var (type, typeIsNew) = await DocumentTypeEdit.ResolveAsync(labels, documentType, ct);
         IReadOnlyList<string> unknown = [];
         var (result, suggestion) = await ChangeOneAsync(id, _ => true, (s, m, personal) =>
         {
+            if (DocumentTypeEdit.IsTopic(type.IsSet ? type.Label : s.DocumentTypeLabel, topicLabel))
+            {
+                return ReviewResult.DocumentTypeIsTopic;
+            }
+
             IReadOnlyList<(string Id, string Name)>? replaced = null;
             if (replaceLabels is { Count: > 0 })
             {
@@ -94,6 +116,7 @@ public sealed class ReviewService(
             s.TopicLabel = topicLabel;
             s.NeedsAction = needsAction;
             s.ToBeDeleted = toBeDeleted;
+            DocumentTypeEdit.Apply(s, type, typeIsNew);
             if (replaceLabels is not null)
             {
                 s.SetReplaced(replaced ?? []);
@@ -204,7 +227,7 @@ public sealed class ReviewService(
     /// Edits every pending member of the sender's group to <paramref name="outcome"/> and approves it (one decision row
     /// each), as <see cref="EditAsync"/> does for one; a protected message never gets a to-be-deleted outcome here.
     /// </summary>
-    public async Task<GroupDecisionResponse> EditGroupAsync(string senderAddress, string groupKey, GroupOutcome outcome, CancellationToken ct)
+    public async Task<GroupDecisionResponse> EditGroupAsync(string senderAddress, string groupKey, GroupEdit outcome, CancellationToken ct)
     {
         var skipped = new List<Guid>();
         var edit = await EditToAsync(outcome, [senderAddress], skipped, ct);
@@ -223,7 +246,7 @@ public sealed class ReviewService(
     /// Approves the suggestion only while it is pending, edited to <paramref name="edit"/> first when given; a protected
     /// message never gets a to-be-deleted edit (it is skipped). Joins the caller's transaction when there is one.
     /// </summary>
-    public async Task<GroupDecisionResponse> ApprovePendingAsync(Guid id, GroupOutcome? edit, CancellationToken ct)
+    public async Task<GroupDecisionResponse> ApprovePendingAsync(Guid id, GroupEdit? edit, CancellationToken ct)
     {
         var skipped = new List<Guid>();
         Func<SuggestionRow, MessageRow, bool> include = edit is null
@@ -313,24 +336,15 @@ public sealed class ReviewService(
         return (ReviewResult.Ok, run);
     }
 
-    /// <summary>Whether Gmail lacks the label; null without a Gmail connection or when the label list cannot be loaded.</summary>
-    private async Task<bool?> IsNewLabelAsync(string topicLabel, CancellationToken ct)
-    {
-        try
-        {
-            return await labels.FindByNameAsync(topicLabel, ct) is null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>The edit for <see cref="ChangeChunkAsync"/>: skips (and lists) a protected message the outcome would delete.</summary>
+    /// <summary>
+    /// The edit for <see cref="ChangeChunkAsync"/>: skips (and lists) a protected message the outcome would delete. A
+    /// member's document type equal to the new topic label is dropped with a warning (the callers are Claude verdicts).
+    /// </summary>
     private async Task<Func<SuggestionRow, MessageRow, bool>> EditToAsync(
-        GroupOutcome outcome, IReadOnlyCollection<string> senders, List<Guid> skipped, CancellationToken ct)
+        GroupEdit outcome, IReadOnlyCollection<string> senders, List<Guid> skipped, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
+        var (type, typeIsNew) = await DocumentTypeEdit.ResolveAsync(labels, outcome.DocumentType, ct);
         var (allowlist, rules) = await ProtectionAsync(senders, ct);
         var names = outcome.ReplaceLabels is { Count: > 0 } ? (await PersonalLabelsAsync(ct)).Names : null;
         return (s, m) =>
@@ -349,6 +363,13 @@ public sealed class ReviewService(
             s.TopicLabel = outcome.TopicLabel;
             s.NeedsAction = outcome.NeedsAction;
             s.ToBeDeleted = outcome.ToBeDeleted;
+            DocumentTypeEdit.Apply(s, type, typeIsNew);
+            if (DocumentTypeEdit.IsTopic(s.DocumentTypeLabel, outcome.TopicLabel))
+            {
+                LogDocumentTypeDropped(logger, s.Id);
+                DocumentTypeEdit.Apply(s, DocumentTypeChange.Clear, null);
+            }
+
             KeepReplaced(s, outcome.ReplaceLabels, names);
             s.Edited = true;
             return true;
@@ -470,27 +491,4 @@ public sealed class ReviewService(
         db.ChangeTracker.Clear();
         return changed;
     }
-
-    /// <summary>The matching ids in keyset chunks of <see cref="ChunkSize"/>; rows left pending are not seen twice.</summary>
-    private static async IAsyncEnumerable<Guid[]> ChunksAsync(
-        IQueryable<SuggestionRow> candidates, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
-    {
-        Guid? after = null;
-        while (true)
-        {
-            var page = after is { } last ? candidates.Where(s => s.Id.CompareTo(last) > 0) : candidates;
-            var ids = await page.OrderBy(s => s.Id).Select(s => s.Id).Take(ChunkSize).ToArrayAsync(ct);
-            if (ids.Length == 0)
-            {
-                yield break;
-            }
-
-            yield return ids;
-            after = ids[^1];
-        }
-    }
-
-    /// <summary>Loads and locks the rows until the transaction ends; uncomposed so the lock clause stays at the top level.</summary>
-    private Task<List<SuggestionRow>> LockAsync(Guid[] ids, CancellationToken ct) =>
-        db.Suggestions.FromSql($"SELECT * FROM suggestions WHERE id = ANY({ids}) ORDER BY id FOR UPDATE").ToListAsync(ct);
 }
