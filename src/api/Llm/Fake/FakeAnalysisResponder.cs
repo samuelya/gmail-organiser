@@ -107,7 +107,7 @@ public static class FakeAnalysisResponder
                 email.From ??= Field(line, "from");
                 email.Category ??= Field(line, "category");
                 email.Subject ??= Field(line, "subject");
-                if (Field(line, "current labels") is { } current)
+                if (Field(line, "current labels") is { } current && current != "-")
                 {
                     email.CurrentLabels.AddRange(current.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
                 }
