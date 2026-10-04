@@ -756,4 +756,30 @@ describe('ReviewPage', () => {
     await settle();
     expect(el.querySelector('[data-testid="detail-none"]')).not.toBeNull();
   });
+
+  it('a Re-analysed change never requests the detail of a sender the new list hides', async () => {
+    const { api, el, settle } = await render(noPattern, 'off', [group()], 4);
+    const filtered = new Subject<{
+      items: ReviewSenderDto[];
+      page: number;
+      pageSize: number;
+      total: number;
+    }>();
+    api.listSenders.mockImplementation((...args: unknown[]) =>
+      args[4] ? filtered : of({ items: [sender()], page: 1, pageSize: 25, total: 1 }),
+    );
+    api.sender.mockClear();
+    el.querySelector<HTMLButtonElement>('[data-testid="filter-reanalysed"] button')!.click();
+    await settle();
+    expect(api.sender).not.toHaveBeenCalled();
+    filtered.next({
+      items: [sender({ address: 'shop@example.com' })],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+    });
+    await settle();
+    expect(api.sender).toHaveBeenCalledTimes(1);
+    expect(api.sender).toHaveBeenCalledWith('shop@example.com', 'pending', 1, 20, true);
+  });
 });
