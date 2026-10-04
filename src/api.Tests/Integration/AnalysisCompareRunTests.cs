@@ -214,6 +214,47 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Resumed_older_run_keeps_a_later_created_runs_alternatives_and_replaces_older_ones()
+    {
+        var (run, stored) = await CrashAfterFirstGroupAsync();
+        var created = (await h.GetRunAsync(run.Id)).CreatedAt;
+        string[] rest;
+        await using (var db = postgres.CreateDbContext())
+        {
+            // A compare run created after this one wrote the messages it has not reached yet; one of them came from an
+            // earlier run instead.
+            var newer = new AnalysisRunRow
+            {
+                Id = Guid.CreateVersion7(),
+                Kind = AnalysisRunKind.Compare,
+                Scope = AnalysisScope.Messages,
+                Status = AnalysisRunStatus.Completed,
+                CreatedAt = created.AddMinutes(1),
+            };
+            db.AnalysisRuns.Add(newer);
+            var suggestions = await db.Suggestions.AsNoTracking().Where(s => !stored.Contains(s.MessageId)).OrderBy(s => s.MessageId).ToListAsync(Ct);
+            rest = [.. suggestions.Select(s => s.MessageId)];
+            db.SuggestionAlternatives.AddRange(suggestions.Select((s, i) =>
+            {
+                var older = i == 0;
+                var alternative = SuggestionAlternativeRow.From(s, s.Id, older ? first.Id : newer.Id, created);
+                alternative.TopicLabel = older ? "Older" : "Newer";
+                return alternative;
+            }));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.MessagesCovered, done.SkippedMessages).ShouldBe(("completed", stored.Length + 1, rest.Length - 1));
+        await using var check = postgres.CreateDbContext();
+        (await check.SuggestionAlternatives.CountAsync(a => a.TopicLabel == "Newer", Ct)).ShouldBe(rest.Length - 1);
+        (await check.SuggestionAlternatives.SingleAsync(a => a.MessageId == rest[0], Ct)).RunId.ShouldBe(run.Id);
+        (await check.SuggestionAlternatives.CountAsync(a => a.RunId == run.Id, Ct)).ShouldBe(stored.Length + 1);
+    }
+
+    [Fact]
     public async Task Resume_does_not_count_messages_whose_alternatives_a_reanalyse_cascaded_away()
     {
         var (run, stored) = await CrashAfterFirstGroupAsync();

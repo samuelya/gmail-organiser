@@ -1,5 +1,5 @@
-using GmailOrganiser.Claude;
 using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Claude;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace GmailOrganiser.Review;
