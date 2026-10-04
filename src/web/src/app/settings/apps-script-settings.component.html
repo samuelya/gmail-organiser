@@ -1,0 +1,262 @@
+<div class="flex max-w-2xl flex-col gap-6">
+  <p class="help">
+    Changes are saved a moment after you make them; the whole block is saved at once.
+  </p>
+
+  <section class="flex flex-col gap-2" aria-labelledby="archive-rules-title">
+    <h3 id="archive-rules-title" class="m-0">Archive rules</h3>
+    <p class="help">
+      Inbox threads with the label are archived once their last message is older than the days.
+    </p>
+
+    @if (rules.length) {
+      <table class="w-full border-collapse" [formGroup]="form" data-testid="rules-table">
+        <thead>
+          <tr>
+            <th scope="col" class="py-1 pr-2">Label</th>
+            <th scope="col" class="w-36 py-1 pr-2">Days</th>
+            <th scope="col" class="w-12 py-1"><span class="sr-only">Remove</span></th>
+          </tr>
+        </thead>
+        <tbody formArrayName="rules">
+          @for (rule of rules.controls; track rule; let i = $index) {
+            <tr [formGroupName]="i" data-testid="rule-row">
+              <td class="max-w-0 truncate py-1 pr-2" [title]="rule.controls.label.value">
+                {{ rule.controls.label.value }}
+              </td>
+              <td class="py-1 pr-2">
+                <mat-form-field class="w-full" subscriptSizing="dynamic">
+                  <mat-label>Days</mat-label>
+                  <input
+                    matInput
+                    type="number"
+                    formControlName="days"
+                    [min]="days.min"
+                    [max]="days.max"
+                    [step]="days.step"
+                    [attr.aria-label]="'Days for ' + rule.controls.label.value"
+                    data-testid="rule-days"
+                  />
+                  @if (rule.controls.days.invalid) {
+                    <mat-error>{{ days.min }} to {{ days.max }} whole days.</mat-error>
+                  }
+                </mat-form-field>
+              </td>
+              <td class="py-1">
+                <button
+                  mat-icon-button
+                  type="button"
+                  (click)="removeRule(i)"
+                  [disabled]="!loaded()"
+                  [attr.aria-label]="'Remove the rule for ' + rule.controls.label.value"
+                  data-testid="rule-remove"
+                >
+                  <mat-icon aria-hidden="true">remove_circle_outline</mat-icon>
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    } @else if (loaded()) {
+      <p class="help" data-testid="rules-empty">No archive rules yet.</p>
+    }
+
+    @if (serverErrors().length) {
+      <ul class="error m-0 pl-5" role="alert" data-testid="apps-script-errors">
+        @for (message of serverErrors(); track $index) {
+          <li>{{ message }}</li>
+        }
+      </ul>
+    }
+
+    <form
+      class="flex flex-wrap items-start gap-2"
+      [formGroup]="newRule"
+      (ngSubmit)="addRule()"
+      novalidate
+    >
+      <mat-form-field class="min-w-48 flex-1" subscriptSizing="dynamic">
+        <mat-label>Label</mat-label>
+        <input matInput autocomplete="off" formControlName="label" data-testid="new-rule-label" />
+        <button
+          mat-icon-button
+          matSuffix
+          type="button"
+          (click)="togglePicker('rule')"
+          [attr.aria-expanded]="picker() === 'rule'"
+          aria-label="Choose from your labels"
+          data-testid="new-rule-browse"
+        >
+          <mat-icon aria-hidden="true">label</mat-icon>
+        </button>
+        @if (newRule.controls.label.hasError('duplicate')) {
+          <mat-error data-testid="new-rule-error">That label already has a rule.</mat-error>
+        } @else if (newRule.controls.label.hasError('scriptLabel')) {
+          <mat-error data-testid="new-rule-error">{{
+            newRule.controls.label.getError('scriptLabel')
+          }}</mat-error>
+        }
+      </mat-form-field>
+      <mat-form-field class="w-32" subscriptSizing="dynamic">
+        <mat-label>Days</mat-label>
+        <input
+          matInput
+          type="number"
+          formControlName="days"
+          [min]="days.min"
+          [max]="days.max"
+          [step]="days.step"
+          data-testid="new-rule-days"
+        />
+        @if (newRule.controls.days.invalid) {
+          <mat-error data-testid="new-rule-days-error"
+            >{{ days.min }} to {{ days.max }} whole days.</mat-error
+          >
+        }
+      </mat-form-field>
+      <button
+        mat-stroked-button
+        type="submit"
+        class="mt-2"
+        [disabled]="!loaded() || rules.length >= maxRules"
+        data-testid="add-rule"
+      >
+        Add rule
+      </button>
+    </form>
+    @if (picker() === 'rule') {
+      <ng-container *ngTemplateOutlet="labelPicker; context: { $implicit: 'rule' }" />
+    }
+  </section>
+
+  <section class="flex flex-col gap-2" [formGroup]="form" aria-label="Archive options">
+    <mat-slide-toggle
+      formControlName="actionDoneArchive"
+      aria-describedby="action-done-help"
+      data-testid="action-done-archive"
+    >
+      Archive when the action label is removed
+    </mat-slide-toggle>
+    <p class="help ml-14" id="action-done-help">
+      Labelled inbox threads that no longer carry the action label are archived.
+    </p>
+    <mat-slide-toggle
+      formControlName="dryRun"
+      aria-describedby="dry-run-help"
+      data-testid="dry-run"
+    >
+      Dry run (log only)
+    </mat-slide-toggle>
+    <p class="help ml-14" id="dry-run-help">
+      The script only logs what it would archive. Turn it off once the log looks right.
+    </p>
+  </section>
+
+  <section class="flex flex-col gap-2" aria-labelledby="keep-title">
+    <h3 id="keep-title" class="m-0">Keep in inbox</h3>
+    <p class="help">Threads with any of these labels are never archived by the script.</p>
+    @if (keepInInboxLabels().length) {
+      <mat-chip-set aria-label="Labels kept in the inbox">
+        @for (label of keepInInboxLabels(); track label) {
+          <mat-chip data-testid="keep-chip" (removed)="removeKeep(label)" [disabled]="!loaded()">
+            {{ label }}
+            <button matChipRemove [attr.aria-label]="'Remove ' + label" data-testid="keep-remove">
+              <mat-icon aria-hidden="true">cancel</mat-icon>
+            </button>
+          </mat-chip>
+        }
+      </mat-chip-set>
+    }
+    <form
+      class="flex flex-wrap items-start gap-2"
+      [formGroup]="newKeepForm"
+      (ngSubmit)="addKeep()"
+      novalidate
+    >
+      <mat-form-field class="min-w-48 flex-1" subscriptSizing="dynamic">
+        <mat-label>Add label</mat-label>
+        <input matInput autocomplete="off" formControlName="label" data-testid="new-keep-label" />
+        <button
+          mat-icon-button
+          matSuffix
+          type="button"
+          (click)="togglePicker('keep')"
+          [attr.aria-expanded]="picker() === 'keep'"
+          aria-label="Choose from your labels"
+          data-testid="new-keep-browse"
+        >
+          <mat-icon aria-hidden="true">label</mat-icon>
+        </button>
+        @if (newKeep.hasError('duplicate')) {
+          <mat-error data-testid="new-keep-error">That label is already kept.</mat-error>
+        } @else if (newKeep.hasError('scriptLabel')) {
+          <mat-error data-testid="new-keep-error">{{ newKeep.getError('scriptLabel') }}</mat-error>
+        }
+      </mat-form-field>
+      <button
+        mat-stroked-button
+        type="submit"
+        class="mt-2"
+        [disabled]="!loaded() || keepInInboxLabels().length >= maxKeep"
+        data-testid="add-keep"
+      >
+        Add
+      </button>
+    </form>
+    @if (picker() === 'keep') {
+      <ng-container *ngTemplateOutlet="labelPicker; context: { $implicit: 'keep' }" />
+    }
+  </section>
+
+  <section class="flex flex-col gap-2" aria-labelledby="script-config-title">
+    <div class="flex flex-wrap items-center gap-2">
+      <h3 id="script-config-title" class="m-0 flex-1">Script configuration</h3>
+      <button
+        mat-stroked-button
+        type="button"
+        (click)="copy()"
+        [disabled]="!config() || configStale()"
+        data-testid="copy-config"
+      >
+        <mat-icon aria-hidden="true">content_copy</mat-icon>
+        Copy
+      </button>
+    </div>
+    <p class="help">
+      Paste over the CONFIG block in the script, then run <code>runAutoArchive</code> once with dry
+      run on.
+      <a [href]="guideUrl" target="_blank" rel="noopener" data-testid="guide-link">Install guide</a>
+    </p>
+    @if (config() && configStale()) {
+      <p class="help" role="status" data-testid="config-stale">
+        Out of date until your changes are saved.
+      </p>
+    }
+    @if (config(); as generated) {
+      <pre
+        class="config m-0 max-h-80 overflow-auto rounded p-3"
+        tabindex="0"
+        aria-label="Generated CONFIG block"
+        data-testid="config-block"
+        >{{ generated.config }}</pre>
+    } @else if (configFailed()) {
+      <p class="help" role="alert">
+        The configuration could not be generated.
+        <button mat-button type="button" (click)="loadConfig()" data-testid="config-retry">
+          Retry
+        </button>
+      </p>
+    }
+  </section>
+</div>
+
+<ng-template #labelPicker let-target>
+  @if (labels(); as list) {
+    <app-label-tree-picker [labels]="list" (pick)="pick(target, $event)" />
+  } @else if (labelsFailed()) {
+    <p class="help" data-testid="labels-failed">
+      Labels could not be loaded; type the label instead.
+    </p>
+  }
+</ng-template>

@@ -4,6 +4,8 @@ import { Observable } from 'rxjs';
 import { SetupService } from '../setup/setup.service';
 import {
   AnalysisSettingsUpdate,
+  AppsScriptConfigDto,
+  AppsScriptUpdate,
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
   LabelSettingsUpdate,
@@ -44,6 +46,16 @@ export class SettingsService {
   /** A partial update of the protection rules: rules left out stay unchanged. */
   saveProtection(changes: ProtectionUpdate): Observable<SettingsDto> {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** Replaces the whole Apps Script block. */
+  saveAppsScript(changes: AppsScriptUpdate): Observable<SettingsDto> {
+    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** The script's `CONFIG` block generated from the saved settings. */
+  appsScriptConfig(): Observable<AppsScriptConfigDto> {
+    return this.http.get<AppsScriptConfigDto>('/api/rules/apps-script/config');
   }
 
   /** A partial update of the action and delete label names: names left out stay unchanged. */
