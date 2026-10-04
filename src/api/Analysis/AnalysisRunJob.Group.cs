@@ -47,7 +47,7 @@ public sealed partial class AnalysisRunJob
         RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
     {
         var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
-        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree), ct);
+        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree, context.LabelNames), ct);
         var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
         var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
         for (var i = 0; i < batch.Count; i++)
@@ -82,7 +82,8 @@ public sealed partial class AnalysisRunJob
             .Select(x => new EmailForPrompt(
                 x.First.Id, x.First.FromAddress, x.First.FromName, x.First.Subject, x.First.InternalDate, x.First.Category?.ToString(),
                 !string.IsNullOrEmpty(x.First.ListUnsubscribe), x.First.HasAttachment,
-                BodyCleaner.Clean(x.Second!.Body.Text, x.Second.Body.Html, context.Settings.AnalysisBodyMaxChars)))
+                BodyCleaner.Clean(x.Second!.Body.Text, x.Second.Body.Html, context.Settings.AnalysisBodyMaxChars),
+                CurrentLabels(context, x.First)))
             .ToList();
 
         // One message's attachments at a time, and groups run one after another: conversions (OCR, vision, office
@@ -257,6 +258,17 @@ public sealed partial class AnalysisRunJob
             Mixed: false);
     }
 
+    /// <summary>The message's user label names as the prompt shows them; an id Gmail no longer knows is skipped.</summary>
+    private static IReadOnlyList<string> CurrentLabels(RunContext context, MessageRow message) =>
+        [.. message.LabelIds
+            .Where(GmailLabelIds.IsUser)
+            .Select(id => context.LabelNames.GetValueOrDefault(id))
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .Take(EmailForPrompt.MaxLabels)];
+
+    // ReplaceLabels is parsed but not stored yet (#196); storing and applying it comes next.
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson) => new()
         {

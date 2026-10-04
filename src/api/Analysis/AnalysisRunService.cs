@@ -215,6 +215,7 @@ public sealed class AnalysisRunService(
             .FirstOrDefaultAsync(ct);
         var llmCalls = totals?.LlmCalls ?? 0;
         var covered = totals?.Covered ?? 0;
+        var labelled = await AnalysisCandidates.CountLabelledAsync(db, ct);
 
         return new AnalysisSummaryDto(
             counts.GetValueOrDefault(AnalysisStatus.NotAnalysed),
@@ -226,7 +227,8 @@ public sealed class AnalysisRunService(
             deleteCount,
             llmCalls,
             covered,
-            SavedPercent(llmCalls, covered));
+            SavedPercent(llmCalls, covered),
+            labelled);
     }
 
     /// <summary><c>1 − llmCalls / max(1, covered)</c>; negative when retries cost more calls than emails covered.</summary>

@@ -1,5 +1,6 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Analysis.Grouping;
@@ -30,6 +31,7 @@ public static class AnalysisCandidates
             AnalysisScope.All => NotAnalysed(query),
             AnalysisScope.Sender => BySender(NotAnalysed(query), senderAddress),
             AnalysisScope.Messages => ExplicitIds(query, messageIds),
+            AnalysisScope.Labelled => Labelled(query),
             _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, null),
         };
 
@@ -40,13 +42,18 @@ public static class AnalysisCandidates
             .ToListAsync(ct);
     }
 
+    /// <summary>How many messages the labelled scope has left to analyse.</summary>
+    public static Task<int> CountLabelledAsync(AppDbContext db, CancellationToken ct) =>
+        Labelled(db.Messages.AsNoTracking().Where(m => !m.DeletedInGmail)).CountAsync(ct);
+
     /// <summary>Explicit ids the messages scope does not analyse; a short inbox simply has fewer candidates.</summary>
     public static int Skipped(AnalysisScope scope, int count, int candidates) =>
         scope == AnalysisScope.Messages ? count - candidates : 0;
 
     /// <summary>
     /// Whether a run of <paramref name="scope"/> still analyses a frozen candidate: the query's status and deletion
-    /// conditions (not the inbox label: a candidate archived since the run started is still analysed).
+    /// conditions (not the inbox or user labels: a candidate archived, filed or unfiled since the run started is still
+    /// analysed).
     /// </summary>
     public static bool IsEligible(AnalysisScope scope, MessageRow m) =>
         !m.DeletedInGmail && (scope == AnalysisScope.Messages
@@ -55,6 +62,10 @@ public static class AnalysisCandidates
 
     private static IQueryable<MessageRow> NotAnalysed(IQueryable<MessageRow> query) =>
         query.Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed);
+
+    // Npgsql runs this as EXISTS over unnest(label_ids); the constant keeps it a LIKE 'Label\_%' prefix match.
+    private static IQueryable<MessageRow> Labelled(IQueryable<MessageRow> query) =>
+        NotAnalysed(query).Where(m => m.LabelIds.Any(l => l.StartsWith(GmailLabelIds.UserPrefix)));
 
     private static IQueryable<MessageRow> BySender(IQueryable<MessageRow> query, string? senderAddress)
     {

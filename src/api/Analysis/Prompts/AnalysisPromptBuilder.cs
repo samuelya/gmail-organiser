@@ -35,7 +35,8 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
                   "toBeDeleted": { "type": "boolean" },
                   "unsubscribeSuggested": { "type": "boolean" },
                   "confidence": { "type": "number" },
-                  "reason": { "type": "string" }
+                  "reason": { "type": "string" },
+                  "replaceLabels": { "type": "array", "items": { "type": "string" } }
                 },
                 "required": ["id", "topicLabel", "isNewLabel", "needsAction", "toBeDeleted", "unsubscribeSuggested", "confidence", "reason"]
               }
@@ -128,6 +129,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
                 .Append(CultureInfo.InvariantCulture, $"List-Unsubscribe present: {YesNo(e.HasListUnsubscribe)}\n")
                 .Append(CultureInfo.InvariantCulture, $"has attachment: {YesNo(e.HasAttachment)}\n")
                 .Append(CultureInfo.InvariantCulture, $"subject: {OneLine(e.Subject ?? "-")}\n")
+                .Append(CultureInfo.InvariantCulture, $"current labels: {CurrentLabels(e.Labels)}\n")
                 .Append(BodyStart).Append('\n')
                 .Append(DefuseBodyTags(e.Body))
                 .Append('\n').Append(BodyEnd).Append('\n');
@@ -135,6 +137,9 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
 
         return sb.ToString();
     }
+
+    private static string CurrentLabels(IReadOnlyList<string> labels) =>
+        labels.Count == 0 ? "-" : string.Join(", ", labels.Take(EmailForPrompt.MaxLabels).Select(OneLine));
 
     private static string YesNo(bool value) => value ? "yes" : "no";
 

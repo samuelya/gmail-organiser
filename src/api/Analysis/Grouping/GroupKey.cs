@@ -1,5 +1,6 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Analysis.Grouping;
 
@@ -8,6 +9,19 @@ public static class GroupKey
 {
     public const string ListPrefix = "list:";
     public const string FromPrefix = "from:";
+    public const string LabelsPrefix = "|labels:";
+
+    /// <summary>
+    /// The analysis group: <see cref="For"/> plus the message's sorted user label ids, so mail the person filed
+    /// differently never shares a group. Unchanged for mail without user labels.
+    /// </summary>
+    public static string ForGrouping(MessageRow m)
+    {
+        var labels = string.Join(',', m.LabelIds.Where(GmailLabelIds.IsUser).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
+        return labels.Length == 0 ? For(m) : $"{For(m)}{LabelsPrefix}{labels}";
+    }
+
+    /// <summary>The memory scope (<c>decisions.scope_key</c>): list or sender and category, plus the subject template.</summary>
 
     public static string For(MessageRow m)
     {

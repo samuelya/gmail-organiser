@@ -54,7 +54,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
         }
 
         List<MessageGroup> keyed = ordered
-            .GroupBy(GroupKey.For, StringComparer.Ordinal)
+            .GroupBy(GroupKey.ForGrouping, StringComparer.Ordinal)
             .Select(g => Keyed(g.Key, g.ToList()))
             .ToList();
         if (settings.Mode == AnalysisGroupingMode.Auto)

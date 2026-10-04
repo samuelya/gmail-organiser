@@ -11,6 +11,9 @@ public enum AnalysisScope
     All,
     Sender,
     Messages,
+
+    /// <summary>Not-analysed mail that already carries at least one user label (the labelled phase).</summary>
+    Labelled,
 }
 
 public enum AnalysisRunStatus

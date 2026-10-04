@@ -101,8 +101,9 @@ public sealed partial class AnalysisRunJob(
         var work = await PlanAsync(run, cursor, settings, ct);
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
+        var (labelTree, labelNames) = await UserLabelsAsync(ct);
         var context = new RunContext(
-            run, settings, builder, chat, await UserLabelsAsync(ct), work.Allowlisted, await attachmentPolicy.GetAsync(ct));
+            run, settings, builder, chat, labelTree, labelNames, work.Allowlisted, await attachmentPolicy.GetAsync(ct));
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
@@ -203,13 +204,14 @@ public sealed partial class AnalysisRunJob(
         return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], groups, allowlisted, cursor);
     }
 
-    /// <summary>The mailbox's user labels, sorted; read once per run for the prompt.</summary>
-    private async Task<IReadOnlyList<string>> UserLabelsAsync(CancellationToken ct) =>
-        (await gmail.ListLabelsAsync(ct))
-            .Where(l => l.Type == GmailLabelType.User)
-            .Select(l => l.Name)
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    /// <summary>The mailbox's user label names, sorted, and the names by id; read once per run for the prompt.</summary>
+    private async Task<(IReadOnlyList<string> Tree, IReadOnlyDictionary<string, string> Names)> UserLabelsAsync(CancellationToken ct)
+    {
+        var labels = (await gmail.ListLabelsAsync(ct)).Where(l => l.Type == GmailLabelType.User).ToList();
+        return (
+            [.. labels.Select(l => l.Name).Order(StringComparer.OrdinalIgnoreCase)],
+            labels.DistinctBy(l => l.Id, StringComparer.Ordinal).ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal));
+    }
 
     /// <summary>
     /// One transaction: the group's suggestion rows (replacing a pending or rejected suggestion of a re-analysed
@@ -343,6 +345,7 @@ public sealed partial class AnalysisRunJob(
         AnalysisPromptBuilder Builder,
         IChatClient Chat,
         IReadOnlyList<string> LabelTree,
+        IReadOnlyDictionary<string, string> LabelNames,
         IReadOnlySet<string> Allowlisted,
         AttachmentPolicySnapshot Attachments);
 

@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using GmailOrganiser.Data;
+using GmailOrganiser.Gmail;
+using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
@@ -30,7 +32,7 @@ public static partial class AnalysisPreviewEndpoint
     /// <summary>Candidates and grouping for a scope and count, without any model call; 400 on an invalid request.</summary>
     private static async Task<Results<Ok<GroupingPreviewDto>, ValidationProblem>> PreviewAsync(
         AnalysisPreviewRequest request, AppDbContext db, ISettingsStore settingsStore, AnalysisGrouper grouper,
-        IAnalysisShortCircuit shortCircuit, CancellationToken ct)
+        IAnalysisShortCircuit shortCircuit, LabelCatalog labelCatalog, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         var settings = await settingsStore.GetAsync(ct);
@@ -50,8 +52,9 @@ public static partial class AnalysisPreviewEndpoint
         var groups = await grouper.GroupAsync(candidates, GroupingSettings.From(settings), allowlisted, ct);
 
         // The run's own memory lookup, in one query for all groups: a covered group costs one call per member memory
-        // left out (protected mail), and derives nothing. Label names do not change the counts.
-        var covered = await shortCircuit.TryAsync(groups, new ShortCircuitContext(settings, allowlisted, []), ct);
+        // left out (protected mail), and derives nothing. The label tree does not change the counts; the names by id do.
+        var labelNames = await UserLabelNamesAsync(labelCatalog, ct);
+        var covered = await shortCircuit.TryAsync(groups, new ShortCircuitContext(settings, allowlisted, [], labelNames), ct);
         var modelGroups = groups.Where((_, i) => covered[i] is null).ToList();
         var fromMemory = covered.Sum(c => c?.Suggestions.Count ?? 0);
 
@@ -104,6 +107,22 @@ public static partial class AnalysisPreviewEndpoint
         return (scope, count);
     }
 
+    /// <summary>User label names by id; empty when Gmail is not connected (labelled groups then count as model calls).</summary>
+    private static async Task<IReadOnlyDictionary<string, string>> UserLabelNamesAsync(LabelCatalog labelCatalog, CancellationToken ct)
+    {
+        try
+        {
+            return (await labelCatalog.GetAsync(ct))
+                .Where(l => l.Type == GmailLabelType.User)
+                .DistinctBy(l => l.Id, StringComparer.Ordinal)
+                .ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
+        }
+        catch (GmailNotConnectedException)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+    }
+
     /// <summary>1 to <see cref="AnalysisCandidates.MaxMessageIds"/> Gmail-shaped ids.</summary>
     public static bool AreValidMessageIds(string[]? messageIds) =>
         messageIds is { Length: > 0 and <= AnalysisCandidates.MaxMessageIds }
@@ -115,7 +134,7 @@ public static partial class AnalysisPreviewEndpoint
             string.Equals(SnakeCaseEnumConverter<AnalysisScope>.ToDb(v!.Value), value?.Trim(), StringComparison.OrdinalIgnoreCase));
         if (scope is null)
         {
-            errors["scope"] = ["Must be one of inbox, all, sender, messages."];
+            errors["scope"] = ["Must be one of inbox, all, sender, messages, labelled."];
         }
 
         return scope;

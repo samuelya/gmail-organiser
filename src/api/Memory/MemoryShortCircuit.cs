@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Analysis.Prompts;
+using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Memory;
 
@@ -8,7 +9,8 @@ namespace GmailOrganiser.Memory;
 /// Memory as a pre-filter (epic #22, option C): when the group's scope (its <see cref="GroupKey"/>: list or sender and
 /// category, plus subject template) has a consistent approved pattern, every non-protected member gets that suggestion
 /// without a model call. Protected members always go to the model, so a memory <c>toBeDeleted</c> never lands on
-/// protected mail. Suggestions only; the user still reviews them.
+/// protected mail. A group already filed under another user label than the memorised one goes to the model too.
+/// Suggestions only; the user still reviews them.
 /// </summary>
 public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortCircuit
 {
@@ -27,7 +29,7 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
             [.. keys.OfType<string>()], context.Settings.AnalysisMemoryMinApprovals, ct);
         for (var i = 0; i < groups.Count; i++)
         {
-            if (keys[i] is { } key && patterns.TryGetValue(key, out var pattern))
+            if (keys[i] is { } key && patterns.TryGetValue(key, out var pattern) && KeepsLabels(groups[i], pattern, context))
             {
                 results[i] = Cover(groups[i], pattern, context);
             }
@@ -35,6 +37,15 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
 
         return results;
     }
+
+    /// <summary>
+    /// Whether every user label of the group is the memorised topic label. An id without a known name (deleted in Gmail
+    /// since the fetch, or names not loaded) counts as different: the model sees the group instead.
+    /// </summary>
+    private static bool KeepsLabels(MessageGroup group, MemoryPattern pattern, ShortCircuitContext context) =>
+        group.Members.SelectMany(m => m.LabelIds).Where(GmailLabelIds.IsUser).All(id =>
+            context.LabelNames.TryGetValue(id, out var name)
+            && string.Equals(name.Trim(), pattern.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private static ShortCircuitResult? Cover(MessageGroup group, MemoryPattern pattern, ShortCircuitContext context)
     {

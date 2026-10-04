@@ -15,7 +15,14 @@ public interface IAnalysisShortCircuit
     Task<IReadOnlyList<ShortCircuitResult?>> TryAsync(IReadOnlyList<MessageGroup> groups, ShortCircuitContext context, CancellationToken ct);
 }
 
-/// <summary>The caller's settings snapshot, allowlisted senders and Gmail user labels (empty when only counting).</summary>
-public sealed record ShortCircuitContext(AppSettings Settings, IReadOnlySet<string> Allowlisted, IReadOnlyList<string> LabelTree);
+/// <summary>
+/// The caller's settings snapshot, allowlisted senders, Gmail user label names (empty when only counting) and the user
+/// label names by id (empty when Gmail is not connected).
+/// </summary>
+public sealed record ShortCircuitContext(
+    AppSettings Settings,
+    IReadOnlySet<string> Allowlisted,
+    IReadOnlyList<string> LabelTree,
+    IReadOnlyDictionary<string, string> LabelNames);
 
 public sealed record ShortCircuitResult(IReadOnlyList<SuggestionOutput> Suggestions);

@@ -210,10 +210,51 @@ public static class SuggestionOutputParser
             errors.Add($"Email '{id}': 'reason' must be a string.");
         }
 
+        var replaceLabels = ReadReplaceLabels(id, item, label, errors);
         return errors.Count > count
             ? null
             : new SuggestionOutput(id, label!, isNewLabel, needsAction, toBeDeleted, unsubscribe, confidence,
-                Cut(reason!, MaxReasonLength));
+                Cut(reason!, MaxReasonLength))
+            {
+                ReplaceLabels = replaceLabels,
+            };
+    }
+
+    /// <summary>
+    /// The optional <c>replaceLabels</c> array: valid label paths, not system labels, not the topic label; duplicates
+    /// (case-insensitive) dropped. Missing or null is empty.
+    /// </summary>
+    private static IReadOnlyList<string> ReadReplaceLabels(string id, JsonElement item, string? topicLabel, List<string> errors)
+    {
+        if (!item.TryGetProperty("replaceLabels", out var element) || element.ValueKind == JsonValueKind.Null)
+        {
+            return [];
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            errors.Add($"Email '{id}': 'replaceLabels' must be an array of strings.");
+            return [];
+        }
+
+        var labels = new List<string>();
+        foreach (var entry in element.EnumerateArray())
+        {
+            var value = entry.ValueKind == JsonValueKind.String ? entry.GetString()?.Trim() : null;
+            if (value is null || !IsValidLabelPath(value) || LabelPath.IsReserved(value)
+                || string.Equals(value, topicLabel, StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add($"Email '{id}': 'replaceLabels' holds an entry that is not a replaceable label path.");
+                return [];
+            }
+
+            if (!labels.Contains(value, StringComparer.OrdinalIgnoreCase))
+            {
+                labels.Add(value);
+            }
+        }
+
+        return labels.Count == 0 ? [] : labels;
     }
 
     /// <inheritdoc cref="LabelPath.IsValid"/>
