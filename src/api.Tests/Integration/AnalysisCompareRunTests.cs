@@ -5,6 +5,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
@@ -288,6 +289,46 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Resumed_older_run_does_not_write_over_an_alternative_discarded_from_a_later_created_run()
+    {
+        var (run, stored) = await CrashAfterFirstGroupAsync();
+        var created = (await h.GetRunAsync(run.Id)).CreatedAt;
+        string discarded;
+        await using (var db = postgres.CreateDbContext())
+        {
+            // What the run wrote before stopping carries its marker; a later-created run then wrote one message it has
+            // not reached yet, the same way, and the user discarded that alternative.
+            (await db.Suggestions.Where(s => stored.Contains(s.MessageId)).Select(s => s.CompareRunCreatedAt).Distinct().ToListAsync(Ct))
+                .ShouldBe([created]);
+            var newer = new AnalysisRunRow
+            {
+                Id = Guid.CreateVersion7(),
+                Kind = AnalysisRunKind.Compare,
+                Scope = AnalysisScope.Messages,
+                Status = AnalysisRunStatus.Completed,
+                CreatedAt = created.AddMinutes(1),
+            };
+            db.AnalysisRuns.Add(newer);
+            var suggestion = await db.Suggestions.Where(s => !stored.Contains(s.MessageId)).OrderBy(s => s.MessageId).FirstAsync(Ct);
+            suggestion.CompareRunCreatedAt = newer.CreatedAt;
+            db.SuggestionAlternatives.Add(SuggestionAlternativeRow.From(suggestion, suggestion.Id, newer.Id, created));
+            await db.SaveChangesAsync(Ct);
+            discarded = suggestion.MessageId;
+        }
+
+        var response = await h.PostAsync("/api/review/alternatives/discard", new AlternativeDecisionRequest(await SuggestionIdsAsync(discarded), null));
+        (await response.Content.ReadFromJsonAsync<AlternativeDecisionResponse>(Ct)).ShouldBe(new AlternativeDecisionResponse(0, 1, 0));
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.MessagesCovered, done.SkippedMessages).ShouldBe(("completed", 19, 1));
+        await using var check = postgres.CreateDbContext();
+        (await check.SuggestionAlternatives.AnyAsync(a => a.MessageId == discarded, Ct)).ShouldBeFalse();
+        (await check.SuggestionAlternatives.CountAsync(a => a.RunId == run.Id, Ct)).ShouldBe(19);
+    }
+
+    [Fact]
     public async Task Resume_does_not_count_messages_whose_alternatives_a_reanalyse_cascaded_away()
     {
         var (run, stored) = await CrashAfterFirstGroupAsync();
@@ -371,11 +412,16 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
         return [.. await db.Suggestions.AsNoTracking().Where(s => messageIds.Contains(s.MessageId)).OrderBy(s => s.MessageId).Select(s => s.Id).ToListAsync(Ct)];
     }
 
-    /// <summary>Every suggestion, message status and sender count, serialised in a fixed order.</summary>
+    /// <summary>
+    /// Every suggestion but its compare-run marker (which the run writes), message status and sender count, serialised
+    /// in a fixed order.
+    /// </summary>
     private async Task<string> SnapshotAsync()
     {
         await using var db = postgres.CreateDbContext();
-        var suggestions = await db.Suggestions.AsNoTracking().OrderBy(s => s.Id).ToListAsync(Ct);
+        var suggestions = (await db.Suggestions.AsNoTracking().OrderBy(s => s.Id).ToListAsync(Ct))
+            .Select(s => { s.CompareRunCreatedAt = null; return s; })
+            .ToList();
         var messages = await db.Messages.AsNoTracking().OrderBy(m => m.Id).Select(m => new { m.Id, m.AnalysisStatus, m.UpdatedAt }).ToListAsync(Ct);
         var senders = await db.Senders.AsNoTracking().OrderBy(s => s.Address).Select(s => new { s.Address, s.AnalysedCount }).ToListAsync(Ct);
         return JsonSerializer.Serialize(new { suggestions, messages, senders });
