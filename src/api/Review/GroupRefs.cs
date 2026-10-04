@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Claude;
 
 namespace GmailOrganiser.Review;
@@ -8,10 +9,12 @@ public static class GroupRefs
 {
     /// <summary>
     /// The groups with the sender address trimmed and lower-cased; adds a <c>groups</c> error when there are more than
-    /// <paramref name="max"/>, a sender address or group key is missing or too long, or a status is unknown.
+    /// <paramref name="max"/>, a sender address or group key is missing or too long, or a status is unknown;
+    /// <c>applied</c> is a known status only when <paramref name="allowApplied"/>.
     /// </summary>
-    public static GroupRef[] Normalise(GroupRef?[]? groups, int max, Dictionary<string, string[]> errors)
+    public static GroupRef[] Normalise(GroupRef?[]? groups, int max, Dictionary<string, string[]> errors, bool allowApplied = false)
     {
+        var statuses = allowApplied ? "pending, approved, rejected or applied" : "pending, approved or rejected";
         if (groups is { } all && all.Length > max)
         {
             errors["groups"] = [$"At most {max} groups."];
@@ -24,9 +27,10 @@ public static class GroupRefs
             var sender = g?.SenderAddress?.Trim().ToLowerInvariant();
             if (string.IsNullOrEmpty(sender) || sender.Length > AnalysisPreviewEndpoint.MaxSenderAddressLength
                 || string.IsNullOrEmpty(g!.GroupKey) || g.GroupKey.Length > ReviewEndpoints.MaxGroupKeyLength
-                || ReviewQuery.ParseStatus(g.Status) is null)
+                || ReviewQuery.ParseStatus(g.Status) is not { } status
+                || (status == SuggestionStatus.Applied && !allowApplied))
             {
-                errors["groups"] = [$"Each group needs a sender address (at most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters), a group key (at most {ReviewEndpoints.MaxGroupKeyLength}) and, when given, a status of pending, approved or rejected."];
+                errors["groups"] = [$"Each group needs a sender address (at most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters), a group key (at most {ReviewEndpoints.MaxGroupKeyLength}) and, when given, a status of {statuses}."];
                 return [];
             }
 

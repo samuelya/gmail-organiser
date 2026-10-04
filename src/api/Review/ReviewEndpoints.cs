@@ -53,7 +53,7 @@ public static class ReviewEndpoints
         var parsed = ReviewQuery.ParseStatus(status);
         if (parsed is null)
         {
-            errors["status"] = ["Must be pending, approved or rejected."];
+            errors["status"] = ["Must be pending, approved, rejected or applied."];
         }
 
         return paging is null || parsed is not { } s
@@ -83,7 +83,7 @@ public static class ReviewEndpoints
         var parsed = ReviewQuery.ParseStatus(status);
         if (parsed is null)
         {
-            errors["status"] = ["Must be pending, approved or rejected."];
+            errors["status"] = ["Must be pending, approved, rejected or applied."];
         }
 
         if (errors.Count > 0)
