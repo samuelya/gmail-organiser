@@ -56,7 +56,8 @@ public sealed class SenderPatternService(
                     top?.ToBeDeleted,
                     approvals,
                     top is null ? 0 : (double)top.Count / approvals,
-                    remaining.GetValueOrDefault(a));
+                    remaining.GetValueOrDefault(a),
+                    top?.DocumentTypeLabel);
             },
             StringComparer.Ordinal);
     }
@@ -76,7 +77,8 @@ public sealed class SenderPatternService(
 
     /// <summary>
     /// Creates an approved suggestion for every remaining message of <paramref name="address"/> (each request value
-    /// overrides the pattern's), one decision and the apply batch, in one transaction.
+    /// overrides the pattern's), one decision and the apply batch, in one transaction. The request's document-type label
+    /// is <see cref="DocumentTypeEdit.Validate"/>d; the pattern's is applied as approved, whatever the parent is now.
     /// </summary>
     public async Task<(ApplyRestStatus Status, ApplyRestResponse? Response)> ApplyRestAsync(
         string address, ApplyRestRequest request, CancellationToken ct)
@@ -91,12 +93,14 @@ public sealed class SenderPatternService(
 
         var needsAction = request.NeedsAction ?? top?.NeedsAction ?? false;
         var toBeDeleted = request.ToBeDeleted ?? top?.ToBeDeleted ?? false;
+        var type = request.DocumentTypeLabel is { } requested ? (requested.Length == 0 ? null : requested) : top?.DocumentTypeLabel;
         var approvals = outcomes.Sum(o => o.Count);
         var agreeing = outcomes
-            .Where(o => o.TopicLabel == label && o.NeedsAction == needsAction && o.ToBeDeleted == toBeDeleted)
+            .Where(o => o.TopicLabel == label && o.NeedsAction == needsAction && o.ToBeDeleted == toBeDeleted && o.DocumentTypeLabel == type)
             .Sum(o => o.Count);
         var agreement = approvals == 0 ? 0 : (double)agreeing / approvals;
-        var edited = top is not null && (top.TopicLabel != label || top.NeedsAction != needsAction || top.ToBeDeleted != toBeDeleted);
+        var edited = top is not null && (top.TopicLabel != label || top.NeedsAction != needsAction || top.ToBeDeleted != toBeDeleted
+            || top.DocumentTypeLabel != type);
         var filter = new FilterCandidateDto(address, (await CommonListIdsAsync([address], ct)).GetValueOrDefault(address));
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -117,7 +121,8 @@ public sealed class SenderPatternService(
         }
 
         var allowlisted = await db.Senders.AnyAsync(s => s.Address == address && s.Allowlisted, ct);
-        var rules = (await settingsStore.GetAsync(ct)).Protection;
+        var settings = await settingsStore.GetAsync(ct);
+        var rules = settings.Protection;
         var now = time.GetUtcNow();
         var ids = new Guid[messages.Count];
         var protectedAdjusted = 0;
@@ -133,6 +138,7 @@ public sealed class SenderPatternService(
                 SenderAddress = address,
                 Source = SuggestionSource.SenderPattern,
                 TopicLabel = label,
+                DocumentTypeLabel = type,
                 NeedsAction = needsAction,
                 ToBeDeleted = toBeDeleted && !isProtected,
 
@@ -155,6 +161,8 @@ public sealed class SenderPatternService(
             SenderAddress = address,
             ListId = filter.ListId,
             TopicLabel = label,
+            DocumentTypeLabel = type,
+            DocumentTypeDecided = settings.DocumentTypeParent is not null || type is not null,
             NeedsAction = needsAction,
             ToBeDeleted = toBeDeleted,
             Outcome = DecisionOutcome.Approved,
@@ -192,13 +200,14 @@ public sealed class SenderPatternService(
             .Where(s => addresses.Contains(s.SenderAddress)
                 && s.Source != SuggestionSource.SenderPattern
                 && (s.Status == SuggestionStatus.Approved || s.Status == SuggestionStatus.Applied))
-            .GroupBy(s => new { s.SenderAddress, s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
+            .GroupBy(s => new { s.SenderAddress, s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel })
             .Select(g => new
             {
                 g.Key.SenderAddress,
                 g.Key.TopicLabel,
                 g.Key.NeedsAction,
                 g.Key.ToBeDeleted,
+                g.Key.DocumentTypeLabel,
                 Count = g.Count(),
                 Last = g.Max(s => s.DecidedAt),
             })
@@ -208,7 +217,8 @@ public sealed class SenderPatternService(
             g => g.OrderByDescending(o => o.Count)
                 .ThenByDescending(o => o.Last)
                 .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
-                .Select(o => new Outcome(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.Count))
+                .ThenBy(o => o.DocumentTypeLabel, StringComparer.Ordinal)
+                .Select(o => new Outcome(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.DocumentTypeLabel, o.Count))
                 .ToList(),
             StringComparer.Ordinal);
     }
@@ -216,5 +226,5 @@ public sealed class SenderPatternService(
     private static bool IsSuggestionConflict(DbUpdateException ex) =>
         ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, TableName: "suggestions" };
 
-    private sealed record Outcome(string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count);
+    private sealed record Outcome(string TopicLabel, bool NeedsAction, bool ToBeDeleted, string? DocumentTypeLabel, int Count);
 }

@@ -96,13 +96,19 @@ public static class ReviewEndpoints
 
     /// <summary>202 with the queued batch, 200 when nothing remained; 409 without a pattern or topic label, or on a race.</summary>
     private static async Task<Results<Accepted<ApplyRestResponse>, Ok<ApplyRestResponse>, ValidationProblem, ProblemHttpResult>> ApplyRestAsync(
-        string address, ApplyRestRequest? request, SenderPatternService patterns, CancellationToken ct)
+        string address, ApplyRestRequest? request, SenderPatternService patterns, ISettingsStore settings, CancellationToken ct)
     {
         request ??= new();
         var errors = Normalise(address) is null ? AddressError() : [];
         if (request.TopicLabel is { } label && !LabelResolver.IsValid(label.Trim()))
         {
             errors["topicLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters, not a Gmail system label."];
+        }
+
+        if (request.DocumentTypeLabel is not null)
+        {
+            var parent = (await settings.GetAsync(ct)).DocumentTypeParent;
+            request = request with { DocumentTypeLabel = DocumentTypeEdit.Validate(request.DocumentTypeLabel, parent, request.TopicLabel, errors) };
         }
 
         if (errors.Count > 0)
@@ -128,19 +134,23 @@ public static class ReviewEndpoints
     /// <summary>
     /// Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied,
     /// then 400 naming the replaced labels the message does not carry and 503 when the Gmail label list cannot be loaded.
+    /// A document-type label needs the document-type parent setting (<see cref="DocumentTypeEdit.Validate"/>).
     /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
-        Guid id, EditSuggestionRequest request, ReviewService review, CancellationToken ct)
+        Guid id, EditSuggestionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct)
     {
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
         ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
+        var type = request.DocumentTypeLabel is null
+            ? null
+            : DocumentTypeEdit.Validate(request.DocumentTypeLabel, (await settings.GetAsync(ct)).DocumentTypeParent, label, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
         var (result, suggestion, unknown) = await review.EditAsync(
-            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, ct);
+            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type, ct);
         return result == ReviewResult.InvalidReplaceLabels
             ? ReplaceLabelsUnknown("the email does not carry", unknown)
             : ToResult((result, suggestion));

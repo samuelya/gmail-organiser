@@ -231,7 +231,9 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         current,
         LabelChanges.For(s.TopicLabel, replaced, current),
         claudeReview,
-        suggestedForClaude);
+        suggestedForClaude,
+        s.DocumentTypeLabel,
+        s.DocumentTypeIsNew);
     }
 
     /// <summary>
@@ -348,7 +350,9 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
             change,
             key is null ? null : claude.Groups.GetValueOrDefault(key),
             IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0),
-            shared.DocumentTypeLabel);
+            shared.DocumentTypeLabel,
+            shared.DocumentTypeLabel is not null
+                && members.Any(x => x.S.DocumentTypeIsNew && x.S.DocumentTypeLabel == shared.DocumentTypeLabel));
     }
 
     /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags and type.</summary>

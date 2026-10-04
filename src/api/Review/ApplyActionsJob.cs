@@ -185,6 +185,15 @@ public sealed partial class ApplyActionsJob(
         }
 
         var paths = valid.Select(r => r.Suggestion.TopicLabel).ToList();
+
+        // The approved document-type label is applied even if the parent setting changed since; a stored one Gmail
+        // would refuse is skipped for its message, which still gets its topic label.
+        var types = valid.Select(r => r.Suggestion.DocumentTypeLabel).OfType<string>().ToList();
+        paths.AddRange(types.Where(LabelResolver.IsValid));
+        if (types.Count(t => !LabelResolver.IsValid(t)) is > 0 and var invalidTypes)
+        {
+            LogInvalidDocumentTypes(logger, invalidTypes);
+        }
         if (valid.Any(r => r.Suggestion.NeedsAction))
         {
             paths.Add(SettingLabel(settings.ActionLabelName, nameof(AppSettings.ActionLabelName)));
@@ -371,6 +380,9 @@ public sealed partial class ApplyActionsJob(
 
     [GeneratedRegex(@" \(partial: \d+ of \d+\)$")]
     private static partial Regex PartialSuffix();
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{Count} approved document-type labels are not valid label paths; they are skipped.")]
+    private static partial void LogInvalidDocumentTypes(ILogger logger, int count);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Could not mark the action batch as partial.")]
     private static partial void LogPartialNotRecorded(ILogger logger, Exception exception);

@@ -18,6 +18,7 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="ClaudeReview">The newest not-cancelled Claude review item for the group.</param>
 /// <param name="SuggestedForClaude">Any member, listed or not, is worth a Claude review (<see cref="ReviewQuery.IsSuggestedForClaude"/>).</param>
 /// <param name="DocumentTypeLabel">The shown outcome's document-type label; null when it has none.</param>
+/// <param name="DocumentTypeIsNew">A listed member with the shown document-type label would create it in Gmail.</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -38,12 +39,15 @@ public sealed record ReviewGroupDto(
     LabelChange LabelChange,
     ExternalReviewDto? ClaudeReview = null,
     bool SuggestedForClaude = false,
-    string? DocumentTypeLabel = null);
+    string? DocumentTypeLabel = null,
+    bool DocumentTypeIsNew = false);
 
 /// <param name="ReplaceLabels">Current labels apply removes: the replaced labels the message still carries, never the topic label.</param>
 /// <param name="CurrentLabels">The message's personal (user) label names; empty when Gmail is not reachable.</param>
 /// <param name="ClaudeReview">The newest not-cancelled Claude review item for this suggestion alone (not its group's).</param>
 /// <param name="SuggestedForClaude">Worth a Claude review by the settings (<see cref="ReviewQuery.IsSuggestedForClaude"/>); a UI hint only.</param>
+/// <param name="DocumentTypeLabel">The second label apply adds next to the topic label; null when none.</param>
+/// <param name="DocumentTypeIsNew">Gmail did not have <paramref name="DocumentTypeLabel"/> when it was suggested or edited.</param>
 public sealed record SuggestionDto(
     Guid Id,
     string MessageId,
@@ -65,13 +69,17 @@ public sealed record SuggestionDto(
     IReadOnlyList<string> CurrentLabels,
     LabelChange LabelChange,
     ExternalReviewDto? ClaudeReview = null,
-    bool SuggestedForClaude = false);
+    bool SuggestedForClaude = false,
+    string? DocumentTypeLabel = null,
+    bool DocumentTypeIsNew = false);
 
 public sealed record LabelDto(string Id, string Name, string Type);
 
-/// <summary>Every field but <paramref name="ReplaceLabels"/> is required.</summary>
+/// <summary>Every field but <paramref name="ReplaceLabels"/> and <paramref name="DocumentTypeLabel"/> is required.</summary>
 /// <param name="ReplaceLabels">Current labels of the message to replace; null leaves them unchanged.</param>
-public sealed record EditSuggestionRequest(string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, string[]? ReplaceLabels = null);
+/// <param name="DocumentTypeLabel">Null leaves it unchanged, <c>""</c> clears it (<see cref="DocumentTypeEdit"/>).</param>
+public sealed record EditSuggestionRequest(
+    string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, string[]? ReplaceLabels = null, string? DocumentTypeLabel = null);
 
 /// <param name="TopicLabel">Approve only: the outcome the card shows; only members with exactly this outcome are approved.</param>
 /// <param name="ReplaceLabels">Approve only, optional: each approved member keeps only its own replaced labels named here; none are added.</param>
@@ -129,11 +137,15 @@ public sealed record ActionBatchDto(
 /// <param name="Approvals">Approved or applied suggestions the user decided (pattern suggestions excluded).</param>
 /// <param name="Agreement">Share of <paramref name="Approvals"/> with this outcome, 0–1.</param>
 /// <param name="Remaining">Messages without a suggestion, not deleted in Gmail.</param>
+/// <param name="DocumentTypeLabel">The outcome's document-type label; outcomes that differ only in it are separate.</param>
 public sealed record SenderPatternDto(
-    string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, int Approvals, double Agreement, int Remaining);
+    string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, int Approvals, double Agreement, int Remaining,
+    string? DocumentTypeLabel = null);
 
 /// <summary>Each value overrides the pattern's; without a pattern the topic label is required and the flags default to false.</summary>
-public sealed record ApplyRestRequest(string? TopicLabel = null, bool? NeedsAction = null, bool? ToBeDeleted = null);
+/// <param name="DocumentTypeLabel">Null keeps the pattern's, <c>""</c> sets none (<see cref="DocumentTypeEdit"/>).</param>
+public sealed record ApplyRestRequest(
+    string? TopicLabel = null, bool? NeedsAction = null, bool? ToBeDeleted = null, string? DocumentTypeLabel = null);
 
 /// <summary>The criteria of the Gmail filter that matches the sender; the input of filter creation (M6).</summary>
 /// <param name="ListId">The List-Id all the sender's messages share, if any.</param>
