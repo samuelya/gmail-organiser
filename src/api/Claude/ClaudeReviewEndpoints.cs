@@ -35,15 +35,24 @@ public static class ClaudeReviewEndpoints
         return endpoints;
     }
 
-    /// <summary>Queues one item per target without an open item; 400 when empty, invalid or over the limit; 404 for an unknown run.</summary>
-    private static async Task<Results<Ok<CreateExternalReviewsResponse>, ValidationProblem, NotFound>> CreateAsync(
+    /// <summary>
+    /// Queues one item per target without an open item; 400 when empty, invalid or over the limit; 404 for an unknown
+    /// run, plan or finding; 409 for a plan that is not a draft, a finding that is not open, or either with an open item.
+    /// </summary>
+    private static async Task<Results<Ok<CreateExternalReviewsResponse>, ValidationProblem, NotFound, ProblemHttpResult>> CreateAsync(
         CreateExternalReviewsRequest request, ExternalReviewService reviews, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         var max = ExternalReviewService.MaxTargets;
-        if (request.SuggestionIds is not { Length: > 0 } && request.Groups is not { Length: > 0 } && request.RunId is null)
+        if (request.SuggestionIds is not { Length: > 0 } && request.Groups is not { Length: > 0 } && request.RunId is null
+            && request.LabelPlanId is null && request.FindingIds is not { Length: > 0 })
         {
-            errors["request"] = ["Pass suggestionIds, groups or runId."];
+            errors["request"] = ["Pass suggestionIds, groups, runId, labelPlanId or findingIds."];
+        }
+
+        if (request.FindingIds is { Length: > ExternalReviewService.MaxTargets })
+        {
+            errors["findingIds"] = [$"At most {max} ids."];
         }
 
         if (request.SuggestionIds is { Length: > ExternalReviewService.MaxTargets })
@@ -57,15 +66,17 @@ public static class ClaudeReviewEndpoints
             return TypedResults.ValidationProblem(errors);
         }
 
-        return await reviews.CreateAsync(request.SuggestionIds ?? [], groups, request.RunId, ct) switch
+        return await reviews.CreateAsync(request.SuggestionIds ?? [], groups, request.RunId, ct, request.LabelPlanId, request.FindingIds) switch
         {
             (CreateExternalReviewsResult.Ok, { } response) => TypedResults.Ok(response),
-            (CreateExternalReviewsResult.RunNotFound, _) => TypedResults.NotFound(),
+            (CreateExternalReviewsResult.RunNotFound or CreateExternalReviewsResult.TargetNotFound, _) => TypedResults.NotFound(),
+            (CreateExternalReviewsResult.TargetConflict, _) => Conflict(
+                "Not sendable", "The label plan is not a draft, a finding is not open, or one of them is already with Claude."),
             _ => TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
                 ["request"] = [request.RunId is null
-                    ? $"At most {max} suggestions and groups in total."
-                    : $"At most {max} suggestions and groups in total, counting the run's."],
+                    ? $"At most {max} targets in total."
+                    : $"At most {max} targets in total, counting the run's."],
             }),
         };
     }
@@ -101,7 +112,8 @@ public static class ClaudeReviewEndpoints
         {
             (ExternalReviewResult.Ok, { } item) => TypedResults.Ok(item),
             (ExternalReviewResult.NotFound, _) => TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Review item not found"),
-            (ExternalReviewResult.AlreadyDecided, _) => Conflict("Already decided", "The suggestions are no longer pending."),
+            (ExternalReviewResult.AlreadyDecided, _) => Conflict(
+                "Already decided", "The suggestions are no longer pending, the label plan is no longer a draft or the finding is no longer open."),
             (ExternalReviewResult.NeedsHuman, _) => Conflict("Needs a human", "Claude gave no verdict to accept; decide on the review page."),
             (ExternalReviewResult.NotApplicable, _) => Conflict(
                 "Not applicable", "No pending suggestion can take Claude's outcome (protected mail is never marked to-be-deleted, or the suggestions changed since the review); decide on the review page."),

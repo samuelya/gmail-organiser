@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Review;
@@ -140,5 +141,8 @@ public sealed class ExternalReviewQuery(AppDbContext db)
         SnakeCaseEnumConverter<ExternalReviewResolution>.ToDb(r.Resolution),
         r.CreatedAt,
         r.ReviewedAt,
-        r.ResolvedAt);
+        r.ResolvedAt,
+        r.LabelPlanId,
+        r.FilterFindingId,
+        r.AlternativeStructure is { } structure ? JsonSerializer.Deserialize<string[]>(structure) : null);
 }

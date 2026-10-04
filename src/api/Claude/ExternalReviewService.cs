@@ -17,7 +17,7 @@ namespace GmailOrganiser.Claude;
 /// indexes on open items keep a target to one open item; accepting holds the item's row lock while it decides. Every
 /// committed status or resolution change is published through <see cref="IExternalReviewNotifier"/>.
 /// </summary>
-public sealed class ExternalReviewService(
+public sealed partial class ExternalReviewService(
     AppDbContext db,
     ReviewService review,
     ReviewQuery reviewQuery,
@@ -40,11 +40,19 @@ public sealed class ExternalReviewService(
 
     /// <summary>
     /// One <c>Queued</c> item per target without an open item whose suggestions are pending; the rest count as
-    /// skipped. <paramref name="groups"/> must be normalised. Starts the reviewer when anything was queued.
+    /// skipped. <paramref name="groups"/> must be normalised. The label plan and findings are all-or-nothing (see
+    /// <see cref="RulesCandidatesAsync"/>). Starts the reviewer when anything was queued.
     /// </summary>
     public async Task<(CreateExternalReviewsResult Result, CreateExternalReviewsResponse? Response)> CreateAsync(
-        Guid[] suggestionIds, GroupRef[] groups, Guid? runId, CancellationToken ct)
+        Guid[] suggestionIds, GroupRef[] groups, Guid? runId, CancellationToken ct, Guid? labelPlanId = null, Guid[]? findingIds = null)
     {
+        var now = time.GetUtcNow();
+        var (rulesResult, rulesTargets) = await RulesCandidatesAsync(labelPlanId, findingIds ?? [], now, ct);
+        if (rulesResult != CreateExternalReviewsResult.Ok)
+        {
+            return (rulesResult, null);
+        }
+
         var ids = suggestionIds.Distinct().ToList();
         var groupTargets = groups.Select(g => (g.SenderAddress, g.GroupKey, RunId: (Guid?)null)).ToList();
         if (runId is { } run)
@@ -64,7 +72,7 @@ public sealed class ExternalReviewService(
         }
 
         groupTargets = [.. groupTargets.DistinctBy(g => (g.SenderAddress, g.GroupKey))];
-        if (ids.Count + groupTargets.Count > MaxTargets)
+        if (ids.Count + groupTargets.Count + rulesTargets.Count > MaxTargets)
         {
             return (CreateExternalReviewsResult.TooManyTargets, null);
         }
@@ -79,8 +87,7 @@ public sealed class ExternalReviewService(
                 .Select(s => new { s.SenderAddress, s.GroupKey }).Distinct().ToListAsync(ct))
             .Select(g => (g.SenderAddress, g.GroupKey!)).ToHashSet();
 
-        var now = time.GetUtcNow();
-        var candidates = new List<ExternalReviewRow>();
+        var candidates = new List<ExternalReviewRow>(rulesTargets);
         foreach (var id in ids)
         {
             if (suggestions.TryGetValue(id, out var s))
@@ -105,7 +112,7 @@ public sealed class ExternalReviewService(
             await starter.StartAsync(ct);
         }
 
-        var skipped = ids.Count + groupTargets.Count - created.Count;
+        var skipped = ids.Count + groupTargets.Count + rulesTargets.Count - created.Count;
         return (CreateExternalReviewsResult.Ok, new CreateExternalReviewsResponse(created.Count, skipped, items));
     }
 
@@ -134,7 +141,7 @@ public sealed class ExternalReviewService(
             return (ExternalReviewResult.NotFound, null);
         }
 
-        if (row.Status is (ExternalReviewStatus.Unavailable or ExternalReviewStatus.Cancelled) && !await PendingMembers(row).AnyAsync(ct))
+        if (row.Status is (ExternalReviewStatus.Unavailable or ExternalReviewStatus.Cancelled) && !await TargetOpenAsync(row.Id, ct))
         {
             return (ExternalReviewResult.AlreadyDecided, (await query.ToDtosAsync([row], ct))[0]);
         }
@@ -196,6 +203,12 @@ public sealed class ExternalReviewService(
     /// </summary>
     public async Task<(ReviewVerdictResult Result, string? Reason)> SubmitVerdictAsync(Guid id, ReviewVerdictInput verdict, CancellationToken ct)
     {
+        if (await db.ExternalReviews.Where(r => r.Id == id).Select(r => (ExternalReviewTarget?)r.TargetType).SingleOrDefaultAsync(ct)
+            is (ExternalReviewTarget.LabelPlan or ExternalReviewTarget.FilterFinding) and var target)
+        {
+            return await SubmitRulesVerdictAsync(id, target, verdict, ct);
+        }
+
         var parent = verdict is { Verdict: ReviewVerdict.Alternative, DocumentTypeLabel: not null }
             ? (await settings.GetAsync(ct)).DocumentTypeParent
             : null;
@@ -217,13 +230,8 @@ public sealed class ExternalReviewService(
                 return (ReviewVerdictResult.Closed, null);
         }
 
-        if (!await PendingMembers(row).AnyAsync(ct))
+        if (await CloseIfDecidedAsync(row, tx, ct))
         {
-            // The user decided meanwhile: nobody waits for this verdict, so the item is closed rather than left open.
-            row.Status = ExternalReviewStatus.Cancelled;
-            await db.SaveChangesAsync(ct);
-            await tx.CommitAsync(ct);
-            await NotifyAsync(await query.ToDtosAsync([row], ct), ct);
             return (ReviewVerdictResult.AlreadyDecided, null);
         }
 
@@ -258,9 +266,7 @@ public sealed class ExternalReviewService(
     {
         var now = time.GetUtcNow();
         var queued = db.ExternalReviews.Where(r => ids.Contains(r.Id) && r.Status == ExternalReviewStatus.Queued);
-        var changed = await queued.Where(r => db.Suggestions.Any(s => s.Status == SuggestionStatus.Pending
-                && (r.TargetType == ExternalReviewTarget.Suggestion ? s.Id == r.SuggestionId
-                    : s.SenderAddress == r.SenderAddress && s.GroupKey == r.GroupKey)))
+        var changed = await queued.Where(TargetOpen(db))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.Status, ExternalReviewStatus.Running)
                 .SetProperty(r => r.BatchId, batchId).SetProperty(r => r.StartedAt, now), ct);
@@ -318,6 +324,12 @@ public sealed class ExternalReviewService(
         if (row.Verdict == ReviewVerdict.NeedsHuman)
         {
             return ExternalReviewResult.NeedsHuman;
+        }
+
+        if (row.TargetType is ExternalReviewTarget.LabelPlan or ExternalReviewTarget.FilterFinding)
+        {
+            // Accepting records the user's agreement only; the user applies the plan or a fix on the Rules page.
+            return await TargetOpenAsync(row.Id, ct) ? ExternalReviewResult.Ok : ExternalReviewResult.AlreadyDecided;
         }
 
         var alternative = row.Verdict == ReviewVerdict.Alternative;
@@ -422,11 +434,6 @@ public sealed class ExternalReviewService(
         return changed;
     }
 
-    private IQueryable<SuggestionRow> PendingMembers(ExternalReviewRow row) =>
-        db.Suggestions.Where(s => s.Status == SuggestionStatus.Pending && (row.TargetType == ExternalReviewTarget.Suggestion
-            ? s.Id == row.SuggestionId
-            : s.SenderAddress == row.SenderAddress && s.GroupKey == row.GroupKey));
-
     /// <summary>
     /// Inserts the rows, skipping any whose target already has an open item (the partial unique indexes, so concurrent
     /// creates never give a target two); returns the rows inserted.
@@ -444,14 +451,18 @@ public sealed class ExternalReviewService(
         var senders = rows.ConvertAll(r => r.SenderAddress).ToArray();
         var keys = rows.ConvertAll(r => r.GroupKey).ToArray();
         var runIds = rows.ConvertAll(r => r.RunId).ToArray();
+        var planIds = rows.ConvertAll(r => r.LabelPlanId).ToArray();
+        var findingIds = rows.ConvertAll(r => r.FilterFindingId).ToArray();
         var status = SnakeCaseEnumConverter<ExternalReviewStatus>.ToDb(ExternalReviewStatus.Queued);
         var resolution = SnakeCaseEnumConverter<ExternalReviewResolution>.ToDb(ExternalReviewResolution.None);
         var createdAt = rows[0].CreatedAt;
         await db.Database.ExecuteSqlAsync($"""
-            INSERT INTO external_reviews (id, target_type, suggestion_id, sender_address, group_key, run_id, status, resolution, created_at)
-            SELECT t.id, t.target_type, t.suggestion_id, t.sender_address, t.group_key, t.run_id, {status}, {resolution}, {createdAt}
-            FROM unnest({ids}, {types}, {suggestionIds}, {senders}, {keys}, {runIds})
-                AS t(id, target_type, suggestion_id, sender_address, group_key, run_id)
+            INSERT INTO external_reviews
+                (id, target_type, suggestion_id, sender_address, group_key, run_id, label_plan_id, filter_finding_id, status, resolution, created_at)
+            SELECT t.id, t.target_type, t.suggestion_id, t.sender_address, t.group_key, t.run_id, t.label_plan_id, t.filter_finding_id,
+                {status}, {resolution}, {createdAt}
+            FROM unnest({ids}, {types}, {suggestionIds}, {senders}, {keys}, {runIds}, {planIds}, {findingIds})
+                AS t(id, target_type, suggestion_id, sender_address, group_key, run_id, label_plan_id, filter_finding_id)
             ON CONFLICT DO NOTHING
             """, ct);
         var inserted = (await db.ExternalReviews.AsNoTracking().Where(r => ids.Contains(r.Id)).Select(r => r.Id).ToListAsync(ct)).ToHashSet();
@@ -462,7 +473,8 @@ public sealed class ExternalReviewService(
         (ex as PostgresException ?? ex.InnerException as PostgresException) is
         {
             SqlState: PostgresErrorCodes.UniqueViolation,
-            ConstraintName: ExternalReviewRow.OpenSuggestionIndex or ExternalReviewRow.OpenGroupIndex,
+            ConstraintName: ExternalReviewRow.OpenSuggestionIndex or ExternalReviewRow.OpenGroupIndex
+                or ExternalReviewRow.OpenLabelPlanIndex or ExternalReviewRow.OpenFilterFindingIndex,
         };
 
     private static ExternalReviewRow New(

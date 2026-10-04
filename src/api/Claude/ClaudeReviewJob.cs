@@ -45,7 +45,7 @@ public sealed class ClaudeReviewJob(
 
     /// <summary>The review tools, as Claude Code names MCP tools; nothing else (no Bash, Read, Write or web tools).</summary>
     public static readonly IReadOnlyList<string> AllowedTools =
-        [.. new[] { "list_pending_reviews", "get_review_item", "get_label_tree", "submit_review" }
+        [.. new[] { "list_pending_reviews", "get_review_item", "get_label_tree", "submit_review", "get_filters", "get_label_plan", "submit_taxonomy_feedback" }
             .Select(t => $"mcp__{McpExtensions.ServerName}__{t}")];
 
     public string Type => JobType;
