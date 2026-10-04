@@ -228,4 +228,62 @@ describe('AppsScriptSettingsSection', () => {
     expect(writeText).toHaveBeenCalledWith('const CONFIG = {};');
     expect(open).toHaveBeenCalledWith('Copied', undefined, expect.anything());
   });
+  it('disables Copy from an edit until the saved config has reloaded', async () => {
+    await render();
+    const copy = () => q<HTMLButtonElement>('copy-config')!;
+    q('dry-run')!.querySelector('button')!.click();
+    await fixture.whenStable();
+    expect(copy().disabled).toBe(true);
+    expect(q('config-stale')).not.toBeNull();
+
+    await settle();
+    http.expectOne(isPut).flush({ appsScript: block({ dryRun: false }) });
+    await fixture.whenStable();
+    expect(copy().disabled).toBe(true);
+
+    http.expectOne(isConfig).flush(config('const CONFIG = { dryRun: false };'));
+    await fixture.whenStable();
+    expect(copy().disabled).toBe(false);
+    expect(q('config-stale')).toBeNull();
+  });
+
+  it('keeps Copy disabled when the save is refused', async () => {
+    await render();
+    await type('rule-days', '45');
+    await settle();
+    http.expectOne(isPut).flush({ title: 'Invalid' }, { status: 400, statusText: 'Bad Request' });
+    await fixture.whenStable();
+    expect(q<HTMLButtonElement>('copy-config')!.disabled).toBe(true);
+  });
+
+  it('keeps Copy disabled for an edit made while the save is in flight', async () => {
+    await render();
+    await type('rule-days', '45');
+    await settle();
+    const first = http.expectOne(isPut);
+    await type('rule-days', '46');
+    first.flush({});
+    await fixture.whenStable();
+    http.expectOne(isConfig).flush(config('const CONFIG = { days: 45 };'));
+    await fixture.whenStable();
+    expect(q<HTMLButtonElement>('copy-config')!.disabled).toBe(true);
+
+    await settle();
+    http.expectOne(isPut).flush({});
+    await fixture.whenStable();
+    http.expectOne(isConfig).flush(config('const CONFIG = { days: 46 };'));
+    await fixture.whenStable();
+    expect(q<HTMLButtonElement>('copy-config')!.disabled).toBe(false);
+  });
+
+  it('cancels an older config load when a newer one starts', async () => {
+    await render();
+    fixture.componentInstance.loadConfig();
+    const older = http.expectOne(isConfig);
+    fixture.componentInstance.loadConfig();
+    expect(older.cancelled).toBe(true);
+    http.expectOne(isConfig).flush(config('const CONFIG = { newer: true };'));
+    await fixture.whenStable();
+    expect(q('config-block')!.textContent).toBe('const CONFIG = { newer: true };');
+  });
 });

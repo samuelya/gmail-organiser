@@ -3,6 +3,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   inject,
   OnInit,
@@ -26,7 +27,18 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { catchError, concatMap, debounceTime, defer, filter, map, of, Subject } from 'rxjs';
+import {
+  catchError,
+  concatMap,
+  debounceTime,
+  defer,
+  filter,
+  map,
+  of,
+  Subject,
+  switchMap,
+  tap,
+} from 'rxjs';
 import { repoDocUrl } from '../core/repo-links';
 import { LabelTreePicker } from '../review/label-tree-picker.component';
 import { LabelDto } from '../review/labels.models';
@@ -142,21 +154,54 @@ export class AppsScriptSettingsSection implements OnInit {
 
   readonly config = signal<AppsScriptConfigDto | null>(null);
   readonly configFailed = signal(false);
+  /** Counts edits to the block; the config shown was generated from edit `configEdit()`. */
+  private readonly edit = signal(0);
+  private readonly configEdit = signal(0);
+  /** The last edit the API accepted; a config load generates from it. */
+  private savedEdit = 0;
+  /**
+   * The config shown predates an edit on screen: a save is pending or failed, or the reload is
+   * in flight. Copy waits, so the clipboard never gets an old block (e.g. `dryRun: false`).
+   */
+  readonly configStale = computed(() => this.configEdit() !== this.edit());
 
   private readonly edits = new Subject<void>();
+  private readonly configLoads = new Subject<number>();
 
   constructor() {
     this.form.disable();
     this.form.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => this.edits.next());
     this.edits
       .pipe(
+        tap(() => this.edit.update((n) => n + 1)),
         debounceTime(APPS_SCRIPT_SAVE_DEBOUNCE_MS),
         filter(() => this.loaded() && this.form.valid),
         // The block as it is when the save starts: a queued save sends the latest edits.
-        concatMap(() => defer(() => this.save(this.value()))),
+        concatMap(() => defer(() => this.save(this.value(), this.edit()))),
         takeUntilDestroyed(),
       )
       .subscribe();
+    // A newer load cancels an older one, so a slow response can't overwrite a newer config.
+    this.configLoads
+      .pipe(
+        tap(() => this.configFailed.set(false)),
+        switchMap((edit) =>
+          this.settingsApi.appsScriptConfig().pipe(
+            map((config) => ({ config, edit })),
+            // The error interceptor shows why; the block offers a retry.
+            catchError(() => {
+              this.configFailed.set(true);
+              return of(null);
+            }),
+          ),
+        ),
+        takeUntilDestroyed(),
+      )
+      .subscribe((loaded) => {
+        if (!loaded) return;
+        this.config.set(loaded.config);
+        this.configEdit.set(loaded.edit);
+      });
   }
 
   ngOnInit(): void {
@@ -229,7 +274,7 @@ export class AppsScriptSettingsSection implements OnInit {
 
   copy(): void {
     const text = this.config()?.config;
-    if (!text) return;
+    if (!text || this.configStale()) return;
     navigator.clipboard.writeText(text).then(
       () => this.snackBar.open('Copied', undefined, { duration: 3000 }),
       () =>
@@ -240,15 +285,7 @@ export class AppsScriptSettingsSection implements OnInit {
   }
 
   loadConfig(): void {
-    this.configFailed.set(false);
-    this.settingsApi
-      .appsScriptConfig()
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      // The error interceptor shows why; the block offers a retry.
-      .subscribe({
-        next: (config) => this.config.set(config),
-        error: () => this.configFailed.set(true),
-      });
+    this.configLoads.next(this.savedEdit);
   }
 
   private loadLabels(): void {
@@ -262,11 +299,12 @@ export class AppsScriptSettingsSection implements OnInit {
       });
   }
 
-  private save(appsScript: AppsScriptSettings) {
+  private save(appsScript: AppsScriptSettings, edit: number) {
     this.saving.update((n) => n + 1);
     return this.settingsApi.saveAppsScript({ appsScript }).pipe(
       map(() => {
         this.saving.update((n) => n - 1);
+        this.savedEdit = edit;
         this.serverErrors.set([]);
         this.snackBar.open('Apps Script settings saved', undefined, { duration: 3000 });
         this.loadConfig();

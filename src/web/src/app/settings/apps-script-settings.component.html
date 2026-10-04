@@ -216,7 +216,7 @@
         mat-stroked-button
         type="button"
         (click)="copy()"
-        [disabled]="!config()"
+        [disabled]="!config() || configStale()"
         data-testid="copy-config"
       >
         <mat-icon aria-hidden="true">content_copy</mat-icon>
@@ -228,6 +228,11 @@
       run on.
       <a [href]="guideUrl" target="_blank" rel="noopener" data-testid="guide-link">Install guide</a>
     </p>
+    @if (config() && configStale()) {
+      <p class="help" role="status" data-testid="config-stale">
+        Out of date until your changes are saved.
+      </p>
+    }
     @if (config(); as generated) {
       <pre
         class="config m-0 max-h-80 overflow-auto rounded p-3"
