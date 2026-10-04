@@ -25,6 +25,10 @@ cp .env.example .env            # optional: edit ports, Google client ID/secret,
 docker compose up -d --build
 ```
 
+In Rider, the shared run configurations `docker-publish` (build and start the stack) and `docker-stop-app` (stop
+`api` and `web`, keeping `db` for IDE runs) do the same. Stop the IDE-run API before `docker-publish`: only one API
+may use the database.
+
 If you change `WEB_PORT`, set `APP_BASE_URL` to the same port too (e.g. `http://localhost:5280`): the Google
 redirect URI is built from `APP_BASE_URL`, and a mismatch makes Google reject sign-in with `redirect_uri_mismatch`.
 
