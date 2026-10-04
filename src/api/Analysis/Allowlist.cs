@@ -28,18 +28,34 @@ public sealed record Allowlist(IReadOnlySet<string> Addresses, IReadOnlyList<str
     /// <summary>
     /// Whether <paramref name="domain"/> equals one of <paramref name="domains"/> or is a subdomain of one. Entries are
     /// stored in punycode, so a Unicode domain (SMTPUTF8 mail, #288) is compared in its <see cref="AsciiDomain"/> form.
+    /// A domain <see cref="IdnMapping"/> rejects (e.g. an emoji label) is also compared with the entries'
+    /// <see cref="SqlForms"/>, so C# protects whatever the clean-up SQL protects.
     /// </summary>
     public static bool CoversDomain(IReadOnlyList<string> domains, string domain)
     {
-        domain = AsciiDomain(domain);
-        return domain.Length > 0 && domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal));
+        if (domain.Length == 0)
+        {
+            return false;
+        }
+
+        if (TryAsciiDomain(domain) is { } ascii)
+        {
+            return Matches(domains, ascii);
+        }
+
+        return Matches(domains, domain) || Matches(SqlForms(domains), domain);
     }
+
+    private static bool Matches(IEnumerable<string> domains, string domain) =>
+        domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal));
 
     /// <summary>
     /// <paramref name="domain"/> in the form allowlisted domains are stored in: an IDN in lower-case punycode. An ASCII
     /// domain, or one <see cref="IdnMapping"/> rejects, is returned as it is.
     /// </summary>
-    public static string AsciiDomain(string domain)
+    public static string AsciiDomain(string domain) => TryAsciiDomain(domain) ?? domain;
+
+    private static string? TryAsciiDomain(string domain)
     {
         if (Ascii.IsValid(domain))
         {
@@ -52,7 +68,7 @@ public sealed record Allowlist(IReadOnlySet<string> Addresses, IReadOnlyList<str
         }
         catch (ArgumentException)
         {
-            return domain;
+            return null;
         }
     }
 
