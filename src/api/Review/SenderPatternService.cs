@@ -16,6 +16,9 @@ public enum ApplyRestStatus
     /// <summary>No approved pattern and no topic label given, or the pattern's label is one Gmail would refuse.</summary>
     NoPattern,
 
+    /// <summary>The requested document-type label is the topic label applied.</summary>
+    DocumentTypeIsTopic,
+
     /// <summary>Another writer (an analysis run) created a suggestion for one of the messages meanwhile.</summary>
     Conflict,
 }
@@ -25,8 +28,14 @@ public enum ApplyRestStatus
 /// remaining messages without the LLM through the <see cref="ApplyActionsJob"/>. Pattern suggestions are excluded from
 /// the pattern itself, so it only ever reflects the user's own approvals.
 /// </summary>
-public sealed class SenderPatternService(
-    AppDbContext db, ApplyService apply, SenderStatsUpdater stats, ISettingsStore settingsStore, TimeProvider time)
+public sealed partial class SenderPatternService(
+    AppDbContext db,
+    ApplyService apply,
+    SenderStatsUpdater stats,
+    ISettingsStore settingsStore,
+    LabelCatalog labels,
+    TimeProvider time,
+    ILogger<SenderPatternService> logger)
 {
     public const string Reason = "Applied the approved pattern of this sender";
 
@@ -77,11 +86,13 @@ public sealed class SenderPatternService(
 
     /// <summary>
     /// Creates an approved suggestion for every remaining message of <paramref name="address"/> (each request value
-    /// overrides the pattern's), one decision and the apply batch, in one transaction. The request's document-type label
-    /// is <see cref="DocumentTypeEdit.Validate"/>d; the pattern's is applied as approved, whatever the parent is now.
+    /// overrides the pattern's), one decision and the apply batch, in one transaction. <paramref name="documentType"/>
+    /// is <see cref="DocumentTypeEdit.Validate"/>d (unchanged keeps the pattern's, applied as approved whatever the parent
+    /// is now) and stored in Gmail's spelling. A requested type equal to the topic label applied is
+    /// <see cref="ApplyRestStatus.DocumentTypeIsTopic"/>; the pattern's is dropped with a warning instead.
     /// </summary>
     public async Task<(ApplyRestStatus Status, ApplyRestResponse? Response)> ApplyRestAsync(
-        string address, ApplyRestRequest request, CancellationToken ct)
+        string address, ApplyRestRequest request, DocumentTypeChange documentType, CancellationToken ct)
     {
         var outcomes = (await OutcomesAsync([address], ct)).GetValueOrDefault(address) ?? [];
         var top = outcomes.FirstOrDefault();
@@ -93,11 +104,27 @@ public sealed class SenderPatternService(
 
         var needsAction = request.NeedsAction ?? top?.NeedsAction ?? false;
         var toBeDeleted = request.ToBeDeleted ?? top?.ToBeDeleted ?? false;
-        var type = request.DocumentTypeLabel is { } requested ? (requested.Length == 0 ? null : requested) : top?.DocumentTypeLabel;
+        var type = documentType.IsSet ? documentType.Label : top?.DocumentTypeLabel;
+        if (DocumentTypeEdit.IsTopic(type, label))
+        {
+            if (documentType.IsSet)
+            {
+                return (ApplyRestStatus.DocumentTypeIsTopic, null);
+            }
+
+            LogPatternDocumentTypeDropped(logger);
+            type = null;
+        }
+
+        var (resolved, typeIsNew) = await DocumentTypeEdit.ResolveAsync(
+            labels, type is null ? DocumentTypeChange.Clear : DocumentTypeChange.To(type), ct);
+        type = resolved.Label;
         var approvals = outcomes.Sum(o => o.Count);
         var agreeing = outcomes
-            .Where(o => o.TopicLabel == label && o.NeedsAction == needsAction && o.ToBeDeleted == toBeDeleted && o.DocumentTypeLabel == type)
-            .Sum(o => o.Count);
+            .Where(o => o.TopicLabel == label && o.NeedsAction == needsAction && o.ToBeDeleted == toBeDeleted)
+            .SelectMany(o => o.Types)
+            .Where(t => t.Label == type)
+            .Sum(t => t.Count);
         var agreement = approvals == 0 ? 0 : (double)agreeing / approvals;
         var edited = top is not null && (top.TopicLabel != label || top.NeedsAction != needsAction || top.ToBeDeleted != toBeDeleted
             || top.DocumentTypeLabel != type);
@@ -139,6 +166,7 @@ public sealed class SenderPatternService(
                 Source = SuggestionSource.SenderPattern,
                 TopicLabel = label,
                 DocumentTypeLabel = type,
+                DocumentTypeIsNew = type is not null && typeIsNew != false,
                 NeedsAction = needsAction,
                 ToBeDeleted = toBeDeleted && !isProtected,
 
@@ -193,7 +221,10 @@ public sealed class SenderPatternService(
             && m.AnalysisStatus == AnalysisStatus.NotAnalysed
             && !db.Suggestions.Any(s => s.MessageId == m.Id));
 
-    /// <summary>Each sender's approved outcomes, most common first, ties to the latest decision.</summary>
+    /// <summary>
+    /// Each sender's approved outcomes by topic and flags, most common first, ties to the latest decision; each with its
+    /// document types counted the same way, so the type never changes which outcome is on top.
+    /// </summary>
     private async Task<Dictionary<string, List<Outcome>>> OutcomesAsync(IReadOnlyCollection<string> addresses, CancellationToken ct)
     {
         var rows = await db.Suggestions
@@ -214,11 +245,20 @@ public sealed class SenderPatternService(
             .ToListAsync(ct);
         return rows.GroupBy(r => r.SenderAddress, StringComparer.Ordinal).ToDictionary(
             g => g.Key,
-            g => g.OrderByDescending(o => o.Count)
+            g => g.GroupBy(r => (r.TopicLabel, r.NeedsAction, r.ToBeDeleted))
+                .Select(o => new Outcome(
+                    o.Key.TopicLabel,
+                    o.Key.NeedsAction,
+                    o.Key.ToBeDeleted,
+                    o.Sum(r => r.Count),
+                    o.Max(r => r.Last),
+                    [.. o.OrderByDescending(r => r.Count)
+                        .ThenByDescending(r => r.Last)
+                        .ThenBy(r => r.DocumentTypeLabel, StringComparer.Ordinal)
+                        .Select(r => new TypeCount(r.DocumentTypeLabel, r.Count))]))
+                .OrderByDescending(o => o.Count)
                 .ThenByDescending(o => o.Last)
                 .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
-                .ThenBy(o => o.DocumentTypeLabel, StringComparer.Ordinal)
-                .Select(o => new Outcome(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.DocumentTypeLabel, o.Count))
                 .ToList(),
             StringComparer.Ordinal);
     }
@@ -226,5 +266,15 @@ public sealed class SenderPatternService(
     private static bool IsSuggestionConflict(DbUpdateException ex) =>
         ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, TableName: "suggestions" };
 
-    private sealed record Outcome(string TopicLabel, bool NeedsAction, bool ToBeDeleted, string? DocumentTypeLabel, int Count);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Apply rest: the pattern's document-type label is the topic label applied; it is dropped.")]
+    private static partial void LogPatternDocumentTypeDropped(ILogger logger);
+
+    /// <param name="Types">The document types of the outcome's approvals, most common first; never empty.</param>
+    private sealed record Outcome(
+        string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count, DateTimeOffset? Last, IReadOnlyList<TypeCount> Types)
+    {
+        public string? DocumentTypeLabel => Types[0].Label;
+    }
+
+    private sealed record TypeCount(string? Label, int Count);
 }

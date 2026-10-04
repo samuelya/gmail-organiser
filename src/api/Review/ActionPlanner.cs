@@ -24,8 +24,8 @@ public static class ActionPlanner
         [MessageProtection.StarredLabel, MessageProtection.ImportantLabel, "UNREAD"], StringComparer.Ordinal);
 
     /// <param name="labelIds">Label path to Gmail label id (case-insensitive): the topic label, the document-type label
-    /// when it is a valid path (an invalid one is skipped), the action label when the suggestion needs action and the
-    /// delete label when it is deletable and not protected.</param>
+    /// when <see cref="AppliesDocumentType"/> (otherwise it is skipped), the action label when the suggestion needs
+    /// action and the delete label when it is deletable and not protected.</param>
     /// <param name="removable">Ids of the personal labels Gmail has now; a replaced label not in it (deleted, or now
     /// the action or delete label) is skipped. Null removes no replaced label.</param>
     /// <exception cref="KeyNotFoundException">A label the plan needs is missing from <paramref name="labelIds"/>.</exception>
@@ -39,7 +39,7 @@ public static class ActionPlanner
     {
         var protectedReason = MessageProtection.Reason(message, allowlist, settings.Protection);
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
-        if (suggestion.DocumentTypeLabel is { } type && LabelResolver.IsValid(type))
+        if (suggestion.DocumentTypeLabel is { } type && AppliesDocumentType(type, settings))
         {
             add.Add(labelIds[type]);
         }
@@ -79,4 +79,13 @@ public static class ActionPlanner
             [.. remove.Distinct(StringComparer.Ordinal).Where(id => current.Contains(id) && !Untouched.Contains(id))],
             note);
     }
+
+    /// <summary>
+    /// Whether a stored document-type label is applied: a path Gmail accepts that is not the current action or delete
+    /// label. It was approved under the parent of its time, and settings only keep those two apart from the current one.
+    /// </summary>
+    public static bool AppliesDocumentType(string type, AppSettings settings) =>
+        LabelResolver.IsValid(type)
+        && !string.Equals(type, settings.ActionLabelName.Trim(), StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(type, settings.DeleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase);
 }

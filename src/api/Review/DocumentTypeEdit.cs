@@ -2,68 +2,103 @@ using GmailOrganiser.Analysis;
 
 namespace GmailOrganiser.Review;
 
+/// <summary>A change to a suggestion's document-type label: <see cref="Unchanged"/>, cleared, or set to <see cref="Label"/>.</summary>
+public readonly record struct DocumentTypeChange(bool IsSet, string? Label)
+{
+    public static readonly DocumentTypeChange Unchanged = default;
+    public static readonly DocumentTypeChange Clear = new(true, null);
+
+    public static DocumentTypeChange To(string label) => new(true, label);
+}
+
 /// <summary>
-/// The document-type label a user sets in review (edit, apply to rest of sender): <c>null</c> leaves it unchanged,
-/// <c>""</c> clears it, any other value must sit exactly one level under the document-type parent (DESIGN §6.3).
+/// The document-type label a user sets in review (edit, apply to rest of sender): on the wire <c>null</c> leaves it
+/// unchanged, <c>""</c> clears it, any other value follows <see cref="DocumentTypePath"/> (DESIGN §6.3).
 /// </summary>
 public static class DocumentTypeEdit
 {
     public const string Field = "documentTypeLabel";
     public const string OffMessage = "Document-type labels are off.";
+    public const string SameAsTopicMessage = "Must differ from the topic label.";
 
     /// <summary>
-    /// The requested value for <see cref="Apply"/>: null (unchanged), <c>""</c> (clear, also for blank) or the label
-    /// with the parent as configured. Adds a <see cref="Field"/> error to <paramref name="errors"/> when the parent is
-    /// off, the path is not one Gmail accepts, it is not exactly one level under the parent, or it is the topic label.
+    /// The requested change: null is <see cref="DocumentTypeChange.Unchanged"/>, blank clears, anything else is the
+    /// label with the parent as configured. Adds a <see cref="Field"/> error to <paramref name="errors"/> when the parent
+    /// is off or <see cref="DocumentTypePath.Normalise"/> refuses the value.
     /// </summary>
-    public static string? Validate(string? requested, string? parent, string? topicLabel, Dictionary<string, string[]> errors)
+    public static DocumentTypeChange Validate(string? requested, string? parent, string? topicLabel, Dictionary<string, string[]> errors)
     {
         if (requested is null)
         {
-            return null;
+            return DocumentTypeChange.Unchanged;
         }
 
         var value = requested.Trim();
         if (value.Length == 0)
         {
-            return "";
+            return DocumentTypeChange.Clear;
         }
 
-        var prefix = parent + "/";
-        string? error = parent is null ? OffMessage
-            : !LabelResolver.IsValid(value) ? "Not a label path Gmail accepts."
-            : !value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || value.AsSpan(prefix.Length).Contains('/')
-                ? $"Must be exactly one level under '{parent}'."
-            : string.Equals(value, topicLabel?.Trim(), StringComparison.OrdinalIgnoreCase) ? "Must differ from the topic label."
-            : null;
-        if (error is not null)
+        if (parent is null)
         {
-            errors[Field] = [error];
-            return null;
+            errors[Field] = [OffMessage];
+            return DocumentTypeChange.Unchanged;
         }
 
-        return prefix + value[prefix.Length..];
+        if (DocumentTypePath.Normalise(value, parent, topicLabel, out var error) is { } label)
+        {
+            return DocumentTypeChange.To(label);
+        }
+
+        errors[Field] = [error switch
+        {
+            DocumentTypePathError.InvalidPath => "Not a label path Gmail accepts.",
+            DocumentTypePathError.NotOneLevel => $"Must be exactly one level under '{parent}'.",
+            _ => SameAsTopicMessage,
+        }];
+        return DocumentTypeChange.Unchanged;
     }
 
     /// <summary>
-    /// Sets <paramref name="requested"/> (<see cref="Validate"/>d) on the suggestion; true when the label changed.
-    /// <paramref name="isNew"/> is whether Gmail lacks it, null when unknown (a changed label then counts as new).
+    /// <paramref name="change"/> with the label in Gmail's spelling when Gmail has it (as analysis stores it, so group
+    /// and sender-pattern matching agree), and whether Gmail lacks it: null when unknown (no connection) or not set.
     /// </summary>
-    public static bool Apply(SuggestionRow s, string? requested, bool? isNew)
+    public static async Task<(DocumentTypeChange Change, bool? IsNew)> ResolveAsync(
+        LabelCatalog labels, DocumentTypeChange change, CancellationToken ct)
     {
-        if (requested is null)
+        if (change.Label is not { } label)
         {
-            return false;
+            return (change, null);
         }
 
-        var type = requested.Length == 0 ? null : requested;
-        if (string.Equals(s.DocumentTypeLabel, type, StringComparison.Ordinal))
+        try
         {
-            return false;
+            return await labels.FindByNameAsync(label, ct) is { } found
+                ? (DocumentTypeChange.To(found.Name.Trim()), false)
+                : (change, true);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return (change, null);
+        }
+    }
+
+    /// <summary>Whether <paramref name="type"/> is the topic label (case-insensitive), which a document type must not be.</summary>
+    public static bool IsTopic(string? type, string topicLabel) =>
+        type is not null && string.Equals(type.Trim(), topicLabel.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Sets <paramref name="change"/> (<see cref="Validate"/>d) on the suggestion. <paramref name="isNew"/> is whether
+    /// Gmail lacks it, null when unknown (a changed label then counts as new).
+    /// </summary>
+    public static void Apply(SuggestionRow s, DocumentTypeChange change, bool? isNew)
+    {
+        if (!change.IsSet || string.Equals(s.DocumentTypeLabel, change.Label, StringComparison.Ordinal))
+        {
+            return;
         }
 
-        s.DocumentTypeIsNew = type is not null && (isNew ?? true);
-        s.DocumentTypeLabel = type;
-        return true;
+        s.DocumentTypeIsNew = change.Label is not null && (isNew ?? true);
+        s.DocumentTypeLabel = change.Label;
     }
 }

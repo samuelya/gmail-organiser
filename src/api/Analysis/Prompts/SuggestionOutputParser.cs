@@ -276,8 +276,8 @@ public static class SuggestionOutputParser
     }
 
     /// <summary>
-    /// The optional <c>documentTypeLabel</c>: exactly one segment directly under <paramref name="parent"/>
-    /// (case-insensitive, returned with the parent as configured), not the topic label. Absent, null or blank is null, as
+    /// The optional <c>documentTypeLabel</c> by <see cref="DocumentTypePath"/>: exactly one segment directly under
+    /// <paramref name="parent"/> (case-insensitive, returned with the parent as configured), not the topic label. Absent, null or blank is null, as
     /// is anything with the parent off; any other value is dropped with a note in <paramref name="dropped"/> and the
     /// email's suggestion stays valid.
     /// </summary>
@@ -299,23 +299,12 @@ public static class SuggestionOutputParser
             return null;
         }
 
-        if (!LabelPath.IsValid(value))
+        return DocumentTypePath.Normalise(value, parent, topicLabel, out var error) ?? Ignored(error switch
         {
-            return Ignored("not a valid label path");
-        }
-
-        var prefix = parent + "/";
-        if (!value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || value.AsSpan(prefix.Length).Contains('/'))
-        {
-            return Ignored("not one level below the document-type parent");
-        }
-
-        if (string.Equals(value, topicLabel, StringComparison.OrdinalIgnoreCase))
-        {
-            return Ignored("same as topicLabel");
-        }
-
-        return prefix + value[prefix.Length..];
+            DocumentTypePathError.InvalidPath => "not a valid label path",
+            DocumentTypePathError.NotOneLevel => "not one level below the document-type parent",
+            _ => "same as topicLabel",
+        });
 
         string? Ignored(string reason)
         {

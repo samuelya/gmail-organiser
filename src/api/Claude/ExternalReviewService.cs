@@ -367,7 +367,10 @@ public sealed class ExternalReviewService(
             : null;
 
         // Claude never sees the replaced labels: an alternative removes none, an agree keeps them as shown.
-        var edit = alternative ? outcome! with { ReplaceLabels = [] } : null;
+        // It keeps each member's document type (dropped where it is the new topic label).
+        var edit = alternative
+            ? new GroupEdit(outcome!.TopicLabel, outcome.NeedsAction, outcome.ToBeDeleted, [], DocumentTypeChange.Unchanged)
+            : null;
         GroupDecisionResponse response;
         if (row.TargetType == ExternalReviewTarget.Suggestion)
         {

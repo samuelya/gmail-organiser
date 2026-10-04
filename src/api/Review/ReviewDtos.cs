@@ -137,7 +137,10 @@ public sealed record ActionBatchDto(
 /// <param name="Approvals">Approved or applied suggestions the user decided (pattern suggestions excluded).</param>
 /// <param name="Agreement">Share of <paramref name="Approvals"/> with this outcome, 0–1.</param>
 /// <param name="Remaining">Messages without a suggestion, not deleted in Gmail.</param>
-/// <param name="DocumentTypeLabel">The outcome's document-type label; outcomes that differ only in it are separate.</param>
+/// <param name="DocumentTypeLabel">
+/// The most common document-type label among the outcome's approvals; outcomes are by topic and flags only, so the type
+/// never changes the top outcome or <paramref name="Agreement"/> (filter proposals use them).
+/// </param>
 public sealed record SenderPatternDto(
     string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, int Approvals, double Agreement, int Remaining,
     string? DocumentTypeLabel = null);
