@@ -1,0 +1,62 @@
+<form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-2" novalidate>
+  <mat-form-field subscriptSizing="dynamic">
+    <mat-label>Action label</mat-label>
+    <input
+      matInput
+      formControlName="actionLabelName"
+      autocomplete="off"
+      data-testid="action-label-name"
+    />
+    @if (actionLabelName.hasError('required')) {
+      <mat-error>The action label is required.</mat-error>
+    } @else if (actionLabelName.hasError('maxlength')) {
+      <mat-error>Must be at most {{ maxLength }} characters.</mat-error>
+    } @else if (actionLabelName.hasError('labelPath')) {
+      <mat-error>Use '/' only between parts; no part may be blank.</mat-error>
+    } @else if (actionLabelName.hasError('server')) {
+      <mat-error>{{ actionLabelName.getError('server') }}</mat-error>
+    }
+    <mat-hint>Mail that needs you to act gets this label.</mat-hint>
+  </mat-form-field>
+
+  <mat-form-field subscriptSizing="dynamic">
+    <mat-label>Delete label</mat-label>
+    <input
+      matInput
+      formControlName="deleteLabelName"
+      autocomplete="off"
+      [errorStateMatcher]="deleteMatcher"
+      data-testid="delete-label-name"
+    />
+    @if (deleteLabelName.hasError('required')) {
+      <mat-error>The delete label is required.</mat-error>
+    } @else if (deleteLabelName.hasError('maxlength')) {
+      <mat-error>Must be at most {{ maxLength }} characters.</mat-error>
+    } @else if (deleteLabelName.hasError('labelPath')) {
+      <mat-error>Use '/' only between parts; no part may be blank.</mat-error>
+    } @else if (deleteLabelName.hasError('server')) {
+      <mat-error>{{ deleteLabelName.getError('server') }}</mat-error>
+    } @else if (form.hasError('labelsMatch')) {
+      <mat-error data-testid="labels-match-error">Must differ from the action label.</mat-error>
+    }
+    <mat-hint>Mail you approve for deletion gets this label; "Delete" moves it to Trash.</mat-hint>
+  </mat-form-field>
+
+  <p class="help m-0 text-sm" data-testid="labels-rename-hint">
+    Renaming does not touch Gmail or mail already labelled: new suggestions use the new name.
+  </p>
+  @if (formError(); as error) {
+    <p class="labels-error m-0 text-sm" role="alert" data-testid="labels-form-error">{{ error }}</p>
+  }
+
+  <div>
+    <button
+      mat-flat-button
+      type="submit"
+      [disabled]="!settings() || saving()"
+      data-testid="save-labels"
+    >
+      Save
+    </button>
+  </div>
+</form>
