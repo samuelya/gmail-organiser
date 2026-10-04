@@ -57,6 +57,27 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
+    public async Task Document_types_do_not_split_the_pattern_that_filter_proposals_use()
+    {
+        // Bills with two types (3 + 3) still outnumbers Shop without one (4): the type never changes the top outcome.
+        const string bills = "Example/Bills";
+        await SeedAsync([.. Enumerable.Range(0, 10).Select(i => (
+            $"a0{i}", i < 6 ? bills : "Example/Shop", false, SuggestionStatus.Approved, SuggestionSource.Llm))]);
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a00" || s.MessageId == "a01" || s.MessageId == "a02")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.DocumentTypeLabel, "Synthetic Types/Receipt"), Ct);
+            await db.Suggestions.Where(s => s.MessageId == "a03" || s.MessageId == "a04" || s.MessageId == "a05")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.DocumentTypeLabel, "Synthetic Types/Invoice"), Ct);
+        }
+
+        await using var scope = h.Services.CreateAsyncScope();
+        var found = await scope.ServiceProvider.GetRequiredService<SenderPatternService>().GetManyAsync([AnalysisRunHarness.Shop], Ct);
+
+        found[AnalysisRunHarness.Shop].ShouldBe(new SenderPatternDto(bills, false, false, 10, 0.6, 0, "Synthetic Types/Invoice"));
+    }
+
+    [Fact]
     public async Task Apply_rest_creates_approved_suggestions_and_applies_only_them()
     {
         await SeedAsync(

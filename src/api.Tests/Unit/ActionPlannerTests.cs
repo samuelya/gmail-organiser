@@ -151,6 +151,15 @@ public sealed class ActionPlannerTests
         Plan(Suggestion(type: type), Message("INBOX")).Add.ShouldBe(["L1"]);
     }
 
+    [Theory]
+    [InlineData("synthetic action")]
+    [InlineData("Synthetic Delete")]
+    public void A_document_type_label_that_is_now_the_action_or_delete_label_is_skipped(string type)
+    {
+        ActionPlanner.AppliesDocumentType(type, Settings).ShouldBeFalse();
+        Plan(Suggestion(type: type), Message("INBOX")).Add.ShouldBe(["L1"]);
+    }
+
     private static ActionPlan Plan(
         SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null, HashSet<string>? removable = null) =>
         ActionPlanner.Plan(
