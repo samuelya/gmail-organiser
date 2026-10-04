@@ -192,7 +192,12 @@ public sealed class SenderPatternService(
             .GroupBy(s => new { s.SenderAddress, s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
             .Select(g => new
             {
-                g.Key.SenderAddress, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, Count = g.Count(), Last = g.Max(s => s.DecidedAt),
+                g.Key.SenderAddress,
+                g.Key.TopicLabel,
+                g.Key.NeedsAction,
+                g.Key.ToBeDeleted,
+                Count = g.Count(),
+                Last = g.Max(s => s.DecidedAt),
             })
             .ToListAsync(ct);
         return rows.GroupBy(r => r.SenderAddress, StringComparer.Ordinal).ToDictionary(
