@@ -52,7 +52,7 @@ public static class UnsubscribeEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
         }
     }
 
@@ -77,7 +77,7 @@ public static class UnsubscribeEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
         }
     }
 
@@ -111,7 +111,4 @@ public static class UnsubscribeEndpoints
 
     private static ProblemHttpResult Conflict(string title, string detail) =>
         TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: title, detail: detail);
-
-    private static ProblemHttpResult GmailNotConnected(GmailNotConnectedException ex) =>
-        TypedResults.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Gmail not connected", detail: ex.Message);
 }

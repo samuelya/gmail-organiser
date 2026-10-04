@@ -35,7 +35,7 @@ public static class CleanUpEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
         }
     }
 
@@ -54,7 +54,7 @@ public static class CleanUpEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
         }
     }
 
@@ -80,7 +80,7 @@ public static class CleanUpEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
         }
     }
 
@@ -101,7 +101,7 @@ public static class CleanUpEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
         }
     }
 
@@ -141,7 +141,4 @@ public static class CleanUpEndpoints
 
         return new CleanUpSelection();
     }
-
-    private static ProblemHttpResult GmailNotConnected(GmailNotConnectedException ex) =>
-        TypedResults.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Gmail not connected", detail: ex.Message);
 }

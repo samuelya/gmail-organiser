@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
 namespace GmailOrganiser.Tests.Integration;
@@ -36,7 +37,9 @@ public sealed class FilterSnapshotTests(ApiFactory factory, PostgresFixture post
 
         host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
         {
-            services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), []));
+            // One attempt, so an injected rate limit fails the request without real backoff delays.
+            var retry = new GmailRetryPolicy(Options.Create(new GmailOptions { MaxRetryAttempts = 1 }), TimeProvider.System);
+            services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), [], retry));
             services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<FakeGmailClient>());
             services.AddSingleton<TimeProvider>(time);
         }));
@@ -138,6 +141,38 @@ public sealed class FilterSnapshotTests(ApiFactory factory, PostgresFixture post
         response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
         (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("Gmail not connected");
         (await ListAsync()).SyncedAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task The_snapshot_is_served_without_label_names_while_gmail_is_disconnected()
+    {
+        await SyncAsync();
+        await host.Services.GetRequiredService<FakeTokenStore>().DeleteAsync(Ct);
+
+        var list = await ListAsync();
+
+        list.ActiveCount.ShouldBe(3);
+        list.Filters.SelectMany(f => f.Action.AddLabels).ShouldAllBe(l => l.Name == null);
+    }
+
+    [Fact]
+    public async Task Sync_is_503_when_gmail_keeps_rate_limiting()
+    {
+        Gmail.FailNext(HttpStatusCode.TooManyRequests, 1);
+
+        var response = await PostAsync("/api/rules/filters/sync");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+        (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("rate-limiting");
+    }
+
+    [Fact]
+    public async Task Sync_claims_the_local_account()
+    {
+        await SyncAsync();
+
+        await using var db = postgres.CreateDbContext();
+        (await db.FetchState.SingleAsync(Ct)).AccountEmail.ShouldBe(FakeGmailClient.AccountEmail);
     }
 
     private async Task<FilterSyncResultDto> SyncAsync()

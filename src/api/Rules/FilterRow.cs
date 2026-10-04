@@ -14,7 +14,6 @@ public sealed class FilterRow
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 
     public string Id { get; set; } = "";

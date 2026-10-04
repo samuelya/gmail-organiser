@@ -1,10 +1,43 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace GmailOrganiser.Gmail;
 
 /// <summary>How a filter compares a message's size with <see cref="GmailFilterCriteria.Size"/>.</summary>
+[JsonConverter(typeof(GmailSizeComparisonJsonConverter))]
 public enum GmailSizeComparison
 {
     Smaller,
     Larger,
+}
+
+/// <summary>The one mapping between <see cref="GmailSizeComparison"/> and Gmail's <c>sizeComparison</c> strings.</summary>
+public static class GmailSizeComparisons
+{
+    public static string ToGmailString(this GmailSizeComparison comparison) => comparison switch
+    {
+        GmailSizeComparison.Smaller => "smaller",
+        GmailSizeComparison.Larger => "larger",
+        _ => throw new ArgumentOutOfRangeException(nameof(comparison), comparison, null),
+    };
+
+    /// <summary>The comparison Gmail's <paramref name="value"/> names; null for absent, <c>unspecified</c> or unknown.</summary>
+    public static GmailSizeComparison? Parse(string? value) => value?.ToLowerInvariant() switch
+    {
+        "smaller" => GmailSizeComparison.Smaller,
+        "larger" => GmailSizeComparison.Larger,
+        _ => null,
+    };
+}
+
+/// <summary>Stores <see cref="GmailSizeComparison"/> as Gmail's string.</summary>
+public sealed class GmailSizeComparisonJsonConverter : JsonConverter<GmailSizeComparison>
+{
+    public override GmailSizeComparison Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        GmailSizeComparisons.Parse(reader.GetString()) ?? throw new JsonException("Unknown size comparison.");
+
+    public override void Write(Utf8JsonWriter writer, GmailSizeComparison value, JsonSerializerOptions options) =>
+        writer.WriteStringValue(value.ToGmailString());
 }
 
 /// <summary>The criteria of a Gmail filter (<c>users.settings.filters</c>); every part is optional and they all apply.</summary>
@@ -22,10 +55,10 @@ public sealed record GmailFilterCriteria(
     int? Size = null,
     GmailSizeComparison? SizeComparison = null)
 {
-    public bool IsEmpty =>
-        string.IsNullOrEmpty(From) && string.IsNullOrEmpty(To) && string.IsNullOrEmpty(Subject)
-        && string.IsNullOrEmpty(Query) && string.IsNullOrEmpty(NegatedQuery)
-        && HasAttachment is null or false && ExcludeChats is null or false && Size is null;
+    /// <summary>True when a criterion other than <see cref="ExcludeChats"/> matches mail; Gmail rejects a filter without one.</summary>
+    public bool MatchesMail =>
+        !string.IsNullOrEmpty(From) || !string.IsNullOrEmpty(To) || !string.IsNullOrEmpty(Subject)
+        || !string.IsNullOrEmpty(Query) || !string.IsNullOrEmpty(NegatedQuery) || HasAttachment == true || Size is not null;
 }
 
 /// <summary>What a Gmail filter does to a matching message.</summary>
@@ -44,9 +77,14 @@ public sealed record GmailFilter(string Id, GmailFilterCriteria Criteria, GmailF
         ArgumentNullException.ThrowIfNull(action);
         ArgumentNullException.ThrowIfNull(action.AddLabelIds);
         ArgumentNullException.ThrowIfNull(action.RemoveLabelIds);
-        if (criteria.IsEmpty)
+        if (!criteria.MatchesMail)
         {
-            throw new ArgumentException("A filter needs at least one criterion.", nameof(criteria));
+            throw new ArgumentException("A filter needs at least one criterion besides excluding chats.", nameof(criteria));
+        }
+
+        if (criteria.Size is null != criteria.SizeComparison is null || criteria.Size < 0)
+        {
+            throw new ArgumentException("A size criterion needs a non-negative size and a comparison.", nameof(criteria));
         }
 
         if (action.Forward is not null)

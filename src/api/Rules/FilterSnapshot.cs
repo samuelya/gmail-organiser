@@ -2,6 +2,7 @@ using System.Globalization;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,10 +10,11 @@ namespace GmailOrganiser.Rules;
 
 /// <summary>
 /// The local snapshot of the account's Gmail filters (<c>filters</c>): synced on demand from one <c>filters.list</c>
-/// and read by every Rules feature. A sync is idempotent and serialised by a transaction-scoped advisory lock, so a
-/// repeated or concurrent sync converges on the same rows.
+/// and read by every Rules feature. A sync lists Gmail inside a transaction-scoped advisory lock, so concurrent syncs
+/// apply in listing order and a repeated sync converges on the same rows.
 /// </summary>
-public sealed class FilterSnapshot(AppDbContext db, IGmailClient gmail, LabelCatalog labels, TimeProvider time)
+public sealed class FilterSnapshot(
+    AppDbContext db, IGmailClient gmail, LabelCatalog labels, LocalAccountClaim accountClaim, TimeProvider time)
 {
     /// <summary>Gmail's per-account filter limit.</summary>
     public const int GmailFilterLimit = 1000;
@@ -26,17 +28,19 @@ public sealed class FilterSnapshot(AppDbContext db, IGmailClient gmail, LabelCat
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    /// <exception cref="JobRefusedException">The local data belongs to another account.</exception>
     public async Task<FilterSyncResultDto> SyncAsync(CancellationToken ct)
     {
+        await accountClaim.ClaimAsync((await gmail.GetProfileAsync(ct)).EmailAddress, ct);
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({SyncLockKey})", ct);
         var listed = (await gmail.ListFiltersAsync(ct))
             .Where(f => !string.IsNullOrEmpty(f.Id))
             .DistinctBy(f => f.Id, StringComparer.Ordinal)
             .ToList();
         var now = time.GetUtcNow();
         int added = 0, removed = 0;
-
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({SyncLockKey})", ct);
         var rows = await db.Filters.ToDictionaryAsync(r => r.Id, StringComparer.Ordinal, ct);
         foreach (var filter in listed)
         {
@@ -77,31 +81,28 @@ public sealed class FilterSnapshot(AppDbContext db, IGmailClient gmail, LabelCat
 
         await db.SaveChangesAsync(ct);
         await db.FetchState.Where(s => s.Id == FetchStateRow.SingletonId)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.FiltersSyncedAt, now), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.FiltersSyncedAt, now).SetProperty(r => r.UpdatedAt, now), ct);
         await tx.CommitAsync(ct);
         return new FilterSyncResultDto(listed.Count, added, removed, now);
     }
 
     /// <summary>
-    /// The snapshot sorted by criteria summary, label ids resolved to names (null for a label the mailbox lacks). Before
-    /// the first sync the list is empty and <see cref="FilterListDto.SyncedAt"/> null.
+    /// The snapshot sorted by criteria summary, label ids resolved to names (null for a label the mailbox lacks, and for
+    /// every label while Gmail is disconnected or rate-limiting). Before the first sync the list is empty and
+    /// <see cref="FilterListDto.SyncedAt"/> null.
     /// </summary>
-    /// <exception cref="GmailNotConnectedException">There are filters to show and the label names can't be read.</exception>
     public async Task<FilterListDto> ListAsync(bool includeDeleted, CancellationToken ct)
     {
         var syncedAt = await db.FetchState.AsNoTracking()
             .Where(s => s.Id == FetchStateRow.SingletonId)
             .Select(s => s.FiltersSyncedAt)
             .SingleOrDefaultAsync(ct);
-        var rows = await db.Filters.AsNoTracking().ToListAsync(ct);
-        var activeCount = rows.Count(r => r.DeletedAt is null);
-        var shown = rows.Where(r => includeDeleted || r.DeletedAt is null)
+        var activeCount = await db.Filters.CountAsync(r => r.DeletedAt == null, ct);
+        var shown = (await db.Filters.AsNoTracking().Where(r => includeDeleted || r.DeletedAt == null).ToListAsync(ct))
             .OrderBy(r => r.CriteriaSummary, StringComparer.OrdinalIgnoreCase)
             .ThenBy(r => r.Id, StringComparer.Ordinal)
             .ToList();
-        var names = shown.Count == 0
-            ? new Dictionary<string, string>(StringComparer.Ordinal)
-            : (await labels.GetAsync(ct)).ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
+        var names = shown.Count == 0 ? new Dictionary<string, string>(StringComparer.Ordinal) : await LabelNamesAsync(ct);
         return new FilterListDto(syncedAt, activeCount, GmailFilterLimit, [.. shown.Select(r => ToDto(r, names))]);
     }
 
@@ -135,12 +136,7 @@ public sealed class FilterSnapshot(AppDbContext db, IGmailClient gmail, LabelCat
 
         if (criteria.Size is { } size)
         {
-            var op = criteria.SizeComparison switch
-            {
-                GmailSizeComparison.Smaller => "smaller",
-                GmailSizeComparison.Larger => "larger",
-                _ => "size",
-            };
+            var op = criteria.SizeComparison?.ToGmailString() ?? "size";
             parts.Add(string.Create(CultureInfo.InvariantCulture, $"{op}:{size}"));
         }
 
@@ -165,7 +161,7 @@ public sealed class FilterSnapshot(AppDbContext db, IGmailClient gmail, LabelCat
         var a = row.ReadAction();
         var criteria = new FilterCriteriaDto(
             c.From, c.To, c.Subject, c.Query, c.NegatedQuery, c.HasAttachment, c.ExcludeChats, c.Size,
-            c.SizeComparison?.ToString().ToLowerInvariant());
+            c.SizeComparison?.ToGmailString());
         var action = new FilterActionDto(
             [.. a.AddLabelIds.Select(id => new LabelRefDto(id, labelNames.GetValueOrDefault(id)))],
             a.RemoveLabelIds,
@@ -175,6 +171,18 @@ public sealed class FilterSnapshot(AppDbContext db, IGmailClient gmail, LabelCat
         return new FilterDto(
             row.Id, criteria, row.CriteriaSummary, action, row.CreatedByApp, row.FirstSeenAt, row.DeletedAt, row.DeletedByApp,
             row.RestoredFrom);
+    }
+
+    private async Task<Dictionary<string, string>> LabelNamesAsync(CancellationToken ct)
+    {
+        try
+        {
+            return (await labels.GetAsync(ct)).ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
+        }
+        catch (Exception ex) when (ex is GmailNotConnectedException or GmailRateLimitedException)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
     }
 
     private static void Write(FilterRow row, GmailFilter filter, DateTimeOffset now)

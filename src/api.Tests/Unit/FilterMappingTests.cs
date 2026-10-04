@@ -108,6 +108,32 @@ public sealed class FilterMappingTests
     }
 
     [Fact]
+    public void Creating_a_filter_gmail_would_reject_is_refused()
+    {
+        var label = new GmailFilterAction(["Label_1"], []);
+
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(new GmailFilterCriteria(ExcludeChats: true), label));
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(new GmailFilterCriteria(Size: 1000), label));
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(
+            new GmailFilterCriteria(From: "a@example.com", SizeComparison: GmailSizeComparison.Larger), label));
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(
+            new GmailFilterCriteria(Size: -1, SizeComparison: GmailSizeComparison.Larger), label));
+        Should.NotThrow(() => GmailFilter.EnsureValidCreate(
+            new GmailFilterCriteria(ExcludeChats: true, Size: 1000, SizeComparison: GmailSizeComparison.Larger), label));
+    }
+
+    [Fact]
+    public void Size_comparison_is_stored_as_gmails_string_and_read_back()
+    {
+        var criteria = new GmailFilterCriteria(Size: 10, SizeComparison: GmailSizeComparison.Smaller);
+
+        var json = FilterRow.WriteCriteria(criteria);
+
+        json.ShouldContain("\"sizeComparison\":\"smaller\"");
+        new FilterRow { Criteria = json }.ReadCriteria().ShouldBe(criteria);
+    }
+
+    [Fact]
     public async Task The_fake_creates_lists_and_deletes_filters_and_a_missing_id_is_not_an_error()
     {
         var gmail = new FakeGmailClient(new FakeTokenStore(TimeProvider.System), []);

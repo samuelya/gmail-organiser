@@ -57,7 +57,7 @@ public sealed partial class GoogleGmailClient
         var a = filter.Action ?? new FilterAction();
         var criteria = new GmailFilterCriteria(
             Blank(c.From), Blank(c.To), Blank(c.Subject), Blank(c.Query), Blank(c.NegatedQuery),
-            c.HasAttachment, c.ExcludeChats, c.Size, ParseSizeComparison(c.SizeComparison));
+            c.HasAttachment, c.ExcludeChats, c.Size, GmailSizeComparisons.Parse(c.SizeComparison));
         var action = new GmailFilterAction([.. a.AddLabelIds ?? []], [.. a.RemoveLabelIds ?? []], Blank(a.Forward));
         return new GmailFilter(filter.Id ?? "", criteria, action);
     }
@@ -79,12 +79,7 @@ public sealed partial class GoogleGmailClient
                 HasAttachment = criteria.HasAttachment,
                 ExcludeChats = criteria.ExcludeChats,
                 Size = criteria.Size,
-                SizeComparison = criteria.SizeComparison switch
-                {
-                    GmailSizeComparison.Smaller => "smaller",
-                    GmailSizeComparison.Larger => "larger",
-                    _ => null,
-                },
+                SizeComparison = criteria.SizeComparison?.ToGmailString(),
             },
             Action = new FilterAction
             {
@@ -94,13 +89,6 @@ public sealed partial class GoogleGmailClient
             },
         };
     }
-
-    private static GmailSizeComparison? ParseSizeComparison(string? value) => value?.ToLowerInvariant() switch
-    {
-        "smaller" => GmailSizeComparison.Smaller,
-        "larger" => GmailSizeComparison.Larger,
-        _ => null,
-    };
 
     private static string? Blank(string? value) => string.IsNullOrEmpty(value) ? null : value;
 }

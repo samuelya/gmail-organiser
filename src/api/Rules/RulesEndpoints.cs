@@ -1,5 +1,6 @@
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Jobs;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace GmailOrganiser.Rules;
@@ -14,21 +15,11 @@ public static class RulesEndpoints
         return endpoints;
     }
 
-    /// <summary>The filter snapshot; empty with a null <c>syncedAt</c> before the first sync.</summary>
-    private static async Task<Results<Ok<FilterListDto>, ProblemHttpResult>> ListFiltersAsync(
-        FilterSnapshot snapshot, CancellationToken ct, bool includeDeleted = false)
-    {
-        try
-        {
-            return TypedResults.Ok(await snapshot.ListAsync(includeDeleted, ct));
-        }
-        catch (GmailNotConnectedException ex)
-        {
-            return GmailNotConnected(ex);
-        }
-    }
+    /// <summary>The filter snapshot; empty with a null <c>syncedAt</c> before the first sync. Served while Gmail is unreachable.</summary>
+    private static async Task<Ok<FilterListDto>> ListFiltersAsync(FilterSnapshot snapshot, CancellationToken ct, bool includeDeleted = false) =>
+        TypedResults.Ok(await snapshot.ListAsync(includeDeleted, ct));
 
-    /// <summary>Reads the account's filters from Gmail into the snapshot; 503 when Gmail is not connected.</summary>
+    /// <summary>Reads the account's filters from Gmail into the snapshot; 503 when Gmail is not connected or rate-limiting.</summary>
     private static async Task<Results<Ok<FilterSyncResultDto>, ProblemHttpResult>> SyncFiltersAsync(
         FilterSnapshot snapshot, CancellationToken ct)
     {
@@ -38,10 +29,17 @@ public static class RulesEndpoints
         }
         catch (GmailNotConnectedException ex)
         {
-            return GmailNotConnected(ex);
+            return GmailProblems.NotConnected(ex);
+        }
+        catch (GmailRateLimitedException ex)
+        {
+            return GmailProblems.RateLimited(ex);
+        }
+        catch (JobRefusedException)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, type: AccountGuard.ProblemType, title: AccountGuard.ProblemTitle,
+                detail: AccountGuard.ProblemDetail);
         }
     }
-
-    private static ProblemHttpResult GmailNotConnected(GmailNotConnectedException ex) =>
-        TypedResults.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Gmail not connected", detail: ex.Message);
 }
