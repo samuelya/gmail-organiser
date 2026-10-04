@@ -14,6 +14,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { catchError, finalize, of } from 'rxjs';
 import { sentMessage } from '../core/claude.models';
@@ -22,6 +23,7 @@ import { JobsService } from '../core/jobs.service';
 import { humanise } from '../dashboard/fetch.models';
 import { SettingsService } from '../settings/settings.service';
 import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysis.models';
+import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compare-run';
 
 /** Active runs with live progress and Cancel, then the finished runs with their counters and savings. */
 @Component({
@@ -33,6 +35,7 @@ import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysi
     MatChipsModule,
     MatIconModule,
     MatProgressBarModule,
+    MatTooltipModule,
   ],
   template: `
     <section class="flex flex-col gap-3" aria-labelledby="runs-active">
@@ -91,6 +94,20 @@ import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysi
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <span class="min-w-0 flex-1" data-testid="run-savings">{{ savings(run) }}</span>
+            @if (run.messagesCovered > 0) {
+              <button
+                mat-button
+                type="button"
+                [disabled]="!!reanalyseBlocked(run)"
+                [disabledInteractive]="true"
+                [matTooltip]="reanalyseBlocked(run)"
+                (click)="reanalyseRun.emit(run)"
+                [attr.aria-label]="'Re-analyse run ' + target(run)"
+                data-testid="run-reanalyse"
+              >
+                Re-analyse
+              </button>
+            }
             @if (claudeEnabled() && run.groups > 0) {
               <button
                 mat-button
@@ -162,6 +179,16 @@ export class RunList {
   /** Run ids whose cancel request is in flight or waiting for the run to stop. */
   readonly cancelling = input<ReadonlySet<string>>(new Set());
   readonly cancelRun = output<AnalysisRunDto>();
+  /** An analysis run is queued or running: no re-analysis can start. */
+  readonly runActive = input(false);
+  /** "Re-analyse" on a finished run: the page confirms and starts a re-analysis of it. */
+  readonly reanalyseRun = output<AnalysisRunDto>();
+
+  /** Why a run's "Re-analyse" is off (its tooltip), `''` when it may start. */
+  reanalyseBlocked(run: AnalysisRunDto): string {
+    if (this.runActive()) return RUN_ACTIVE_TOOLTIP;
+    return run.messagesCovered > MAX_COMPARE ? RUN_TOO_LARGE_TOOLTIP : '';
+  }
 
   readonly claudeEnabled = computed(() => (this.settings()?.claudeReviewerMode ?? 'off') !== 'off');
   /** Run ids whose "Send run to Claude" is in flight. */

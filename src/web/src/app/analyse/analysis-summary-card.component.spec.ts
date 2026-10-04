@@ -20,6 +20,7 @@ const summary: AnalysisSummaryDto = {
   totalMessagesCovered: 300,
   savedPercent: 0.8,
   labelledNotAnalysed: 42,
+  alternatives: 0,
 };
 
 class FakeJobs {

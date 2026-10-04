@@ -25,6 +25,7 @@ const analysisSummary: AnalysisSummaryDto = {
   totalMessagesCovered: 0,
   savedPercent: 0,
   labelledNotAnalysed: 0,
+  alternatives: 0,
 };
 
 /** Signals and calls the page reads from `JobsService`, driven by the test. */

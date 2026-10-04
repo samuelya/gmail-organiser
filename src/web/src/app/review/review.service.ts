@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { AnalysisRunDto } from '../analyse/analysis.models';
 import { JobDto } from '../core/jobs.models';
 import { PagedDto } from '../core/paging.models';
+import { AlternativeDecisionRequest, AlternativeDecisionResponse } from './alternative.models';
 import {
   ActionBatchDto,
   ApplyRestRequest,
@@ -30,8 +31,10 @@ export class ReviewService {
     search: string,
     page: number,
     pageSize: number,
+    hasAlternative = false,
   ): Observable<PagedDto<ReviewSenderDto>> {
     let params = new HttpParams().set('status', status).set('page', page).set('pageSize', pageSize);
+    if (hasAlternative) params = params.set('hasAlternative', true);
     const trimmed = search.trim();
     if (trimmed) params = params.set('search', trimmed);
     return this.http.get<PagedDto<ReviewSenderDto>>('/api/review/senders', { params });
@@ -42,11 +45,10 @@ export class ReviewService {
     status: ReviewStatus,
     page: number,
     pageSize: number,
+    hasAlternative = false,
   ): Observable<ReviewSenderDetailDto> {
-    const params = new HttpParams()
-      .set('status', status)
-      .set('page', page)
-      .set('pageSize', pageSize);
+    let params = new HttpParams().set('status', status).set('page', page).set('pageSize', pageSize);
+    if (hasAlternative) params = params.set('hasAlternative', true);
     return this.http.get<ReviewSenderDetailDto>(
       `/api/review/senders/${encodeURIComponent(address)}`,
       {
@@ -103,6 +105,18 @@ export class ReviewService {
 
   analyseIndividually(suggestionIds: string[]): Observable<AnalysisRunDto> {
     return this.http.post<AnalysisRunDto>('/api/review/analyse-individually', { suggestionIds });
+  }
+
+  /** "Use new": the re-analysis result replaces the suggestion, which is pending again. */
+  acceptAlternatives(request: AlternativeDecisionRequest): Observable<AlternativeDecisionResponse> {
+    return this.http.post<AlternativeDecisionResponse>('/api/review/alternatives/accept', request);
+  }
+
+  /** "Keep current": the re-analysis result is dropped. */
+  discardAlternatives(
+    request: AlternativeDecisionRequest,
+  ): Observable<AlternativeDecisionResponse> {
+    return this.http.post<AlternativeDecisionResponse>('/api/review/alternatives/discard', request);
   }
 
   /** `202` with the batch and its job; `409` when nothing matching is approved. */

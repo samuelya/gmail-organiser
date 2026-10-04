@@ -17,27 +17,34 @@ import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { Router } from '@angular/router';
 import { catchError, filter, finalize, map, Observable, of, switchMap, tap } from 'rxjs';
+import { analysisJobsKey } from '../analyse/analysis.models';
+import { AnalysisService } from '../analyse/analysis.service';
 import { ExternalReviewDto } from '../core/claude.models';
 import { openConfirm } from '../core/confirm-dialog';
-import { isActiveJob, JobDto, newerJob, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
 import { ANALYSIS_LIMITS } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
+import {
+  AlternativeDecision,
+  alternativeMessage,
+  alternativeRequest,
+  AlternativeTarget,
+  PENDING_AGAIN_NOTE,
+  repends,
+} from './alternative.models';
+import { ApplyTracker } from './apply-tracker';
 import { openBulkApprove } from './bulk-approve-dialog.component';
 import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
 import {
-  APPLY_JOB,
   applyRestRequest,
   canApplyRest,
   DEFAULT_FLAG_LABELS,
   GROUP_PAGE_SIZE,
   GroupDecisionResponse,
-  MAX_ANALYSE_INDIVIDUALLY,
   outcomeOf,
   patchClaudeReview,
   patternSummary,
@@ -52,6 +59,7 @@ import {
   SuggestionDto,
 } from './review.models';
 import { ReviewService } from './review.service';
+import { SelectionActions } from './selection-actions.component';
 import { SenderList } from './sender-list.component';
 
 /**
@@ -70,12 +78,19 @@ import { SenderList } from './sender-list.component';
     MatProgressBarModule,
     MatTooltipModule,
     PageHeader,
+    SelectionActions,
     SenderList,
   ],
+  providers: [ApplyTracker],
   templateUrl: './review-page.component.html',
   styles: `
     .muted {
       color: var(--mat-sys-on-surface-variant);
+    }
+    .note {
+      background: var(--mat-sys-secondary-container);
+      color: var(--mat-sys-on-secondary-container);
+      border-radius: var(--mat-sys-corner-small);
     }
     .sender-title {
       font: var(--mat-sys-title-medium);
@@ -89,19 +104,22 @@ export class ReviewPage {
   private readonly jobs = inject(JobsService);
   private readonly dialog = inject(MatDialog);
   private readonly snackBar = inject(MatSnackBar);
-  private readonly router = inject(Router);
   private readonly editDialog = inject(REVIEW_EDIT_DIALOG);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly senderPageSize = SENDER_PAGE_SIZE;
   readonly groupPageSize = GROUP_PAGE_SIZE;
-  readonly maxAnalyse = MAX_ANALYSE_INDIVIDUALLY;
+  readonly pendingAgainNote = PENDING_AGAIN_NOTE;
 
   readonly status = signal<ReviewStatus>('pending');
+  /** The "Re-analysed" filter: only suggestions with a re-analysis result waiting. */
+  readonly reanalysed = signal(false);
   private readonly search = signal('');
   private readonly senderPage = signal(1);
   readonly selected = signal<string | null>(null);
   private readonly groupPage = signal(1);
+  /** The status and "Re-analysed" filter of the last senders list shown. */
+  private readonly listedFilter = signal<string | null>(null);
   /** Bumped after every action and reconnect: everything shown is re-fetched. */
   private readonly version = signal(0);
 
@@ -111,8 +129,18 @@ export class ReviewPage {
   readonly detail = signal<ReviewSenderDetailDto | null>(null);
   readonly detailLoading = signal(false);
   readonly pattern = signal<SenderPatternDto | null>(null);
-  /** Suggestion ids ticked for "Analyse individually". */
+  /** Suggestion ids ticked for "Analyse individually" and "Re-analyse". */
   readonly selection = signal<ReadonlySet<string>>(new Set());
+  readonly selectionHasApplied = computed(() => {
+    const ids = this.selection();
+    return !!this.detail()?.groups.some((g) =>
+      g.members.some((m) => m.status === 'applied' && ids.has(m.id)),
+    );
+  });
+  /** Suggestions with a re-analysis result waiting, from the summary; null until loaded. */
+  readonly alternatives = signal<number | null>(null);
+  /** "Use new" re-pended an approved or applied suggestion. */
+  readonly pendingAgain = signal(false);
   /** Ids the last group or bulk approve left pending. */
   readonly skipped = signal<ReadonlySet<string>>(new Set());
   readonly busy = signal(false);
@@ -129,22 +157,8 @@ export class ReviewPage {
   });
   readonly claudeMode = computed(() => this.settings()?.claudeReviewerMode ?? 'off');
 
-  /** The apply batch's job, from the hub or (after a reconnect) from the API, whichever is newer. */
-  readonly applyJobId = signal<string | null>(null);
-  private readonly fetchedJob = signal<JobDto | null>(null);
-  /** Apply jobs already reported; the hub may still hold one as active until its next snapshot. */
-  private readonly finishedJobIds = new Set<string>();
-  /** Apply-to-rest jobs whose completion snackbar offers "Create filter" for this sender. */
-  private readonly filterOffers = new Map<string, string>();
-  readonly applyJob = computed(() => {
-    const id = this.applyJobId();
-    if (!id) return null;
-    const fetched = this.fetchedJob();
-    const held = fetched?.id === id ? fetched : null;
-    const live = this.jobs.job(id);
-    return live ? newerJob(live, held) : held;
-  });
-  readonly applyPercent = computed(() => progressPercent(this.applyJob()?.progress));
+  /** The apply batch's job and its outcome. */
+  readonly apply = inject(ApplyTracker);
 
   readonly approvedCount = computed(() => this.detail()?.sender.approved ?? 0);
   readonly restPattern = computed(() => {
@@ -155,6 +169,7 @@ export class ReviewPage {
   constructor() {
     const sendersKey = computed(() => ({
       status: this.status(),
+      reanalysed: this.reanalysed(),
       search: this.search(),
       page: this.senderPage(),
       version: this.version(),
@@ -163,30 +178,44 @@ export class ReviewPage {
       .pipe(
         tap(() => this.sendersLoading.set(true)),
         switchMap((k) =>
-          this.review.listSenders(k.status, k.search, k.page, SENDER_PAGE_SIZE).pipe(orNull()),
+          this.review.listSenders(k.status, k.search, k.page, SENDER_PAGE_SIZE, k.reanalysed).pipe(
+            orNull(),
+            map((page) => ({ listed: `${k.status}|${k.reanalysed}`, page })),
+          ),
         ),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe((page) => {
+      .subscribe(({ listed, page }) => {
         this.sendersLoading.set(false);
         this.sendersFailed.set(!page);
         this.senders.set(page);
-        if (page && !this.selected() && page.items.length > 0)
-          this.selected.set(page.items[0].address);
+        if (!page) return;
+        // A tab or "Re-analysed" change moves to the new list's first sender unless the selected one is in it.
+        const selected = this.selected();
+        const changed = listed !== this.listedFilter();
+        this.listedFilter.set(listed);
+        if (!selected || (changed && !page.items.some((s) => s.address === selected)))
+          this.selected.set(page.items[0]?.address ?? null);
       });
 
+    // Waits for the list of the current tab and filter, so a sender it hides is never requested (404).
     const detailKey = computed(() => ({
+      listed: this.listedFilter() === `${this.status()}|${this.reanalysed()}`,
       address: this.selected(),
       status: this.status(),
+      reanalysed: this.reanalysed(),
       page: this.groupPage(),
       version: this.version(),
     }));
     toObservable(detailKey)
       .pipe(
+        filter((k) => k.listed),
         tap((k) => this.detailLoading.set(!!k.address)),
         switchMap((k) =>
           k.address
-            ? this.review.sender(k.address, k.status, k.page, GROUP_PAGE_SIZE).pipe(orNull())
+            ? this.review
+                .sender(k.address, k.status, k.page, GROUP_PAGE_SIZE, k.reanalysed)
+                .pipe(orNull())
             : of(null),
         ),
         takeUntilDestroyed(this.destroyRef),
@@ -194,6 +223,7 @@ export class ReviewPage {
       .subscribe((detail) => {
         this.detailLoading.set(false);
         this.detail.set(detail);
+        this.pruneSelection(detail);
       });
 
     const patternKey = computed(() => ({ address: this.selected(), version: this.version() }));
@@ -205,41 +235,37 @@ export class ReviewPage {
       )
       .subscribe((pattern) => this.pattern.set(pattern));
 
+    // The count changes with every decision and whenever an analysis run starts or ends.
+    const analysis = inject(AnalysisService);
+    const summaryKey = computed(
+      () => `${this.version()}|${analysisJobsKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
+    );
+    toObservable(summaryKey)
+      .pipe(
+        switchMap(() => analysis.summary().pipe(orNull())),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((summary) => summary && this.alternatives.set(summary.alternatives));
+
     this.jobs.externalReviewChanges
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((item) => this.onClaudeChange(item));
 
-    // An apply job started elsewhere or before this page opened (the hub's snapshot, also after a
-    // reconnect): follow it, so its progress and Cancel show and no second batch can be queued.
+    this.apply.finished.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => this.refresh());
+    // Updates may have been missed while disconnected.
     effect(() => {
-      const active = this.jobs
-        .activeJobs()
-        .find((j) => j.type === APPLY_JOB && !this.finishedJobIds.has(j.id));
-      if (active && !this.applyJobId()) untracked(() => this.track(active.id));
-    });
-    // The apply job finished: show its outcome and re-fetch.
-    effect(() => {
-      const job = this.applyJob();
-      if (job && !isActiveJob(job)) untracked(() => this.finishApply(job));
-    });
-    // Updates may have been missed while disconnected; the hub's snapshot holds active jobs only.
-    effect(() => {
-      if (this.jobs.reconnects() === 0) return;
-      untracked(() => {
-        this.refresh();
-        const id = this.applyJobId();
-        if (id) {
-          this.review
-            .job(id)
-            .pipe(orNull(), takeUntilDestroyed(this.destroyRef))
-            .subscribe((job) => job && this.fetchedJob.set(job));
-        }
-      });
+      if (this.jobs.reconnects() > 0) untracked(() => this.refresh());
     });
   }
 
   onStatus(status: ReviewStatus): void {
     this.status.set(status);
+    this.senderPage.set(1);
+    this.resetDetail();
+  }
+
+  onReanalysed(on: boolean): void {
+    this.reanalysed.set(on);
     this.senderPage.set(1);
     this.resetDetail();
   }
@@ -324,21 +350,24 @@ export class ReviewPage {
     });
   }
 
-  analyseIndividually(): void {
-    const ids = [...this.selection()];
-    if (ids.length === 0 || ids.length > MAX_ANALYSE_INDIVIDUALLY) return;
-    this.run(this.review.analyseIndividually(ids), () => {
-      this.selection.set(new Set());
-      this.snackBar
-        .open(
-          `Analysing ${ids.length} ${ids.length === 1 ? 'message' : 'messages'} individually.`,
-          'Analyse',
-          {
-            duration: 8000,
-          },
-        )
-        .onAction()
-        .subscribe(() => void this.router.navigate(['/analyse']));
+  /** A run was queued for the ticked members. */
+  onSelectionStarted(): void {
+    this.selection.set(new Set());
+    this.refresh();
+  }
+
+  /** "Use new" (accept) or "Keep current" (discard) for a member or a whole group card. */
+  decideAlternative(decision: AlternativeDecision, target: AlternativeTarget): void {
+    const address = this.selected();
+    if (!address) return;
+    const request = alternativeRequest(target, address, this.status());
+    const call =
+      decision === 'accept'
+        ? this.review.acceptAlternatives(request)
+        : this.review.discardAlternatives(request);
+    this.run(call, (r) => {
+      if (decision === 'accept' && r.accepted > 0 && repends(target)) this.pendingAgain.set(true);
+      this.snackBar.open(alternativeMessage(decision, r), 'Dismiss', { duration: 6000 });
     });
   }
 
@@ -361,14 +390,14 @@ export class ReviewPage {
   /** Applies the selected sender's approved suggestions; the API answers 409 when none is. */
   applyApproved(): void {
     const address = this.selected();
-    if (!address || this.applyJobId()) return;
-    this.run(this.review.apply(address), (batch) => this.track(batch.jobId));
+    if (!address || this.apply.jobId()) return;
+    this.run(this.review.apply(address), (batch) => this.apply.track(batch.jobId));
   }
 
   applyRest(): void {
     const address = this.selected();
     const pattern = this.restPattern();
-    if (!address || !pattern || this.applyJobId()) return;
+    if (!address || !pattern || this.apply.jobId()) return;
     const parent = this.settings()?.documentTypeParent ?? null;
     const request = applyRestRequest(pattern, parent);
     openConfirm(this.dialog, {
@@ -383,74 +412,20 @@ export class ReviewPage {
       .subscribe(() =>
         this.run(this.review.applyRest(address, request), (r) => {
           const jobId = r.batch?.jobId ?? null;
-          this.track(jobId);
+          this.apply.track(jobId);
           const adjusted = r.protectedAdjusted
             ? `; ${r.protectedAdjusted} protected ${r.protectedAdjusted === 1 ? 'message is' : 'messages are'} not marked for deletion`
             : '';
           const created = `Created ${r.created} ${r.created === 1 ? 'suggestion' : 'suggestions'}${adjusted}.`;
           // The apply job's completion snackbar replaces this one, so the offer moves there.
           if (jobId) {
-            this.filterOffers.set(jobId, r.filterCandidate.from);
+            this.apply.offerFilterAfter(jobId, r.filterCandidate.from);
             this.snackBar.open(created, 'Dismiss', { duration: 10_000 });
           } else {
-            this.offerFilter(created, r.filterCandidate.from);
+            this.apply.offerFilter(created, r.filterCandidate.from);
           }
         }),
       );
-  }
-
-  /** The API refuses (409, shown by the error interceptor) while a chunk is pending. */
-  cancelApply(): void {
-    const id = this.applyJobId();
-    if (!id) return;
-    openConfirm(this.dialog, {
-      title: 'Cancel apply?',
-      message:
-        'It stops at its next checkpoint. Messages already changed stay changed; undo them in History.',
-      confirm: 'Cancel apply',
-    })
-      .pipe(
-        filter((confirmed) => confirmed),
-        switchMap(() => this.jobs.cancel(id).pipe(catchError(() => of(undefined)))),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe();
-  }
-
-  private track(jobId: string | null): void {
-    if (!jobId) return;
-    this.fetchedJob.set(null);
-    this.applyJobId.set(jobId);
-  }
-
-  private finishApply(job: JobDto): void {
-    this.finishedJobIds.add(job.id);
-    this.applyJobId.set(null);
-    this.fetchedJob.set(null);
-    this.refresh();
-    const message =
-      job.status === 'completed'
-        ? (job.progress?.message ?? 'Applied.')
-        : job.status === 'cancelled'
-          ? `Apply cancelled. ${job.progress?.message ?? ''}`.trim()
-          : `Apply failed${job.error ? `: ${job.error}` : '.'}`;
-    const offer = this.filterOffers.get(job.id);
-    this.filterOffers.delete(job.id);
-    if (offer && job.status === 'completed') {
-      this.offerFilter(message, offer);
-      return;
-    }
-    this.snackBar
-      .open(message, 'History', { duration: 10_000 })
-      .onAction()
-      .subscribe(() => void this.router.navigate(['/history']));
-  }
-
-  private offerFilter(message: string, from: string): void {
-    this.snackBar
-      .open(message, 'Create filter', { duration: 10_000 })
-      .onAction()
-      .subscribe(() => void this.router.navigate(['/rules'], { queryParams: { propose: from } }));
   }
 
   private reportGroup(verb: string, r: GroupDecisionResponse): void {
@@ -495,7 +470,17 @@ export class ReviewPage {
     this.version.update((v) => v + 1);
   }
 
+  /** Ticks only survive a reload on members still shown: an applied or moved member drops out. */
+  private pruneSelection(detail: ReviewSenderDetailDto | null): void {
+    const current = this.selection();
+    if (current.size === 0) return;
+    const shown = new Set(detail?.groups.flatMap((g) => g.members.map((m) => m.id)) ?? []);
+    const kept = [...current].filter((id) => shown.has(id));
+    if (kept.length !== current.size) this.selection.set(new Set(kept));
+  }
+
   private resetDetail(): void {
+    this.pendingAgain.set(false);
     this.groupPage.set(1);
     this.selection.set(new Set());
     this.skipped.set(new Set());

@@ -5,18 +5,20 @@ import {
   ExternalReviewDto,
   MAX_CLAUDE_TARGETS,
 } from '../core/claude.models';
+import type { SuggestionAlternativeDto } from './alternative.models';
 import { LabelDto } from './labels.models';
 
-/** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. */
-export type ReviewStatus = 'pending' | 'approved' | 'rejected';
+/** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. Applied is read-only. */
+export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'applied';
 export const REVIEW_STATUSES: readonly { value: ReviewStatus; label: string }[] = [
   { value: 'pending', label: 'Pending' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
+  { value: 'applied', label: 'Applied' },
 ];
 
 /** `SuggestionStatus` as the API writes it. */
-export type SuggestionStatus = ReviewStatus | 'applied';
+export type SuggestionStatus = ReviewStatus;
 /** `SuggestionSource` as the API writes it. */
 export type SuggestionSource = 'llm' | 'derived' | 'memory' | 'sender_pattern';
 
@@ -70,6 +72,8 @@ export interface SuggestionDto {
   documentTypeLabel: string | null;
   /** Gmail did not have `documentTypeLabel` when it was suggested or edited. */
   documentTypeIsNew: boolean;
+  /** The re-analysis result waiting next to it; null when none. */
+  alternative?: SuggestionAlternativeDto | null;
 }
 
 /** `groupKey` is null for a message analysed on its own. */
@@ -101,6 +105,8 @@ export interface ReviewGroupDto {
   documentTypeLabel: string | null;
   /** A listed member with the shown document-type label would create it in Gmail. */
   documentTypeIsNew: boolean;
+  /** The listed members' re-analysis result (`mixed` when they disagree); null when none has one. */
+  alternative?: SuggestionAlternativeDto | null;
 }
 
 export interface ReviewSenderDetailDto {

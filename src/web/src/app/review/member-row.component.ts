@@ -6,6 +6,8 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
+import { AlternativeCompare } from './alternative-compare.component';
+import { memberValues } from './alternative.models';
 import { ClaudeVerdict } from './claude-verdict.component';
 import { LabelChangeChip } from './label-change-chip.component';
 import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.models';
@@ -14,6 +16,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
 @Component({
   selector: 'app-member-row',
   imports: [
+    AlternativeCompare,
     ClaudeVerdict,
     DatePipe,
     LabelChangeChip,
@@ -31,7 +34,6 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
     >
       <mat-checkbox
         [checked]="selected()"
-        [disabled]="s.status === 'applied'"
         (change)="toggleSelect.emit()"
         [aria-label]="'Select ' + subject()"
         data-testid="member-select"
@@ -104,46 +106,60 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           [sendable]="s.status === 'pending'"
           (changed)="claudeChange.emit($event)"
         />
+        @if (s.alternative; as alt) {
+          <app-alternative-compare
+            class="mt-2 block"
+            [current]="values()"
+            [alternative]="alt"
+            [labels]="labels()"
+            [busy]="busy()"
+            (useNew)="useNew.emit()"
+            (keepCurrent)="keepCurrent.emit()"
+          />
+        }
       </div>
-      <div class="ml-auto flex shrink-0">
-        @if (s.status !== 'approved') {
+      <!-- Applied mail is read-only: ticked for re-analysis, decided by Use new / Keep current. -->
+      @if (s.status !== 'applied') {
+        <div class="ml-auto flex shrink-0">
+          @if (s.status !== 'approved') {
+            <button
+              mat-icon-button
+              type="button"
+              [disabled]="busy()"
+              (click)="approve.emit()"
+              matTooltip="Approve"
+              [attr.aria-label]="'Approve ' + subject()"
+              data-testid="member-approve"
+            >
+              <mat-icon aria-hidden="true">check</mat-icon>
+            </button>
+          }
+          @if (s.status !== 'rejected') {
+            <button
+              mat-icon-button
+              type="button"
+              [disabled]="busy()"
+              (click)="reject.emit()"
+              matTooltip="Reject"
+              [attr.aria-label]="'Reject ' + subject()"
+              data-testid="member-reject"
+            >
+              <mat-icon aria-hidden="true">close</mat-icon>
+            </button>
+          }
           <button
             mat-icon-button
             type="button"
-            [disabled]="busy() || s.status === 'applied'"
-            (click)="approve.emit()"
-            matTooltip="Approve"
-            [attr.aria-label]="'Approve ' + subject()"
-            data-testid="member-approve"
+            [disabled]="busy()"
+            (click)="edit.emit()"
+            matTooltip="Edit"
+            [attr.aria-label]="'Edit ' + subject()"
+            data-testid="member-edit"
           >
-            <mat-icon aria-hidden="true">check</mat-icon>
+            <mat-icon aria-hidden="true">edit</mat-icon>
           </button>
-        }
-        @if (s.status !== 'rejected') {
-          <button
-            mat-icon-button
-            type="button"
-            [disabled]="busy() || s.status === 'applied'"
-            (click)="reject.emit()"
-            matTooltip="Reject"
-            [attr.aria-label]="'Reject ' + subject()"
-            data-testid="member-reject"
-          >
-            <mat-icon aria-hidden="true">close</mat-icon>
-          </button>
-        }
-        <button
-          mat-icon-button
-          type="button"
-          [disabled]="busy() || s.status === 'applied'"
-          (click)="edit.emit()"
-          matTooltip="Edit"
-          [attr.aria-label]="'Edit ' + subject()"
-          data-testid="member-edit"
-        >
-          <mat-icon aria-hidden="true">edit</mat-icon>
-        </button>
-      </div>
+        </div>
+      }
     </div>
   `,
   styles: `
@@ -199,11 +215,15 @@ export class MemberRow {
   readonly edit = output<void>();
   readonly toggleSelect = output<void>();
   readonly claudeChange = output<ExternalReviewDto>();
+  /** "Use new" / "Keep current" on its re-analysis result. */
+  readonly useNew = output<void>();
+  readonly keepCurrent = output<void>();
 
   readonly subject = computed(() => this.suggestion().subject || '(no subject)');
   readonly source = computed(
     () => SOURCE_LABELS[this.suggestion().source] ?? this.suggestion().source,
   );
   readonly confidence = computed(() => percent(this.suggestion().confidence));
+  readonly values = computed(() => memberValues(this.suggestion()));
   readonly claudeRequest = computed(() => ({ suggestionIds: [this.suggestion().id] }));
 }
