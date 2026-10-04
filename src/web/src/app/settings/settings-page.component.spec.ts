@@ -80,6 +80,7 @@ const models: LlmModels = {
   error: null,
 };
 
+const VERSION = '9.8.7-test';
 const PROMPT = 'Synthetic instructions.\n\n{{emails}}';
 const defaultPrompt = { version: 'test-v1', template: PROMPT };
 const appsScriptConfig = {
@@ -108,6 +109,7 @@ describe('SettingsPage', () => {
         else if (path === '/api/llm/models') req.flush(models);
         else if (path === '/api/analysis/prompt/default') req.flush(defaultPrompt);
         else if (path === '/api/rules/apps-script/config') req.flush(appsScriptConfig);
+        else if (path === '/healthz') req.flush({ status: 'ok', version: VERSION });
         else throw new Error(`unexpected GET ${path}`);
       }
     }
@@ -181,6 +183,11 @@ describe('SettingsPage', () => {
     expect(q('section-ollama')!.querySelector('app-models-step')).not.toBeNull();
     expect(q('connected-as')!.textContent).toContain(EMAIL);
     expect(q('no-client')).toBeNull();
+  });
+
+  it('shows the api version from /healthz in the footer', async () => {
+    const { q } = await render();
+    expect(q('app-version')!.textContent!.trim()).toBe(`Gmail Organiser v${VERSION}`);
   });
 
   it('callback connected: shows the result on the Gmail card, scrolls to it, clears the params', async () => {

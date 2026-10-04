@@ -23,6 +23,18 @@ public sealed class SkeletonTests(ApiFactory factory, PostgresFixture postgres) 
     }
 
     [Fact]
+    public async Task Healthz_returns_the_informational_version_without_the_source_revision()
+    {
+        var body = await factory.CreateClient().GetFromJsonAsync<HealthDto>("/healthz", Ct);
+
+        var version = body.ShouldNotBeNull().Version;
+        version.ShouldBe(HealthEndpoints.Version);
+        version.ShouldNotBeNullOrWhiteSpace();
+        version.ShouldNotContain('+');
+        version.ShouldMatch(@"^\d+\.\d+\.\d+");
+    }
+
+    [Fact]
     public async Task Foreign_host_gets_400()
     {
         var client = factory.CreateClient(new() { BaseAddress = new Uri("http://other.example.com") });

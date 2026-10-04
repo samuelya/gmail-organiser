@@ -7,5 +7,7 @@
     <!-- NuGet audit advisories stay warnings so a new advisory doesn't break restore on unchanged code. -->
     <WarningsNotAsErrors>NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
     <LangVersion>latest</LangVersion>
+    <!-- Release version; the api image overrides it with the tag (Dockerfile VERSION build arg). -->
+    <Version>1.0.0</Version>
   </PropertyGroup>
 </Project>

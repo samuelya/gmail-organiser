@@ -10,6 +10,11 @@
     "changeOrigin": false,
     "ws": true
   },
+  "/healthz": {
+    "target": "http://localhost:5181",
+    "secure": false,
+    "changeOrigin": false
+  },
   "/mcp": {
     "target": "http://localhost:5181",
     "secure": false,
