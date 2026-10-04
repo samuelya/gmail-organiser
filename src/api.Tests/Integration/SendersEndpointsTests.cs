@@ -8,6 +8,7 @@ using GmailOrganiser.Senders;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace GmailOrganiser.Tests.Integration;
 
@@ -114,6 +115,33 @@ public sealed class SendersEndpointsTests(ApiFactory factory, PostgresFixture po
 
         page.Total.ShouldBe(expected);
         page.Items.Count.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task Search_query_uses_the_trigram_index_on_each_searched_column()
+    {
+        await using var db = postgres.CreateDbContext();
+        await db.Database.OpenConnectionAsync(Ct);
+        await using var tx = await db.Database.BeginTransactionAsync(Ct);
+        await db.Database.ExecuteSqlRawAsync("SET LOCAL enable_seqscan = off", Ct);
+        await using var explain = SenderQuery.Filter(db.Senders.AsNoTracking(), "example").CreateDbCommand();
+        explain.Transaction = tx.GetDbTransaction();
+        explain.CommandText = "EXPLAIN " + explain.CommandText;
+
+        var plan = new List<string>();
+        await using (var reader = await explain.ExecuteReaderAsync(Ct))
+        {
+            while (await reader.ReadAsync(Ct))
+            {
+                plan.Add(reader.GetString(0));
+            }
+        }
+
+        var text = string.Join('\n', plan);
+        text.ShouldContain("ix_senders_address_trgm", customMessage: text);
+        text.ShouldContain("ix_senders_domain_trgm", customMessage: text);
+        text.ShouldContain("ix_senders_display_name_trgm", customMessage: text);
+        text.ShouldNotContain("Seq Scan", customMessage: text);
     }
 
     [Fact]

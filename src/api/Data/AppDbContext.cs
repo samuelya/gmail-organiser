@@ -50,6 +50,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasPostgresExtension("vector");
+        modelBuilder.HasPostgresExtension("pg_trgm");
 
         modelBuilder.Entity<SettingsRow>(e =>
         {
@@ -100,6 +101,10 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.Allowlisted).HasDefaultValue(false);
             e.Property(r => r.UnsubscribeMethod).HasConversion(new SnakeCaseEnumConverter<UnsubscribeMethod>());
             e.HasIndex(r => r.Domain);
+            // Trigram indexes for SenderQuery's ILIKE '%term%' search (a leading wildcard can't use a B-tree).
+            e.HasIndex(r => r.Address, "ix_senders_address_trgm").HasDatabaseName("ix_senders_address_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+            e.HasIndex(r => r.Domain, "ix_senders_domain_trgm").HasDatabaseName("ix_senders_domain_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+            e.HasIndex(r => r.DisplayName, "ix_senders_display_name_trgm").HasDatabaseName("ix_senders_display_name_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
         });
 
         modelBuilder.Entity<FetchStateRow>(e =>
