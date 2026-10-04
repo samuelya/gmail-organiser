@@ -2,13 +2,14 @@ import { computed, DestroyRef, effect, inject, Injectable, signal, untracked } f
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { filter, Observable, Subject, switchMap } from 'rxjs';
+import { catchError, filter, Observable, of, Subject, switchMap } from 'rxjs';
 import { AnalysisRunDto } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { injectAnalysisRunActive, MAX_COMPARE, openCompareConfirm } from '../analyse/compare-run';
 import { isActiveJob } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { ReviewGroupDto, SuggestionDto } from './review.models';
+import { ReviewService } from './review.service';
 
 /** Tooltip of a card's "Re-analyse" when it holds more members than one re-analysis takes. */
 export const CARD_TOO_LARGE_TOOLTIP = `At most ${MAX_COMPARE} at a time`;
@@ -21,6 +22,7 @@ export const CARD_TOO_LARGE_TOOLTIP = `At most ${MAX_COMPARE} at a time`;
 export class CardReanalyse {
   private readonly analysis = inject(AnalysisService);
   private readonly jobs = inject(JobsService);
+  private readonly review = inject(ReviewService);
   private readonly dialog = inject(MatDialog);
   private readonly snackBar = inject(MatSnackBar);
   private readonly destroyRef = inject(DestroyRef);
@@ -49,14 +51,25 @@ export class CardReanalyse {
       if (job && isActiveJob(job)) this.seen = true;
       else if (job || this.seen) untracked(() => this.finish());
     });
-    // Updates may have been missed while disconnected; the hub's snapshot holds active jobs only.
+    // Updates may have been missed while disconnected, and the hub may not have reported the job yet
+    // (its snapshot arrives after the reconnect): ask the API and end only on a terminal status.
     effect(() => {
       if (this.jobs.reconnects() === 0) return;
-      untracked(() => {
-        const id = this.jobId();
-        const job = id ? this.jobs.job(id) : undefined;
-        if (id && !(job && isActiveJob(job))) this.finish();
-      });
+      const id = untracked(() => this.jobId());
+      if (!id) return;
+      untracked(() =>
+        this.review
+          .job(id)
+          .pipe(
+            catchError(() => of(null)),
+            takeUntilDestroyed(this.destroyRef),
+          )
+          .subscribe((job) => {
+            if (!job || this.jobId() !== id) return;
+            if (isActiveJob(job)) this.seen = true;
+            else this.finish();
+          }),
+      );
     });
   }
 

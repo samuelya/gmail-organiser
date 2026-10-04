@@ -11,6 +11,7 @@ import { JobsService } from '../core/jobs.service';
 import { CardReanalyse } from './card-reanalyse';
 import { GroupCard } from './group-card.component';
 import { ReviewGroupDto, SuggestionDto, SuggestionStatus } from './review.models';
+import { ReviewService } from './review.service';
 
 const member = (id: string, status: SuggestionStatus = 'pending'): SuggestionDto => ({
   id,
@@ -112,10 +113,12 @@ describe('Card and member Re-analyse', () => {
   async function render(g: ReviewGroupDto, start = () => of({ id: 'run-1', jobId: 'job-r' })) {
     const jobs = new FakeJobs();
     const analysis = { startCompareRun: vi.fn(start) };
+    const review = { job: vi.fn(() => of(runJob('running'))) };
     TestBed.configureTestingModule({
       providers: [
         { provide: JobsService, useValue: jobs },
         { provide: AnalysisService, useValue: analysis },
+        { provide: ReviewService, useValue: review },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
@@ -138,7 +141,7 @@ describe('Card and member Re-analyse', () => {
     await settle();
     const tooltip = (id: string) =>
       fixture.debugElement.query(By.css(`[data-testid="${id}"]`)).injector.get(MatTooltip).message;
-    return { jobs, analysis, ended, q, all, settle, tooltip };
+    return { jobs, analysis, review, ended, q, all, settle, tooltip };
   }
 
   const dialogText = () => document.querySelector('mat-dialog-container')?.textContent ?? '';
@@ -241,11 +244,38 @@ describe('Card and member Re-analyse', () => {
     expect(ended).not.toHaveBeenCalled();
   });
 
-  it('a run the hub never reported ends on reconnect', async () => {
+  it('on reconnect before the hub reported the run, it keeps spinning while the API says it is active', async () => {
+    const { all, q, jobs, review, ended, settle } = await render(group([member('a')]));
+    all('member-reanalyse')[0].click();
+    await settle();
+    jobs.reconnects.set(1);
+    await settle();
+    expect(review.job).toHaveBeenCalledWith('job-r');
+    expect(ended).not.toHaveBeenCalled();
+    expect(q('member-reanalysing')).not.toBeNull();
+
+    jobs.held.set([runJob('completed')]);
+    await settle();
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it('on reconnect, a run the API reports finished ends', async () => {
+    const { all, jobs, review, ended, settle } = await render(group([member('a')]));
+    review.job.mockReturnValue(of(runJob('completed')));
+    all('member-reanalyse')[0].click();
+    await settle();
+    jobs.reconnects.set(1);
+    await settle();
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it('on reconnect, a run the API reported active ends once the hub snapshot drops it', async () => {
     const { all, jobs, ended, settle } = await render(group([member('a')]));
     all('member-reanalyse')[0].click();
     await settle();
     jobs.reconnects.set(1);
+    await settle();
+    jobs.held.set([]);
     await settle();
     expect(ended).toHaveBeenCalledTimes(1);
   });
