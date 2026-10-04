@@ -81,14 +81,48 @@ public static class ClaudeReviewEndpoints
         };
     }
 
-    /// <summary>Items in <c>status</c> (any when omitted), newest first.</summary>
+    /// <summary>
+    /// Items in <c>status</c> (any when omitted), for <c>labelPlanId</c> and any of the repeated <c>findingId</c> values
+    /// when given, newest first. Ids are taken as strings so a malformed one is a 400 keyed by its parameter.
+    /// </summary>
     private static async Task<Results<Ok<PagedDto<ExternalReviewDto>>, ValidationProblem>> ListAsync(
-        ExternalReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null)
+        ExternalReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null,
+        string? labelPlanId = null, string[]? findingId = null)
     {
         var errors = new Dictionary<string, string[]>();
         if (!ExternalReviewQuery.TryParseStatus(status, out var parsed))
         {
             errors["status"] = ["Must be queued, running, reviewed, unavailable or cancelled."];
+        }
+
+        Guid? planId = null;
+        if (labelPlanId is not null)
+        {
+            if (Guid.TryParse(labelPlanId, out var id))
+            {
+                planId = id;
+            }
+            else
+            {
+                errors["labelPlanId"] = ["Must be a GUID."];
+            }
+        }
+
+        var findingIds = new Guid[findingId?.Length ?? 0];
+        if (findingIds.Length > ExternalReviewService.MaxTargets)
+        {
+            errors["findingId"] = [$"At most {ExternalReviewService.MaxTargets} ids."];
+        }
+        else
+        {
+            for (var i = 0; i < findingIds.Length; i++)
+            {
+                if (!Guid.TryParse(findingId![i], out findingIds[i]))
+                {
+                    errors["findingId"] = ["Must be GUIDs."];
+                    break;
+                }
+            }
         }
 
         if (page is < 1 or > SenderQuery.MaxPage)
@@ -103,7 +137,8 @@ public static class ClaudeReviewEndpoints
 
         return errors.Count > 0
             ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await query.ListAsync(parsed, page ?? 1, pageSize ?? ExternalReviewQuery.DefaultPageSize, ct));
+            : TypedResults.Ok(await query.ListAsync(
+                parsed, page ?? 1, pageSize ?? ExternalReviewQuery.DefaultPageSize, ct, planId, findingIds));
     }
 
     private static async Task<Results<Ok<ExternalReviewDto>, ProblemHttpResult>> ToResultAsync(
