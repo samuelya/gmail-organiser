@@ -190,7 +190,9 @@ public sealed partial class SenderPatternService(
             ListId = filter.ListId,
             TopicLabel = label,
             DocumentTypeLabel = type,
-            DocumentTypeDecided = settings.DocumentTypeParent is not null || type is not null,
+            // No run here: the user decides under the current parent, recorded like DecisionRecorder records a run's.
+            DocumentTypeDecided = settings.DocumentTypeParent is not null,
+            DocumentTypeParent = settings.DocumentTypeParent,
             NeedsAction = needsAction,
             ToBeDeleted = toBeDeleted,
             Outcome = DecisionOutcome.Approved,

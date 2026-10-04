@@ -313,6 +313,16 @@ public static class SuggestionOutputParser
         }
     }
 
+    /// <summary>
+    /// <paramref name="value"/> (trimmed) as stored for a suggestion: a valid label path exactly one segment directly under
+    /// <paramref name="parent"/> (case-insensitive), spelled with the parent as configured; null otherwise. Memory answers
+    /// with the same spelling as the model's rows, so both group together.
+    /// </summary>
+    public static string? DocumentTypeUnder(string parent, string value)
+    {
+        return DocumentTypePath.Normalise(value.Trim(), parent, topicLabel: null, out _);
+    }
+
     /// <inheritdoc cref="LabelPath.IsValid"/>
     public static bool IsValidLabelPath(string path) => LabelPath.IsValid(path);
 

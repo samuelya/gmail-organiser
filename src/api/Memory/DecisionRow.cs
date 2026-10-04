@@ -37,6 +37,11 @@ public sealed class DecisionRow
 
     /// <summary>The decision was recorded with a document-type parent set, so a null label means "no type".</summary>
     public bool DocumentTypeDecided { get; set; }
+
+    /// <summary>
+    /// The document-type parent of the suggestion's run (null: off). Memory counts the type only under the same parent.
+    /// </summary>
+    public string? DocumentTypeParent { get; set; }
     public bool NeedsAction { get; set; }
     public bool ToBeDeleted { get; set; }
     public DecisionOutcome Outcome { get; set; }

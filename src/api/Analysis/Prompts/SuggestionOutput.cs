@@ -20,6 +20,10 @@ public sealed record EmailForPrompt(
 }
 
 /// <summary>A similar past decision from memory, shown to the model as a hint.</summary>
+/// <param name="DocumentTypeDecided">
+/// The decision was made under the current document-type parent, so a null <paramref name="DocumentTypeLabel"/> means
+/// "no type" rather than unknown.
+/// </param>
 public sealed record MemoryHint(
     string SenderAddress,
     string? SubjectTemplate,
@@ -27,7 +31,9 @@ public sealed record MemoryHint(
     bool NeedsAction,
     bool ToBeDeleted,
     string Outcome,
-    double Similarity);
+    double Similarity,
+    string? DocumentTypeLabel = null,
+    bool DocumentTypeDecided = false);
 
 /// <param name="DocumentTypeParent">The document-type parent label; null or blank tells the model the feature is off.</param>
 public sealed record PromptInput(

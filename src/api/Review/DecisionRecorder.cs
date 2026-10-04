@@ -3,21 +3,25 @@ using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Memory;
+using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Review;
 
 /// <summary>
 /// Adds one <c>decisions</c> row per approve or reject to the caller's unit of work; the caller saves it together with
 /// the status change and then calls <see cref="Committed"/>, which wakes the background embedding: the request never
-/// waits on the model. Rows are otherwise only updated with their vector.
+/// waits on the model. Rows are otherwise only updated with their vector. The document type is decided under the
+/// parent of the suggestion's run (its snapshot, not the current Settings), read once per run per recorder (one request).
 /// </summary>
 public sealed partial class DecisionRecorder(
     AppDbContext db, IDecisionEmbeddingQueue embedding, TimeProvider time, ILogger<DecisionRecorder> logger)
 {
+    private readonly Dictionary<Guid, string?> runParents = [];
     private bool recorded;
 
-    public ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
+    public async ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
     {
+        var parent = await RunParentAsync(suggestion.RunId, ct);
         var now = time.GetUtcNow();
         var row = new DecisionRow
         {
@@ -29,6 +33,9 @@ public sealed partial class DecisionRecorder(
             // The message's own template: the one GroupKey.For put in its group key, without parsing the key.
             SubjectTemplate = SubjectNormaliser.Template(message.Subject),
             TopicLabel = suggestion.TopicLabel,
+            DocumentTypeLabel = suggestion.DocumentTypeLabel,
+            DocumentTypeDecided = parent is not null,
+            DocumentTypeParent = parent,
             NeedsAction = suggestion.NeedsAction,
             ToBeDeleted = suggestion.ToBeDeleted,
             Outcome = outcome,
@@ -38,7 +45,23 @@ public sealed partial class DecisionRecorder(
         };
         db.Decisions.Add(row);
         recorded = true;
-        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>The run's document-type parent; null without a run (deleted, or a suggestion made outside one).</summary>
+    private async ValueTask<string?> RunParentAsync(Guid? runId, CancellationToken ct)
+    {
+        if (runId is not { } id)
+        {
+            return null;
+        }
+
+        if (!runParents.TryGetValue(id, out var parent))
+        {
+            parent = await db.AnalysisRuns.AsNoTracking().Where(r => r.Id == id).Select(r => r.DocumentTypeParent).FirstOrDefaultAsync(ct);
+            runParents[id] = parent;
+        }
+
+        return parent;
     }
 
     /// <summary>
