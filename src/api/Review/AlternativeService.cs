@@ -2,7 +2,10 @@ using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Claude;
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Review;
@@ -11,14 +14,15 @@ namespace GmailOrganiser.Review;
 /// Accepts or discards compare-run alternatives (#249). Accept copies the alternative into its suggestion and makes it
 /// pending again, whatever its status: an approval is withdrawn, and an applied suggestion keeps its <c>action_log</c>
 /// rows (Undo of that batch still reverts the Gmail state it logged, but no longer touches the suggestion or the count)
-/// and stops counting in <c>senders.applied_count</c>. Open Claude reviews of the suggestion or its group are closed, as they judged the old
+/// and stops counting in <c>senders.applied_count</c>; the labels its applied outcome added that the new outcome doesn't add
+/// join the replaced labels, so applying the new outcome removes them through the undo log (#310). Open Claude reviews of the suggestion or its group are closed, as they judged the old
 /// outcome. Nothing changes in Gmail and no decision is recorded; the new outcome is approved and applied the normal
 /// way. Both actions lock the suggestions <c>FOR UPDATE</c> by id in chunks of <see cref="ReviewService.ChunkSize"/>,
 /// one transaction each, so they wait for each other and for a compare run's checkpoint (<c>FOR KEY SHARE</c>).
 /// Endpoints validate first.
 /// </summary>
 public sealed class AlternativeService(
-    AppDbContext db, ExternalReviewQuery externalReviews, IExternalReviewNotifier notifier, TimeProvider time)
+    AppDbContext db, ExternalReviewQuery externalReviews, IExternalReviewNotifier notifier, ISettingsStore settingsStore, TimeProvider time)
 {
     /// <summary>Most suggestion ids and groups one request names, each.</summary>
     public const int MaxTargets = 1000;
@@ -30,11 +34,12 @@ public sealed class AlternativeService(
     public async Task<AlternativeDecisionResponse> AcceptAsync(Guid[] suggestionIds, GroupRef[] groups, CancellationToken ct)
     {
         var targets = await TargetsAsync(suggestionIds, groups, ct);
+        var settings = await settingsStore.GetAsync(ct);
         int accepted = 0;
         var closed = new List<Guid>();
         foreach (var chunk in targets.Chunk(ReviewService.ChunkSize))
         {
-            accepted += await AcceptChunkAsync(chunk, closed, ct);
+            accepted += await AcceptChunkAsync(chunk, settings, closed, ct);
         }
 
         if (closed.Count > 0)
@@ -67,7 +72,7 @@ public sealed class AlternativeService(
     }
 
     /// <summary>One transaction: accepts the locked chunk's alternatives; adds the Claude reviews it closed to <paramref name="closed"/>.</summary>
-    private async Task<int> AcceptChunkAsync(Guid[] ids, List<Guid> closed, CancellationToken ct)
+    private async Task<int> AcceptChunkAsync(Guid[] ids, AppSettings settings, List<Guid> closed, CancellationToken ct)
     {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var locked = await db.Suggestions.FromSql($"SELECT * FROM suggestions WHERE id = ANY({ids}) ORDER BY id FOR UPDATE").ToListAsync(ct);
@@ -75,6 +80,11 @@ public sealed class AlternativeService(
         var messageIds = locked.ConvertAll(s => s.MessageId);
         var messages = await db.Messages.Where(m => messageIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, StringComparer.Ordinal, ct);
         var inApply = await InApplyAsync(ids, ct);
+        var appliedIds = locked.Where(s => s.Status == SuggestionStatus.Applied).Select(s => (Guid?)s.Id).ToArray();
+        var logs = (await db.ActionLog.AsNoTracking()
+                .Where(l => appliedIds.Contains(l.SuggestionId) && l.UndoneByBatchId == null)
+                .ToListAsync(ct))
+            .ToLookup(l => l.SuggestionId!.Value);
         var now = time.GetUtcNow();
         var done = new List<SuggestionRow>();
         var wasApplied = new List<string>();
@@ -91,7 +101,15 @@ public sealed class AlternativeService(
             }
 
             Copy(alternative, suggestion);
-            suggestion.SetStatus(SuggestionStatus.Pending, messages[suggestion.MessageId], now);
+            var message = messages[suggestion.MessageId];
+            if (logs[suggestion.Id].Any())
+            {
+                suggestion.SetReplaced([.. suggestion.Replaced(null)
+                    .Concat(OldOutcomeLabels(logs[suggestion.Id], suggestion, message, settings))
+                    .DistinctBy(l => l.Id, StringComparer.Ordinal)]);
+            }
+
+            suggestion.SetStatus(SuggestionStatus.Pending, message, now);
             db.SuggestionAlternatives.Remove(alternative);
             done.Add(suggestion);
         }
@@ -210,6 +228,40 @@ public sealed class AlternativeService(
                 && (c.SuggestionIds is null || c.SuggestionIds.Contains(s.Id))),
             _ => false,
         };
+    }
+
+    /// <summary>
+    /// The user labels the suggestion's not-undone apply rows added that the message still carries and the new outcome
+    /// <paramref name="s"/> doesn't add (topic, applied document type, action and delete label, by name): the old
+    /// outcome's labels apply removes. A log row's added names are aligned with its sorted added ids; the id stands in
+    /// for a name the row doesn't have. Apply drops any it adds again.
+    /// </summary>
+    private static IEnumerable<(string Id, string Name)> OldOutcomeLabels(
+        IEnumerable<ActionLogRow> rows, SuggestionRow s, MessageRow m, AppSettings settings)
+    {
+        var kept = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { s.TopicLabel.Trim() };
+        if (s.DocumentTypeLabel is { } type && ActionPlanner.AppliesDocumentType(type, settings))
+        {
+            kept.Add(type.Trim());
+        }
+
+        if (s.NeedsAction)
+        {
+            kept.Add(settings.ActionLabelName.Trim());
+        }
+
+        if (s.ToBeDeleted)
+        {
+            kept.Add(settings.DeleteLabelName.Trim());
+        }
+
+        return rows
+            .SelectMany(r =>
+            {
+                var added = LabelChunks.Sorted(r.LabelIdsAfter.Except(r.LabelIdsBefore, StringComparer.Ordinal));
+                return added.Select((id, i) => (Id: id, Name: added.Length == r.LabelsAdded.Length ? r.LabelsAdded[i] : id));
+            })
+            .Where(l => GmailLabelIds.IsUser(l.Id) && m.LabelIds.Contains(l.Id, StringComparer.Ordinal) && !kept.Contains(l.Name.Trim()));
     }
 
     /// <summary>The alternative's outcome and provenance; the suggestion keeps its id, message, sender and group.</summary>

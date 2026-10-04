@@ -154,7 +154,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var labelNames = personal.IsUnavailable ? null : personal.Names;
         foreach (var (g, members) in loaded)
         {
-            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlist, claude, labelNames, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
+            groups.Add(ToGroup(
+                g, outcomes[g.Key], members, allowlist, claude, labelNames, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
         }
 
         return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
@@ -201,9 +202,16 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             || (settings.ClaudeSuggestNewLabels && isNewLabel));
 
     /// <param name="labelNames">Personal label names by id (<see cref="PersonalLabels.Names"/>) for the current labels; null lists none.</param>
+    /// <param name="appLabelIds">The action and delete label ids (<see cref="PersonalLabels.AppLabelIds"/>): replaced too
+    /// when an accepted alternative replaces an applied outcome.</param>
     public static SuggestionDto ToDto(
-        SuggestionRow s, MessageRow m, Allowlist allowlist, ProtectionSettings rules, IReadOnlyDictionary<string, string>? labelNames = null) =>
-        ToDto(s, m, allowlist, rules, labelNames, null, false);
+        SuggestionRow s,
+        MessageRow m,
+        Allowlist allowlist,
+        ProtectionSettings rules,
+        IReadOnlyDictionary<string, string>? labelNames = null,
+        IReadOnlyList<string>? appLabelIds = null) =>
+        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds);
 
     public static SuggestionDto ToDto(
         SuggestionRow s,
@@ -213,10 +221,11 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         IReadOnlyDictionary<string, string>? labelNames,
         ExternalReviewDto? claudeReview,
         bool suggestedForClaude,
-        SuggestionAlternativeRow? alternative = null)
+        SuggestionAlternativeRow? alternative = null,
+        IReadOnlyList<string>? appLabelIds = null)
     {
         var current = CurrentLabels(m, labelNames);
-        var replaced = Replaced(s.Replaced(labelNames), s.TopicLabel, m, labelNames);
+        var replaced = Replaced(s.Replaced(labelNames), s.TopicLabel, m, labelNames, appLabelIds);
         return new SuggestionDto(
         s.Id,
         s.MessageId,
@@ -246,13 +255,18 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
 
     /// <summary>
     /// The names of the replaced labels apply would remove now: those the message still carries, never the topic label,
-    /// and (when the label list is known) only personal labels Gmail still has. Distinct and ordinal-sorted.
+    /// and (when the label list is known) only personal labels or <paramref name="appLabelIds"/> Gmail still has.
+    /// Distinct and ordinal-sorted.
     /// </summary>
     private static string[] Replaced(
-        IReadOnlyList<(string Id, string Name)> stored, string topicLabel, MessageRow m, IReadOnlyDictionary<string, string>? labelNames) =>
+        IReadOnlyList<(string Id, string Name)> stored,
+        string topicLabel,
+        MessageRow m,
+        IReadOnlyDictionary<string, string>? labelNames,
+        IReadOnlyList<string>? appLabelIds = null) =>
         [.. stored
             .Where(l => m.LabelIds.Contains(l.Id, StringComparer.Ordinal)
-                && (labelNames is null || labelNames.ContainsKey(l.Id))
+                && (labelNames is null || labelNames.ContainsKey(l.Id) || appLabelIds?.Contains(l.Id, StringComparer.Ordinal) == true)
                 && !string.Equals(l.Name.Trim(), topicLabel.Trim(), StringComparison.OrdinalIgnoreCase))
             .Select(l => l.Name)
             .Distinct(StringComparer.Ordinal)
@@ -310,6 +324,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         Allowlist allowlist,
         ClaudeLookup claude,
         IReadOnlyDictionary<string, string>? labelNames,
+        IReadOnlyList<string> appLabelIds,
         IReadOnlyDictionary<Guid, SuggestionAlternativeRow> alternatives,
         int alternativeCount)
     {
@@ -335,7 +350,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var settings = claude.Settings;
         var dtos = members.Select(x => ToDto(
                 x.S, x.M, allowlist, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
-                IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel), alternatives.GetValueOrDefault(x.S.Id)))
+                IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel), alternatives.GetValueOrDefault(x.S.Id), appLabelIds))
             .ToList();
         var change = Combined(dtos.Select(d => d.LabelChange));
         return new ReviewGroupDto(

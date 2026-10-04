@@ -215,8 +215,11 @@ public sealed partial class ApplyActionsJob(
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : await labels.EnsureAsync(paths, (label, _) => RecordCreatedAsync(cursor.BatchId, label), ct);
         // Ids, not names: a replaced label renamed in Gmail since analysis is still removed; a deleted one is skipped.
+        // The action and delete labels are removable too: an accepted alternative replaces the applied outcome's (#310).
         var personal = valid.Any(r => r.Suggestion.ReplaceLabelIds.Length > 0)
-            ? PersonalLabels.From(await catalog.GetAsync(ct), settings).Names
+            ? (await catalog.GetAsync(ct)).Where(l => l.Type == GmailLabelType.User)
+                .DistinctBy(l => l.Id, StringComparer.Ordinal)
+                .ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal)
             : new Dictionary<string, string>(StringComparer.Ordinal);
         var removable = personal.Keys.ToHashSet(StringComparer.Ordinal);
         var items = valid.Select(r => new PlannedItem(

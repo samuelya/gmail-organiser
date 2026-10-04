@@ -432,7 +432,7 @@ public sealed partial class ReviewService(
         var rules = settings.Protection;
         if (suggestion.Status == SuggestionStatus.Applied)
         {
-            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names));
+            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds));
         }
 
         if (needsChange(suggestion))
@@ -451,7 +451,7 @@ public sealed partial class ReviewService(
 
         await tx.CommitAsync(ct);
         decisions.Committed();
-        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names));
+        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds));
     }
 
     /// <summary>
