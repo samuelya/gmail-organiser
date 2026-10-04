@@ -82,7 +82,8 @@ public static partial class LabelPlanBuilder
             }
         }
 
-        foreach (var n in nests.Where(n => !handled.Contains(n.Entry.Label.Id)))
+        // A parent stays where it is; renaming it would split it from its children.
+        foreach (var n in nests.Where(n => !handled.Contains(n.Entry.Label.Id) && !IsParent(n.Entry)))
         {
             items.Add(Item(LabelPlanItemKind.Nest, n.Entry, Filters(n.Entry.Label), n.Rationale) with { ProposedName = n.ProposedName });
             handled.Add(n.Entry.Label.Id);
