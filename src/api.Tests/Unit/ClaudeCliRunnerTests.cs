@@ -45,7 +45,7 @@ public sealed class ClaudeCliRunnerTests : IDisposable
             "--output-format", "json",
             "--mcp-config", "/tmp/x/mcp.json",
             "--strict-mcp-config",
-            "--allowedTools", "mcp__gmail-organiser__list_pending_reviews,mcp__gmail-organiser__get_review_item,mcp__gmail-organiser__get_label_tree,mcp__gmail-organiser__submit_review",
+            "--allowedTools", "mcp__gmail-organiser__list_pending_reviews,mcp__gmail-organiser__get_review_item,mcp__gmail-organiser__get_label_tree,mcp__gmail-organiser__submit_review,mcp__gmail-organiser__get_filters,mcp__gmail-organiser__get_label_plan,mcp__gmail-organiser__submit_taxonomy_feedback",
             "--max-turns", "80",
         ]);
         args.ShouldNotContain(a => a.Contains(McpToken));
