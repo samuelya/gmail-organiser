@@ -57,7 +57,9 @@ public sealed class LlmClientFactory(
     // A new fake per call: callers dispose it, and its request log lives no longer than one run.
     private static FakeChatClient CreateFakeChatClient() => new() { Responder = FakeAnalysisResponder.Answer };
 
-    private static FakeEmbeddingGenerator CreateFakeEmbeddingGenerator() => new(FakeEmbeddingDimension);
+    // Reports the fake model name, so memory never records fake vectors under the real model chosen in Settings.
+    private static FakeEmbeddingGenerator CreateFakeEmbeddingGenerator() =>
+        new(FakeEmbeddingDimension) { ModelId = FakeOllamaCatalog.EmbeddingModel };
 
     // OllamaApiClient implements both IChatClient and IEmbeddingGenerator; its HttpClient comes from IHttpClientFactory,
     // so disposing the client never disposes a pooled handler.

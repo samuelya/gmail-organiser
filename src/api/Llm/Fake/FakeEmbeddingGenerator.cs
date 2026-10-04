@@ -13,6 +13,9 @@ public sealed class FakeEmbeddingGenerator(int dimension = 8) : IEmbeddingGenera
     public int Dimension { get; } = dimension > 0 ? dimension : throw new ArgumentOutOfRangeException(nameof(dimension));
     public Exception? Failure { get; set; }
 
+    /// <summary>Reported as the metadata's model, so the vectors are recorded under it; null reports no metadata.</summary>
+    public string? ModelId { get; init; }
+
     /// <summary>A call with any input this matches fails as a whole, like a model rejecting one invalid input.</summary>
     public Func<string, bool>? Rejects { get; set; }
     public bool Disposed { get; private set; }
@@ -70,7 +73,11 @@ public sealed class FakeEmbeddingGenerator(int dimension = 8) : IEmbeddingGenera
     }
 
     public object? GetService(Type serviceType, object? serviceKey = null) =>
-        serviceKey is null && serviceType.IsInstanceOfType(this) ? this : null;
+        serviceKey is not null ? null
+        : serviceType.IsInstanceOfType(this) ? this
+        : serviceType == typeof(EmbeddingGeneratorMetadata) && ModelId is not null
+            ? new EmbeddingGeneratorMetadata("fake", defaultModelId: ModelId, defaultModelDimensions: Dimension)
+            : null;
 
     public void Dispose() => Disposed = true;
 }

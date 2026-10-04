@@ -122,6 +122,19 @@ public sealed class FakeLlmTests
     }
 
     [Theory]
+    [InlineData(true, FakeOllamaCatalog.EmbeddingModel)]
+    [InlineData(false, "synthetic-embed-model")]
+    public void Embedding_generator_reports_the_model_that_makes_the_vectors(bool fake, string expected)
+    {
+        var factory = new LlmClientFactory(
+            new StubHttpClientFactory(new StubOllamaHandler()), new InMemorySettingsStore(), Options.Create(new LlmOptions { UseFake = fake }));
+
+        using var embed = factory.CreateEmbeddingGenerator(new Uri("http://unused.example.com:11434"), "synthetic-embed-model");
+
+        embed.GetService<EmbeddingGeneratorMetadata>().ShouldNotBeNull().DefaultModelId.ShouldBe(expected);
+    }
+
+    [Theory]
     [InlineData(null, false)]
     [InlineData("true", true)]
     [InlineData(" False ", false)]
