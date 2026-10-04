@@ -20,7 +20,8 @@ public sealed record IncrementalFetchCursor(
 /// re-read and upserted (which is how removed labels show), so re-applying a page changes nothing.
 /// <c>fetch_state.last_history_id</c> moves only on completion. Expired history resets the mailbox phase on completion
 /// and then queues a full resync, which reconciles the stored mail it does not list. After each page the re-read
-/// messages go to <see cref="IActionDoneScanner"/> (auto-archive).
+/// messages go to <see cref="IActionDoneScanner"/> (auto-archive). The account guard runs after every Gmail read and
+/// before the writes that follow it, so a reconnect to another account mid-page stores nothing of that page.
 /// </summary>
 public sealed partial class IncrementalFetchJob(
     IGmailClient gmail,
@@ -88,7 +89,7 @@ public sealed partial class IncrementalFetchJob(
                 continue;
             }
 
-            cursor = await ApplyAsync(cursor, page, ct);
+            cursor = await ApplyAsync(ctx, cursor, page, ct);
             var progress = new JobProgress(cursor.Touched + cursor.Deleted, null, ApplyingMessage);
             if (cursor.PageToken is null)
             {
@@ -105,8 +106,10 @@ public sealed partial class IncrementalFetchJob(
         }
     }
 
-    private async Task<IncrementalFetchCursor> ApplyAsync(IncrementalFetchCursor cursor, HistoryPage page, CancellationToken ct)
+    private async Task<IncrementalFetchCursor> ApplyAsync(
+        JobContext ctx, IncrementalFetchCursor cursor, HistoryPage page, CancellationToken ct)
     {
+        await ctx.EnsureMayWriteAsync(ct);
         var deleted = page.Records.SelectMany(r => r.MessagesDeleted).ToHashSet(StringComparer.Ordinal);
         var touched = page.Records
             .SelectMany(r => r.MessagesAdded
@@ -116,8 +119,10 @@ public sealed partial class IncrementalFetchJob(
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
+        // The sets are disjoint, so the re-read (and its guard) goes first: the page's first write follows the last guard.
+        var refreshed = await pipeline.RefreshByIdsAsync(touched, ctx.EnsureMayWriteAsync, ct);
         var marked = await pipeline.MarkDeletedAsync([.. deleted], ct);
-        var refreshed = await pipeline.RefreshByIdsAsync(touched, ct);
+        await ctx.EnsureMayWriteAsync(ct);
         await actionDone.ScanAsync(touched, ct);
         return cursor with
         {
