@@ -168,8 +168,13 @@ describe('FindingsTab', () => {
     expect(all('finding-apply', carried)[0].textContent!.trim()).toBe('Resume fix');
   });
 
+  const applied = () => finding({ status: 'applied', appliedAt: new Date().toISOString() });
+
   it('applies a fix after confirming and updates that finding in place', async () => {
     const { q, all, card, settle } = await render();
+    api.latestReview.mockReturnValue(
+      of({ ...standard(), findings: [applied(), ...standard().findings.slice(1)] }),
+    );
     all('finding-apply', card('Two filters do the same thing.'))[0].click();
     await settle();
     dialog('confirm-ok')!.click();
@@ -179,6 +184,26 @@ describe('FindingsTab', () => {
     expect(api.applyFinding).toHaveBeenCalledWith('k1');
     expect(q('findings-status')!.textContent).toMatch(/4 open,\s+2 resolved/);
     expect(all('finding-group')[0].querySelector('h3')!.textContent).toContain('Overlaps');
+  });
+
+  it('reloads the review after a fix so other findings show the filters it deleted', async () => {
+    const { all, card, settle } = await render();
+    const gone = { ...filterDto('f2', 'a@example.com'), deletedAt: new Date().toISOString() };
+    const [, k2, ...rest] = standard().findings;
+    api.latestReview.mockReturnValue(
+      of({
+        ...standard(),
+        findings: [applied(), { ...k2, filters: [k2.filters[0], gone] }, ...rest],
+      }),
+    );
+    expect(card('Mergeable senders.').textContent).not.toContain('(deleted)');
+    all('finding-apply', card('Two filters do the same thing.'))[0].click();
+    await settle();
+    dialog('confirm-ok')!.click();
+    await settle();
+    await settle();
+    expect(api.latestReview).toHaveBeenCalledTimes(2);
+    expect(card('Mergeable senders.').textContent).toContain('(deleted)');
   });
 
   it('keeps a failed fix open with the error and Apply fix', async () => {

@@ -140,6 +140,7 @@ export class FindingsTab {
         next: (updated) => {
           this.setBusy(f.id, false);
           this.replace(updated);
+          this.refresh();
         },
         // The finding stays open with the reason, so Apply fix can be tried again.
         error: (e: unknown) => {
@@ -192,6 +193,22 @@ export class FindingsTab {
           this.summarising.set(false);
           if (e instanceof HttpErrorResponse && e.status === 409) this.nothingToSummarise.set(true);
         },
+      });
+  }
+
+  /**
+   * Reloads the review in place after a fix, so other findings show the filters it deleted.
+   * A failed reload keeps what is on show.
+   */
+  private refresh(): void {
+    this.rules
+      .latestReview()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (r) => {
+          if (r) this.review.set(r);
+        },
+        error: () => undefined,
       });
   }
 
