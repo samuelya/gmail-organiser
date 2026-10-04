@@ -68,6 +68,9 @@ import { AnalysisService } from './analysis.service';
               </dd>
             </div>
           </dl>
+          <p class="m-0" data-testid="labelled-not-analysed">
+            Already labelled, not analysed: {{ s.labelledNotAnalysed | number }}
+          </p>
           <p class="muted m-0" data-testid="savings">{{ savings() }}</p>
         }
       </mat-card-content>

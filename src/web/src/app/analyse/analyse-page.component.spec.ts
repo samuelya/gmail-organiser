@@ -15,8 +15,10 @@ import {
   ANALYSIS_RUN_JOB,
   AnalysisRunDto,
   GroupingPreviewDto,
+  isScope,
   parseAnalyseParams,
   queueOrder,
+  runTarget,
   savingsText,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
@@ -101,6 +103,11 @@ describe('analysis models', () => {
     expect(savingsText(5, 20, 0.75)).toBe('5 LLM calls for 20 emails (75 % saved)');
     expect(savingsText(6, 4, -0.5)).toBe('6 LLM calls for 4 emails (50 % more calls than emails)');
     expect(savingsText(0, 0, 0)).toBe('0 LLM calls, no emails covered');
+  });
+
+  it('labels the labelled scope in the run list and history', () => {
+    expect(runTarget({ scope: 'labelled', senderAddress: null })).toBe('Already labelled');
+    expect(isScope('labelled')).toBe(true);
   });
 
   it('the deep link drops an invalid count or sender', () => {
@@ -228,6 +235,23 @@ describe('AnalysePage', () => {
     component.form.patchValue({ scope: 'sender' });
     await harness.fixture.whenStable();
     expect((q('start') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('offers the Already labelled scope with its help text and no sender field', async () => {
+    const { harness, q, el } = await render();
+    expect(q('scope-help')).toBeNull();
+    const toggle = [...el.querySelectorAll<HTMLElement>('[data-testid="scope"] button')].find(
+      (b) => b.textContent?.trim() === 'Already labelled',
+    )!;
+    toggle.click();
+    await harness.fixture.whenStable();
+    expect(q('scope-help')!.textContent).toContain(
+      'Mail that already has a label and has not been analysed',
+    );
+    expect(q('sender')).toBeNull();
+    q('start')!.click();
+    await harness.fixture.whenStable();
+    expect(api.start).toHaveBeenCalledWith({ scope: 'labelled', count: 20 });
   });
 
   it('Start posts the selection and the new run appears in the queue', async () => {
