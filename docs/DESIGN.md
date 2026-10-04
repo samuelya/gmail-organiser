@@ -32,7 +32,7 @@ Will be published as a **public GitHub project**: no personal data, no hardcoded
 | Hosting | `docker compose`: `web`, `api`, `db`. Only `web` is published, on `127.0.0.1:${WEB_PORT}` (default 5180); `api` and `db` stay on the compose network. A dev override publishes `db` on `127.0.0.1` for the IDE-run API |
 | App login | None (localhost only). "Sign in with Google" only connects Gmail |
 | Accounts | One Gmail account per install |
-| Label style | Nested hierarchy, e.g. `Bills/Water`, `Property/Example-Street/Investment` |
+| Label style | Nested hierarchy, e.g. `Finance/<Bank>`, `Property/Example-Street/Investment` |
 | Time-based archiving | Stays in **Google Apps Script** (runs in Google's cloud even when the PC is off). Tool ships a generalised, configurable version of the script and can create filters that feed it |
 | Scope | Inbox first, then All Mail including already-labelled mail |
 | Volume | Designed for 100k+ messages: resumable background jobs, progress tracking |
@@ -111,7 +111,7 @@ Every fetched email has an **analysis status**:
 - For efficiency, emails from the same sender in one run are sent to the LLM together (several per prompt), but each email gets **its own** suggestion and status.
 
 **LLM input:** sender info, subject/snippet/cleaned body (truncated), current label tree, and similar past decisions from memory.
-**LLM output (JSON per email):** `topicLabel` (e.g. `Bills/Water`), `isNewLabel`, `needsAction` (bool), `toBeDeleted` (bool), `unsubscribeSuggested`, `confidence`, `reason`, plus a sender-level `filterCriteria` suggestion.
+**LLM output (JSON per email):** `topicLabel` (the sender organisation, e.g. `Finance/<Bank>`), `documentTypeLabel` (optional second label under the document-type parent), `isNewLabel`, `needsAction` (bool), `toBeDeleted` (bool), `unsubscribeSuggested`, `confidence`, `reason`, plus a sender-level `filterCriteria` suggestion.
 
 ### 6.3 Review & apply
 - Review screen lists analysed emails grouped by sender; per item **Approve / Edit / Reject / Send to Claude**. Bulk-approve above a confidence threshold.
@@ -121,7 +121,7 @@ Every fetched email has an **analysis status**:
 **Outcome labels**
 | Suggestion | What the portal does |
 |---|---|
-| Normal mail | Topic label (e.g. `Bills/Water`) + archive (leaves inbox) |
+| Normal mail | Topic label (+ document-type label when set) + archive (leaves inbox) |
 | Needs action (e.g. invoice to pay) | Topic label **+ `Action/ToDo`**, stays in inbox. When the user removes `Action/ToDo`, it is auto-archived (6.6) |
 | Deletable (ads, low value) | **`To-Be-Deleted`** label + archive. The portal never deletes on its own |
 
@@ -217,7 +217,7 @@ Email bodies are **not** stored; they are fetched when an email is analysed and 
 6. **Clean-up** – everything labelled `To-Be-Deleted`, grouped by sender; remove from list, Delete (→ Trash), Unsubscribe.
 7. **Rules** – existing filters with findings, proposed filters, label tree editor.
 8. **History** – action log with undo.
-9. **Settings** – models, fetch chunk size, default analysis count, label names (`Action/ToDo`, `To-Be-Deleted`), protection rules, prompt templates, purge data.
+9. **Settings** – models, fetch chunk size, default analysis count, label names (`Action/ToDo`, `To-Be-Deleted`), document-type parent (empty = off), protection rules, prompt templates, purge data.
 10. **Claude review** (in Settings + review UI) – choose mode (headless Claude Code / Claude Desktop), test connection, Claude Desktop config snippet; "Send to Claude" buttons in review screens; Claude's verdicts shown beside local suggestions.
 
 Light/dark theme, collapsible side nav, responsive.

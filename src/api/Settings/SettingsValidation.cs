@@ -61,6 +61,12 @@ public static class SettingsValidation
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
+    // A document-type label is one level below its parent, so the parent leaves room for it in Gmail's limits.
+    public const int MaxDocumentTypeParentLength = 200;
+    public const int MaxDocumentTypeParentSegments = 4;
+    public const string DocumentTypeParentField = "documentTypeParent";
+    public const string DocumentTypeParentClashMessage = "Must differ from the action and delete labels.";
+
     /// <summary>
     /// Checks <paramref name="request"/>; the label names must differ from each other, so a name sent alone is compared with the
     /// other name in <paramref name="current"/> (the defaults when omitted).
@@ -256,16 +262,77 @@ public static class SettingsValidation
     {
         var actionOk = CheckLabelName(errors, "actionLabelName", request.ActionLabelName);
         var deleteOk = CheckLabelName(errors, "deleteLabelName", request.DeleteLabelName);
-        if ((request.ActionLabelName is not null || request.DeleteLabelName is not null) && actionOk && deleteOk
-            && LabelNamesClash(request.ActionLabelName?.Trim() ?? current.ActionLabelName, request.DeleteLabelName?.Trim() ?? current.DeleteLabelName))
+        var parentOk = CheckDocumentTypeParent(errors, request.DocumentTypeParent);
+        var effective = current with
         {
-            errors[LabelNamesClashField] = [LabelNamesClashMessage];
+            ActionLabelName = request.ActionLabelName?.Trim() ?? current.ActionLabelName,
+            DeleteLabelName = request.DeleteLabelName?.Trim() ?? current.DeleteLabelName,
+            DocumentTypeParent = request.DocumentTypeParent is null ? current.DocumentTypeParent : NormaliseDocumentTypeParent(request.DocumentTypeParent),
+        };
+        if (actionOk && deleteOk && parentOk && LabelNameClashes(request, effective) is { } clash)
+        {
+            foreach (var (field, messages) in clash)
+            {
+                errors[field] = messages;
+            }
         }
+    }
+
+    /// <summary>
+    /// The clash errors of <paramref name="merged"/>'s label names when <paramref name="request"/> sends any of them, else
+    /// <c>null</c>: the action and delete labels must differ, and the document-type parent must not equal, contain or sit
+    /// under either (Gmail label names are case-insensitive).
+    /// </summary>
+    public static Dictionary<string, string[]>? LabelNameClashes(UpdateSettingsRequest request, AppSettings merged)
+    {
+        if (request.ActionLabelName is null && request.DeleteLabelName is null && request.DocumentTypeParent is null)
+        {
+            return null;
+        }
+
+        if (LabelNamesClash(merged.ActionLabelName, merged.DeleteLabelName))
+        {
+            return new() { [LabelNamesClashField] = [LabelNamesClashMessage] };
+        }
+
+        return merged.DocumentTypeParent is { } parent
+            && (PathsOverlap(parent, merged.ActionLabelName) || PathsOverlap(parent, merged.DeleteLabelName))
+            ? new() { [DocumentTypeParentField] = [DocumentTypeParentClashMessage] }
+            : null;
     }
 
     /// <summary>Gmail label names are case-insensitive, so the action and delete labels must differ ignoring case.</summary>
     public static bool LabelNamesClash(string actionLabelName, string deleteLabelName) =>
         string.Equals(actionLabelName, deleteLabelName, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Trimmed, or <c>null</c> (feature off) when blank.</summary>
+    public static string? NormaliseDocumentTypeParent(string value) => value.Trim() is { Length: > 0 } trimmed ? trimmed : null;
+
+    private static bool PathsOverlap(string a, string b) =>
+        string.Equals(a, b, StringComparison.OrdinalIgnoreCase)
+        || a.StartsWith(b + "/", StringComparison.OrdinalIgnoreCase)
+        || b.StartsWith(a + "/", StringComparison.OrdinalIgnoreCase);
+
+    // Blank is "off"; otherwise a valid label path short and shallow enough to take one more level.
+    private static bool CheckDocumentTypeParent(Dictionary<string, string[]> errors, string? value)
+    {
+        if (value is null || NormaliseDocumentTypeParent(value) is not { } name)
+        {
+            return true;
+        }
+
+        string? error = name.Length > MaxDocumentTypeParentLength ? $"Must be at most {MaxDocumentTypeParentLength} characters."
+            : name.Split('/').Length > MaxDocumentTypeParentSegments ? $"Must have at most {MaxDocumentTypeParentSegments} '/'-separated parts."
+            : LabelPath.IsReserved(name) ? "Must not be a Gmail system label."
+            : !LabelResolver.IsValid(name) ? "Must be a valid Gmail label: '/'-separated parts of at most 100 characters, none blank or a system label."
+            : null;
+        if (error is not null)
+        {
+            errors[DocumentTypeParentField] = [error];
+        }
+
+        return error is null;
+    }
 
     // Trimmed, non-empty, a valid user label path with no Gmail system label name at any level, at most 225 characters.
     /// <summary>A Gmail label name the Apps Script can also search for: letters, digits, '_', '/', ' ' and '-', not leading with ' ' or '-'.</summary>

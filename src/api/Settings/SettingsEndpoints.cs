@@ -58,21 +58,17 @@ public static class SettingsEndpoints
         }
 
         // The pre-check above reads a snapshot; a concurrent PUT may change the other label name before the row lock,
-        // so the merged pair is checked again inside the locked update and the whole request is dropped on a clash.
-        var clash = false;
+        // so the merged names are checked again inside the locked update and the whole request is dropped on a clash.
+        Dictionary<string, string[]>? clash = null;
         var settings = await store.UpdateAsync(s =>
         {
             var merged = Merge(s, request);
-            clash = (request.ActionLabelName is not null || request.DeleteLabelName is not null)
-                && SettingsValidation.LabelNamesClash(merged.ActionLabelName, merged.DeleteLabelName);
-            return clash ? s : merged;
+            clash = SettingsValidation.LabelNameClashes(request, merged);
+            return clash is null ? merged : s;
         }, ct);
-        if (clash)
+        if (clash is not null)
         {
-            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
-            {
-                [SettingsValidation.LabelNamesClashField] = [SettingsValidation.LabelNamesClashMessage],
-            });
+            return TypedResults.ValidationProblem(clash);
         }
 
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
@@ -113,6 +109,9 @@ public static class SettingsEndpoints
         Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
         ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,
         DeleteLabelName = request.DeleteLabelName?.Trim() ?? s.DeleteLabelName,
+        DocumentTypeParent = request.DocumentTypeParent is null
+            ? s.DocumentTypeParent
+            : SettingsValidation.NormaliseDocumentTypeParent(request.DocumentTypeParent),
         AppsScript = request.AppsScript is { } appsScript ? SettingsValidation.NormaliseAppsScript(appsScript) : s.AppsScript,
     };
 
