@@ -315,8 +315,7 @@ public static class SuggestionOutputParser
             return Ignored("same as topicLabel");
         }
 
-        var label = prefix + value[prefix.Length..];
-        return LabelPath.IsValid(label) ? label : Ignored("not a valid label path");
+        return prefix + value[prefix.Length..];
 
         string? Ignored(string reason)
         {

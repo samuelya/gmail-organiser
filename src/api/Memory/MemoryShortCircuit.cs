@@ -56,7 +56,7 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
         }
 
         var label = pattern.TopicLabel.Trim();
-        var isNewLabel = !context.LabelTree.Any(l => string.Equals(l.Trim(), label, StringComparison.OrdinalIgnoreCase));
+        var isNewLabel = !context.LabelTree.Contains(label);
         var confidence = Math.Clamp(pattern.Agreement - context.Settings.AnalysisDerivedConfidencePenalty, 0, 1);
         var reason = $"Matches {pattern.Approvals} approved decisions for this sender";
         return new ShortCircuitResult([.. covered.Select(m => new SuggestionOutput(

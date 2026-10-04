@@ -26,7 +26,10 @@ public sealed record Agreed(
     /// <summary>The replaced labels every representative named, ordinal-sorted.</summary>
     public IReadOnlyList<string> ReplaceLabels { get; init; } = [];
 
-    /// <summary>The document-type label every representative named (as the first wrote it); null when none did.</summary>
+    /// <summary>
+    /// The document-type label the representatives that named one agree on (as the first wrote it); null when any
+    /// representative named none, so a derived member is assigned less rather than a type not every sample showed.
+    /// </summary>
     public string? DocumentTypeLabel { get; init; }
 }
 
@@ -38,8 +41,9 @@ public sealed record Mixed : Derivation
 
 /// <summary>
 /// Epic #22 safety rule: derive only when every representative (at least two) has a valid output and all agree on
-/// all decision fields, the replaced labels (same set, ordinal) and the document-type label (case-insensitive, none
-/// equals none) included. One invalid representative makes the group mixed rather than deriving from a partial sample.
+/// all decision fields, the replaced labels (same set, ordinal) included. One invalid representative makes the group
+/// mixed rather than deriving from a partial sample. A missing document-type label is no opinion: representatives that
+/// name different types (case-insensitive) are mixed, and a group where only some name the type derives with none.
 /// </summary>
 public static class DerivationRule
 {
@@ -58,14 +62,13 @@ public static class DerivationRule
 
         var first = valid[0];
         var label = first.TopicLabel.Trim();
-        var documentType = Normalised(first.DocumentTypeLabel);
+        var types = valid.Select(o => Normalised(o.DocumentTypeLabel)).ToList();
         var agree = valid.All(o =>
             string.Equals(o.TopicLabel.Trim(), label, StringComparison.OrdinalIgnoreCase)
             && o.NeedsAction == first.NeedsAction
             && o.ToBeDeleted == first.ToBeDeleted
-            && SameSet(o.ReplaceLabels, first.ReplaceLabels)
-            && string.Equals(Normalised(o.DocumentTypeLabel), documentType, StringComparison.OrdinalIgnoreCase));
-        if (!agree)
+            && SameSet(o.ReplaceLabels, first.ReplaceLabels));
+        if (!agree || types.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
         {
             return Mixed.Instance;
         }
@@ -74,7 +77,7 @@ public static class DerivationRule
         return new Agreed(label, first.NeedsAction, first.ToBeDeleted, valid.Any(o => o.UnsubscribeSuggested), confidence)
         {
             ReplaceLabels = Set(first.ReplaceLabels),
-            DocumentTypeLabel = documentType,
+            DocumentTypeLabel = types.Contains(null) ? null : types[0],
         };
     }
 

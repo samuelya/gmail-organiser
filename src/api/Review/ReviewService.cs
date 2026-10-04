@@ -9,11 +9,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Review;
 
-/// <summary>The outcome a group card shows: label, needs-action and to-be-deleted.</summary>
+/// <summary>The outcome a group card shows: label, needs-action, to-be-deleted and document type.</summary>
 /// <param name="ReplaceLabels">
 /// Each member keeps only its own replaced labels named here (never gains one; empty clears them); null leaves them.
 /// </param>
-public sealed record GroupOutcome(string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels = null);
+/// <param name="DocumentTypeLabel">The card's document-type label; null matches only members without one.</param>
+public sealed record GroupOutcome(
+    string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels = null, string? DocumentTypeLabel = null);
 
 public enum ReviewResult
 {
@@ -176,6 +178,7 @@ public sealed class ReviewService(
             {
                 if (outcome == DecisionOutcome.Rejected
                     || (s.TopicLabel == shown!.TopicLabel && s.NeedsAction == shown.NeedsAction && s.ToBeDeleted == shown.ToBeDeleted
+                        && s.DocumentTypeLabel == shown.DocumentTypeLabel
                         && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, rules))))
                 {
                     if (outcome == DecisionOutcome.Approved)

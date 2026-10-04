@@ -11,12 +11,13 @@ public sealed record ReviewSenderDetailDto(
     ReviewSenderDto Sender, IReadOnlyList<ReviewGroupDto> Groups, int Page, int PageSize, long TotalGroups);
 
 /// <param name="GroupKey">Null for a message analysed on its own.</param>
-/// <param name="Mixed">Members disagree on label, needs-action or to-be-deleted (after edits).</param>
+/// <param name="Mixed">Members disagree on label, needs-action, to-be-deleted or document type (after edits).</param>
 /// <param name="Truncated">Not every member is listed (<see cref="ReviewQuery.MaxMembers"/>, <see cref="ReviewQuery.MaxResponseMembers"/>); the aggregates count them all.</param>
 /// <param name="ReplaceLabels">Union of the listed members' replaced labels, distinct and ordinal-sorted.</param>
 /// <param name="LabelChange">The listed members' label change when they agree; else relabel when any member replaces a label, add otherwise.</param>
 /// <param name="ClaudeReview">The newest not-cancelled Claude review item for the group.</param>
 /// <param name="SuggestedForClaude">Any member, listed or not, is worth a Claude review (<see cref="ReviewQuery.IsSuggestedForClaude"/>).</param>
+/// <param name="DocumentTypeLabel">The shown outcome's document-type label; null when it has none.</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -36,7 +37,8 @@ public sealed record ReviewGroupDto(
     IReadOnlyList<string> ReplaceLabels,
     LabelChange LabelChange,
     ExternalReviewDto? ClaudeReview = null,
-    bool SuggestedForClaude = false);
+    bool SuggestedForClaude = false,
+    string? DocumentTypeLabel = null);
 
 /// <param name="ReplaceLabels">Current labels apply removes: the replaced labels the message still carries, never the topic label.</param>
 /// <param name="CurrentLabels">The message's personal (user) label names; empty when Gmail is not reachable.</param>
@@ -73,13 +75,15 @@ public sealed record EditSuggestionRequest(string? TopicLabel, bool? NeedsAction
 
 /// <param name="TopicLabel">Approve only: the outcome the card shows; only members with exactly this outcome are approved.</param>
 /// <param name="ReplaceLabels">Approve only, optional: each approved member keeps only its own replaced labels named here; none are added.</param>
+/// <param name="DocumentTypeLabel">Approve only: the card's document-type label; absent or blank approves only members without one.</param>
 public sealed record GroupDecisionRequest(
     string? SenderAddress,
     string? GroupKey,
     string? TopicLabel = null,
     bool? NeedsAction = null,
     bool? ToBeDeleted = null,
-    string[]? ReplaceLabels = null);
+    string[]? ReplaceLabels = null,
+    string? DocumentTypeLabel = null);
 
 /// <param name="Skipped">Pending members left pending (another outcome than the card's, or a protected deletion), at most <see cref="ReviewService.MaxSkippedIds"/>.</param>
 public sealed record GroupDecisionResponse(int Changed, IReadOnlyList<Guid> Skipped);

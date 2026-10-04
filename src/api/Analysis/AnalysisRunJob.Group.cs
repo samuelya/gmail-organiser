@@ -47,7 +47,7 @@ public sealed partial class AnalysisRunJob
         RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
     {
         var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
-        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree, context.Labels), ct);
+        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelIndex, context.Labels), ct);
         var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
         var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
         for (var i = 0; i < batch.Count; i++)
@@ -204,7 +204,7 @@ public sealed partial class AnalysisRunJob
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName));
 
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
-        var parent = context.Settings.DocumentTypeParent;
+        var parent = context.Run.DocumentTypeParent;
         var first = SuggestionOutputParser.Parse(await ChatAsync(context, messages, ct), expected, current, parent);
         LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
@@ -275,11 +275,13 @@ public sealed partial class AnalysisRunJob
 
     /// <summary>
     /// The replaced labels resolve to the ids this message carries: a derived member without one loses nothing. The
-    /// document-type label is new when the run's label tree lacks it, so a derived row agrees with its representatives.
+    /// document-type label takes the spelling of the run's label tree entry it matches and is new when there is none, so
+    /// a derived row agrees with its representatives.
     /// </summary>
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson)
     {
+        var existingType = output.DocumentTypeLabel is { } type ? context.LabelIndex.Find(type) : null;
         var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
@@ -289,8 +291,8 @@ public sealed partial class AnalysisRunJob
             Source = source,
             TopicLabel = output.TopicLabel,
             IsNewLabel = output.IsNewLabel,
-            DocumentTypeLabel = output.DocumentTypeLabel,
-            DocumentTypeIsNew = output.DocumentTypeLabel is { } type && !context.LabelTree.Contains(type, StringComparer.OrdinalIgnoreCase),
+            DocumentTypeLabel = existingType ?? output.DocumentTypeLabel,
+            DocumentTypeIsNew = output.DocumentTypeLabel is not null && existingType is null,
             NeedsAction = output.NeedsAction,
             ToBeDeleted = output.ToBeDeleted,
             UnsubscribeSuggested = output.UnsubscribeSuggested,
