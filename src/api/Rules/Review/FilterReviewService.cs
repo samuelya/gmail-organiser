@@ -345,7 +345,7 @@ public sealed class FilterReviewService(
         var rows = await db.Filters.AsNoTracking().Where(r => ids.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
         return new FilterReviewDto(
             review.Id, review.CreatedAt, review.FilterCount, [.. findings.Select(f => ToFindingDto(f, rows, names))], review.Summary,
-            review.SummaryModel, review.SummarisedAt, review.SummaryError);
+            review.SummaryModel, review.SummaryPromptVersion, review.SummarisedAt, review.SummaryError);
     }
 
     private async Task<FilterFindingDto> ToFindingDtoAsync(FilterFindingRow finding, CancellationToken ct)
