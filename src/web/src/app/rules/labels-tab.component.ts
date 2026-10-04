@@ -21,6 +21,7 @@ import { catchError, concatMap, filter, map, Observable, of, Subject, switchMap 
 import { openConfirm } from '../core/confirm-dialog';
 import { isActiveJob, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
+import { ClaudeVerdict } from '../review/claude-verdict.component';
 import { LabelDto } from '../review/labels.models';
 import { LabelsService } from '../review/labels.service';
 import { openApplyPlan } from './apply-plan-dialog.component';
@@ -34,15 +35,20 @@ import {
   PLAN_KINDS,
   UpdatePlanItemRequest,
 } from './label-plan.models';
+import { RulesClaude } from './rules-claude.service';
 import { RulesService } from './rules.service';
 
 /** What the latest-plan request found: a plan, none (404) or an error. */
 type Loaded = LabelPlanDto | 'none' | 'error';
 
-/** The Rules page's Labels tab: review the label plan, edit and accept items, apply them as a job, discard. */
+/**
+ * The Rules page's Labels tab: review the label plan, send it to Claude, edit and accept items, apply them as a job,
+ * discard.
+ */
 @Component({
   selector: 'app-labels-tab',
   imports: [
+    ClaudeVerdict,
     DecimalPipe,
     LabelPlanItem,
     LabelPlanTree,
@@ -52,6 +58,7 @@ type Loaded = LabelPlanDto | 'none' | 'error';
     MatIconModule,
     MatProgressBarModule,
   ],
+  providers: [RulesClaude],
   templateUrl: './labels-tab.component.html',
   styles: `
     .muted {
@@ -70,6 +77,7 @@ export class LabelsTab {
   private readonly jobs = inject(JobsService);
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
+  readonly claude = inject(RulesClaude);
 
   readonly plan = signal<LabelPlanDto | null>(null);
   readonly loading = signal(false);

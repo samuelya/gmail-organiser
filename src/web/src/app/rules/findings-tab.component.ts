@@ -19,6 +19,7 @@ import { openConfirm } from '../core/confirm-dialog';
 import { errorMessage } from '../core/error.interceptor';
 import { relativeTime } from '../senders/senders.models';
 import { FindingCard } from './finding-card.component';
+import { RulesClaude } from './rules-claude.service';
 import { FilterFindingDto, FilterReviewDto, fixView, groupFindings } from './rules.models';
 import { RulesService } from './rules.service';
 
@@ -37,6 +38,7 @@ import { RulesService } from './rules.service';
     MatProgressBarModule,
     MatProgressSpinnerModule,
   ],
+  providers: [RulesClaude],
   templateUrl: './findings-tab.component.html',
   styles: `
     .muted {
@@ -53,6 +55,7 @@ export class FindingsTab {
   private readonly rules = inject(RulesService);
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
+  readonly claude = inject(RulesClaude);
 
   /** Null with `loaded()` set: no review yet. */
   readonly review = signal<FilterReviewDto | null>(null);

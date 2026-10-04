@@ -8,6 +8,7 @@ import {
   ClaudeSenderActions,
   ClaudeVerdict,
   resolutionText,
+  structureRows,
   verdictText,
 } from './claude-verdict.component';
 import {
@@ -360,5 +361,24 @@ describe('ClaudeSenderActions', () => {
     const { q, claude } = await render('headless_claude_code', [detail([])]);
     q('claude-send-pending')!.click();
     expect(claude.createReviews).not.toHaveBeenCalled();
+  });
+});
+
+describe('structureRows', () => {
+  it('puts parents before children and keeps each label under its own parent', () => {
+    expect(structureRows(['Work/Clients', 'Personal', 'Work/Projects'])).toEqual([
+      { name: 'Personal', depth: 0 },
+      { name: 'Work', depth: 0 },
+      { name: 'Clients', depth: 1 },
+      { name: 'Projects', depth: 1 },
+    ]);
+  });
+
+  it('adds the parents a path implies', () => {
+    expect(structureRows(['A/B/C'])).toEqual([
+      { name: 'A', depth: 0 },
+      { name: 'B', depth: 1 },
+      { name: 'C', depth: 2 },
+    ]);
   });
 });

@@ -3,15 +3,22 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatDialog } from '@angular/material/dialog';
+import { MatTooltip } from '@angular/material/tooltip';
+import { By } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { of, Subject, throwError } from 'rxjs';
+import { ExternalReviewDto } from '../core/claude.models';
+import { ClaudeService } from '../core/claude.service';
 import { JobDto } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { LabelDto } from '../review/labels.models';
 import { LabelsService } from '../review/labels.service';
+import { ClaudeReviewerMode } from '../settings/settings.models';
+import { SettingsService } from '../settings/settings.service';
 import { planItem } from './label-plan.testing';
 import { LabelPlanDto } from './label-plan.models';
 import { LabelsTab } from './labels-tab.component';
+import { ruleReview } from './rules-claude.testing';
 import { RulesService } from './rules.service';
 
 const labels: LabelDto[] = [
@@ -55,12 +62,22 @@ describe('LabelsTab', () => {
   let held: ReturnType<typeof signal<ReadonlyMap<string, JobDto>>>;
   let confirm: boolean;
   let dialogData: unknown[];
+  let claudeMode: ClaudeReviewerMode;
+  let claudeChanges: Subject<ExternalReviewDto>;
+  let claude: Record<string, ReturnType<typeof vi.fn>>;
 
   async function render(latest: () => ReturnType<RulesService['latestPlan']>) {
     jobs = new Map();
     held = signal<ReadonlyMap<string, JobDto>>(jobs);
     confirm = true;
     dialogData = [];
+    claudeChanges = new Subject();
+    claude = {
+      list: vi.fn(() => of({ items: [], page: 1, pageSize: 100, total: 0 })),
+      createReviews: vi.fn(() =>
+        of({ created: 1, skipped: 0, items: [planReview({ status: 'queued' })] }),
+      ),
+    };
     rules = {
       latestPlan: vi.fn(latest),
       createPlan: vi.fn(() => of(plan({ id: 'p-2' }))),
@@ -82,8 +99,14 @@ describe('LabelsTab', () => {
           useValue: {
             job: (id: string) => held().get(id),
             reconnects: signal(0),
+            externalReviewChanges: claudeChanges,
             cancel: vi.fn(() => of(undefined)),
           },
+        },
+        { provide: ClaudeService, useValue: claude },
+        {
+          provide: SettingsService,
+          useValue: { getSettings: () => of({ claudeReviewerMode: claudeMode }) },
         },
         {
           provide: MatDialog,
@@ -104,6 +127,11 @@ describe('LabelsTab', () => {
     const all = (id: string) => [...el.querySelectorAll<HTMLElement>(`[data-testid="${id}"]`)];
     return { fixture, el, q, all };
   }
+
+  beforeEach(() => (claudeMode = 'headless_claude_code'));
+
+  const planReview = (over: Partial<ExternalReviewDto> = {}) =>
+    ruleReview({ targetType: 'label_plan', findingId: null, labelPlanId: 'p-1', ...over });
 
   const notFound = () =>
     throwError(() => new HttpErrorResponse({ status: 404, statusText: 'Not Found' }));
@@ -271,5 +299,42 @@ describe('LabelsTab', () => {
     expect(rows.map((r) => r.dataset['path'])).toEqual(['Old', 'Topic-Alpha']);
     expect(rows[0].querySelector('.line-through')).not.toBeNull();
     expect(rows[1].textContent).toContain('→ Topic/Alpha');
+  });
+
+  it('sends a draft plan to Claude and shows the alternative structure live', async () => {
+    const { fixture, q, el } = await render(() => of(plan()));
+    q('claude-send')!.click();
+    await fixture.whenStable();
+    expect(claude['createReviews']).toHaveBeenCalledWith({ labelPlanId: 'p-1' });
+    expect(q('claude-queued')).not.toBeNull();
+
+    claudeChanges.next(
+      planReview({
+        status: 'reviewed',
+        verdict: 'alternative',
+        reasoning: 'Nest the topics.',
+        alternativeStructure: ['Topic', 'Topic/Alpha', 'Topic/Alpha/Beta'],
+      }),
+    );
+    await fixture.whenStable();
+    expect(q('claude-verdict')!.textContent).toContain('Suggests another structure');
+    const rows = [...el.querySelectorAll<HTMLElement>('[data-testid="claude-structure"] li')];
+    expect(rows.map((li) => li.textContent!.trim())).toEqual(['Topic', 'Alpha', 'Beta']);
+    expect(rows.map((li) => li.style.paddingLeft)).toEqual(['0rem', '1.25rem', '2.5rem']);
+    expect(q('claude-reasoning')!.textContent).toContain('Nest the topics.');
+  });
+
+  it('disables Send to Claude with a tooltip when the reviewer is off or the plan is applied', async () => {
+    claudeMode = 'off';
+    const off = await render(() => of(plan()));
+    expect(off.q<HTMLButtonElement>('claude-send')!.disabled).toBe(true);
+    const tooltip = off.fixture.debugElement
+      .query(By.css('[data-testid="claude-send-tooltip"]'))
+      .injector.get(MatTooltip);
+    expect(tooltip.message).toContain('Settings');
+    TestBed.resetTestingModule();
+    claudeMode = 'claude_desktop';
+    const applied = await render(() => of(plan({ status: 'applied' })));
+    expect(applied.q<HTMLButtonElement>('claude-send')!.disabled).toBe(true);
   });
 });

@@ -9,11 +9,12 @@ import {
   ExternalReviewDto,
   McpConfig,
 } from './claude.models';
+import { PagedDto } from './paging.models';
 
 /** Why copying the review prompt failed; a failed request is already shown by the error interceptor. */
 export type CopyPromptResult = 'copied' | 'load_failed' | 'copy_failed';
 
-/** The Claude review endpoints (`/api/claude`), shared by Settings and Review. */
+/** The Claude review endpoints (`/api/claude`), shared by Settings, Review and Rules. */
 @Injectable({ providedIn: 'root' })
 export class ClaudeService {
   private readonly http = inject(HttpClient);
@@ -42,6 +43,13 @@ export class ClaudeService {
   /** Queues one item per target without an open item; the others count as skipped. */
   createReviews(request: CreateExternalReviewsRequest): Observable<CreateExternalReviewsResponse> {
     return this.http.post<CreateExternalReviewsResponse>('/api/claude/reviews', request);
+  }
+
+  /** Review items, newest first. */
+  list(page = 1, pageSize = 100): Observable<PagedDto<ExternalReviewDto>> {
+    return this.http.get<PagedDto<ExternalReviewDto>>('/api/claude/reviews', {
+      params: { page, pageSize },
+    });
   }
 
   /** Queued items only. */

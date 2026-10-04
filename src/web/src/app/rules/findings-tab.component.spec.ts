@@ -1,8 +1,14 @@
 import { HttpErrorResponse } from '@angular/common/http';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
-import { Observable, of, throwError } from 'rxjs';
+import { Observable, of, Subject, throwError } from 'rxjs';
+import { ExternalReviewDto } from '../core/claude.models';
+import { ClaudeService } from '../core/claude.service';
+import { JobsService } from '../core/jobs.service';
+import { SettingsService } from '../settings/settings.service';
 import { FindingsTab } from './findings-tab.component';
+import { ruleReview } from './rules-claude.testing';
 import { FilterDto, FilterFindingDto, FilterReviewDto } from './rules.models';
 import { RulesService } from './rules.service';
 
@@ -85,6 +91,12 @@ describe('FindingsTab', () => {
     ReturnType<typeof vi.fn>
   >;
 
+  let claudeChanges: Subject<ExternalReviewDto>;
+  let claude: Record<string, ReturnType<typeof vi.fn>>;
+  let loaded: ExternalReviewDto[];
+
+  beforeEach(() => (loaded = []));
+
   async function render(latest: Observable<FilterReviewDto | null> = of(standard())) {
     api = {
       latestReview: vi.fn(() => latest),
@@ -103,9 +115,34 @@ describe('FindingsTab', () => {
         ),
       ),
     };
+    claudeChanges = new Subject();
+    claude = {
+      list: vi.fn(() => of({ items: loaded, page: 1, pageSize: 100, total: loaded.length })),
+      createReviews: vi.fn(() => of({ created: 1, skipped: 0, items: [ruleReview()] })),
+      accept: vi.fn((id: string) =>
+        of(
+          ruleReview({
+            id,
+            findingId: 'k1',
+            status: 'reviewed',
+            verdict: 'agree',
+            resolution: 'accepted_claude',
+          }),
+        ),
+      ),
+    };
     TestBed.configureTestingModule({
       providers: [
         { provide: RulesService, useValue: api },
+        { provide: ClaudeService, useValue: claude },
+        {
+          provide: SettingsService,
+          useValue: { getSettings: () => of({ claudeReviewerMode: 'headless_claude_code' }) },
+        },
+        {
+          provide: JobsService,
+          useValue: { externalReviewChanges: claudeChanges, reconnects: signal(0) },
+        },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
@@ -248,5 +285,51 @@ describe('FindingsTab', () => {
     await settle();
     expect(q('summary-nothing')).not.toBeNull();
     expect((q('findings-summarise') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('sends an open finding to Claude, not a resolved one, and shows its criteria live', async () => {
+    const { all, card, settle } = await render();
+    expect(all('claude-send', card('Two filters do the same thing.'))).toHaveLength(1);
+    expect(all('claude-panel', all('findings-resolved')[0])).toHaveLength(0);
+    all('claude-send', card('Two filters do the same thing.'))[0].click();
+    await settle();
+    expect(claude['createReviews']).toHaveBeenCalledWith({ findingIds: ['k1'] });
+
+    claudeChanges.next(
+      ruleReview({
+        findingId: 'k2',
+        status: 'reviewed',
+        verdict: 'alternative',
+        verdictFilterCriteria: 'from:(a@example.com OR b@example.com)',
+      }),
+    );
+    await settle();
+    const merge = card('Mergeable senders.');
+    expect(all('claude-verdict', merge)[0].textContent).toContain('Suggests other criteria');
+    expect(all('claude-criteria', merge)[0].textContent).toContain(
+      'from:(a@example.com OR b@example.com)',
+    );
+    expect(all('claude-verdict', card('Two filters do the same thing.'))).toHaveLength(0);
+  });
+
+  it('restores a loaded verdict; Accept records it and keeps Apply fix for the user', async () => {
+    loaded = [ruleReview({ id: 'x-9', findingId: 'k1', status: 'reviewed', verdict: 'agree' })];
+    const { all, card, settle } = await render();
+    const dup = card('Two filters do the same thing.');
+    expect(all('claude-verdict', dup)[0].textContent).toContain('Agrees');
+    all('claude-accept', dup)[0].click();
+    await settle();
+    expect(claude['accept']).toHaveBeenCalledWith('x-9');
+    expect(api['applyFinding']).not.toHaveBeenCalled();
+    expect(all('claude-resolution', dup)[0].textContent).toContain("Accepted Claude's");
+    expect(all('finding-apply', dup)).toHaveLength(1);
+  });
+
+  it('leaves Accept disabled for needs-human', async () => {
+    loaded = [ruleReview({ findingId: 'k1', status: 'reviewed', verdict: 'needs_human' })];
+    const { all, card } = await render();
+    const dup = card('Two filters do the same thing.');
+    expect(all('claude-verdict', dup)[0].textContent).toContain('Needs a human');
+    expect((all('claude-accept', dup)[0] as HTMLButtonElement).disabled).toBe(true);
   });
 });

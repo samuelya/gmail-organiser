@@ -65,6 +65,16 @@
   }
 
   @if (plan(); as p) {
+    <app-claude-verdict
+      [mode]="claude.mode()"
+      [request]="{ labelPlanId: p.id }"
+      [review]="claude.forPlan(p.id)"
+      [busy]="working()"
+      [sendable]="draft()"
+      [showWhenOff]="true"
+      (changed)="claude.patch($event)"
+      data-testid="plan-claude"
+    />
     @if (p.warnings.length) {
       <div class="banner flex gap-2 rounded p-3" role="status" data-testid="plan-warnings">
         <mat-icon aria-hidden="true">warning</mat-icon>

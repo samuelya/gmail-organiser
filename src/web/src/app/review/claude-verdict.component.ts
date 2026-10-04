@@ -25,6 +25,7 @@ import {
 import { ClaudeService } from '../core/claude.service';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import {
+  DEFAULT_FLAG_LABELS,
   FlagLabels,
   MAX_GROUP_PAGE_SIZE,
   pendingClaudeRequest,
@@ -43,6 +44,8 @@ export function verdictText(item: ExternalReviewDto, labels: FlagLabels): string
     case 'needs_human':
       return 'Needs a human';
     case 'alternative': {
+      if (item.targetType === 'filter_finding') return 'Suggests other criteria';
+      if (item.targetType === 'label_plan') return 'Suggests another structure';
       const flags = [
         item.verdictNeedsAction ? labels.action : null,
         item.verdictToBeDeleted ? labels.delete : null,
@@ -59,6 +62,27 @@ export function verdictText(item: ExternalReviewDto, labels: FlagLabels): string
   }
 }
 
+/**
+ * A label plan alternative's paths as an indented tree: parents before children (siblings by name), each label's own
+ * name at its depth, and any parent Claude left out added so no label shows without its ancestors.
+ */
+export function structureRows(paths: readonly string[]): { name: string; depth: number }[] {
+  const all = new Map<string, string[]>();
+  for (const path of paths) {
+    const parts = path.split('/');
+    for (let i = 1; i <= parts.length; i++) all.set(parts.slice(0, i).join('/'), parts.slice(0, i));
+  }
+  return [...all.values()]
+    .sort((a, b) => {
+      for (let i = 0; i < Math.min(a.length, b.length); i++) {
+        const c = a[i].localeCompare(b[i]);
+        if (c !== 0) return c;
+      }
+      return a.length - b.length;
+    })
+    .map((parts) => ({ name: parts[parts.length - 1], depth: parts.length - 1 }));
+}
+
 export function resolutionText(item: ExternalReviewDto): string {
   return item.resolution === 'accepted_claude'
     ? "Accepted Claude's"
@@ -70,13 +94,13 @@ export function resolutionText(item: ExternalReviewDto): string {
 /**
  * "Send to Claude" for one card or row and its Claude review item beside the local suggestion:
  * queued (Cancel), running, reviewed (Accept Claude's / Keep local), unavailable (Retry), resolved.
- * Hidden when Claude review is off. Every changed item is emitted for the page to patch in place.
+ * Hidden when Claude review is off, unless `showWhenOff`: then "Send to Claude" is disabled with a tooltip. Every changed item is emitted for the page to patch in place.
  */
 @Component({
   selector: 'app-claude-verdict',
   imports: [MatButtonModule, MatIconModule, MatProgressSpinnerModule, MatTooltipModule],
   template: `
-    @if (mode() !== 'off') {
+    @if (mode() !== 'off' || showWhenOff()) {
       @let r = shown();
       <div class="flex flex-col gap-1 text-sm" data-testid="claude-panel">
         @if (r) {
@@ -139,20 +163,36 @@ export function resolutionText(item: ExternalReviewDto): string {
               }
             }
           </div>
+          @if (r.status === 'reviewed' && r.verdict === 'alternative') {
+            @if (r.verdictFilterCriteria) {
+              <p class="reasoning m-0" data-testid="claude-criteria">
+                Criteria: <code>{{ r.verdictFilterCriteria }}</code>
+              </p>
+            }
+            @if (structure().length) {
+              <ul
+                class="m-0 list-none p-0"
+                aria-label="Claude's label structure"
+                data-testid="claude-structure"
+              >
+                @for (row of structure(); track $index) {
+                  <li class="reasoning" [style.padding-left.rem]="row.depth * 1.25">
+                    {{ row.name }}
+                  </li>
+                }
+              </ul>
+            }
+          }
           @if (r.status === 'reviewed' && r.reasoning) {
             <p class="reasoning m-0" data-testid="claude-reasoning">{{ r.reasoning }}</p>
           }
         }
         <!-- A disabled button shows no tooltip; the wrapper does. -->
-        <span
-          class="self-start"
-          [matTooltip]="open() ? 'Claude already has this; decide on its review first' : ''"
-          data-testid="claude-send-tooltip"
-        >
+        <span class="self-start" [matTooltip]="sendTooltip()" data-testid="claude-send-tooltip">
           <button
             mat-button
             type="button"
-            [disabled]="disabled() || open() || !sendable()"
+            [disabled]="disabled() || open() || !sendable() || mode() === 'off'"
             (click)="send()"
             data-testid="claude-send"
           >
@@ -195,10 +235,12 @@ export class ClaudeVerdict {
   /** What "Send to Claude" queues. */
   readonly request = input.required<CreateExternalReviewsRequest>();
   readonly review = input<ExternalReviewDto | null | undefined>(null);
-  readonly labels = input.required<FlagLabels>();
+  readonly labels = input<FlagLabels>(DEFAULT_FLAG_LABELS);
   readonly busy = input(false);
   /** Only pending suggestions can be sent. */
   readonly sendable = input(true);
+  /** Shows the disabled "Send to Claude" when Claude review is off, instead of nothing. */
+  readonly showWhenOff = input(false);
   readonly changed = output<ExternalReviewDto>();
 
   readonly working = signal(false);
@@ -213,6 +255,14 @@ export class ClaudeVerdict {
     const r = this.shown();
     return r ? verdictText(r, this.labels()) : '';
   });
+  readonly structure = computed(() => structureRows(this.shown()?.alternativeStructure ?? []));
+  readonly sendTooltip = computed(() =>
+    this.mode() === 'off'
+      ? 'Turn on Claude review in Settings to send this'
+      : this.open()
+        ? 'Claude already has this; decide on its review first'
+        : '',
+  );
   readonly resolution = computed(() => {
     const r = this.shown();
     return r ? resolutionText(r) : '';
