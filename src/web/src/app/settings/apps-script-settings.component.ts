@@ -165,13 +165,6 @@ export class AppsScriptSettingsSection implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       // The error interceptor shows why; the section stays disabled.
       .subscribe({ next: (settings) => this.load(settings.appsScript), error: () => undefined });
-    this.labelsApi
-      .labels()
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (labels) => this.labels.set(labels.filter((l) => l.type === 'user')),
-        error: () => this.labelsFailed.set(true),
-      });
     this.loadConfig();
   }
 
@@ -221,8 +214,10 @@ export class AppsScriptSettingsSection implements OnInit {
     this.edits.next();
   }
 
+  /** Opens or closes the label tree; the labels load on the first open. */
   togglePicker(picker: Picker): void {
     this.picker.update((open) => (open === picker ? null : picker));
+    if (this.picker() && !this.labels()) this.loadLabels();
   }
 
   pick(picker: Picker, path: string): void {
@@ -253,6 +248,17 @@ export class AppsScriptSettingsSection implements OnInit {
       .subscribe({
         next: (config) => this.config.set(config),
         error: () => this.configFailed.set(true),
+      });
+  }
+
+  private loadLabels(): void {
+    this.labelsFailed.set(false);
+    this.labelsApi
+      .labels()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (labels) => this.labels.set(labels.filter((l) => l.type === 'user')),
+        error: () => this.labelsFailed.set(true),
       });
   }
 

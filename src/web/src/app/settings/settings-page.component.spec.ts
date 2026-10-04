@@ -73,6 +73,11 @@ const models: LlmModels = {
 
 const PROMPT = 'Synthetic instructions.\n\n{{emails}}';
 const defaultPrompt = { version: 'test-v1', template: PROMPT };
+const appsScriptConfig = {
+  scriptVersion: 1,
+  config: 'const CONFIG = {};',
+  generatedAt: '2026-01-01T00:00:00Z',
+};
 
 describe('SettingsPage', () => {
   let http: HttpTestingController;
@@ -93,6 +98,7 @@ describe('SettingsPage', () => {
         else if (path === '/api/setup/status') req.flush(setupStatus);
         else if (path === '/api/llm/models') req.flush(models);
         else if (path === '/api/analysis/prompt/default') req.flush(defaultPrompt);
+        else if (path === '/api/rules/apps-script/config') req.flush(appsScriptConfig);
         else throw new Error(`unexpected GET ${path}`);
       }
     }
@@ -130,7 +136,14 @@ describe('SettingsPage', () => {
   it('renders the Google, Gmail connection and Ollama sections with the wizard steps', async () => {
     const { el, q } = await render();
     const headings = [...el.querySelectorAll('h2')].map((h) => h.textContent?.trim());
-    expect(headings).toEqual(['Google', 'Gmail connection', 'Ollama', 'Fetch', 'Analysis']);
+    expect(headings).toEqual([
+      'Google',
+      'Gmail connection',
+      'Ollama',
+      'Fetch',
+      'Analysis',
+      'Apps Script',
+    ]);
     expect(q('section-google')!.querySelector('app-google-client-step')).not.toBeNull();
     expect(q('section-gmail')!.querySelector('app-connect-gmail-step')).not.toBeNull();
     expect(q('section-ollama')!.querySelector('app-ollama-url-step')).not.toBeNull();
@@ -354,6 +367,12 @@ describe('SettingsPage', () => {
       claudeModel: null,
       claudeTokenSet: false,
     };
+
+    it('shows the Apps Script section with the generated config', async () => {
+      const { q } = await render();
+      expect(q('section-apps-script')).not.toBeNull();
+      expect(q('config-block')?.textContent).toBe(appsScriptConfig.config);
+    });
 
     it('is hidden when the API has no Claude fields', async () => {
       const { q } = await render();
