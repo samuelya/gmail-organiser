@@ -132,3 +132,12 @@ public sealed record UpdateProtectionSettingsRequest(
 public sealed record AttachmentTypeSettingRequest(string? Type, bool? Enabled);
 
 public sealed record GoogleClientRequest(string? ClientId, string? ClientSecret);
+
+/// <summary>Purges local data when <see cref="Confirm"/> is <see cref="ConfirmationWord"/> (trimmed, case-sensitive).</summary>
+public sealed record PurgeRequest(string? Confirm)
+{
+    public const string ConfirmationWord = "purge";
+}
+
+/// <param name="Tables">The tables emptied.</param>
+public sealed record PurgeResponse(IReadOnlyList<string> Tables, DateTimeOffset PurgedAt);
