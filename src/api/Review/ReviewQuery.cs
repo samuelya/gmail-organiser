@@ -117,9 +117,10 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         var keys = pageStats.ConvertAll(g => g.Key);
         var outcomes = (await inStatus
                 .Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId))
-                .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
+                .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel })
                 .Select(g => new OutcomeCount(
-                    g.Key.Key, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Count(), g.Count(s => s.Source == SuggestionSource.Llm) > 0))
+                    g.Key.Key, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
+                    g.Count(s => s.Source == SuggestionSource.Llm) > 0))
                 .ToListAsync(ct))
             .ToLookup(o => o.Key, StringComparer.Ordinal);
 
@@ -161,9 +162,10 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
     {
         var outcomes = await db.Suggestions.AsNoTracking()
             .Where(s => s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending)
-            .GroupBy(s => new { s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
+            .GroupBy(s => new { s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel })
             .Select(g => new OutcomeCount(
-                groupKey, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Count(), g.Count(s => s.Source == SuggestionSource.Llm) > 0))
+                groupKey, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
+                g.Count(s => s.Source == SuggestionSource.Llm) > 0))
             .ToListAsync(ct);
         if (outcomes.Count == 0)
         {
@@ -171,7 +173,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         }
 
         var shown = Shown(outcomes);
-        return new GroupOutcome(shown.TopicLabel, shown.NeedsAction, shown.ToBeDeleted);
+        return new GroupOutcome(shown.TopicLabel, shown.NeedsAction, shown.ToBeDeleted, DocumentTypeLabel: shown.DocumentTypeLabel);
     }
 
     /// <summary>
@@ -301,7 +303,8 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         var all = outcomes.ToList();
         var shared = Shown(all);
         bool Matches(SuggestionRow s) =>
-            s.TopicLabel == shared.TopicLabel && s.NeedsAction == shared.NeedsAction && s.ToBeDeleted == shared.ToBeDeleted;
+            s.TopicLabel == shared.TopicLabel && s.NeedsAction == shared.NeedsAction && s.ToBeDeleted == shared.ToBeDeleted
+            && s.DocumentTypeLabel == shared.DocumentTypeLabel;
         var representative = members.FirstOrDefault(x => Matches(x.S) && x.S.Source == SuggestionSource.Llm);
         if (representative.S is null)
         {
@@ -344,16 +347,18 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
             [.. dtos.SelectMany(d => d.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
             change,
             key is null ? null : claude.Groups.GetValueOrDefault(key),
-            IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0));
+            IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0),
+            shared.DocumentTypeLabel);
     }
 
-    /// <summary>The card's outcome: the most common, then one with a model answer, then by label and flags.</summary>
+    /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags and type.</summary>
     private static OutcomeCount Shown(IEnumerable<OutcomeCount> outcomes) => outcomes
         .OrderByDescending(o => o.Count)
         .ThenByDescending(o => o.HasLlm)
         .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
         .ThenBy(o => o.NeedsAction)
         .ThenBy(o => o.ToBeDeleted)
+        .ThenBy(o => o.DocumentTypeLabel, StringComparer.Ordinal)
         .First();
 
     private static ReviewSenderDto ToDto(StatusCounts c, SenderRow? sender) => new(
@@ -385,5 +390,6 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
     private sealed record ClaudeLookup(
         AppSettings Settings, Dictionary<Guid, ExternalReviewDto> Suggestions, Dictionary<string, ExternalReviewDto> Groups);
 
-    private sealed record OutcomeCount(string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count, bool HasLlm);
+    private sealed record OutcomeCount(
+        string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, string? DocumentTypeLabel, int Count, bool HasLlm);
 }

@@ -156,7 +156,15 @@ public static class ReviewEndpoints
         {
             errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
             ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
-            shown = errors.Count == 0 ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels) : null;
+            var type = string.IsNullOrWhiteSpace(request.DocumentTypeLabel) ? null : request.DocumentTypeLabel.Trim();
+            if (type is not null && !LabelPath.IsValid(type))
+            {
+                errors["documentTypeLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters."];
+            }
+
+            shown = errors.Count == 0
+                ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type)
+                : null;
         }
 
         var sender = Normalise(request.SenderAddress);

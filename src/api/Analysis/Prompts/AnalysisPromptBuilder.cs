@@ -36,7 +36,8 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
                   "unsubscribeSuggested": { "type": "boolean" },
                   "confidence": { "type": "number" },
                   "reason": { "type": "string" },
-                  "replaceLabels": { "type": "array", "items": { "type": "string" } }
+                  "replaceLabels": { "type": "array", "items": { "type": "string" } },
+                  "documentTypeLabel": { "type": ["string", "null"] }
                 },
                 "required": ["id", "topicLabel", "isNewLabel", "needsAction", "toBeDeleted", "unsubscribeSuggested", "confidence", "reason"]
               }

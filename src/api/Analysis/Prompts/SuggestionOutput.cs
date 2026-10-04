@@ -38,6 +38,7 @@ public sealed record PromptInput(
     string DeleteLabel);
 
 /// <summary>A validated suggestion for one email; <see cref="Confidence"/> is always within [0, 1].</summary>
+/// <param name="DocumentTypeLabel">The second label under the document-type parent; null when none or the feature is off.</param>
 public sealed record SuggestionOutput(
     string Id,
     string TopicLabel,
@@ -46,7 +47,8 @@ public sealed record SuggestionOutput(
     bool ToBeDeleted,
     bool UnsubscribeSuggested,
     double Confidence,
-    string Reason)
+    string Reason,
+    string? DocumentTypeLabel = null)
 {
     /// <summary>Current labels of the email that <see cref="TopicLabel"/> replaces; empty when they stay.</summary>
     public IReadOnlyList<string> ReplaceLabels { get; init; } = [];
