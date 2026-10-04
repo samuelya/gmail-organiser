@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Claude;
+using GmailOrganiser.CleanUp;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
@@ -13,8 +14,16 @@ using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Pgvector;
 
@@ -26,18 +35,31 @@ public sealed class DataPurgeTests(ApiFactory factory, PostgresFixture postgres)
     private static readonly DateTimeOffset Now = new(2026, 10, 4, 12, 0, 0, TimeSpan.Zero);
     private const string SettingsDocument = """{"chatModel": "chat-model-a"}""";
 
+    private WebApplicationFactory<Program> host = null!;
+
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     public async ValueTask InitializeAsync()
     {
-        await using var db = postgres.CreateDbContext();
-        await db.Database.ExecuteSqlRawAsync(
-            "TRUNCATE settings, oauth_tokens, jobs, external_reviews, action_log, action_batches, decisions, suggestions, analysis_runs, fetch_run_messages, messages, senders", Ct);
+        // Every model table, so tables added later are emptied too; the fetch_state singleton is reset below.
+        await using (var db = postgres.CreateDbContext())
+        {
+            var sql = db.GetService<ISqlGenerationHelper>();
+            var tables = db.Model.GetEntityTypes().Where(t => t.ClrType != typeof(FetchStateRow)).Select(t => sql.DelimitIdentifier(t.GetTableName()!, t.GetSchema())).Distinct();
+            var truncate = $"TRUNCATE {string.Join(", ", tables)} CASCADE";
+            await db.Database.ExecuteSqlRawAsync(truncate, Ct);
+        }
+
         await postgres.ResetFetchStateAsync();
+
+        // No live job runner: it would claim the synthetic jobs and fail them before the purge checks.
+        host = factory.WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+            services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)))));
     }
 
     public async ValueTask DisposeAsync()
     {
+        await host.DisposeAsync();
         await using var db = postgres.CreateDbContext();
         await db.Settings.ExecuteDeleteAsync();
         await db.OAuthTokens.ExecuteDeleteAsync();
@@ -121,6 +143,67 @@ public sealed class DataPurgeTests(ApiFactory factory, PostgresFixture postgres)
         (await check.FetchState.AsNoTracking().SingleAsync(Ct)).MailboxPhase.ShouldBe(MailboxPhase.Completed);
     }
 
+    [Theory]
+    [InlineData(ReviewJobTypes.Apply)]
+    [InlineData(ReviewJobTypes.Undo)]
+    [InlineData(CleanUpJobTypes.Actions)]
+    public async Task Failed_gmail_job_with_a_pending_chunk_refuses_the_purge_and_keeps_the_undo_log(string type)
+    {
+        await SeedAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Jobs.Add(Job(JobStatus.Failed, type, """{"pending": {"index": 0}}"""));
+            db.Jobs.Add(Job(JobStatus.Failed, type, """{"next": 1}"""));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        (await PurgeAsync()).ShouldBeOfType<PurgeResult.GmailChunkPending>();
+
+        await using var check = postgres.CreateDbContext();
+        (await check.ActionLog.CountAsync(Ct)).ShouldBe(1);
+        (await check.Jobs.CountAsync(Ct)).ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Purge_waits_for_a_batch_start_holding_action_batches_and_then_sees_its_job()
+    {
+        // ApplyService.StartAsync order: the batch row, then the job, in one transaction.
+        await using var apply = postgres.CreateDbContext();
+        await using var tx = await apply.Database.BeginTransactionAsync(Ct);
+        apply.ActionBatches.Add(new ActionBatchRow { Id = Guid.NewGuid(), Kind = ActionKind.ApplyRest, Description = "Synthetic batch", MessageCount = 1, CreatedAt = Now });
+        await apply.SaveChangesAsync(Ct);
+
+        var purge = PurgeAsync();
+        await using (var probe = postgres.CreateDbContext())
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!await probe.Database.SqlQuery<int>($"SELECT 1 AS \"Value\" FROM pg_stat_activity WHERE wait_event_type = 'Lock'").AnyAsync(Ct))
+            {
+                DateTime.UtcNow.ShouldBeLessThan(deadline);
+                await Task.Delay(20, Ct);
+            }
+        }
+
+        apply.Jobs.Add(Job(JobStatus.Queued, ReviewJobTypes.Apply));
+        await apply.SaveChangesAsync(Ct);
+        await tx.CommitAsync(Ct);
+
+        (await purge.WaitAsync(TimeSpan.FromSeconds(10), Ct)).ShouldBeOfType<PurgeResult.JobsActive>();
+    }
+
+    [Fact]
+    public async Task Failed_jobs_without_a_pending_gmail_chunk_do_not_block_the_purge()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Jobs.Add(Job(JobStatus.Failed, ReviewJobTypes.Apply, """{"next": 1}"""));
+            db.Jobs.Add(Job(JobStatus.Failed, "synthetic-job", """{"pending": {"index": 0}}"""));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        (await PurgeAsync()).ShouldBeOfType<PurgeResult.Done>();
+    }
+
     [Fact]
     public async Task Endpoint_purges_with_the_confirmation_word()
     {
@@ -133,6 +216,39 @@ public sealed class DataPurgeTests(ApiFactory factory, PostgresFixture postgres)
         body.Tables.ShouldContain("messages");
         await using var db = postgres.CreateDbContext();
         (await db.Messages.AnyAsync(Ct)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Endpoint_purge_tells_connected_clients()
+    {
+        var purged = new TaskCompletionSource();
+        var server = host.Server;
+        await using var connection = new HubConnectionBuilder()
+            .WithUrl(new Uri(server.BaseAddress, JobsHub.Path), HttpTransportType.LongPolling, o =>
+            {
+                o.HttpMessageHandlerFactory = _ => server.CreateHandler();
+                o.Headers["Origin"] = ApiFactory.AllowedOrigin;
+            })
+            .Build();
+        connection.On(JobsHub.DataPurgedEvent, () => purged.TrySetResult());
+        await connection.StartAsync(Ct);
+
+        (await PostAsync(new { confirm = "purge" })).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await purged.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("null")]
+    public async Task Endpoint_with_no_body_is_a_field_error(string body)
+    {
+        var response = await Client().PostAsync(
+            "/api/settings/purge", new StringContent(body, System.Text.Encoding.UTF8, "application/json"), Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var problem = JsonNode.Parse(await response.Content.ReadAsStringAsync(Ct))!;
+        problem["errors"]!["confirm"].ShouldNotBeNull();
     }
 
     [Theory]
@@ -159,8 +275,7 @@ public sealed class DataPurgeTests(ApiFactory factory, PostgresFixture postgres)
     {
         await using (var db = postgres.CreateDbContext())
         {
-            // Paused: the test host's job runner never claims it.
-            db.Jobs.Add(Job(JobStatus.Paused));
+            db.Jobs.Add(Job(JobStatus.Queued));
             await db.SaveChangesAsync(Ct);
         }
 
@@ -176,7 +291,7 @@ public sealed class DataPurgeTests(ApiFactory factory, PostgresFixture postgres)
     {
         await SeedAsync();
 
-        var response = await factory.CreateClient().PostAsJsonAsync("/api/settings/purge", new { confirm = "purge" }, Ct);
+        var response = await host.CreateClient().PostAsJsonAsync("/api/settings/purge", new { confirm = "purge" }, Ct);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         await using var db = postgres.CreateDbContext();
@@ -186,23 +301,27 @@ public sealed class DataPurgeTests(ApiFactory factory, PostgresFixture postgres)
     private async Task<PurgeResult> PurgeAsync()
     {
         await using var db = postgres.CreateDbContext();
-        using var labels = new LabelCatalog(factory.Services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
-        return await new DataPurgeService(db, labels, NullLogger<DataPurgeService>.Instance).PurgeAsync(Ct);
+        using var labels = new LabelCatalog(host.Services.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System);
+        var hub = host.Services.GetRequiredService<IHubContext<JobsHub>>();
+        return await new DataPurgeService(db, labels, hub, NullLogger<DataPurgeService>.Instance).PurgeAsync(Ct);
     }
 
-    private async Task<HttpResponseMessage> PostAsync(object body)
+    private Task<HttpResponseMessage> PostAsync(object body) => Client().PostAsJsonAsync("/api/settings/purge", body, Ct);
+
+    private HttpClient Client()
     {
-        var client = factory.CreateClient();
+        var client = host.CreateClient();
         client.DefaultRequestHeaders.Add(ApiRequestGuardMiddleware.RequestedWithHeader, "XMLHttpRequest");
-        return await client.PostAsJsonAsync("/api/settings/purge", body, Ct);
+        return client;
     }
 
-    private static JobRow Job(JobStatus status) => new()
+    private static JobRow Job(JobStatus status, string type = "synthetic-job", string? cursor = null) => new()
     {
         Id = Guid.NewGuid(),
-        Type = "synthetic-job",
+        Type = type,
         Queue = "synthetic-queue",
         Status = status,
+        Cursor = cursor,
         CreatedAt = Now,
         QueuedAt = Now,
         UpdatedAt = Now,

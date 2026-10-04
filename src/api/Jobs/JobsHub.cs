@@ -16,6 +16,10 @@ namespace GmailOrganiser.Jobs;
 /// The hub also carries <see cref="ExternalReviewChangedEvent"/> (a Claude review <c>ExternalReviewDto</c>) after every
 /// committed item status or resolution change; there is no snapshot for it, the review page reads the items over HTTP.
 /// </para>
+/// <para>
+/// <see cref="DataPurgedEvent"/> (no payload) follows a committed local-data purge: every job, fetch status and review
+/// row a page holds is gone, so it drops its jobs and reloads what it shows.
+/// </para>
 /// </summary>
 public sealed class JobsHub(IJobService jobs) : Hub
 {
@@ -23,6 +27,7 @@ public sealed class JobsHub(IJobService jobs) : Hub
     public const string SnapshotEvent = "jobsSnapshot";
     public const string ChangedEvent = "jobChanged";
     public const string ExternalReviewChangedEvent = "externalReviewChanged";
+    public const string DataPurgedEvent = "dataPurged";
 
     public override async Task OnConnectedAsync()
     {

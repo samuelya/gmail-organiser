@@ -52,7 +52,7 @@ public sealed partial class AccountGuard(AppDbContext db, ITokenStore tokens, IL
 
     public const string ProblemDetail =
         "The stored mail was fetched from a different Gmail account than the one now connected. "
-        + "Reconnect the original account, or purge the local data (available in Settings in a later release) before fetching.";
+        + "Reconnect the original account, or purge the local data in Settings before fetching.";
 
     /// <summary>The error recorded on a fetch job refused or stopped because the accounts differ.</summary>
     public const string RefuseReason = $"{ProblemTitle}. {ProblemDetail}";

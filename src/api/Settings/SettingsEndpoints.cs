@@ -140,9 +140,10 @@ public static class SettingsEndpoints
     }
 
     private static async Task<Results<Ok<PurgeResponse>, ValidationProblem, ProblemHttpResult>> PurgeAsync(
-        PurgeRequest request, DataPurgeService purge, TimeProvider time, CancellationToken ct)
+        PurgeRequest? request, DataPurgeService purge, TimeProvider time, CancellationToken ct)
     {
-        if (request.Confirm?.Trim() != PurgeRequest.ConfirmationWord)
+        // A missing or null body is a wrong word too, so the form always gets the confirm field error.
+        if (request?.Confirm?.Trim() != PurgeRequest.ConfirmationWord)
         {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
             {
@@ -153,6 +154,10 @@ public static class SettingsEndpoints
         return await purge.PurgeAsync(ct) switch
         {
             PurgeResult.Done done => TypedResults.Ok(new PurgeResponse(done.Tables, time.GetUtcNow())),
+            PurgeResult.GmailChunkPending => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "A Gmail batch is half-applied",
+                detail: "A failed apply, undo or clean-up job stopped part-way through a Gmail batch. Resume it in Jobs so the batch finishes (and can be undone) before purging."),
             _ => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Jobs are active",
