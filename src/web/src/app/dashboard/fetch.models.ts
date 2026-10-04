@@ -1,4 +1,4 @@
-import { JobControls, jobControls, JobDto, newerJob } from '../core/jobs.models';
+import { isActiveJob, JobControls, jobControls, JobDto, newerJob } from '../core/jobs.models';
 
 /** Mailbox fetch phase as the API writes it; open, so a phase added later (e.g. `reconcile`) still shows. */
 export type MailboxPhase = 'not_started' | 'inbox' | 'all_mail' | 'completed' | (string & {});
@@ -7,8 +7,14 @@ export type MailboxPhase = 'not_started' | 'inbox' | 'all_mail' | 'completed' | 
 export interface FetchStatusDto {
   accountEmail: string | null;
   mailboxPhase: MailboxPhase;
+  /** Inbox messages the current or last mailbox fetch run processed (that run's progress). */
   inboxFetched: number;
+  /** All Mail messages the current or last mailbox fetch run processed (that run's progress). */
   allMailFetched: number;
+  /** Stored messages in the Inbox, excluding those deleted in Gmail. */
+  inboxStored: number;
+  /** Stored messages outside Spam and Trash, excluding those deleted in Gmail. */
+  allMailStored: number;
   /** Messages Gmail reports in the Inbox; `null` until known. */
   inboxTotal?: number | null;
   /** Messages Gmail reports in All Mail; `null` until known. */
@@ -36,6 +42,35 @@ export interface StartFetchResponse {
 
 /** Jobs on this queue change the fetch status. */
 export const FETCH_QUEUE = 'fetch';
+
+/** `label_resync`, the job type `POST /api/fetch/labels/resync` enqueues. */
+export const LABEL_RESYNC_JOB = 'label_resync';
+
+const JOB_TYPE_LABELS: Record<string, string> = {
+  [LABEL_RESYNC_JOB]: 'Resync labels',
+};
+
+/** A job type as the dashboard names it; types without a label are humanised. */
+export function jobTypeLabel(type: string): string {
+  return JOB_TYPE_LABELS[type] ?? humanise(type);
+}
+
+/**
+ * Resync labels is blocked before Gmail is connected (`connected` false; `null` while unknown lets
+ * the API answer), on an account mismatch, and while any fetch-queue job is queued, running or paused.
+ */
+export function resyncDisabled(
+  status: FetchStatusDto,
+  jobs: readonly JobDto[],
+  connected: boolean | null,
+): boolean {
+  return (
+    connected === false ||
+    status.accountMismatch ||
+    status.activeJob !== null ||
+    jobs.some((j) => j.queue === FETCH_QUEUE && isActiveJob(j))
+  );
+}
 
 const PHASE_LABELS: Record<string, string> = {
   not_started: 'Not started',

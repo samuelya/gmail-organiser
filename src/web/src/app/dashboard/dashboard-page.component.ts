@@ -25,13 +25,15 @@ import { CountOfPipe } from '../core/count-of.pipe';
 import { JobDto, JobStatus, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PageHeader } from '../layout/page-header';
+import { SetupService } from '../setup/setup.service';
 import {
   dashboardControls,
   FetchStatusDto,
   fetchJobsKey,
   fetchProgressKey,
   fetchView,
-  humanise,
+  jobTypeLabel,
+  resyncDisabled,
 } from './fetch.models';
 import { FetchService } from './fetch.service';
 
@@ -88,6 +90,7 @@ export const STATUS_REFRESH_MS = 5000;
 })
 export class DashboardPage {
   private readonly fetch = inject(FetchService);
+  private readonly setup = inject(SetupService);
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
   /** Every status request goes through here; `switchMap` drops an older response. */
@@ -99,6 +102,8 @@ export class DashboardPage {
 
   readonly status = signal<FetchStatusDto | null>(null);
   readonly loadFailed = signal(false);
+  /** Gmail is connected (the API's own check); `null` while unknown or unreadable. */
+  readonly gmailConnected = signal<boolean | null>(null);
   /** A start or job control request is in flight. */
   readonly busy = signal(false);
   /** Pause or cancel requested per job id, with the status it had; shown until the status changes. */
@@ -109,6 +114,10 @@ export class DashboardPage {
     if (!status) return null;
     const live = status.activeJob ? this.jobs.job(status.activeJob.id) : undefined;
     return fetchView(status, live);
+  });
+  readonly resyncDisabled = computed(() => {
+    const status = this.status();
+    return !status || resyncDisabled(status, this.jobs.jobs(), this.gmailConnected());
   });
   readonly fetchPercent = computed(() => progressPercent(this.view()?.job?.progress));
   readonly runningJobs = computed(() => {
@@ -152,6 +161,18 @@ export class DashboardPage {
       this.refreshKey();
       untracked(() => this.load());
     });
+    // Connecting happens on another page; the reconnect refresh picks up a change made meanwhile.
+    toObservable(this.jobs.reconnects)
+      .pipe(
+        switchMap(() =>
+          this.setup.getGoogleStatus().pipe(
+            map((s) => s.connected),
+            catchError(() => of(null)),
+          ),
+        ),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe((connected) => this.gmailConnected.set(connected));
     // Counts move with every chunk: refetch at most every 5 s while a fetch job runs.
     toObservable(computed(() => fetchProgressKey(this.jobs.jobs())))
       .pipe(
@@ -175,6 +196,11 @@ export class DashboardPage {
 
   start(): void {
     this.run(this.fetch.startMailboxFetch());
+  }
+
+  /** Refreshes labels and read state of stored mail; no confirm, it changes nothing in Gmail. */
+  resync(): void {
+    this.run(this.fetch.resyncLabels());
   }
 
   pause(job: JobDto): void {
@@ -220,7 +246,7 @@ export class DashboardPage {
   }
 
   jobLabel(job: JobDto): string {
-    return humanise(job.type);
+    return jobTypeLabel(job.type);
   }
 
   private statusOf(id: string): JobStatus | undefined {
