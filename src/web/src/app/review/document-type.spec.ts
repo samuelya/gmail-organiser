@@ -52,21 +52,19 @@ const pattern = (documentTypeLabel: string | null): SenderPatternDto & { topicLa
 describe('apply rest with a document type', () => {
   const flags = { action: 'Act', delete: 'Bin' };
 
-  it('names the document type when the parent is set', () => {
-    expect(patternSummary(pattern('Docs/Invoice'), flags, 'Docs')).toContain(
+  it('names the pattern\'s document type whether or not settings have loaded', () => {
+    expect(patternSummary(pattern('Docs/Invoice'), flags)).toContain(
       'label "Topic/Alpha", document type "Docs/Invoice", "Act"',
     );
-    expect(patternSummary(pattern('Docs/Invoice'), flags, null)).toContain(
-      'label "Topic/Alpha", "Act"',
-    );
+    expect(patternSummary(pattern(null), flags)).toContain('label "Topic/Alpha", "Act"');
   });
 
-  it('sends the shown type, none as "", and nothing with the parent off', () => {
-    expect(applyRestRequest(pattern('Docs/Invoice'), 'Docs')).toEqual({
-      documentTypeLabel: 'Docs/Invoice',
-    });
+  it('never re-sends the pattern\'s own type; "" only for none with the parent on', () => {
+    expect(applyRestRequest(pattern('Docs/Invoice'), 'Docs')).toEqual({});
+    expect(applyRestRequest(pattern('Docs/Invoice'), 'Types')).toEqual({});
     expect(applyRestRequest(pattern(null), 'Docs')).toEqual({ documentTypeLabel: '' });
     expect(applyRestRequest(pattern('Docs/Invoice'), null)).toEqual({});
+    expect(applyRestRequest(pattern(null), null)).toEqual({});
   });
 });
 

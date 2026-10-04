@@ -373,7 +373,7 @@ export class ReviewPage {
     const request = applyRestRequest(pattern, parent);
     openConfirm(this.dialog, {
       title: 'Apply to rest of sender?',
-      message: patternSummary(pattern, this.flagLabels(), parent),
+      message: patternSummary(pattern, this.flagLabels()),
       confirm: 'Apply',
     })
       .pipe(

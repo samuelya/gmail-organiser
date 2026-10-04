@@ -413,6 +413,25 @@ describe('ReviewPage', () => {
     });
   });
 
+  it('names the pattern\'s document type without a parent in settings and does not re-send it', async () => {
+    const { api, q, settle } = await render({
+      topicLabel: 'Topic/Alpha',
+      needsAction: false,
+      toBeDeleted: false,
+      approvals: 4,
+      agreement: 0.75,
+      remaining: 6,
+      documentTypeLabel: 'Docs/Invoice',
+    });
+    q('apply-rest')!.click();
+    await settle();
+    const dialog = document.querySelector('mat-dialog-container')!.textContent!;
+    expect(dialog).toContain('label "Topic/Alpha", document type "Docs/Invoice"');
+    dialogButton('confirm-ok').click();
+    await settle();
+    expect(api.applyRest).toHaveBeenCalledWith('news@example.com', {});
+  });
+
   it('does not apply to the rest when the confirm is cancelled', async () => {
     const { api, q, settle } = await render({
       ...noPattern,

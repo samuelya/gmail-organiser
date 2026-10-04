@@ -261,14 +261,15 @@ export function toDocumentTypeLabel(parent: string, text: string): string | null
 }
 
 /**
- * The apply-rest body: with document-type labels on, the type the summary shows (`""` for none);
- * with them off the pattern's is left as it is, and apply skips it.
+ * The apply-rest body: a pattern's own type is never re-sent, so the server keeps it as approved
+ * even when the parent has changed since; `""` only says "none" when the parent is on and the
+ * pattern has no type.
  */
 export function applyRestRequest(
   pattern: SenderPatternDto,
   parent: string | null,
 ): ApplyRestRequest {
-  return parent ? { documentTypeLabel: pattern.documentTypeLabel ?? '' } : {};
+  return parent && !pattern.documentTypeLabel ? { documentTypeLabel: '' } : {};
 }
 
 /** A pattern exists and there is mail left to apply it to. */
@@ -278,20 +279,19 @@ export function canApplyRest(pattern: SenderPatternDto | null): pattern is Sende
   return !!pattern?.topicLabel && pattern.remaining > 0;
 }
 
-/** What "Apply to rest of sender" will do, for the confirm dialog. */
+/**
+ * What "Apply to rest of sender" will do, for the confirm dialog. The pattern's type is named
+ * whatever the settings say, since the server applies it either way.
+ */
 export function patternSummary(
   pattern: SenderPatternDto & { topicLabel: string },
   labels: FlagLabels,
-  documentTypeParent: string | null = null,
 ): string {
   const flags = [
     pattern.needsAction ? labels.action : null,
     pattern.toBeDeleted ? labels.delete : null,
   ].filter((f): f is string => !!f);
-  const type =
-    documentTypeParent && pattern.documentTypeLabel
-      ? [`document type "${pattern.documentTypeLabel}"`]
-      : [];
+  const type = pattern.documentTypeLabel ? [`document type "${pattern.documentTypeLabel}"`] : [];
   const outcome = [`label "${pattern.topicLabel}"`, ...type, ...flags.map((f) => `"${f}"`)].join(
     ', ',
   );
