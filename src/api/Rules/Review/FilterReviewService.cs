@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
@@ -32,12 +33,17 @@ public sealed class FilterReviewService(
     /// <summary>The <c>pg_advisory_xact_lock</c> key that serialises review creation.</summary>
     private const long CreateLockKey = 0x6672_7276_7720;
 
-    /// <summary>The <c>pg_advisory_lock</c> key that serialises finding applies.</summary>
-    private const long ApplyLockKey = 0x6672_6170_706C;
+    /// <summary>The advisory lock key that serialises finding applies, dismissals and supersedes.</summary>
+    public const long ApplyLockKey = 0x6672_6170_706C;
+
+    /// <summary>Open findings an apply has created a filter for but not finished.</summary>
+    private static readonly Expression<Func<FilterFindingRow, bool>> InProgress =
+        f => f.Status == FilterFindingStatus.Open && f.CreatedFilterId != null;
 
     /// <summary>
     /// Syncs the snapshot, refreshes the labels, checks the active filters and stores the findings; open findings of
-    /// earlier reviews become superseded. Every Gmail read happens before the first write.
+    /// earlier reviews become superseded, except half-applied ones (<see cref="FilterFindingRow.CreatedFilterId"/> set),
+    /// whose filters the new review leaves out. Every Gmail read happens before the first write.
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -48,9 +54,13 @@ public sealed class FilterReviewService(
         var labels = await catalog.RefreshAsync(ct);
         var days = (await settings.GetAsync(ct)).RulesStaleFilterDays;
         var active = await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct);
+        var busy = (await db.FilterFindings.AsNoTracking().Where(InProgress)
+                .Select(f => new { f.FilterIds, f.CreatedFilterId }).ToListAsync(ct))
+            .SelectMany(f => f.FilterIds.Append(f.CreatedFilterId!)).ToHashSet(StringComparer.Ordinal);
+        var checkedFilters = active.Where(r => !busy.Contains(r.Id)).ToList();
         var now = time.GetUtcNow();
-        var counts = await RecentCountsAsync(active, now.AddDays(-days), ct);
-        var drafts = FilterChecks.Run(active, labels, r => counts.TryGetValue(r.Id, out var c) ? c : null, days);
+        var counts = await RecentCountsAsync(checkedFilters, now.AddDays(-days), ct);
+        var drafts = FilterChecks.Run(checkedFilters, labels, r => counts.TryGetValue(r.Id, out var c) ? c : null, days);
 
         var review = new FilterReviewRow
         {
@@ -77,7 +87,8 @@ public sealed class FilterReviewService(
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({CreateLockKey})", ct);
-        await db.FilterFindings.Where(f => f.Status == FilterFindingStatus.Open)
+        await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({ApplyLockKey})", ct);
+        await db.FilterFindings.Where(f => f.Status == FilterFindingStatus.Open && f.CreatedFilterId == null)
             .ExecuteUpdateAsync(s => s.SetProperty(f => f.Status, FilterFindingStatus.Superseded), ct);
         db.FilterReviews.Add(review);
         db.FilterFindings.AddRange(findings);
@@ -106,29 +117,10 @@ public sealed class FilterReviewService(
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     /// <exception cref="GoogleApiException">Gmail refused a create or delete.</exception>
-    public async Task<FindingResult> ApplyAsync(Guid id, CancellationToken ct)
-    {
-        await db.Database.OpenConnectionAsync(ct);
-        try
-        {
-            await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_lock({ApplyLockKey})", ct);
-            try
-            {
-                return await ApplyLockedAsync(id, ct);
-            }
-            finally
-            {
-                await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_unlock({ApplyLockKey})", CancellationToken.None);
-            }
-        }
-        finally
-        {
-            await db.Database.CloseConnectionAsync();
-        }
-    }
+    public Task<FindingResult> ApplyAsync(Guid id, CancellationToken ct) => UnderApplyLockAsync(() => ApplyLockedAsync(id, ct), ct);
 
-    /// <summary>Marks an open finding dismissed; 409 otherwise.</summary>
-    public async Task<FindingResult> DismissAsync(Guid id, CancellationToken ct)
+    /// <summary>Marks an open finding dismissed; 409 when it is not open or is half applied (only a re-apply finishes it).</summary>
+    public Task<FindingResult> DismissAsync(Guid id, CancellationToken ct) => UnderApplyLockAsync(async () =>
     {
         var finding = await db.FilterFindings.SingleOrDefaultAsync(f => f.Id == id, ct);
         if (finding is null)
@@ -141,9 +133,36 @@ public sealed class FilterReviewService(
             return NotOpen(finding);
         }
 
+        if (finding.CreatedFilterId is not null)
+        {
+            return FindingResult.Conflict(
+                "Finding is half applied", "Its new filter exists and some originals are not deleted yet; apply it again to finish.");
+        }
+
         finding.Status = FilterFindingStatus.Dismissed;
         await db.SaveChangesAsync(ct);
         return new FindingResult(FilterOutcome.Ok, await ToFindingDtoAsync(finding, ct));
+    }, ct);
+
+    private async Task<FindingResult> UnderApplyLockAsync(Func<Task<FindingResult>> action, CancellationToken ct)
+    {
+        await db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_lock({ApplyLockKey})", ct);
+            try
+            {
+                return await action();
+            }
+            finally
+            {
+                await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_unlock({ApplyLockKey})", CancellationToken.None);
+            }
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
     }
 
     private async Task<FindingResult> ApplyLockedAsync(Guid id, CancellationToken ct)
@@ -160,6 +179,11 @@ public sealed class FilterReviewService(
         }
 
         var fix = finding.ReadFix();
+        if (fix.Kind == FilterFixKind.None)
+        {
+            return FindingResult.Conflict("Finding has no fix", "Review these filters by hand in Gmail.");
+        }
+
         var referenced = finding.FilterIds.Concat(fix.DeleteFilterIds).Except(finding.DeletedFilterIds).ToList();
         var rows = await db.Filters.AsNoTracking().Where(r => referenced.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
         if (referenced.FirstOrDefault(i => !rows.TryGetValue(i, out var r) || r.DeletedAt is not null) is { } gone)
@@ -167,6 +191,15 @@ public sealed class FilterReviewService(
             return FindingResult.Conflict("Filter already deleted", $"Filter '{gone}' no longer exists; run a new review.");
         }
 
+        // A filter an earlier attempt created that is gone since (deleted by hand, or through the app) is created again.
+        if (finding.CreatedFilterId is { } createdId
+            && !await db.Filters.AnyAsync(r => r.Id == createdId && r.DeletedAt == null, ct))
+        {
+            finding.CreatedFilterId = null;
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
+
+        var pendingDeletes = fix.DeleteFilterIds.Except(finding.DeletedFilterIds).Count();
         try
         {
             if (fix.Create is { } create && finding.CreatedFilterId is null)
@@ -176,7 +209,7 @@ public sealed class FilterReviewService(
                     .FirstOrDefault(r => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, create.Action));
                 if (existing is null)
                 {
-                    var created = await filters.CreateFromIdsAsync(create.Criteria, create.Action, ct);
+                    var created = await filters.CreateFromIdsAsync(create.Criteria, create.Action, pendingDeletes, ct);
                     if (created is not { Outcome: FilterOutcome.Ok, Filter: { } filter })
                     {
                         await RecordErrorAsync(finding, $"{created.Title}: {created.Detail}");
@@ -225,16 +258,26 @@ public sealed class FilterReviewService(
         FindingResult.Conflict("Finding is not open", $"The finding is {finding.Status.ToString().ToLowerInvariant()}.");
 
     /// <summary>
-    /// Stored messages since <paramref name="cutoff"/> each locally evaluable filter matches: single <c>from</c> filters
-    /// from one grouped query, the rest one count each up to <see cref="MaxCountedFilters"/>.
+    /// Stored messages since <paramref name="cutoff"/> each locally evaluable filter matches: <c>from</c>-only filters
+    /// from one grouped query, the rest one count each up to <see cref="MaxCountedFilters"/>. None when the stored mail
+    /// does not cover the whole window (the mailbox fetch has not completed, or the oldest message is newer than the
+    /// cutoff), and none for a filter first seen after the cutoff.
     /// </summary>
     private async Task<Dictionary<string, int>> RecentCountsAsync(List<FilterRow> active, DateTimeOffset cutoff, CancellationToken ct)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var recent = db.Messages.AsNoTracking().Where(m => !m.DeletedInGmail && m.InternalDate >= cutoff);
+        var state = await db.FetchState.AsNoTracking().SingleOrDefaultAsync(s => s.Id == FetchStateRow.SingletonId, ct);
+        var stored = db.Messages.AsNoTracking().Where(m => !m.DeletedInGmail);
+        if (state is not { MailboxPhase: MailboxPhase.Completed, LastHistoryId: not null }
+            || !await stored.AnyAsync(m => m.InternalDate < cutoff, ct))
+        {
+            return counts;
+        }
+
+        var recent = stored.Where(m => m.InternalDate >= cutoff);
         var fromOnly = new List<(FilterRow Row, IReadOnlyList<string> Terms)>();
         var other = new List<(FilterRow Row, Func<IQueryable<MessageRow>, IQueryable<MessageRow>> Filter)>();
-        foreach (var row in active)
+        foreach (var row in active.Where(r => r.FirstSeenAt < cutoff))
         {
             var criteria = row.ReadCriteria();
             if (FilterCriteriaMapping.LocalFilter(criteria, out _) is not { } filter)
@@ -242,8 +285,7 @@ public sealed class FilterReviewService(
                 continue;
             }
 
-            if (FilterChecks.Normalise(criteria with { From = null }) == FilterChecks.Normalise(new GmailFilterCriteria())
-                && FilterCriteriaMapping.FromTerms(criteria.From!) is { } terms)
+            if (FilterChecks.FromOnlyTerms(criteria) is { } terms)
             {
                 fromOnly.Add((row, terms));
             }
@@ -256,10 +298,10 @@ public sealed class FilterReviewService(
         if (fromOnly.Count > 0)
         {
             var senders = await recent.GroupBy(m => m.FromAddress).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
+            var index = SenderIndex.Build(senders.Select(s => (s.Key, s.Count)));
             foreach (var (row, terms) in fromOnly)
             {
-                counts[row.Id] = senders.Where(s => terms.Any(t => FilterCriteriaMapping.FromTermMatches(t, s.Key.ToLowerInvariant())))
-                    .Sum(s => s.Count);
+                counts[row.Id] = index.Count(terms);
             }
         }
 
@@ -282,7 +324,7 @@ public sealed class FilterReviewService(
         FilterReviewRow review, List<FilterFindingRow>? findings, Dictionary<string, string>? names, CancellationToken ct)
     {
         findings ??= await db.FilterFindings.AsNoTracking().Where(f => f.ReviewId == review.Id).OrderBy(f => f.Id).ToListAsync(ct);
-        names ??= await LabelNamesAsync(ct);
+        names ??= await snapshot.LabelNamesAsync(ct);
         var ids = findings.SelectMany(f => f.FilterIds).Distinct().ToList();
         var rows = await db.Filters.AsNoTracking().Where(r => ids.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
         return new FilterReviewDto(
@@ -293,7 +335,7 @@ public sealed class FilterReviewService(
     private async Task<FilterFindingDto> ToFindingDtoAsync(FilterFindingRow finding, CancellationToken ct)
     {
         var rows = await db.Filters.AsNoTracking().Where(r => finding.FilterIds.Contains(r.Id)).ToDictionaryAsync(r => r.Id, ct);
-        return ToFindingDto(finding, rows, await LabelNamesAsync(ct));
+        return ToFindingDto(finding, rows, await snapshot.LabelNamesAsync(ct));
     }
 
     private static FilterFindingDto ToFindingDto(
@@ -311,18 +353,6 @@ public sealed class FilterReviewService(
         return new FilterFindingDto(
             f.Id, f.Kind, f.FilterIds, [.. f.FilterIds.Where(rows.ContainsKey).Select(i => FilterSnapshot.ToDto(rows[i], names))],
             f.Description, new FilterFixDto(fix.Kind, fix.DeleteFilterIds, create), f.Status, f.AppliedAt, f.Error);
-    }
-
-    private async Task<Dictionary<string, string>> LabelNamesAsync(CancellationToken ct)
-    {
-        try
-        {
-            return Names(await catalog.GetAsync(ct));
-        }
-        catch (Exception ex) when (ex is GmailNotConnectedException or GmailRateLimitedException)
-        {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
-        }
     }
 
     private static Dictionary<string, string> Names(IReadOnlyList<GmailLabel> labels) =>

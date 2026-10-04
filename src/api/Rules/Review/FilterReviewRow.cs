@@ -29,6 +29,8 @@ public enum FilterFindingKind
 [JsonConverter(typeof(SnakeCaseJsonConverter<FilterFixKind>))]
 public enum FilterFixKind
 {
+    /// <summary>Reported only: no safe fix (a forwarding filter, or actions that cannot be combined).</summary>
+    None,
     Delete,
     Merge,
     MergeActions,

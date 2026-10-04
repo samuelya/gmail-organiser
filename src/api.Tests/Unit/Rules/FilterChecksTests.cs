@@ -162,6 +162,57 @@ public sealed class FilterChecksTests
         findings[1].FilterIds.ShouldBe(["a", "c"]);
     }
 
+    [Fact]
+    public void No_recent_matches_skips_filters_that_trash_spam_or_forward()
+    {
+        var trash = Row("t", new(Subject: "a"), new(["TRASH"], []));
+        var spam = Row("s", new(Subject: "b"), new(["SPAM"], []), seenDaysLater: 1);
+        var forward = Row("f", new(Subject: "c"), new([], [], "fwd@example.com"), seenDaysLater: 2);
+        var stale = Row("x", new(Subject: "d"), new(["Label_1"], []), seenDaysLater: 3);
+
+        var labels = Labels.Concat([new("TRASH", "TRASH", GmailLabelType.System), new("SPAM", "SPAM", GmailLabelType.System)]).ToList();
+
+        var finding = FilterChecks.Run([trash, spam, forward, stale], labels, _ => 0, 365).ShouldHaveSingleItem();
+
+        finding.FilterIds.ShouldBe(["x"]);
+    }
+
+    [Fact]
+    public void A_duplicate_forwarding_filter_is_reported_without_a_fix()
+    {
+        var first = Row("a", new(From: "one@example.com"), new([], [], "fwd@example.com"));
+        var copy = Row("b", new(From: "one@example.com"), new([], [], "FWD@example.com"), seenDaysLater: 1);
+
+        var finding = FilterChecks.Run([first, copy], Labels, _ => 0, 365).ShouldHaveSingleItem();
+
+        finding.Kind.ShouldBe(FilterFindingKind.Duplicate);
+        finding.Fix.ShouldBe(new FilterFix(FilterFixKind.None, []), new FixComparer());
+    }
+
+    [Fact]
+    public void An_overlap_whose_union_adds_and_removes_one_label_is_reported_without_a_fix()
+    {
+        var star = Row("a", new(Subject: "receipt"), new(["STARRED"], []));
+        var unstar = Row("b", new(Subject: "receipt"), new(["Label_1"], ["STARRED"]), seenDaysLater: 1);
+        var labels = Labels.Append(new("STARRED", "STARRED", GmailLabelType.System)).ToList();
+
+        var finding = FilterChecks.Run([star, unstar], labels, NotEvaluable, 365).ShouldHaveSingleItem();
+
+        finding.Kind.ShouldBe(FilterFindingKind.Overlap);
+        finding.Fix.ShouldBe(new FilterFix(FilterFixKind.None, []), new FixComparer());
+        finding.Description.ShouldContain("STARRED");
+    }
+
+    [Fact]
+    public void From_only_terms_are_null_unless_the_criteria_is_only_a_from_list()
+    {
+        FilterChecks.FromOnlyTerms(new(From: " One@Example.com OR @news.example.com ")).ShouldBe(["one@example.com", "@news.example.com"]);
+        FilterChecks.FromOnlyTerms(new(From: "one@example.com", HasAttachment: false)).ShouldBe(["one@example.com"]);
+        FilterChecks.FromOnlyTerms(new(From: "one@example.com", Subject: "x")).ShouldBeNull();
+        FilterChecks.FromOnlyTerms(new(From: "not an address")).ShouldBeNull();
+        FilterChecks.FromOnlyTerms(new(Subject: "x")).ShouldBeNull();
+    }
+
     private static IReadOnlyList<FilterFindingDraft> Run(IEnumerable<FilterRow> rows) => FilterChecks.Run(rows, Labels, NotEvaluable, 365);
 
     private static FilterRow Row(string id, GmailFilterCriteria criteria, GmailFilterAction action, int seenDaysLater = 0) => new()

@@ -1,4 +1,5 @@
 using System.Globalization;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Rules.Review;
@@ -9,12 +10,15 @@ public sealed record FilterFindingDraft(FilterFindingKind Kind, IReadOnlyList<st
 /// <summary>
 /// The deterministic filter checks (DESIGN §6.5) over the active filters. Criteria compare by <see cref="Normalise"/>,
 /// actions as add/remove label-id sets plus the forward address. A filter that forwards mail is only ever reported as a
-/// duplicate (the app never creates a forwarding filter); the later copies of a duplicate take part in no other check.
+/// duplicate, without a fix: the app never creates a forwarding filter, so it could not restore a deleted one. The later
+/// copies of a duplicate take part in no other check.
 /// </summary>
 public static class FilterChecks
 {
     /// <summary>The most addresses one merged <c>from</c> filter lists.</summary>
     public const int MergeMaxAddresses = 20;
+
+    private static readonly FilterFix NoFix = new(FilterFixKind.None, []);
 
     /// <param name="recentMatches">Stored messages newer than the stale cutoff the filter matches; null when not evaluable.</param>
     public static IReadOnlyList<FilterFindingDraft> Run(
@@ -40,13 +44,14 @@ public static class FilterChecks
                 FilterFindingKind.Duplicate,
                 [.. group.Select(f => f.Row.Id)],
                 $"{Quote(copies)} {(copies.Count == 1 ? "repeats" : "repeat")} the earlier '{kept.Row.CriteriaSummary}' ({Describe(kept.Action, names)}).",
-                new FilterFix(FilterFixKind.Delete, [.. copies.Select(c => c.Row.Id)])));
+                kept.Forwards ? NoFix : new FilterFix(FilterFixKind.Delete, [.. copies.Select(c => c.Row.Id)])));
         }
 
         var distinct = filters.Where(f => !later.Contains(f.Row.Id)).ToList();
         findings.AddRange(DeletedLabels(distinct, names));
         findings.AddRange(Overlaps(distinct, names));
-        foreach (var f in distinct.Where(f => recentMatches(f.Row) == 0))
+        // Gmail's own Trash and Spam are never fetched, so a filter that sends mail there always counts zero.
+        foreach (var f in distinct.Where(f => !f.Forwards && !f.HidesMail && recentMatches(f.Row) == 0))
         {
             findings.Add(new(
                 FilterFindingKind.NoRecentMatches,
@@ -68,6 +73,18 @@ public static class FilterChecks
             c.HasAttachment ?? false, c.ExcludeChats ?? false, c.Size, c.SizeComparison);
 
         static string? Text(string? v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// The lower-cased terms (see <see cref="FilterCriteriaMapping.FromTerms"/>) of a criteria that is only <c>from</c>;
+    /// null otherwise.
+    /// </summary>
+    public static IReadOnlyList<string>? FromOnlyTerms(GmailFilterCriteria criteria)
+    {
+        ArgumentNullException.ThrowIfNull(criteria);
+        return Normalise(criteria with { From = null }) == Normalise(new GmailFilterCriteria()) && !string.IsNullOrWhiteSpace(criteria.From)
+            ? FilterCriteriaMapping.FromTerms(criteria.From)
+            : null;
     }
 
     /// <summary>Whether two filters have the same normalised criteria and the same action sets.</summary>
@@ -103,6 +120,17 @@ public static class FilterChecks
                 continue;
             }
 
+            if (union.AddLabelIds.Intersect(union.RemoveLabelIds, StringComparer.Ordinal).ToList() is { Count: > 0 } clash)
+            {
+                var both = string.Join(", ", clash.Select(id => names.GetValueOrDefault(id, id)));
+                yield return new(
+                    FilterFindingKind.Overlap,
+                    [.. members.Select(f => f.Row.Id)],
+                    $"{Quote(members)} have the same criteria and opposite actions on {both}; review them by hand.",
+                    NoFix);
+                continue;
+            }
+
             // Gmail refuses a filter equal to an existing one, so a member that already has the union is kept.
             var keeper = members.FirstOrDefault(f => f.ActionKey == ActionKey(union));
             var text = $"{Quote(members)} have the same criteria and different actions; one filter can {Describe(union, names)}.";
@@ -118,12 +146,12 @@ public static class FilterChecks
 
     private static IEnumerable<FilterFindingDraft> Mergeable(List<Parsed> filters, Dictionary<string, string> names)
     {
-        var singles = filters.Where(f => !f.Forwards && f.Missing.Count == 0 && SingleFrom(f.Key) is not null);
+        var singles = filters.Where(f => !f.Forwards && f.Missing.Count == 0 && FromOnlyTerms(f.Criteria) is [_]);
         foreach (var group in singles.GroupBy(f => f.ActionKey))
         {
             foreach (var chunk in group.Chunk(MergeMaxAddresses).Where(c => c.Length > 1))
             {
-                var terms = chunk.Select(f => SingleFrom(f.Key)!).ToList();
+                var terms = chunk.Select(f => FromOnlyTerms(f.Criteria)![0]).ToList();
                 var criteria = new GmailFilterCriteria(From: string.Join(" OR ", terms));
                 yield return new(
                     FilterFindingKind.Mergeable,
@@ -133,13 +161,6 @@ public static class FilterChecks
             }
         }
     }
-
-    /// <summary>The one address or <c>@domain</c> of a criteria that is only <c>from</c>; null otherwise.</summary>
-    private static string? SingleFrom(GmailFilterCriteria key) =>
-        key with { From = null } == Normalise(new GmailFilterCriteria()) && key.From is { } from
-            && FilterCriteriaMapping.FromTerms(from) is [var term]
-            ? term
-            : null;
 
     private static Parsed Parse(FilterRow row, Dictionary<string, string> names)
     {
@@ -187,5 +208,8 @@ public static class FilterChecks
         IReadOnlyList<string> Missing)
     {
         public bool Forwards => !string.IsNullOrEmpty(Action.Forward);
+
+        /// <summary>The action sends mail to Trash or Spam, which the mailbox fetch never stores.</summary>
+        public bool HidesMail => Action.AddLabelIds.Any(id => id is MailboxFetchJob.TrashLabelId or MailboxFetchJob.SpamLabelId);
     }
 }
