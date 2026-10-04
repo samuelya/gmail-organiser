@@ -22,6 +22,57 @@ public sealed class SuggestionOutputParserTests
         valid[0].ShouldBe(new SuggestionOutput("m1", "Topic/Sub", false, true, false, false, 0.9, "Synthetic reason"));
     }
 
+    private static readonly Dictionary<string, IReadOnlyList<string>> Current = new()
+    {
+        ["m1"] = ["Subtopic", "Old/Topic", "Topic/Sub"],
+    };
+
+    [Fact]
+    public void Replace_labels_keep_current_labels_trimmed_and_deduplicated()
+    {
+        var raw = $"[{Item("m1", label: "Topic/Subtopic", extra: ",\"replaceLabels\":[\" subtopic \",\"Subtopic\",\"Old/Topic\"]")},{Item("m2", extra: ",\"replaceLabels\":null")}]";
+
+        var result = SuggestionOutputParser.Parse(raw, Ids, Current);
+
+        result.Errors.ShouldBeEmpty();
+        result.Dropped.ShouldBeEmpty();
+        result.Valid[0].ReplaceLabels.ShouldBe(["Subtopic", "Old/Topic"]);
+        result.Valid[1].ReplaceLabels.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("\"Subtopic\"")]
+    [InlineData("[3]")]
+    [InlineData("[\"INBOX\"]")]
+    [InlineData("[\"topic/sub\"]")]
+    [InlineData("[\" \"]")]
+    [InlineData("[\"Elsewhere\"]")]
+    [InlineData("[\"Synthetic Delete\"]")]
+    public void Unusable_replace_labels_are_dropped_without_failing_the_email(string value)
+    {
+        var raw = $"[{Item("m1", extra: $",\"replaceLabels\":{value}")},{Item("m2", extra: ",\"replaceLabels\":[\"Subtopic\"]")}]";
+
+        var result = SuggestionOutputParser.Parse(raw, Ids, Current);
+
+        result.Errors.ShouldBeEmpty();
+        result.Valid.Select(v => v.Id).ShouldBe(["m1", "m2"]);
+        result.Valid.ShouldAllBe(v => v.ReplaceLabels.Count == 0);
+        result.Dropped.Count.ShouldBe(2);
+        result.Dropped[0].ShouldStartWith("Email 'm1': ");
+        result.Dropped[1].ShouldStartWith("Email 'm2': ");
+    }
+
+    [Fact]
+    public void Replace_labels_drop_the_topic_label_but_keep_the_rest()
+    {
+        var raw = $"[{Item("m1", label: "Topic/Sub", extra: ",\"replaceLabels\":[\"Topic/Sub\",\"Old/Topic\"]")}]";
+
+        var result = SuggestionOutputParser.Parse(raw, new HashSet<string> { "m1" }, Current);
+
+        result.Valid.ShouldHaveSingleItem().ReplaceLabels.ShouldBe(["Old/Topic"]);
+        result.Dropped.ShouldHaveSingleItem().ShouldStartWith("Email 'm1': 1 'replaceLabels' entry");
+    }
+
     [Fact]
     public void Suggestions_object_with_a_top_level_filter_parses()
     {

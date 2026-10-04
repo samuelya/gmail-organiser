@@ -64,7 +64,10 @@ public sealed record AnalysisRunDto(
     DateTimeOffset? StartedAt,
     DateTimeOffset? FinishedAt);
 
-/// <summary>Message counts by analysis status, applied action/delete counts and the cumulative LLM savings.</summary>
+/// <summary>
+/// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed
+/// messages the labelled scope still covers.
+/// </summary>
 public sealed record AnalysisSummaryDto(
     int NotAnalysed,
     int Analysed,
@@ -75,4 +78,5 @@ public sealed record AnalysisSummaryDto(
     int ToBeDeletedCount,
     long TotalLlmCalls,
     long TotalMessagesCovered,
-    double SavedPercent);
+    double SavedPercent,
+    int LabelledNotAnalysed);

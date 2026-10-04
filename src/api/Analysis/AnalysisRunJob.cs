@@ -98,11 +98,12 @@ public sealed partial class AnalysisRunJob(
         run.PromptVersion = builder.Version;
         await db.SaveChangesAsync(ct);
 
-        var work = await PlanAsync(run, cursor, settings, ct);
+        var (labelTree, labels) = await UserLabelsAsync(settings, ct);
+        var work = await PlanAsync(run, cursor, settings, labels, ct);
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
         var context = new RunContext(
-            run, settings, builder, chat, await UserLabelsAsync(ct), work.Allowlisted, await attachmentPolicy.GetAsync(ct));
+            run, settings, builder, chat, labelTree, labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct));
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
@@ -163,7 +164,8 @@ public sealed partial class AnalysisRunJob(
     /// eligible. Candidates no longer eligible leave the cursor and count as skipped (both stored with the next
     /// checkpoint). Members left over from a mixed group come first, one by one.
     /// </summary>
-    private async Task<Plan> PlanAsync(AnalysisRunRow run, AnalysisRunCursor cursor, AppSettings settings, CancellationToken ct)
+    private async Task<Plan> PlanAsync(
+        AnalysisRunRow run, AnalysisRunCursor cursor, AppSettings settings, PersonalLabels labels, CancellationToken ct)
     {
         var frozen = cursor.CandidateIds ?? throw new JobRefusedException("The analysis run has no frozen candidates.");
         var failed = (cursor.FailedIds ?? []).ToHashSet(StringComparer.Ordinal);
@@ -174,7 +176,7 @@ public sealed partial class AnalysisRunJob(
         var open = frozen.Except(failed, StringComparer.Ordinal).Except(stored, StringComparer.Ordinal).ToArray();
         var rows = await db.Messages.AsNoTracking().Where(m => open.Contains(m.Id)).ToListAsync(ct);
         var candidates = rows
-            .Where(m => AnalysisCandidates.IsEligible(run.Scope, m))
+            .Where(m => AnalysisCandidates.IsEligible(run.Scope, m, labels))
             .OrderByDescending(m => m.InternalDate)
             .ThenBy(m => m.Id, StringComparer.Ordinal)
             .ToList();
@@ -199,17 +201,18 @@ public sealed partial class AnalysisRunJob(
 
         var individual = (cursor.IndividualIds ?? []).ToHashSet(StringComparer.Ordinal);
         var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode };
-        var groups = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, ct);
+        var groups = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, labels, ct);
         return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], groups, allowlisted, cursor);
     }
 
-    /// <summary>The mailbox's user labels, sorted; read once per run for the prompt.</summary>
-    private async Task<IReadOnlyList<string>> UserLabelsAsync(CancellationToken ct) =>
-        (await gmail.ListLabelsAsync(ct))
-            .Where(l => l.Type == GmailLabelType.User)
-            .Select(l => l.Name)
-            .Order(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+    /// <summary>The mailbox's user label names, sorted, and the person's own labels; read once per run.</summary>
+    private async Task<(IReadOnlyList<string> Tree, PersonalLabels Labels)> UserLabelsAsync(AppSettings settings, CancellationToken ct)
+    {
+        var labels = await gmail.ListLabelsAsync(ct);
+        return (
+            [.. labels.Where(l => l.Type == GmailLabelType.User).Select(l => l.Name).Order(StringComparer.OrdinalIgnoreCase)],
+            PersonalLabels.From(labels, settings));
+    }
 
     /// <summary>
     /// One transaction: the group's suggestion rows (replacing a pending or rejected suggestion of a re-analysed
@@ -343,11 +346,15 @@ public sealed partial class AnalysisRunJob(
         AnalysisPromptBuilder Builder,
         IChatClient Chat,
         IReadOnlyList<string> LabelTree,
+        PersonalLabels Labels,
         IReadOnlySet<string> Allowlisted,
         AttachmentPolicySnapshot Attachments);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]
     private static partial void LogInvalidOutput(ILogger logger, int count, string errors);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output ignored: {Notes}")]
+    private static partial void LogDroppedOutput(ILogger logger, string notes);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Skipped {Count} representative(s) Gmail no longer knows")]
     private static partial void LogMissingBodies(ILogger logger, int count);

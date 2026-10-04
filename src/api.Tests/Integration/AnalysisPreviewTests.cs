@@ -71,15 +71,46 @@ public sealed class AnalysisPreviewTests(ApiFactory factory, PostgresFixture pos
     {
         await using var db = postgres.CreateDbContext();
 
-        (await AnalysisCandidates.QueryAsync(db, AnalysisScope.Inbox, null, null, 4, Ct)).Select(m => m.Id)
+        (await AnalysisCandidates.QueryAsync(db, AnalysisScope.Inbox, null, null, 4, [], Ct)).Select(m => m.Id)
             .ShouldBe(["f-normal-3", "f-normal-2", "f-normal-1", "shop-0999"]);
-        (await AnalysisCandidates.QueryAsync(db, AnalysisScope.All, null, null, 2, Ct)).Select(m => m.Id)
+        (await AnalysisCandidates.QueryAsync(db, AnalysisScope.All, null, null, 2, [], Ct)).Select(m => m.Id)
             .ShouldBe(["f-archived", "f-normal-3"]);
-        (await AnalysisCandidates.QueryAsync(db, AnalysisScope.Sender, " FILTER@example.com ", null, 50, Ct)).Select(m => m.Id)
+        (await AnalysisCandidates.QueryAsync(db, AnalysisScope.Sender, " FILTER@example.com ", null, 50, [], Ct)).Select(m => m.Id)
             .ShouldBe(["f-archived", "f-normal-3", "f-normal-2", "f-normal-1"]);
         (await AnalysisCandidates.QueryAsync(
-                db, AnalysisScope.Messages, null, ["f-applied", "f-analysed", "f-deleted", "shop-0001", "missing"], 50, Ct))
+                db, AnalysisScope.Messages, null, ["f-applied", "f-analysed", "f-deleted", "shop-0001", "missing"], 50, [], Ct))
             .Select(m => m.Id).ShouldBe(["f-analysed", "shop-0001"]);
+    }
+
+    [Fact]
+    public async Task Labelled_scope_takes_not_analysed_mail_with_a_user_label()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            async Task Label(string id, params string[] labels) =>
+                await db.Messages.Where(m => m.Id == id).ExecuteUpdateAsync(x => x.SetProperty(m => m.LabelIds, labels), Ct);
+            await Label("f-normal-1", "INBOX", "Label_3");
+            await Label("f-normal-2", "Label_3");
+            await Label("f-normal-3", "INBOX", "Label_4");
+            await Label("f-archived", "LabelX1", "LABEL_2");
+            await Label("f-analysed", "Label_5");
+            await Label("f-deleted", "Label_6");
+            await Label("shop-0001", "CATEGORY_PERSONAL", "INBOX");
+            await Label("shop-0002", "INBOX", "Label_7");
+        }
+
+        // Label_7 stands for the app's action or delete label: not the person's filing.
+        await using var read = postgres.CreateDbContext();
+        (await AnalysisCandidates.QueryAsync(read, AnalysisScope.Labelled, null, null, 50, ["Label_7"], Ct)).Select(m => m.Id)
+            .ShouldBe(["f-normal-3", "f-normal-2", "f-normal-1"]);
+        var (byStatus, labelled) = await AnalysisCandidates.CountAsync(read, ["Label_7"], Ct);
+        labelled.ShouldBe(3);
+        byStatus[AnalysisStatus.NotAnalysed].ShouldBe(ShopCount + 4);
+        (await AnalysisCandidates.CountAsync(read, [], Ct)).Labelled.ShouldBe(4);
+
+        // Not connected: the app label ids are unknown, so the preview counts that message too.
+        var preview = await PreviewAsync(new { scope = "labelled", count = 50 });
+        preview.Messages.ShouldBe(4);
     }
 
     [Fact]

@@ -47,7 +47,7 @@ public sealed partial class AnalysisRunJob
         RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
     {
         var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
-        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree), ct);
+        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree, context.Labels), ct);
         var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
         var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
         for (var i = 0; i < batch.Count; i++)
@@ -82,7 +82,8 @@ public sealed partial class AnalysisRunJob
             .Select(x => new EmailForPrompt(
                 x.First.Id, x.First.FromAddress, x.First.FromName, x.First.Subject, x.First.InternalDate, x.First.Category?.ToString(),
                 !string.IsNullOrEmpty(x.First.ListUnsubscribe), x.First.HasAttachment,
-                BodyCleaner.Clean(x.Second!.Body.Text, x.Second.Body.Html, context.Settings.AnalysisBodyMaxChars)))
+                BodyCleaner.Clean(x.Second!.Body.Text, x.Second.Body.Html, context.Settings.AnalysisBodyMaxChars),
+                context.Labels.NamesOf(x.First)))
             .ToList();
 
         // One message's attachments at a time, and groups run one after another: conversions (OCR, vision, office
@@ -199,7 +200,9 @@ public sealed partial class AnalysisRunJob
         var messages = context.Builder.Build(new PromptInput(
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName));
 
-        var first = SuggestionOutputParser.Parse(await ChatAsync(context, messages, ct), expected);
+        var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
+        var first = SuggestionOutputParser.Parse(await ChatAsync(context, messages, ct), expected, current);
+        LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
         var filter = first.Filter;
         if (outputs.Count == expected.Count)
@@ -208,7 +211,8 @@ public sealed partial class AnalysisRunJob
         }
 
         var retry = SuggestionOutputParser.Parse(
-            await ChatAsync(context, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], ct), expected);
+            await ChatAsync(context, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], ct), expected, current);
+        LogDropped(retry);
         foreach (var o in retry.Valid)
         {
             outputs.TryAdd(o.Id, o);
@@ -222,6 +226,14 @@ public sealed partial class AnalysisRunJob
         }
 
         return (outputs, filter, 2);
+    }
+
+    private void LogDropped(ParsedSuggestions parsed)
+    {
+        if (parsed.Dropped.Count > 0)
+        {
+            LogDroppedOutput(logger, string.Join("; ", parsed.Dropped));
+        }
     }
 
     private async Task<string> ChatAsync(RunContext context, IList<ChatMessage> messages, CancellationToken ct)
@@ -257,6 +269,7 @@ public sealed partial class AnalysisRunJob
             Mixed: false);
     }
 
+    // ReplaceLabels is parsed but not stored yet (#196); storing and applying it comes next.
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson) => new()
         {

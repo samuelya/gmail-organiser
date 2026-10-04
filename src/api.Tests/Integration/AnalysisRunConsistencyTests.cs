@@ -3,9 +3,11 @@ using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailOrganiser.Tests.Integration;
 
@@ -179,7 +181,9 @@ public sealed class AnalysisRunConsistencyTests(ApiFactory factory, PostgresFixt
         await using var db = postgres.CreateDbContext();
         var settings = new InMemorySettingsStore();
         settings.Current = settings.Current with { ChatModel = AnalysisRunHarness.ChatModel };
-        var service = new AnalysisRunService(db, new ThrowingJobService(), settings, new SenderStatsUpdater(db, TimeProvider.System), TimeProvider.System);
+        var service = new AnalysisRunService(db, new ThrowingJobService(), settings, new SenderStatsUpdater(db, TimeProvider.System),
+            new LabelCatalog(new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), TimeProvider.System),
+            TimeProvider.System);
 
         await Should.ThrowAsync<InvalidOperationException>(() => service.StartAsync(AnalysisScope.Inbox, null, null, 5, null, Ct));
 

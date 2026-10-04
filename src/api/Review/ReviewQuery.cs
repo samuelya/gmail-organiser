@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 namespace GmailOrganiser.Review;
 
 /// <summary>The review sender list and one sender's suggestions grouped by <see cref="SuggestionRow.GroupKey"/>.</summary>
-public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
+public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, LabelCatalog labelCatalog)
 {
     /// <summary>Most members listed for one group.</summary>
     public const int MaxMembers = 500;
@@ -143,9 +143,12 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
         }
 
         var claude = await ClaudeLookupAsync(address, loaded, ct);
+        var labelNames = loaded.Any(x => GroupKey.LabelIds(x.Stats.Key).Count > 0)
+            ? (await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct)).Names
+            : null;
         foreach (var (g, members) in loaded)
         {
-            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlisted, claude));
+            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlisted, claude, labelNames));
         }
 
         return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
@@ -172,10 +175,14 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
         return new GroupOutcome(shown.TopicLabel, shown.NeedsAction, shown.ToBeDeleted);
     }
 
-    /// <summary>A group's title: the newest member's subject (or the no-subject text), plus the list suffix for a list group.</summary>
-    public static string GroupDisplay(string? subject, string? groupKey) =>
+    /// <summary>
+    /// A group's title: the newest member's subject (or the no-subject text), plus the list suffix for a list group and,
+    /// with <paramref name="labelNames"/>, the label set the group was split by.
+    /// </summary>
+    public static string GroupDisplay(string? subject, string? groupKey, IReadOnlyDictionary<string, string>? labelNames = null) =>
         (string.IsNullOrWhiteSpace(subject) ? AnalysisGrouper.NoSubjectDisplay : subject)
-        + (groupKey is not null && GroupKey.IsList(groupKey) ? AnalysisGrouper.ListDisplaySuffix : "");
+        + (groupKey is not null && GroupKey.IsList(groupKey) ? AnalysisGrouper.ListDisplaySuffix : "")
+        + (groupKey is not null && labelNames is not null ? AnalysisGrouper.LabelsDisplay(groupKey, labelNames) : "");
 
     /// <summary>
     /// Worth a Claude review: the reviewer is on and the suggestion is below the threshold (when that rule is on) or
@@ -254,7 +261,8 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
         IEnumerable<OutcomeCount> outcomes,
         IReadOnlyList<(SuggestionRow S, MessageRow M)> members,
         bool allowlisted,
-        ClaudeLookup claude)
+        ClaudeLookup claude,
+        IReadOnlyDictionary<string, string>? labelNames)
     {
         var all = outcomes.ToList();
         var shared = Shown(all);
@@ -273,7 +281,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore)
 
         var newest = members[0];
         var key = newest.S.GroupKey;
-        var display = GroupDisplay(newest.M.Subject, key);
+        var display = GroupDisplay(newest.M.Subject, key, labelNames);
         var settings = claude.Settings;
         return new ReviewGroupDto(
             key,

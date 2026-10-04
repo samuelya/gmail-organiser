@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Llm.Fake;
@@ -16,8 +17,9 @@ public sealed class FakeLlmTests
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static EmailForPrompt Email(string id, string from, string subject, string category, string body = "Synthetic body") =>
-        new(id, from, null, subject, Date, category, false, false, body);
+    private static EmailForPrompt Email(string id, string from, string subject, string category, string body = "Synthetic body",
+        params string[] labels) =>
+        new(id, from, null, subject, Date, category, false, false, body, labels);
 
     private static IList<ChatMessage> Prompt(params EmailForPrompt[] emails) =>
         new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(
@@ -64,6 +66,21 @@ public sealed class FakeLlmTests
         FakeAnalysisResponder.Answer([.. prompt]).ShouldBe(FakeAnalysisResponder.Answer([.. prompt]));
         Parse(prompt, "u1")["u1"].TopicLabel.ShouldBe("Updates/Example");
         Enumerable.Range(0, 50).Select(i => FakeAnalysisResponder.Confidence($"id{i}")).Distinct().Count().ShouldBeGreaterThan(5);
+    }
+
+    [Fact]
+    public void Answer_reads_current_labels_and_ignores_the_none_marker()
+    {
+        var prompt = Prompt(
+            Email("l1", "billing@example.com", "Your bill", "updates", "Synthetic body", "Bills", "Topic"),
+            Email("n1", "billing@example.com", "Your bill", "updates"));
+
+        using var answer = JsonDocument.Parse(FakeAnalysisResponder.Answer([.. prompt]));
+        var replace = answer.RootElement.GetProperty("suggestions").EnumerateArray()
+            .ToDictionary(s => s.GetProperty("id").GetString()!, s => s.GetProperty("replaceLabels").EnumerateArray().Select(l => l.GetString()).ToList());
+
+        replace["l1"].ShouldBe(["Bills"]);
+        replace["n1"].ShouldBeEmpty();
     }
 
     [Fact]
