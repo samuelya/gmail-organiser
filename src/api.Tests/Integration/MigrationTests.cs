@@ -1,4 +1,5 @@
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -66,6 +67,26 @@ public sealed class MigrationTests(PostgresFixture postgres)
             .SingleAsync(Ct);
 
         count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Fetch_state_row_is_seeded_by_migration()
+    {
+        // A fresh database: the shared one holds whatever fetch state earlier test classes left behind.
+        var connectionString = await CreateEmptyDatabaseAsync();
+        await using var db = CreateDbContext(connectionString);
+        await db.Database.MigrateAsync(Ct);
+
+        var state = await db.FetchState.AsNoTracking().SingleAsync(Ct);
+
+        state.Id.ShouldBe(FetchStateRow.SingletonId);
+        state.MailboxPhase.ShouldBe(MailboxPhase.NotStarted);
+        state.PageToken.ShouldBeNull();
+        state.InboxFetched.ShouldBe(0);
+        var phase = await db.Database
+            .SqlQuery<string>($"SELECT mailbox_phase AS \"Value\" FROM fetch_state WHERE id = 1")
+            .SingleAsync(Ct);
+        phase.ShouldBe("not_started");
     }
 
     [Fact]

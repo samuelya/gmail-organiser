@@ -101,21 +101,4 @@ public sealed class MessageStorageTests(PostgresFixture postgres) : IAsyncLifeti
         message.Category.ShouldBe(MessageCategory.Promotions);
         message.AnalysisStatus.ShouldBe(AnalysisStatus.NotAnalysed);
     }
-
-    [Fact]
-    public async Task Fetch_state_row_exists_after_migration()
-    {
-        await using var db = postgres.CreateDbContext();
-
-        var state = await db.FetchState.AsNoTracking().SingleAsync(Ct);
-
-        state.Id.ShouldBe(FetchStateRow.SingletonId);
-        state.MailboxPhase.ShouldBe(MailboxPhase.NotStarted);
-        state.PageToken.ShouldBeNull();
-        state.InboxFetched.ShouldBe(0);
-        var phase = await db.Database
-            .SqlQuery<string>($"SELECT mailbox_phase AS \"Value\" FROM fetch_state WHERE id = 1")
-            .SingleAsync(Ct);
-        phase.ShouldBe("not_started");
-    }
 }
