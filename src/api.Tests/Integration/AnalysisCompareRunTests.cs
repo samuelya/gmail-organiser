@@ -5,8 +5,10 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailOrganiser.Tests.Integration;
 
@@ -158,6 +160,88 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Hints_leave_out_every_message_of_the_run_not_just_the_group()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            var at = new DateTimeOffset(2026, 2, 2, 0, 0, 0, TimeSpan.Zero);
+            foreach (var id in new[] { "c00", "c01", "c02" })
+            {
+                await AnalysisRunHarness.DecideAsync(db, id, SuggestionStatus.Applied);
+                db.Decisions.Add(Decision(id, AnalysisRunHarness.Billing, null, $"Hint-For-{id}", at));
+            }
+
+            db.Decisions.Add(Decision("c03", AnalysisRunHarness.Billing, null, "Hint-Outside-Run", at));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(x => x with { AnalysisGroupingMode = AnalysisGroupingMode.Off }, Ct);
+        }
+
+        var calls = h.Chat.Calls;
+        var run = await StartCompareAsync(new CompareRunRequest(await SuggestionIdsAsync("c00", "c01", "c02"), null));
+        await h.RunNextAsync();
+
+        (await h.GetRunAsync(run.Id)).LlmCalls.ShouldBe(3);
+        var prompts = h.Chat.Requests.Skip(calls).ToList();
+        prompts.ShouldAllBe(r => !r.Any(m => m.Text.Contains("Hint-For-c0")));
+        prompts.ShouldAllBe(r => r.Any(m => m.Text.Contains("Hint-Outside-Run")));
+    }
+
+    [Fact]
+    public async Task Resume_does_not_redo_messages_whose_alternatives_another_run_replaced()
+    {
+        var (run, stored) = await CrashAfterFirstGroupAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            // Another compare run replaced them while this one was stopped.
+            await db.SuggestionAlternatives.Where(a => a.RunId == run.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.RunId, first.Id).SetProperty(a => a.TopicLabel, "Newer"), Ct);
+        }
+
+        var calls = h.Chat.Calls;
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.MessagesCovered, done.SkippedMessages, done.LlmCalls).ShouldBe(("completed", 20, 0, 3));
+        (h.Chat.Calls - calls).ShouldBe(2);
+        await using var check = postgres.CreateDbContext();
+        (await check.SuggestionAlternatives.CountAsync(a => a.TopicLabel == "Newer", Ct)).ShouldBe(stored.Length);
+        (await check.SuggestionAlternatives.CountAsync(a => a.RunId == run.Id, Ct)).ShouldBe(20 - stored.Length);
+    }
+
+    [Fact]
+    public async Task Resume_does_not_count_messages_whose_alternatives_a_reanalyse_cascaded_away()
+    {
+        var (run, stored) = await CrashAfterFirstGroupAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => stored.Contains(s.MessageId)).ExecuteDeleteAsync(Ct);
+        }
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.MessagesCovered, done.SkippedMessages, done.LlmCalls).ShouldBe(("completed", 20, 0, 3));
+        await using var check = postgres.CreateDbContext();
+        (await check.SuggestionAlternatives.CountAsync(a => a.RunId == run.Id, Ct)).ShouldBe(20 - stored.Length);
+    }
+
+    [Fact]
+    public async Task Compare_runs_leave_the_analysis_summary_unchanged()
+    {
+        var before = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
+        await StartCompareAsync(new CompareRunRequest(null, first.Id));
+        await h.RunNextAsync();
+
+        var after = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
+        after.ShouldBe(before);
+    }
+
+    [Fact]
     public async Task Invalid_requests_are_400_and_a_missing_chat_model_is_409()
     {
         (await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
@@ -172,6 +256,32 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
         (await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, first.Id))).StatusCode.ShouldBe(HttpStatusCode.Conflict);
         await using var check = postgres.CreateDbContext();
         (await check.AnalysisRuns.CountAsync(r => r.Kind == AnalysisRunKind.Compare, Ct)).ShouldBe(0);
+    }
+
+    /// <summary>A compare run over the first run that stops during its second model call; returns the stored messages.</summary>
+    private async Task<(AnalysisRunDto Run, string[] Stored)> CrashAfterFirstGroupAsync()
+    {
+        using var stop = new CancellationTokenSource();
+        var calls = h.Chat.Calls;
+        h.Chat.Respond = (ids, call, _, ct) =>
+        {
+            if (call == calls + 2)
+            {
+                stop.Cancel();
+                ct.ThrowIfCancellationRequested();
+            }
+
+            return Task.FromResult(AnalysisRunHarness.Agree(ids));
+        };
+        var run = await StartCompareAsync(new CompareRunRequest(null, first.Id));
+        await h.RunNextAsync(stop.Token);
+        (await h.Runner.RecoverAsync(Ct)).ShouldBe(1);
+        h.Chat.Respond = (ids, _, _, _) => Task.FromResult(AnalysisRunHarness.Agree(ids));
+
+        await using var db = postgres.CreateDbContext();
+        var stored = await db.SuggestionAlternatives.Where(a => a.RunId == run.Id).Select(a => a.MessageId).ToArrayAsync(Ct);
+        stored.ShouldNotBeEmpty();
+        return (run, stored);
     }
 
     private async Task<AnalysisRunDto> StartCompareAsync(CompareRunRequest request)

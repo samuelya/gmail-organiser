@@ -111,7 +111,7 @@ public sealed partial class AnalysisRunJob
                 emails,
                 await memory.FindSimilarAsync(
                     representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, context.Run.DocumentTypeParent,
-                    context.Run.Kind == AnalysisRunKind.Compare ? [.. group.Members.Select(m => m.Id)] : [], ct),
+                    context.HintExclusions, ct),
                 attachmentsSection,
                 ct);
         if (outputs.Count == 0)

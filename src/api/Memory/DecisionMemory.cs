@@ -225,9 +225,7 @@ public sealed partial class DecisionMemory(
     {
         try
         {
-            var rows = await db.Decisions.AsNoTracking()
-                .Where(d => d.EmbeddingModel == model && d.Embedding != null)
-                .Where(d => d.MessageId == null || !excluded.Contains(d.MessageId))
+            var rows = await WithoutMessages(db.Decisions.AsNoTracking().Where(d => d.EmbeddingModel == model && d.Embedding != null), excluded)
                 .Select(d => new { Decision = d, Distance = d.Embedding!.CosineDistance(vector) })
                 .Where(x => x.Distance <= MaxDistance)
                 .OrderBy(x => x.Distance)
@@ -246,15 +244,17 @@ public sealed partial class DecisionMemory(
     private async Task<List<(DecisionRow Decision, double Similarity)>> LatestForSenderAsync(
         string sender, string? listId, int k, string[] excluded, CancellationToken ct)
     {
-        var rows = await db.Decisions.AsNoTracking()
-            .Where(d => d.SenderAddress == sender || (listId != null && d.ListId == listId))
-            .Where(d => d.MessageId == null || !excluded.Contains(d.MessageId))
+        var rows = await WithoutMessages(db.Decisions.AsNoTracking().Where(d => d.SenderAddress == sender || (listId != null && d.ListId == listId)), excluded)
             .OrderByDescending(d => d.SenderAddress == sender)
             .ThenByDescending(d => d.CreatedAt)
             .Take(k)
             .ToListAsync(ct);
         return [.. rows.Select(d => (d, d.SenderAddress == sender ? 1.0 : ListMatchSimilarity))];
     }
+
+    /// <summary>Leaves out decisions about <paramref name="excluded"/>; no predicate when empty, so normal runs keep their plan.</summary>
+    private static IQueryable<DecisionRow> WithoutMessages(IQueryable<DecisionRow> decisions, string[] excluded) =>
+        excluded.Length == 0 ? decisions : decisions.Where(d => d.MessageId == null || !excluded.Contains(d.MessageId));
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Decision memory left {Count} text(s) without a vector: {Reason}")]
     private static partial void LogEmbeddingFailed(ILogger logger, int count, string reason);

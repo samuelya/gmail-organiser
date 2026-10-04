@@ -25,6 +25,10 @@ namespace GmailOrganiser.Analysis;
 /// eligible ones), so mail fetched meanwhile never shifts the window.
 /// </param>
 /// <param name="SuggestionIds">A compare run's suggestion per candidate, frozen at the start; its alternative belongs to it.</param>
+/// <param name="CoveredIds">
+/// A compare run's stored candidates (alternative written, or suggestion gone and skipped); a resume skips them even
+/// when another run replaced or a cascade removed their alternatives meanwhile.
+/// </param>
 public sealed record AnalysisRunCursor(
     Guid RunId,
     int GroupsDone = 0,
@@ -32,7 +36,8 @@ public sealed record AnalysisRunCursor(
     IReadOnlyList<string>? FailedIds = null,
     IReadOnlyList<string>? IndividualIds = null,
     IReadOnlyList<string>? CandidateIds = null,
-    IReadOnlyDictionary<string, Guid>? SuggestionIds = null);
+    IReadOnlyDictionary<string, Guid>? SuggestionIds = null,
+    IReadOnlyList<string>? CoveredIds = null);
 
 /// <summary>
 /// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining frozen candidates, then per group asks the model
@@ -109,13 +114,17 @@ public sealed partial class AnalysisRunJob(
         var work = await PlanAsync(run, cursor, settings, labels, ct);
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
+        var compare = run.Kind == AnalysisRunKind.Compare;
+        // A compare run's hints leave out decisions about every message it re-analyses, not just the current group's.
         var context = new RunContext(
-            run, settings, builder, chat, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct));
+            run, settings, builder, chat, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
+            compare ? [.. cursor.SuggestionIds!.Keys] : []);
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
         var individualIds = new HashSet<string>(cursor.IndividualIds ?? [], StringComparer.Ordinal);
         var failedIds = new List<string>(cursor.FailedIds ?? []);
+        var coveredIds = new List<string>(cursor.CoveredIds ?? []);
         var prepared = new Dictionary<MessageGroup, PreparedGroup>(ReferenceEqualityComparer.Instance);
         while (front.TryDequeue(out var group) || rest.TryDequeue(out group))
         {
@@ -134,12 +143,18 @@ public sealed partial class AnalysisRunJob(
 
             individualIds.ExceptWith(group.Members.Select(m => m.Id).Except(outcome.Individual.Select(g => g.Members[0].Id)));
             failedIds.AddRange(outcome.FailedIds);
+            if (compare)
+            {
+                coveredIds.AddRange(outcome.Suggestions.Select(s => s.MessageId));
+            }
+
             cursor = cursor with
             {
                 GroupsDone = cursor.GroupsDone + 1,
                 LastGroupKey = group.Key,
                 FailedIds = [.. failedIds],
                 IndividualIds = [.. individualIds],
+                CoveredIds = compare ? [.. coveredIds] : null,
             };
 
             var signal = await StoreAsync(ctx, run, group, outcome, cursor, ct);
@@ -167,9 +182,9 @@ public sealed partial class AnalysisRunJob(
         IReadOnlyList<MessageGroup> Individual, IReadOnlyList<MessageGroup> Groups, Allowlist Allowlisted, AnalysisRunCursor Cursor);
 
     /// <summary>
-    /// The frozen candidates still to cover, newest first: not failed, without a suggestion of this run and still
-    /// eligible. Candidates no longer eligible leave the cursor and count as skipped (both stored with the next
-    /// checkpoint). Members left over from a mixed group come first, one by one.
+    /// The frozen candidates still to cover, newest first: not failed, without a suggestion of this run (a compare
+    /// run: not covered per its cursor) and still eligible. Candidates no longer eligible leave the cursor and count
+    /// as skipped (both stored with the next checkpoint). Members left over from a mixed group come first, one by one.
     /// </summary>
     private async Task<Plan> PlanAsync(
         AnalysisRunRow run, AnalysisRunCursor cursor, AppSettings settings, PersonalLabels labels, CancellationToken ct)
@@ -178,7 +193,7 @@ public sealed partial class AnalysisRunJob(
         var failed = (cursor.FailedIds ?? []).ToHashSet(StringComparer.Ordinal);
         var compare = run.Kind == AnalysisRunKind.Compare;
         var stored = compare
-            ? await db.SuggestionAlternatives.AsNoTracking().Where(a => a.RunId == run.Id).Select(a => a.MessageId).ToListAsync(ct)
+            ? cursor.CoveredIds ?? []
             : await db.Suggestions.AsNoTracking().Where(s => s.RunId == run.Id).Select(s => s.MessageId).ToListAsync(ct);
         var open = frozen.Except(failed, StringComparer.Ordinal).Except(stored, StringComparer.Ordinal).ToArray();
         var rows = await db.Messages.AsNoTracking().Where(m => open.Contains(m.Id)).ToListAsync(ct);
@@ -261,7 +276,7 @@ public sealed partial class AnalysisRunJob(
                     cursor,
                     Progress(run, cursor),
                     c => run.Kind == AnalysisRunKind.Compare
-                        ? WriteAlternativesAsync(run, cursor.SuggestionIds ?? new Dictionary<string, Guid>(), rows, now, c)
+                        ? WriteAlternativesAsync(run, cursor.SuggestionIds!, rows, now, c)
                         : WriteGroupAsync(run, members, rows, now, c),
                     ct);
             }
@@ -361,7 +376,8 @@ public sealed partial class AnalysisRunJob(
         LabelTreeIndex LabelIndex,
         PersonalLabels Labels,
         Allowlist Allowlisted,
-        AttachmentPolicySnapshot Attachments);
+        AttachmentPolicySnapshot Attachments,
+        IReadOnlyCollection<string> HintExclusions);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]
     private static partial void LogInvalidOutput(ILogger logger, int count, string errors);
