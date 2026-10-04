@@ -57,6 +57,31 @@ public sealed class AppsScriptSettingsTests
         Validate(new AppsScriptSettings { Rules = [new("Synthetic/News", days)] }).Keys.ShouldBe(["appsScript.rules[0].days"]);
     }
 
+    [Theory]
+    [InlineData("Receipts & Bills")]
+    [InlineData("example.com")]
+    [InlineData("Synthetic 'single'")]
+    [InlineData("-Synthetic")]
+    [InlineData("Synthetic:News")]
+    public void Unsearchable_labels_are_field_errors(string label)
+    {
+        Validate(new AppsScriptSettings { Rules = [new(label, 7)], KeepInInboxLabels = ["Synthetic/Keep", label] })
+            .Keys.ShouldBe(["appsScript.rules[0].label", "appsScript.keepInInboxLabels[1]"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Searchable_labels_with_letters_digits_spaces_and_dashes_pass()
+    {
+        Validate(new AppsScriptSettings { Rules = [new("Synthetic/Ünïcode 2_x-y", 7)], KeepInInboxLabels = ["_Synthetic Keep"] }).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Rule_labels_that_search_the_same_are_duplicates()
+    {
+        Validate(new AppsScriptSettings { Rules = [new("Synthetic News", 7), new("Synthetic-News", 30)] })
+            .Keys.ShouldBe(["appsScript.rules[1].label"]);
+    }
+
     [Fact]
     public void Rule_labels_must_be_unique_ignoring_case()
     {
@@ -164,16 +189,9 @@ public sealed class AppsScriptSettingsTests
     [Fact]
     public void Quotes_and_backslashes_are_escaped()
     {
-        var settings = new AppSettings
-        {
-            ActionLabelName = "Synthetic \"Act\"",
-            AppsScript = new AppsScriptSettings { Rules = [new("""Synthetic "quoted" \ slash""", 5)], KeepInInboxLabels = ["Synthetic 'single'"] },
-        };
+        // Rule and keep-in-inbox labels can't carry quotes (see Unsearchable_*), but the action label can.
+        var settings = new AppSettings { ActionLabelName = """Synthetic "Act" \ slash""" };
 
-        var config = AppsScriptConfigGenerator.Generate(settings);
-
-        config.ShouldContain("""    { label: "Synthetic \"quoted\" \\ slash", days: 5 },""");
-        config.ShouldContain("""  actionLabel: "Synthetic \"Act\"",""");
-        config.ShouldContain("""    "Synthetic 'single'",""");
+        AppsScriptConfigGenerator.Generate(settings).ShouldContain("""  actionLabel: "Synthetic \"Act\" \\ slash",""");
     }
 }

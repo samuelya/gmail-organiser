@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Gmail;
@@ -10,6 +11,9 @@ namespace GmailOrganiser.Settings;
 /// <summary>Input checks for the settings endpoints; each returns field errors for a validation ProblemDetails.</summary>
 public static class SettingsValidation
 {
+    // Mirrors SEARCHABLE_LABEL_ in scripts/apps-script/auto-archive.gs: the script skips any other label name.
+    private static readonly Regex ScriptSearchableLabel = new(@"^[\p{L}\p{N}_/][\p{L}\p{N}_/ -]*\z", RegexOptions.CultureInvariant);
+
     public const int MaxModelNameLength = 200;
     public const int MaxUrlLength = 2048;
     public const int MaxClientIdLength = 256;
@@ -190,7 +194,8 @@ public static class SettingsValidation
                     continue;
                 }
 
-                if (CheckLabelName(errors, $"{field}.label", rule.Label ?? "") && !seen.Add(rule.Label!.Trim()))
+                // The script searches "A B" as "A-B", so the two would be one rule.
+                if (CheckScriptLabelName(errors, $"{field}.label", rule.Label ?? "") && !seen.Add(rule.Label!.Trim().Replace(' ', '-')))
                 {
                     errors[$"{field}.label"] = ["Each label may have one rule."];
                 }
@@ -207,7 +212,7 @@ public static class SettingsValidation
 
         for (var i = 0; i < keep.Count; i++)
         {
-            CheckLabelName(errors, $"appsScript.keepInInboxLabels[{i}]", keep[i] ?? "");
+            CheckScriptLabelName(errors, $"appsScript.keepInInboxLabels[{i}]", keep[i] ?? "");
         }
     }
 
@@ -263,6 +268,23 @@ public static class SettingsValidation
         string.Equals(actionLabelName, deleteLabelName, StringComparison.OrdinalIgnoreCase);
 
     // Trimmed, non-empty, a valid user label path with no Gmail system label name at any level, at most 225 characters.
+    /// <summary>A Gmail label name the Apps Script can also search for: letters, digits, '_', '/', ' ' and '-', not leading with ' ' or '-'.</summary>
+    private static bool CheckScriptLabelName(Dictionary<string, string[]> errors, string field, string value)
+    {
+        if (!CheckLabelName(errors, field, value))
+        {
+            return false;
+        }
+
+        if (ScriptSearchableLabel.IsMatch(value.Trim()))
+        {
+            return true;
+        }
+
+        errors[field] = ["The Apps Script can only use labels of letters, digits, spaces, '_', '-' and '/', not starting with '-'."];
+        return false;
+    }
+
     private static bool CheckLabelName(Dictionary<string, string[]> errors, string field, string? value)
     {
         if (value is null)
