@@ -1,4 +1,5 @@
 using GmailOrganiser.Review;
+using GmailOrganiser.Rules.Review;
 
 namespace GmailOrganiser.Rules;
 
@@ -74,3 +75,35 @@ public sealed record FilterSuggestionDto(FilterCriteriaDto Criteria, FilterActio
 /// <param name="ListId">The List-Id all the sender's stored messages share, if any.</param>
 public sealed record FilterProposalDto(
     string SenderAddress, string? DisplayName, int MessageCount, string? ListId, SenderPatternDto Pattern, FilterSuggestionDto Suggested);
+
+/// <param name="FilterCount">Active filters the review checked.</param>
+/// <param name="Summary">The LLM summary (#215); null until summarised.</param>
+public sealed record FilterReviewDto(
+    Guid Id,
+    DateTimeOffset CreatedAt,
+    int FilterCount,
+    IReadOnlyList<FilterFindingDto> Findings,
+    string? Summary,
+    string? SummaryModel,
+    DateTimeOffset? SummarisedAt,
+    string? SummaryError);
+
+/// <param name="Filters">The rows of <paramref name="FilterIds"/>, deleted ones included.</param>
+/// <param name="Error">Why the last apply stopped; the finding stays open.</param>
+/// <param name="ReviewId">The review that found it; another review's id marks a half-applied finding carried over.</param>
+public sealed record FilterFindingDto(
+    Guid Id,
+    FilterFindingKind Kind,
+    IReadOnlyList<string> FilterIds,
+    IReadOnlyList<FilterDto> Filters,
+    string Description,
+    FilterFixDto Fix,
+    FilterFindingStatus Status,
+    DateTimeOffset? AppliedAt,
+    string? Error,
+    Guid ReviewId);
+
+/// <summary>Apply creates <paramref name="Create"/> (if any) first, then deletes <paramref name="DeleteFilterIds"/>.</summary>
+public sealed record FilterFixDto(FilterFixKind Kind, IReadOnlyList<string> DeleteFilterIds, FilterFixCreateDto? Create);
+
+public sealed record FilterFixCreateDto(FilterCriteriaDto Criteria, FilterActionDto Action);

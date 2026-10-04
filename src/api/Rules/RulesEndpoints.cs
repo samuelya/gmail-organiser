@@ -3,6 +3,7 @@ using GmailOrganiser.Common;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Rules.Review;
 using Google;
 using Microsoft.AspNetCore.Http.HttpResults;
 
@@ -20,6 +21,11 @@ public static class RulesEndpoints
         group.MapDelete("/filters/{id}", DeleteFilterAsync).RequireAccountMatch();
         group.MapPost("/filters/{id}/restore", RestoreFilterAsync).RequireAccountMatch();
         group.MapGet("/filters/proposals", ListProposalsAsync);
+        group.MapPost("/filters/reviews", CreateReviewAsync).RequireAccountMatch();
+        group.MapGet("/filters/reviews/latest", LatestReviewAsync);
+        group.MapGet("/filters/reviews/{id:guid}", GetReviewAsync);
+        group.MapPost("/filters/findings/{id:guid}/apply", ApplyFindingAsync).RequireAccountMatch();
+        group.MapPost("/filters/findings/{id:guid}/dismiss", DismissFindingAsync).RequireAccountMatch();
         return endpoints;
     }
 
@@ -132,6 +138,58 @@ public static class RulesEndpoints
 
         return TypedResults.Ok(await proposals.ListAsync(page ?? 1, pageSize ?? FilterProposalQuery.DefaultPageSize, ct));
     }
+
+    /// <summary>Syncs the filters and stores a new review; 503 when Gmail is unreachable, 409 for another account's data.</summary>
+    private static async Task<Results<Created<FilterReviewDto>, ProblemHttpResult>> CreateReviewAsync(
+        FilterReviewService reviews, CancellationToken ct)
+    {
+        try
+        {
+            var review = await reviews.CreateAsync(ct);
+            return TypedResults.Created($"/api/rules/filters/reviews/{review.Id}", review);
+        }
+        catch (Exception ex) when (GmailProblem(ex) is { } problem)
+        {
+            return problem;
+        }
+    }
+
+    /// <summary>The newest filter review; 404 when there is none.</summary>
+    private static async Task<Results<Ok<FilterReviewDto>, NotFound>> LatestReviewAsync(FilterReviewService reviews, CancellationToken ct) =>
+        await reviews.LatestAsync(ct) is { } review ? TypedResults.Ok(review) : TypedResults.NotFound();
+
+    private static async Task<Results<Ok<FilterReviewDto>, NotFound>> GetReviewAsync(
+        Guid id, FilterReviewService reviews, CancellationToken ct) =>
+        await reviews.GetAsync(id, ct) is { } review ? TypedResults.Ok(review) : TypedResults.NotFound();
+
+    /// <summary>
+    /// Runs the finding's fix; 409 when it is not open, a referenced filter is gone or Gmail refuses a step (the finding
+    /// keeps the error and stays open), 503 when Gmail is unreachable.
+    /// </summary>
+    private static async Task<Results<Ok<FilterFindingDto>, NotFound, ProblemHttpResult>> ApplyFindingAsync(
+        Guid id, FilterReviewService reviews, CancellationToken ct)
+    {
+        try
+        {
+            return ToResult(await reviews.ApplyAsync(id, ct));
+        }
+        catch (Exception ex) when (GmailProblem(ex) is { } problem)
+        {
+            return problem;
+        }
+    }
+
+    /// <summary>Dismisses an open finding; 409 otherwise.</summary>
+    private static async Task<Results<Ok<FilterFindingDto>, NotFound, ProblemHttpResult>> DismissFindingAsync(
+        Guid id, FilterReviewService reviews, CancellationToken ct) =>
+        ToResult(await reviews.DismissAsync(id, ct));
+
+    private static Results<Ok<FilterFindingDto>, NotFound, ProblemHttpResult> ToResult(FindingResult result) => result switch
+    {
+        { Outcome: FilterOutcome.Ok, Finding: { } finding } => TypedResults.Ok(finding),
+        { Outcome: FilterOutcome.NotFound } => TypedResults.NotFound(),
+        _ => TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: result.Title, detail: result.Detail),
+    };
 
     private static Results<Created<FilterDto>, ValidationProblem, ProblemHttpResult> Created(FilterResult result) =>
         result is { Outcome: FilterOutcome.Ok, Filter: { } filter } ? CreatedAt(filter) : ConflictProblem(result);

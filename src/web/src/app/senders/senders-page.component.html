@@ -107,12 +107,22 @@
                   @if (row.sender.displayName) {
                     <span class="address">{{ row.sender.address }}</span>
                   }
-                  @if (row.sender.allowlisted || row.sender.unsubscribedAt) {
+                  @if (
+                    row.sender.allowlisted ||
+                    row.sender.allowlistedByDomain ||
+                    row.sender.unsubscribedAt
+                  ) {
                     <mat-chip-set aria-label="Status">
                       @if (row.sender.allowlisted) {
                         <mat-chip disableRipple data-testid="allowlisted-chip">
                           <mat-icon matChipAvatar aria-hidden="true">shield</mat-icon>
                           Allowlisted
+                        </mat-chip>
+                      }
+                      @if (row.sender.allowlistedByDomain) {
+                        <mat-chip disableRipple data-testid="allowlisted-domain-chip">
+                          <mat-icon matChipAvatar aria-hidden="true">domain</mat-icon>
+                          Allowlisted (domain)
                         </mat-chip>
                       }
                       @if (row.sender.unsubscribedAt; as at) {
@@ -205,6 +215,29 @@
                 >
                   <mat-icon aria-hidden="true">{{
                     row.sender.allowlisted ? 'shield' : 'add_moderator'
+                  }}</mat-icon>
+                </button>
+                @let listed = listedDomain(row.sender);
+                <button
+                  mat-icon-button
+                  type="button"
+                  (click)="toggleDomainAllowlist(row.sender)"
+                  [disabled]="domainSaving() || allowlistedDomains() === null"
+                  [attr.aria-pressed]="!!listed"
+                  [matTooltip]="
+                    listed
+                      ? 'Remove ' + listed + ' from allowlist'
+                      : 'Allowlist domain ' + row.sender.domain
+                  "
+                  [attr.aria-label]="
+                    listed
+                      ? 'Remove ' + listed + ' from allowlist'
+                      : 'Allowlist domain ' + row.sender.domain
+                  "
+                  data-testid="allowlist-domain"
+                >
+                  <mat-icon aria-hidden="true">{{
+                    listed ? 'domain_disabled' : 'domain_add'
                   }}</mat-icon>
                 </button>
                 @if (rowJobs().get(row.sender.address); as job) {

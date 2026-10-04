@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Senders;
@@ -23,9 +25,70 @@ public sealed record Allowlist(IReadOnlySet<string> Addresses, IReadOnlyList<str
         : CoversDomain(Domains, new SenderAddress(address, null).Domain) ? DomainReason
         : null;
 
-    /// <summary>Whether <paramref name="domain"/> equals one of <paramref name="domains"/> or is a subdomain of one.</summary>
-    public static bool CoversDomain(IReadOnlyList<string> domains, string domain) =>
-        domain.Length > 0 && domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal));
+    /// <summary>
+    /// Whether <paramref name="domain"/> equals one of <paramref name="domains"/> or is a subdomain of one. Entries are
+    /// stored in punycode, so a Unicode domain (SMTPUTF8 mail, #288) is compared in its <see cref="AsciiDomain"/> form.
+    /// A domain <see cref="IdnMapping"/> rejects (e.g. an emoji label) is also compared with the entries'
+    /// <see cref="SqlForms"/>, so C# protects whatever the clean-up SQL protects.
+    /// </summary>
+    public static bool CoversDomain(IReadOnlyList<string> domains, string domain)
+    {
+        if (domain.Length == 0)
+        {
+            return false;
+        }
+
+        if (TryAsciiDomain(domain) is { } ascii)
+        {
+            return Matches(domains, ascii);
+        }
+
+        return Matches(domains, domain) || Matches(SqlForms(domains), domain);
+    }
+
+    private static bool Matches(IEnumerable<string> domains, string domain) =>
+        domains.Any(d => domain == d || domain.EndsWith("." + d, StringComparison.Ordinal));
+
+    /// <summary>
+    /// <paramref name="domain"/> in the form allowlisted domains are stored in: an IDN in lower-case punycode. An ASCII
+    /// domain, or one <see cref="IdnMapping"/> rejects, is returned as it is.
+    /// </summary>
+    public static string AsciiDomain(string domain) => TryAsciiDomain(domain) ?? domain;
+
+    private static string? TryAsciiDomain(string domain)
+    {
+        if (Ascii.IsValid(domain))
+        {
+            return domain;
+        }
+
+        try
+        {
+            return new IdnMapping().GetAscii(domain).ToLowerInvariant();
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Each stored entry and, for an IDN, its Unicode form: SQL cannot punycode the stored address, so it matches either.
+    /// </summary>
+    public static string[] SqlForms(IEnumerable<string> domains) =>
+        [.. domains.SelectMany(d => UnicodeDomain(d) is { } u && u != d ? [d, u] : new[] { d })];
+
+    private static string? UnicodeDomain(string domain)
+    {
+        try
+        {
+            return new IdnMapping().GetUnicode(domain).ToLowerInvariant();
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
 }
 
 public static class AllowlistLoader

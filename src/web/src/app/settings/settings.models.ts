@@ -31,7 +31,8 @@ export type SettingsDto = AppSettings &
   AttachmentsSettingsDto &
   ClaudeSettingsDto &
   ProtectionSettingsDto &
-  AppsScriptSettingsDto;
+  AppsScriptSettingsDto &
+  LabelSettings;
 
 /**
  * The analysis part of `UpdateSettingsRequest`: only changed fields are sent; an empty prompt
@@ -85,6 +86,10 @@ export const PROMPT_PLACEHOLDERS: readonly { name: string; help: string }[] = [
   { name: '{{attachments}}', help: 'Attachment names and types.' },
   { name: '{{actionLabel}}', help: 'The action label name from Settings.' },
   { name: '{{deleteLabel}}', help: 'The delete label name from Settings.' },
+  {
+    name: '{{documentTypes}}',
+    help: 'Document-type parent and its existing labels; without it the prompt never asks for a document-type label.',
+  },
 ];
 
 export const GROUPING_MODES: readonly {
@@ -268,6 +273,8 @@ export interface ProtectionSettings {
   starred: boolean;
   important: boolean;
   repliedThreads: boolean;
+  /** Mail from these domains, or their subdomains, is never marked for deletion (#203). */
+  allowlistedDomains: string[];
 }
 
 /** The protection field of `SettingsDto`; absent on an older API. */
@@ -280,7 +287,41 @@ export interface ProtectionUpdate {
   protection?: Partial<ProtectionSettings>;
 }
 
-export type ProtectionRule = keyof ProtectionSettings;
+export type ProtectionRule = Exclude<keyof ProtectionSettings, 'allowlistedDomains'>;
+
+/** The API's limits for `protection.allowlistedDomains`. */
+export const MAX_ALLOWLISTED_DOMAINS = 500;
+const MAX_DOMAIN_LENGTH = 253;
+const HOST_NAME = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
+/**
+ * A domain as the API stores it, or null where it answers 400: trimmed, one trailing dot dropped,
+ * lower-case, an international name in punycode; a host name with a dot, no `@`, not an IP.
+ */
+export function normaliseAllowlistDomain(value: string): string | null {
+  let domain = value.trim();
+  if (domain.endsWith('.')) domain = domain.slice(0, -1);
+  if (!domain || domain.includes('@') || /[\s/:?#\\[\]]/.test(domain)) return null;
+  try {
+    // The URL parser applies the same IDNA mapping as the API's IdnMapping.
+    domain = new URL(`http://${domain}`).hostname;
+  } catch {
+    return null;
+  }
+  if (domain.length > MAX_DOMAIN_LENGTH || !HOST_NAME.test(domain)) return null;
+  // An all-numeric last label is an IPv4 address, which the API rejects.
+  return /\.\d+$/.test(domain) ? null : domain;
+}
+
+export function isAllowlistDomain(value: string): boolean {
+  return normaliseAllowlistDomain(value) !== null;
+}
+
+/** The listed domain that covers `domain`: itself, or a parent domain; null when none does. */
+export function coveringDomain(domain: string, listed: readonly string[]): string | null {
+  const host = domain.toLowerCase();
+  return listed.find((d) => host === d || host.endsWith(`.${d}`)) ?? null;
+}
 
 /** Label and one-line hint per rule, in the API's order. */
 export const PROTECTION_RULES: readonly { key: ProtectionRule; label: string; hint: string }[] = [
@@ -358,20 +399,38 @@ export function scriptLabelKey(path: string): string {
   return path.trim().replace(/ /g, '-').toLowerCase();
 }
 
-/** The two configurable label names of `SettingsDto` (#198). */
+/** The configurable label names of `SettingsDto` (#198, #238). */
 export interface LabelSettings {
   actionLabelName: string;
   deleteLabelName: string;
+  /** The document-type parent label; `null` turns document-type labels off. */
+  documentTypeParent: string | null;
 }
 
-/** The label part of `UpdateSettingsRequest`: omitted names stay unchanged. */
-export type LabelSettingsUpdate = Partial<LabelSettings>;
+/**
+ * The label part of `UpdateSettingsRequest`: omitted names stay unchanged; `documentTypeParent: ""`
+ * clears the parent.
+ */
+export type LabelSettingsUpdate = Partial<{
+  actionLabelName: string;
+  deleteLabelName: string;
+  documentTypeParent: string;
+}>;
 
 /** Same bound as the API's `MaxLabelNameLength`. */
 export const MAX_LABEL_NAME_LENGTH = 225;
 
-/** The API field a document-type parent clash comes back under; this page has no field for it. */
-export const DOCUMENT_TYPE_PARENT_FIELD = 'documentTypeParent';
+/** Same bounds as the API's `MaxDocumentTypeParentLength` and `MaxDocumentTypeParentSegments`. */
+export const MAX_DOCUMENT_TYPE_PARENT_LENGTH = 200;
+export const MAX_DOCUMENT_TYPE_PARENT_LEVELS = 4;
+
+/** At most `MAX_DOCUMENT_TYPE_PARENT_LEVELS` `/`-separated parts, so a document type fits under it. */
+export function maxLevelsValidator(control: AbstractControl<string>): ValidationErrors | null {
+  const value = control.value?.trim() ?? '';
+  return value && value.split('/').length > MAX_DOCUMENT_TYPE_PARENT_LEVELS
+    ? { maxLevels: true }
+    : null;
+}
 
 /**
  * A Gmail label path: `/`-separated segments, none blank, no leading or trailing `/`. Blank is left
@@ -385,12 +444,27 @@ export function labelPathValidator(control: AbstractControl<string>): Validation
     : { labelPath: true };
 }
 
-/** The action and delete labels must differ ignoring case, as Gmail label names do; set on the group. */
+/**
+ * The action and delete labels must differ ignoring case, as Gmail label names do, and the
+ * document-type parent must not equal, contain or sit under either; set on the group.
+ */
 export function labelsDifferValidator(group: AbstractControl): ValidationErrors | null {
-  const { actionLabelName, deleteLabelName } = group.value as Partial<LabelSettings>;
+  const { actionLabelName, deleteLabelName, documentTypeParent } =
+    group.value as Partial<LabelSettings>;
   const action = actionLabelName?.trim().toLowerCase();
   const del = deleteLabelName?.trim().toLowerCase();
-  return action && del && action === del ? { labelsMatch: true } : null;
+  const parent = documentTypeParent?.trim().toLowerCase();
+  const errors: ValidationErrors = {};
+  if (action && del && action === del) errors['labelsMatch'] = true;
+  if (parent && [action, del].some((name) => name && pathsOverlap(parent, name))) {
+    errors['parentClash'] = true;
+  }
+  return Object.keys(errors).length ? errors : null;
+}
+
+/** One path equals the other or sits under it (lower-cased input). */
+function pathsOverlap(a: string, b: string): boolean {
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
 }
 
 /** `PurgeRequest.ConfirmationWord`: what the user types to purge local data. */

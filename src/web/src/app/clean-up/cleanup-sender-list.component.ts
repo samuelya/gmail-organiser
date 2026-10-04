@@ -83,6 +83,11 @@ export const CLEANUP_SEARCH_DEBOUNCE_MS = 300;
               @if (s.allowlisted) {
                 <span class="chip" data-testid="sender-allowlisted">Allowlisted</span>
               }
+              @if (s.allowlistedByDomain) {
+                <span class="chip" data-testid="sender-allowlisted-domain"
+                  >Allowlisted (domain)</span
+                >
+              }
             </span>
           </button>
         }

@@ -14,6 +14,8 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     public const string BodyStart = "<email_body>";
     public const string BodyEnd = "</email_body>";
     public const string MemoryHeading = "Similar past decisions by the person:";
+    public const int MaxDocumentTypes = 50;
+    public const string DocumentTypesOff = "Document-type labels are switched off: always set `documentTypeLabel` to null.";
 
     /// <summary>
     /// The answer shape: one object wrapping the per-email array, because Ollama's JSON mode only yields a top-level
@@ -70,6 +72,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["labelTree"] = RenderLabelTree(input.LabelTree),
+            ["documentTypes"] = RenderDocumentTypes(input.DocumentTypeParent, input.LabelTree),
             ["memory"] = RenderMemory(input.Memory),
             ["attachments"] = DefuseBodyTags(input.AttachmentsSection ?? string.Empty),
             ["emails"] = RenderEmails(input.Emails),
@@ -99,6 +102,26 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         }
 
         return string.Join('\n', lines);
+    }
+
+    /// <summary>The parent and its direct children from the label tree (ordinal order, at most <see cref="MaxDocumentTypes"/>).</summary>
+    private static string RenderDocumentTypes(string? parent, IReadOnlyList<string> labels)
+    {
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return DocumentTypesOff;
+        }
+
+        var prefix = parent.Trim() + "/";
+        var children = labels
+            .Where(l => l.Length > prefix.Length && l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !l.AsSpan(prefix.Length).Contains('/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .Take(MaxDocumentTypes)
+            .Select(l => $"`{OneLine(l)}`")
+            .ToList();
+        var existing = children.Count == 0 ? "none yet" : string.Join(", ", children);
+        return $"Document-type labels live under `{OneLine(prefix[..^1])}`. Existing: {existing}.";
     }
 
     private static string RenderMemory(IReadOnlyList<MemoryHint> memory)

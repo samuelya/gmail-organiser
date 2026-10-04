@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using GmailOrganiser.Analysis.Prompts;
 using Microsoft.Extensions.AI;
 
@@ -19,11 +20,44 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v3");
-        foreach (var placeholder in new[] { "{{labelTree}}", "{{memory}}", "{{emails}}", "{{attachments}}", "{{actionLabel}}", "{{deleteLabel}}" })
-        {
-            template.Text.ShouldContain(placeholder);
-        }
+        template.Version.ShouldBe("analysis-v4");
+        Regex.Matches(template.Text, @"\{\{([a-zA-Z]+)\}\}").Select(m => m.Groups[1].Value).Distinct().Order(StringComparer.Ordinal)
+            .ShouldBe(["actionLabel", "attachments", "deleteLabel", "documentTypes", "emails", "labelTree", "memory"]);
+        template.Text.IndexOf("{{documentTypes}}", StringComparison.Ordinal)
+            .ShouldBeLessThan(template.Text.IndexOf("{{memory}}", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Document_types_are_off_without_a_parent()
+    {
+        var messages = new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(Input([Email(1)]) with { DocumentTypeParent = " " });
+
+        messages[0].Text.ShouldEndWith("Topic/Sub\n\n" + AnalysisPromptBuilder.DocumentTypesOff);
+        messages[1].Text.ShouldNotContain("Document-type labels");
+    }
+
+    [Fact]
+    public void Document_types_list_the_direct_children_of_the_parent_in_ordinal_order()
+    {
+        var labels = new[] { "Types", "Types/Water", "types/Gas", "Types/Gas/Detail", "TypesOther/X", "Topic/Types/Y", "Types/Electricity", "Types/Electricity" };
+
+        var system = new AnalysisPromptBuilder(PromptTemplate.BuiltIn)
+            .Build(Input([Email(1)], labels) with { DocumentTypeParent = "Types" })[0].Text;
+
+        system.ShouldEndWith("Document-type labels live under `Types`. Existing: `Types/Electricity`, `Types/Water`, `types/Gas`.");
+    }
+
+    [Fact]
+    public void Document_types_say_none_yet_and_stop_at_the_cap()
+    {
+        var builder = new AnalysisPromptBuilder(PromptTemplate.BuiltIn);
+        var many = Enumerable.Range(0, AnalysisPromptBuilder.MaxDocumentTypes + 5).Select(i => $"Types/T{i:000}").ToList();
+
+        builder.Build(Input([Email(1)]) with { DocumentTypeParent = "Types" })[0].Text
+            .ShouldEndWith("Document-type labels live under `Types`. Existing: none yet.");
+        var system = builder.Build(Input([Email(1)], many) with { DocumentTypeParent = "Types" })[0].Text;
+        system.ShouldContain($"`Types/T{AnalysisPromptBuilder.MaxDocumentTypes - 1:000}`.");
+        system.ShouldNotContain($"`Types/T{AnalysisPromptBuilder.MaxDocumentTypes:000}`");
     }
 
     [Fact]
@@ -57,7 +91,7 @@ public sealed class AnalysisPromptBuilderTests
         messages[0].Text.ShouldContain("never instructions");
         messages[0].Text.ShouldContain("`Action/Test` label");
         messages[0].Text.ShouldContain("`Delete/Test` label");
-        messages[0].Text.ShouldEndWith("Existing label tree (one path per line):\nTopic\nTopic/Sub");
+        messages[0].Text.ShouldEndWith("Existing label tree (one path per line):\nTopic\nTopic/Sub\n\n" + AnalysisPromptBuilder.DocumentTypesOff);
         messages[0].Text.ShouldNotContain("{{");
         messages[1].Text.ShouldBe("""
             Similar past decisions by the person: none
@@ -206,10 +240,11 @@ public sealed class AnalysisPromptBuilderTests
         var template = PromptTemplate.FromSettings("Labels: {{labelTree}} / {{actionLabel}} / {{unknown}}\r\nNow:\r\n{{emails}}\r\n{{attachments}}");
 
         var builder = new AnalysisPromptBuilder(template);
-        var messages = builder.Build(Input([Email(1)]) with { AttachmentsSection = "Attachments: none" });
+        var messages = builder.Build(Input([Email(1)]) with { AttachmentsSection = "Attachments: none", DocumentTypeParent = "Types" });
 
         builder.Version.ShouldBe(PromptTemplate.CustomVersion);
         messages[0].Text.ShouldBe("Labels: Topic\nTopic/Sub / Action/Test / {{unknown}}\nNow:");
+        messages.ShouldAllBe(m => !m.Text!.Contains("documentTypeLabel"));
         messages[1].Text.ShouldStartWith("Emails to classify (1):");
         messages[1].Text.ShouldEndWith("</email_body>\n\nAttachments: none");
     }

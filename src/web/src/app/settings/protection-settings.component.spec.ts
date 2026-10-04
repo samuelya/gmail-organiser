@@ -12,6 +12,7 @@ const rules = (over: Partial<ProtectionSettings> = {}): ProtectionSettings => ({
   starred: true,
   important: true,
   repliedThreads: true,
+  allowlistedDomains: [],
   ...over,
 });
 
@@ -24,6 +25,7 @@ const sender = (address: string, over: Partial<SenderDto> = {}): SenderDto => ({
   appliedCount: 0,
   lastSeenAt: null,
   allowlisted: true,
+  allowlistedByDomain: false,
   activeFetchJob: null,
   unsubscribedAt: null,
   ...over,

@@ -26,28 +26,38 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import {
-  DOCUMENT_TYPE_PARENT_FIELD,
   LabelSettings,
   LabelSettingsUpdate,
+  MAX_DOCUMENT_TYPE_PARENT_LENGTH,
+  MAX_DOCUMENT_TYPE_PARENT_LEVELS,
   MAX_LABEL_NAME_LENGTH,
   labelPathValidator,
   labelsDifferValidator,
+  maxLevelsValidator,
 } from './settings.models';
 import { SettingsService } from './settings.service';
 
 type LabelField = keyof LabelSettings;
+const LABEL_FIELDS: readonly LabelField[] = [
+  'actionLabelName',
+  'deleteLabelName',
+  'documentTypeParent',
+];
 
-/** The delete label shows the group's "must differ" error as its own. */
-class DeleteLabelErrorMatcher implements ErrorStateMatcher {
+/** A control that shows one of the group's errors as its own. */
+class GroupErrorMatcher implements ErrorStateMatcher {
+  constructor(private readonly groupError: string) {}
+
   isErrorState(control: AbstractControl | null, form: FormGroupDirective | NgForm | null): boolean {
-    const invalid = !!control?.invalid || !!control?.parent?.hasError('labelsMatch');
+    const invalid = !!control?.invalid || !!control?.parent?.hasError(this.groupError);
     return invalid && !!(control?.touched || control?.dirty || form?.submitted);
   }
 }
 
 /**
- * The Settings page's "Labels" section (#202): the action and delete label names. Saves itself with
- * only the changed names; the page passes the loaded names in.
+ * The Settings page's "Labels" section (#202, #244): the action and delete label names and the
+ * optional document-type parent. Saves itself with only the changed names; the page passes the
+ * loaded names in.
  */
 @Component({
   selector: 'app-labels-settings',
@@ -56,9 +66,6 @@ class DeleteLabelErrorMatcher implements ErrorStateMatcher {
   styles: `
     .help {
       color: var(--mat-sys-on-surface-variant);
-    }
-    .labels-error {
-      color: var(--mat-sys-error);
     }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -74,7 +81,10 @@ export class LabelsSettingsSection {
   private readonly saved = linkedSignal(() => this.settings());
 
   readonly maxLength = MAX_LABEL_NAME_LENGTH;
-  readonly deleteMatcher = new DeleteLabelErrorMatcher();
+  readonly maxParentLength = MAX_DOCUMENT_TYPE_PARENT_LENGTH;
+  readonly maxParentLevels = MAX_DOCUMENT_TYPE_PARENT_LEVELS;
+  readonly deleteMatcher = new GroupErrorMatcher('labelsMatch');
+  readonly parentMatcher = new GroupErrorMatcher('parentClash');
   readonly form = new FormGroup(
     {
       actionLabelName: new FormControl('', {
@@ -93,14 +103,21 @@ export class LabelsSettingsSection {
           labelPathValidator,
         ],
       }),
+      documentTypeParent: new FormControl('', {
+        nonNullable: true,
+        validators: [
+          Validators.maxLength(MAX_DOCUMENT_TYPE_PARENT_LENGTH),
+          maxLevelsValidator,
+          labelPathValidator,
+        ],
+      }),
     },
     { validators: labelsDifferValidator },
   );
   readonly actionLabelName = this.form.controls.actionLabelName;
   readonly deleteLabelName = this.form.controls.deleteLabelName;
+  readonly documentTypeParent = this.form.controls.documentTypeParent;
   readonly saving = signal(false);
-  /** A server error with no field here, e.g. a clash with the document-type parent label. */
-  readonly formError = signal<string | null>(null);
 
   constructor() {
     this.form.disable();
@@ -110,19 +127,21 @@ export class LabelsSettingsSection {
     });
   }
 
-  /** The trimmed names that differ from the saved ones. */
+  /** The trimmed names that differ from the saved ones; a cleared parent is sent as `""`. */
   changes(): LabelSettingsUpdate {
     const saved = this.saved();
     const changes: LabelSettingsUpdate = {};
-    for (const field of ['actionLabelName', 'deleteLabelName'] as const) {
+    for (const field of LABEL_FIELDS) {
       const value = this.form.controls[field].value.trim();
-      if (value !== saved?.[field]) changes[field] = value;
+      if (value !== (saved?.[field] ?? '')) changes[field] = value;
     }
     return changes;
   }
 
   save(): void {
     if (this.saving() || !this.saved()) return;
+    // Drops last save's server errors: a parent clash may have been fixed by editing another name.
+    for (const control of Object.values(this.form.controls)) control.updateValueAndValidity();
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
@@ -133,7 +152,6 @@ export class LabelsSettingsSection {
       return;
     }
     this.saving.set(true);
-    this.formError.set(null);
     this.settingsApi
       .updateLabels(changes)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -143,6 +161,7 @@ export class LabelsSettingsSection {
           this.saved.set({
             actionLabelName: settings.actionLabelName,
             deleteLabelName: settings.deleteLabelName,
+            documentTypeParent: settings.documentTypeParent ?? null,
           });
           this.snackBar.open('Label settings saved', undefined, { duration: 3000 });
         },
@@ -163,21 +182,19 @@ export class LabelsSettingsSection {
     this.form.reset({
       actionLabelName: settings.actionLabelName,
       deleteLabelName: settings.deleteLabelName,
+      documentTypeParent: settings.documentTypeParent ?? '',
     });
   }
 
+  // A clash with the saved parent comes back under its field even when only another name changed.
   private applyServerErrors(errors: Record<string, string[]> | null): void {
     if (!errors) return;
     for (const [field, messages] of Object.entries(errors)) {
       const message = messages[0];
-      if (!message) continue;
-      if (field === 'actionLabelName' || field === 'deleteLabelName') {
-        const control = this.form.controls[field as LabelField];
-        control.setErrors({ server: message });
-        control.markAsTouched();
-      } else if (field === DOCUMENT_TYPE_PARENT_FIELD) {
-        this.formError.set(`Document-type parent label: ${message}`);
-      }
+      if (!message || !(LABEL_FIELDS as readonly string[]).includes(field)) continue;
+      const control = this.form.controls[field as LabelField];
+      control.setErrors({ server: message });
+      control.markAsTouched();
     }
   }
 }

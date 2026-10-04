@@ -173,7 +173,8 @@ public sealed class FilterSnapshot(
             row.RestoredFrom);
     }
 
-    private async Task<Dictionary<string, string>> LabelNamesAsync(CancellationToken ct)
+    /// <summary>Label names by id; empty when Gmail cannot be reached.</summary>
+    internal async Task<Dictionary<string, string>> LabelNamesAsync(CancellationToken ct)
     {
         try
         {

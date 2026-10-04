@@ -1,5 +1,6 @@
 using System.Text.Json;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +11,8 @@ namespace GmailOrganiser.Tests.Integration;
 /// <summary>
 /// Document-type labels (#239): with a parent set, the model's <c>documentTypeLabel</c> is stored as the existing label
 /// is spelled (else in the parent's configured casing), derived members get the agreed value, a label missing from the
-/// label tree is marked new, and the run keeps the parent it started with.
+/// label tree is marked new, and the run keeps the parent it started with. The prompt (#240) names the parent and its
+/// children, or says document types are off.
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
@@ -40,6 +42,21 @@ public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFix
         await AssertRowsAsync();
         await using var db = postgres.CreateDbContext();
         (await db.AnalysisRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id, Ct)).DocumentTypeParent.ShouldBe(Parent);
+        h.Chat.Requests.ShouldAllBe(r => r[0].Text.Contains($"Document-type labels live under `{Parent}`. Existing: `{Existing}`."));
+    }
+
+    [Fact]
+    public async Task Without_a_parent_the_prompt_switches_document_types_off_and_none_are_stored()
+    {
+        await SetParentAsync(null);
+        h.Chat.Respond = (ids, _, _, _) => Task.FromResult(Answer(ids));
+        await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+
+        h.Chat.Requests.ShouldNotBeEmpty();
+        h.Chat.Requests.ShouldAllBe(r => r[0].Text.Contains(AnalysisPromptBuilder.DocumentTypesOff));
+        await using var db = postgres.CreateDbContext();
+        (await db.Suggestions.AsNoTracking().ToListAsync(Ct)).ShouldAllBe(s => s.DocumentTypeLabel == null && !s.DocumentTypeIsNew);
     }
 
     [Fact]

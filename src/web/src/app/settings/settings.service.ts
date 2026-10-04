@@ -58,7 +58,7 @@ export class SettingsService {
     return this.http.get<AppsScriptConfigDto>('/api/rules/apps-script/config');
   }
 
-  /** A partial update of the action and delete label names: names left out stay unchanged. */
+  /** A partial update of the label names: names left out stay unchanged; `""` clears the parent. */
   updateLabels(changes: LabelSettingsUpdate): Observable<SettingsDto> {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
   }

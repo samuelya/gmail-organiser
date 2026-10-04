@@ -126,6 +126,27 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
     }
 
     [Fact]
+    public async Task A_unicode_sender_domain_is_covered_by_its_punycode_entry_in_the_count_and_the_list()
+    {
+        const string unicode = "x@bücher.example";
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Messages.Where(m => m.Id == "b00").ExecuteUpdateAsync(s => s.SetProperty(m => m.FromAddress, unicode), Ct);
+        }
+
+        (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(6, 3, 2));
+        await SetDomainsAsync(["xn--bcher-kva.example"]);
+        (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(6, 3, 3));
+        var sender = (await GetAsync<PagedDto<CleanupSenderDto>>("/api/clean-up/senders?search=xn--bcher")).Items;
+        sender.ShouldBeEmpty();
+        var idn = (await GetAsync<PagedDto<CleanupSenderDto>>("/api/clean-up/senders?search=bücher")).Items.Single();
+        (idn.ProtectedCount, idn.Allowlisted, idn.AllowlistedByDomain).ShouldBe((1, false, true));
+        (await GetAsync<PagedDto<CleanupMessageDto>>($"/api/clean-up/senders/{Uri.EscapeDataString(unicode)}/messages")).Items
+            .Single().ProtectedReason.ShouldBe("allowlisted domain");
+        (await h.PostAsync("/api/clean-up/delete", new CleanupSelectionRequest(MessageIds: ["b00"]))).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
     public async Task A_from_without_an_at_sign_has_no_domain_so_the_count_and_the_job_both_leave_it_unprotected()
     {
         await using (var db = postgres.CreateDbContext())

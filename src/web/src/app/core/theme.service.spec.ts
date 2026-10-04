@@ -14,16 +14,26 @@ function stubSystemDark(matches: boolean) {
 
 describe('ThemeService', () => {
   let root: HTMLElement;
+  // jsdom has no matchMedia and specs share one window (no isolation): install a placeholder for
+  // spyOn and remove it afterwards, or a later spec's Material component reads `.matches` on null.
+  const installed = !window.matchMedia;
 
-  beforeEach(() => {
-    localStorage.clear();
-    if (!window.matchMedia) {
+  beforeAll(() => {
+    if (installed) {
       Object.defineProperty(window, 'matchMedia', {
         configurable: true,
         writable: true,
         value: () => null,
       });
     }
+  });
+
+  afterAll(() => {
+    if (installed) delete (window as Partial<Window>).matchMedia;
+  });
+
+  beforeEach(() => {
+    localStorage.clear();
     root = TestBed.inject(DOCUMENT).documentElement;
     root.classList.remove('dark', 'light');
   });

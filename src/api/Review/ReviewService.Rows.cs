@@ -1,0 +1,47 @@
+using GmailOrganiser.Analysis;
+using Microsoft.EntityFrameworkCore;
+
+namespace GmailOrganiser.Review;
+
+/// <summary>Row access and lookups shared by the review decisions: keyset chunks, row locks, label lookups.</summary>
+public sealed partial class ReviewService
+{
+    /// <summary>The matching ids in keyset chunks of <see cref="ChunkSize"/>; rows left pending are not seen twice.</summary>
+    private static async IAsyncEnumerable<Guid[]> ChunksAsync(
+        IQueryable<SuggestionRow> candidates, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        Guid? after = null;
+        while (true)
+        {
+            var page = after is { } last ? candidates.Where(s => s.Id.CompareTo(last) > 0) : candidates;
+            var ids = await page.OrderBy(s => s.Id).Select(s => s.Id).Take(ChunkSize).ToArrayAsync(ct);
+            if (ids.Length == 0)
+            {
+                yield break;
+            }
+
+            yield return ids;
+            after = ids[^1];
+        }
+    }
+
+    /// <summary>Loads and locks the rows until the transaction ends; uncomposed so the lock clause stays at the top level.</summary>
+    private Task<List<SuggestionRow>> LockAsync(Guid[] ids, CancellationToken ct) =>
+        db.Suggestions.FromSql($"SELECT * FROM suggestions WHERE id = ANY({ids}) ORDER BY id FOR UPDATE").ToListAsync(ct);
+
+    /// <summary>Whether Gmail lacks the label; null without a Gmail connection or when the label list cannot be loaded.</summary>
+    private async Task<bool?> IsNewLabelAsync(string label, CancellationToken ct)
+    {
+        try
+        {
+            return await labels.FindByNameAsync(label, ct) is null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return null;
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Dropped the document-type label of suggestion {Id}: it is the edited topic label.")]
+    private static partial void LogDocumentTypeDropped(ILogger logger, Guid id);
+}

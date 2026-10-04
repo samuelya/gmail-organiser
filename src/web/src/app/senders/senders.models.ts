@@ -11,7 +11,10 @@ export interface SenderDto {
   analysedCount: number;
   appliedCount: number;
   lastSeenAt: string | null;
+  /** The address itself is allowlisted. */
   allowlisted: boolean;
+  /** The sender's domain, or a parent domain, is in `protection.allowlistedDomains`. */
+  allowlistedByDomain: boolean;
   /** The queued, running or paused `sender_fetch` job targeting this address or its domain. */
   activeFetchJob: JobDto | null;
   /** When the sender was last unsubscribed from (one-click, or a link / `mailto:` the user marked). */

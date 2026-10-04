@@ -24,6 +24,8 @@
       Allowlisted senders are always protected, whichever rules are on.
     </p>
 
+    <app-allowlisted-domains [listed]="domains()" />
+
     <form
       class="flex flex-wrap items-start gap-2"
       [formGroup]="addForm"
