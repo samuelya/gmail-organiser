@@ -91,18 +91,13 @@ public sealed partial class LabelPlanApplyJob
 
     /// <summary>
     /// Writes the chunk's log rows (and the item's batch with the first chunk) and checkpoints it as pending, in one
-    /// transaction. The labels before are the stored ones, or Gmail's for mail the app never stored, plus the source.
+    /// transaction. The labels before are Gmail's (<c>format=minimal</c>), plus the source for a message Gmail no longer lists.
     /// </summary>
     private async Task<LabelPlanApplyCursor> PrepareAsync(
         JobContext ctx, LabelPlanApplyCursor cursor, LabelPlanItem item, string[] chunk, CancellationToken ct)
     {
-        var stored = await db.Messages.AsNoTracking()
-            .Where(m => chunk.Contains(m.Id))
-            .ToDictionaryAsync(m => m.Id, m => m.LabelIds, StringComparer.Ordinal, ct);
-        string[] missing = [.. chunk.Where(id => !stored.ContainsKey(id))];
-        var read = missing.Length == 0
-            ? []
-            : (await gmail.GetMessagesLabelsAsync(missing, ct)).ToDictionary(m => m.Id, m => m.LabelIds.ToArray(), StringComparer.Ordinal);
+        // Gmail's labels, not the stored ones: undo re-adds exactly what the merge took off, also for mail never fetched.
+        var read = (await gmail.GetMessagesLabelsAsync(chunk, ct)).ToDictionary(m => m.Id, m => m.LabelIds, StringComparer.Ordinal);
 
         var now = time.GetUtcNow();
         var next = cursor with { BatchId = cursor.BatchId ?? Guid.CreateVersion7(now), Pending = chunk };
@@ -122,7 +117,7 @@ public sealed partial class LabelPlanApplyJob
 
             foreach (var id in chunk)
             {
-                string[] before = [.. (stored.GetValueOrDefault(id) ?? read.GetValueOrDefault(id) ?? []).Append(item.LabelId).Distinct(StringComparer.Ordinal)];
+                string[] before = [.. (read.GetValueOrDefault(id) ?? []).Append(item.LabelId).Distinct(StringComparer.Ordinal)];
                 db.ActionLog.Add(new ActionLogRow
                 {
                     Id = Guid.CreateVersion7(now),
