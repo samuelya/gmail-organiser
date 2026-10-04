@@ -24,6 +24,9 @@ public sealed class GmailQuotaLimiter(IOptions<GmailOptions> options, TimeProvid
     /// <summary>Cost of <c>labels.create</c> in Gmail quota units.</summary>
     public const int LabelCreateUnits = 5;
 
+    /// <summary>Cost the app budgets for each <c>users.settings.filters</c> call (list, create, delete).</summary>
+    public const int SettingsCallUnits = 5;
+
     /// <summary>Cost of <c>messages.batchModify</c> in Gmail quota units; the most expensive call the app makes.</summary>
     public const int BatchModifyUnits = 50;
 

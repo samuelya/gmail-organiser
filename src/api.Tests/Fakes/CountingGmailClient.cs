@@ -196,6 +196,13 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         await inner.BatchModifyAsync(ids, addLabelIds, removeLabelIds, ct);
     }
 
+    public Task<IReadOnlyList<GmailFilter>> ListFiltersAsync(CancellationToken ct) => inner.ListFiltersAsync(ct);
+
+    public Task<GmailFilter> CreateFilterAsync(GmailFilterCriteria criteria, GmailFilterAction action, CancellationToken ct) =>
+        inner.CreateFilterAsync(criteria, action, ct);
+
+    public Task DeleteFilterAsync(string id, CancellationToken ct) => inner.DeleteFilterAsync(id, ct);
+
     public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {
         MetadataCalls.Enqueue([.. ids]);

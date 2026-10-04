@@ -43,5 +43,8 @@ public sealed class FetchStateRow
     public string? LastHistoryId { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>When the Gmail filters were last synced into <c>filters</c>; null before the first sync.</summary>
+    public DateTimeOffset? FiltersSyncedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
