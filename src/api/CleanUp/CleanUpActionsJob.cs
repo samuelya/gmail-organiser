@@ -150,7 +150,11 @@ public sealed partial class CleanUpActionsJob(
             .OrderBy(m => m.Id)
             .Select(m => new MessageRow
             {
-                Id = m.Id, FromAddress = m.FromAddress, LabelIds = m.LabelIds, HasAttachment = m.HasAttachment, ThreadReplied = m.ThreadReplied,
+                Id = m.Id,
+                FromAddress = m.FromAddress,
+                LabelIds = m.LabelIds,
+                HasAttachment = m.HasAttachment,
+                ThreadReplied = m.ThreadReplied,
             })
             .AsNoTracking()
             .ToListAsync(ct);

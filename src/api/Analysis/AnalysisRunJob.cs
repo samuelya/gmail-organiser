@@ -90,6 +90,11 @@ public sealed partial class AnalysisRunJob(
         var model = settings.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
         var builder = new AnalysisPromptBuilder(PromptTemplate.FromSettings(settings.AnalysisPromptTemplate));
 
+        if (run.StartedAt is null)
+        {
+            run.DocumentTypeParent = settings.DocumentTypeParent;
+        }
+
         run.Status = AnalysisRunStatus.Running;
         run.StartedAt ??= time.GetUtcNow();
         run.FinishedAt = null;
@@ -103,7 +108,7 @@ public sealed partial class AnalysisRunJob(
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
         var context = new RunContext(
-            run, settings, builder, chat, labelTree, labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct));
+            run, settings, builder, chat, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct));
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
@@ -341,6 +346,7 @@ public sealed partial class AnalysisRunJob(
         AnalysisPromptBuilder Builder,
         IChatClient Chat,
         IReadOnlyList<string> LabelTree,
+        LabelTreeIndex LabelIndex,
         PersonalLabels Labels,
         Allowlist Allowlisted,
         AttachmentPolicySnapshot Attachments);

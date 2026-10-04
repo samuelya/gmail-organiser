@@ -57,6 +57,9 @@ public sealed class AnalysisRunRow
     public int AttachmentsSkipped { get; set; }
     public string? Model { get; set; }
     public string? PromptVersion { get; set; }
+
+    /// <summary>The document-type parent pinned when the run first starts (null: off), so a resumed run keeps it.</summary>
+    public string? DocumentTypeParent { get; set; }
     public string? Error { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }

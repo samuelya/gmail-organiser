@@ -15,10 +15,13 @@
               hideSingleSelectionIndicator
               data-testid="scope"
             >
-              <mat-button-toggle value="inbox">Inbox</mat-button-toggle>
-              <mat-button-toggle value="all">All mail</mat-button-toggle>
-              <mat-button-toggle value="sender">Sender</mat-button-toggle>
+              @for (option of scopes; track option.value) {
+                <mat-button-toggle [value]="option.value">{{ option.label }}</mat-button-toggle>
+              }
             </mat-button-toggle-group>
+            @if (scopeHelp(); as help) {
+              <p class="muted m-0" data-testid="scope-help">{{ help }}</p>
+            }
           </div>
 
           @if (isSender()) {

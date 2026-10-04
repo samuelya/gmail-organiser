@@ -6,7 +6,7 @@ import { SettingsService } from '../settings/settings.service';
 import { MatReviewEditDialog } from './edit-suggestion-dialog.component';
 import { LabelDto } from './labels.models';
 import { LabelsService } from './labels.service';
-import { ReviewGroupDto, ReviewOutcome, SuggestionDto } from './review.models';
+import { EditSuggestionRequest, ReviewGroupDto, SuggestionDto } from './review.models';
 import { ReviewService } from './review.service';
 
 const labels: LabelDto[] = [
@@ -34,6 +34,9 @@ function suggestion(id: string, overrides: Partial<SuggestionDto> = {}): Suggest
     status: 'pending',
     edited: false,
     protected: false,
+    replaceLabels: [],
+    currentLabels: [],
+    labelChange: 'add',
     ...overrides,
   };
 }
@@ -55,6 +58,8 @@ function group(members: SuggestionDto[], truncated = false): ReviewGroupDto {
     reason: 'synthetic',
     members,
     truncated,
+    replaceLabels: [],
+    labelChange: 'add',
   };
 }
 
@@ -62,7 +67,8 @@ describe('EditSuggestionDialog', () => {
   afterEach(() => document.querySelector('.cdk-overlay-container')?.replaceChildren());
 
   function setup(
-    edit: (id: string, o: ReviewOutcome) => Observable<SuggestionDto> = (id) => of(suggestion(id)),
+    edit: (id: string, o: EditSuggestionRequest) => Observable<SuggestionDto> = (id) =>
+      of(suggestion(id)),
   ) {
     const api = { edit: vi.fn(edit) };
     const labelsApi = { labels: vi.fn(() => of(labels)), refresh: vi.fn(() => of(labels)) };
@@ -176,6 +182,136 @@ describe('EditSuggestionDialog', () => {
       ['b', { topicLabel: 'Receipts', needsAction: true, toBeDeleted: false }],
     ]);
     expect(await closed).toBe(true);
+  });
+
+  it('lists current labels as Replace checkboxes and an untouched save leaves them out', () => {
+    const { api, dialog } = setup();
+    const member = suggestion('a', {
+      currentLabels: ['Projects', 'Projects/Alpha'],
+      replaceLabels: ['Projects'],
+    });
+    dialog.editMember(member).subscribe();
+    settle();
+    const boxes = all('edit-replace').map((b) => b.querySelector<HTMLInputElement>('input')!);
+    expect(all('edit-replace').map((b) => b.textContent!.trim())).toEqual([
+      'Projects',
+      'Projects/Alpha',
+    ]);
+    expect(boxes.map((b) => b.checked)).toEqual([true, false]);
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls[0][1]).not.toHaveProperty('replaceLabels');
+  });
+
+  it('sends the checked labels once the Replace checkboxes change', () => {
+    const { api, dialog } = setup();
+    const member = suggestion('a', {
+      currentLabels: ['Projects', 'Projects/Alpha'],
+      replaceLabels: ['Projects'],
+    });
+    dialog.editMember(member).subscribe();
+    settle();
+    all('edit-replace').forEach((b) => b.querySelector<HTMLInputElement>('input')!.click());
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit).toHaveBeenCalledWith('a', {
+      topicLabel: 'Receipts',
+      needsAction: false,
+      toBeDeleted: true,
+      replaceLabels: ['Projects/Alpha'],
+    });
+  });
+
+  it('hides the current labels block when the message has none', () => {
+    const { dialog } = setup();
+    dialog.editMember(suggestion('a')).subscribe();
+    settle();
+    expect(q('edit-current-labels')).toBeNull();
+  });
+
+  it('a group lists the union of current labels and sends each member only the ones it carries', () => {
+    const { api, dialog } = setup();
+    const members = [
+      suggestion('a', { currentLabels: ['Projects'] }),
+      suggestion('b', { currentLabels: ['Projects', 'Receipts/Old'] }),
+    ];
+    dialog.editGroup('news@example.com', group(members)).subscribe();
+    settle();
+    expect(all('edit-replace').map((b) => b.textContent!.trim())).toEqual([
+      'Projects',
+      'Receipts/Old',
+    ]);
+    all('edit-replace').forEach((b) => b.querySelector<HTMLInputElement>('input')!.click());
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => [c[0], c[1].replaceLabels])).toEqual([
+      ['a', ['Projects']],
+      ['b', ['Projects', 'Receipts/Old']],
+    ]);
+  });
+
+  it('a group shows a label only some members replace as mixed and never adds that removal', () => {
+    const { api, dialog } = setup();
+    const members = [
+      suggestion('a', { currentLabels: ['Projects', 'Receipts/Old'], replaceLabels: ['Projects'] }),
+      suggestion('b', { currentLabels: ['Projects', 'Receipts/Old'] }),
+    ];
+    dialog.editGroup('news@example.com', group(members)).subscribe();
+    settle();
+    const boxes = all('edit-replace');
+    expect(boxes.map((b) => b.querySelector<HTMLInputElement>('input')!.indeterminate)).toEqual([
+      true,
+      false,
+    ]);
+    boxes[1].querySelector<HTMLInputElement>('input')!.click();
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => [c[0], c[1].replaceLabels])).toEqual([
+      ['a', ['Projects', 'Receipts/Old']],
+      ['b', ['Receipts/Old']],
+    ]);
+  });
+
+  it('a group ticking a mixed label applies it to every member carrying it', async () => {
+    const { api, dialog } = setup();
+    const members = [
+      suggestion('a', { currentLabels: ['Projects'], replaceLabels: ['Projects'] }),
+      suggestion('b', { currentLabels: ['Projects'] }),
+    ];
+    dialog.editGroup('news@example.com', group(members)).subscribe();
+    settle();
+    all('edit-replace')[0].querySelector<HTMLInputElement>('input')!.click();
+    await Promise.resolve();
+    settle();
+    expect(all('edit-replace')[0].querySelector<HTMLInputElement>('input')!.indeterminate).toBe(
+      false,
+    );
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => [c[0], c[1].replaceLabels])).toEqual([
+      ['a', undefined],
+      ['b', ['Projects']],
+    ]);
+  });
+
+  it("shows the server's replace label error for the member", () => {
+    const { dialog } = setup(() =>
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            status: 400,
+            error: { errors: { replaceLabels: ["Names labels the email does not carry: 'X'."] } },
+          }),
+      ),
+    );
+    dialog.editMember(suggestion('a', { currentLabels: ['X'] })).subscribe();
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(q('edit-error')!.textContent).toContain("does not carry: 'X'.");
   });
 
   it('shows progress for groups over 20 while saving sequentially', () => {

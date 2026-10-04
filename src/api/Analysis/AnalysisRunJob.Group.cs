@@ -47,7 +47,7 @@ public sealed partial class AnalysisRunJob
         RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
     {
         var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
-        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelTree, context.Labels), ct);
+        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelIndex, context.Labels), ct);
         var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
         var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
         for (var i = 0; i < batch.Count; i++)
@@ -133,7 +133,7 @@ public sealed partial class AnalysisRunJob
 
         var decision = DerivationRule.Decide(
             [.. representatives.Select(m => outputs.TryGetValue(m.Id, out var o)
-                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels)
+                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels, o.DocumentTypeLabel)
                 : null)],
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
@@ -147,7 +147,7 @@ public sealed partial class AnalysisRunJob
         var isNewLabel = outputs.Values.Any(o => o.IsNewLabel && string.Equals(o.TopicLabel.Trim(), agreed.TopicLabel, StringComparison.OrdinalIgnoreCase));
         var derived = new SuggestionOutput(
             "", agreed.TopicLabel, isNewLabel, agreed.NeedsAction, agreed.ToBeDeleted, agreed.UnsubscribeSuggested, agreed.Confidence,
-            $"Same as {outputs.Count} analysed emails of this group")
+            $"Same as {outputs.Count} analysed emails of this group", agreed.DocumentTypeLabel)
         {
             ReplaceLabels = agreed.ReplaceLabels,
         };
@@ -204,7 +204,8 @@ public sealed partial class AnalysisRunJob
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName));
 
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
-        var first = SuggestionOutputParser.Parse(await ChatAsync(context, messages, ct), expected, current);
+        var parent = context.Run.DocumentTypeParent;
+        var first = SuggestionOutputParser.Parse(await ChatAsync(context, messages, ct), expected, current, parent);
         LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
         var filter = first.Filter;
@@ -214,7 +215,7 @@ public sealed partial class AnalysisRunJob
         }
 
         var retry = SuggestionOutputParser.Parse(
-            await ChatAsync(context, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], ct), expected, current);
+            await ChatAsync(context, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], ct), expected, current, parent);
         LogDropped(retry);
         foreach (var o in retry.Valid)
         {
@@ -272,10 +273,15 @@ public sealed partial class AnalysisRunJob
             Mixed: false);
     }
 
-    /// <summary>The replaced labels resolve to the ids this message carries: a derived member without one loses nothing.</summary>
+    /// <summary>
+    /// The replaced labels resolve to the ids this message carries: a derived member without one loses nothing. The
+    /// document-type label takes the spelling of the run's label tree entry it matches and is new when there is none, so
+    /// a derived row agrees with its representatives.
+    /// </summary>
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson)
     {
+        var existingType = output.DocumentTypeLabel is { } type ? context.LabelIndex.Find(type) : null;
         var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
@@ -285,6 +291,8 @@ public sealed partial class AnalysisRunJob
             Source = source,
             TopicLabel = output.TopicLabel,
             IsNewLabel = output.IsNewLabel,
+            DocumentTypeLabel = existingType ?? output.DocumentTypeLabel,
+            DocumentTypeIsNew = output.DocumentTypeLabel is not null && existingType is null,
             NeedsAction = output.NeedsAction,
             ToBeDeleted = output.ToBeDeleted,
             UnsubscribeSuggested = output.UnsubscribeSuggested,

@@ -10,6 +10,7 @@ import {
   BulkApproveRequest,
   BulkApproveResponse,
   GroupDecisionResponse,
+  EditSuggestionRequest,
   ReviewOutcome,
   ReviewSenderDetailDto,
   ReviewSenderDto,
@@ -68,7 +69,7 @@ export class ReviewService {
   }
 
   /** Saves the edited outcome and approves the suggestion; `400` with field errors on an invalid label. */
-  edit(id: string, outcome: ReviewOutcome): Observable<SuggestionDto> {
+  edit(id: string, outcome: EditSuggestionRequest): Observable<SuggestionDto> {
     return this.http.put<SuggestionDto>(
       `/api/review/suggestions/${encodeURIComponent(id)}`,
       outcome,

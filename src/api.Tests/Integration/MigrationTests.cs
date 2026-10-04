@@ -58,6 +58,31 @@ public sealed class MigrationTests(PostgresFixture postgres)
     }
 
     [Fact]
+    public async Task Document_type_columns_apply_over_existing_suggestions_and_decisions()
+    {
+        var connectionString = await CreateEmptyDatabaseAsync();
+        await using var db = CreateDbContext(connectionString);
+        await db.GetService<IMigrator>().MigrateAsync("M6_LabelPlans", cancellationToken: Ct);
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO messages (id, thread_id, from_address, internal_date, label_ids, has_attachment, size_estimate, fetched_at, updated_at)
+            VALUES ('m1', 't1', 'a@example.com', now(), ARRAY[]::text[], false, 0, now(), now());
+            INSERT INTO suggestions (id, message_id, sender_address, source, topic_label, is_new_label, needs_action, to_be_deleted,
+                unsubscribe_suggested, confidence, reason, status, edited, created_at)
+            VALUES (gen_random_uuid(), 'm1', 'a@example.com', 'llm', 'Topic', false, false, false, false, 0.5, 'Synthetic', 'pending', false, now());
+            INSERT INTO decisions (id, sender_address, topic_label, needs_action, to_be_deleted, outcome, source, edited, created_at)
+            VALUES (gen_random_uuid(), 'a@example.com', 'Topic', false, false, 'approved', 'llm', false, now());
+            """, Ct);
+
+        await db.Database.MigrateAsync(Ct);
+
+        var suggestion = await db.Suggestions.AsNoTracking().SingleAsync(Ct);
+        (suggestion.DocumentTypeLabel, suggestion.DocumentTypeIsNew).ShouldBe((null, false));
+        var decision = await db.Decisions.AsNoTracking().SingleAsync(Ct);
+        (decision.DocumentTypeLabel, decision.DocumentTypeDecided).ShouldBe((null, false));
+    }
+
+    [Fact]
     public async Task Vector_extension_exists()
     {
         await using var db = postgres.CreateDbContext();

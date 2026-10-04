@@ -337,6 +337,28 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
     }
 
     [Fact]
+    public async Task Group_card_splits_by_document_type_and_approves_only_the_shown_type()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.SenderAddress == AnalysisRunHarness.Shop)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.DocumentTypeLabel, "Types/Receipt"), Ct);
+            await db.Suggestions.Where(s => s.MessageId == "a01").ExecuteUpdateAsync(s => s.SetProperty(x => x.DocumentTypeLabel, "Types/Invoice"), Ct);
+        }
+
+        var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.Single();
+        (group.DocumentTypeLabel, group.Mixed).ShouldBe(("Types/Receipt", true));
+        var untyped = await PostAsync<GroupDecisionResponse>(
+            "/api/review/groups/approve", Approve(AnalysisRunHarness.Shop, group) with { DocumentTypeLabel = null });
+        untyped.Changed.ShouldBe(0);
+
+        var result = await PostAsync<GroupDecisionResponse>("/api/review/groups/approve", Approve(AnalysisRunHarness.Shop, group));
+
+        result.Changed.ShouldBe(9);
+        result.Skipped.ShouldBe([await IdAsync("a01")]);
+    }
+
+    [Fact]
     public async Task Edit_needs_both_flags_and_recomputes_is_new_label()
     {
         var id = await IdAsync("a01");
@@ -418,7 +440,7 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
     }
 
     private static GroupDecisionRequest Approve(string sender, ReviewGroupDto group) =>
-        new(sender, group.GroupKey, group.TopicLabel, group.NeedsAction, group.ToBeDeleted);
+        new(sender, group.GroupKey, group.TopicLabel, group.NeedsAction, group.ToBeDeleted, DocumentTypeLabel: group.DocumentTypeLabel);
 
     private async Task<SuggestionDto> EditAsync(Guid id, string label)
     {

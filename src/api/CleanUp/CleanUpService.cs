@@ -29,7 +29,11 @@ public sealed class CleanUpService(AppDbContext db, CleanUpQuery query, ISetting
         var rows = await CleanUpQuery.Selected(db, label, selection)
             .Select(m => new MessageRow
             {
-                Id = m.Id, FromAddress = m.FromAddress, LabelIds = m.LabelIds, HasAttachment = m.HasAttachment, ThreadReplied = m.ThreadReplied,
+                Id = m.Id,
+                FromAddress = m.FromAddress,
+                LabelIds = m.LabelIds,
+                HasAttachment = m.HasAttachment,
+                ThreadReplied = m.ThreadReplied,
             })
             .AsNoTracking()
             .ToListAsync(ct);
