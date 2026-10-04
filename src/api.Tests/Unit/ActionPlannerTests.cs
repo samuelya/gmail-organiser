@@ -14,6 +14,7 @@ public sealed class ActionPlannerTests
         ["Topic/Sub"] = "L1",
         ["Synthetic Action"] = "L2",
         ["Synthetic Delete"] = "L3",
+        ["Types/Invoice"] = "L4",
     };
 
     [Fact]
@@ -133,22 +134,50 @@ public sealed class ActionPlannerTests
         Plan(Suggestion(replace: ["Label_7"]), Message("INBOX", "Label_7")).Remove.ShouldBe(["INBOX"]);
     }
 
+    [Fact]
+    public void A_document_type_label_is_added_next_to_the_topic_label()
+    {
+        var plan = Plan(Suggestion(needsAction: true, type: "types/invoice"), Message("INBOX"));
+
+        plan.Add.ShouldBe(["L1", "L4", "L2"]);
+    }
+
+    [Theory]
+    [InlineData("Topic/Sub")]
+    [InlineData("INBOX")]
+    [InlineData("Types/")]
+    public void A_document_type_label_that_is_the_topic_or_not_a_valid_path_adds_nothing_more(string type)
+    {
+        Plan(Suggestion(type: type), Message("INBOX")).Add.ShouldBe(["L1"]);
+    }
+
+    [Theory]
+    [InlineData("synthetic action")]
+    [InlineData("Synthetic Delete")]
+    public void A_document_type_label_that_is_now_the_action_or_delete_label_is_skipped(string type)
+    {
+        ActionPlanner.AppliesDocumentType(type, Settings).ShouldBeFalse();
+        Plan(Suggestion(type: type), Message("INBOX")).Add.ShouldBe(["L1"]);
+    }
+
     private static ActionPlan Plan(
         SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null, HashSet<string>? removable = null) =>
         ActionPlanner.Plan(
             suggestion, message, Ids, settings ?? Settings,
             allowlisted ? new Allowlist(new HashSet<string> { message.FromAddress }, []) : Allowlist.Empty, removable);
 
-    private static SuggestionRow Suggestion(string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false, string[]? replace = null) => new()
-    {
-        ReplaceLabelIds = replace ?? [],
-        Id = Guid.NewGuid(),
-        MessageId = "m1",
-        SenderAddress = "sender@example.com",
-        TopicLabel = topic,
-        NeedsAction = needsAction,
-        ToBeDeleted = toBeDeleted,
-    };
+    private static SuggestionRow Suggestion(
+        string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false, string[]? replace = null, string? type = null) => new()
+        {
+            DocumentTypeLabel = type,
+            ReplaceLabelIds = replace ?? [],
+            Id = Guid.NewGuid(),
+            MessageId = "m1",
+            SenderAddress = "sender@example.com",
+            TopicLabel = topic,
+            NeedsAction = needsAction,
+            ToBeDeleted = toBeDeleted,
+        };
 
     private static MessageRow Message(params string[] labels) => new() { Id = "m1", FromAddress = "sender@example.com", LabelIds = labels };
 }

@@ -94,9 +94,12 @@ public static class ReviewEndpoints
             ? TypedResults.Ok(await patterns.GetAsync(a, ct))
             : TypedResults.ValidationProblem(AddressError());
 
-    /// <summary>202 with the queued batch, 200 when nothing remained; 409 without a pattern or topic label, or on a race.</summary>
+    /// <summary>
+    /// 202 with the queued batch, 200 when nothing remained; 400 when the requested document type is the topic label
+    /// applied (the pattern's when none is given); 409 without a pattern or topic label, or on a race.
+    /// </summary>
     private static async Task<Results<Accepted<ApplyRestResponse>, Ok<ApplyRestResponse>, ValidationProblem, ProblemHttpResult>> ApplyRestAsync(
-        string address, ApplyRestRequest? request, SenderPatternService patterns, CancellationToken ct)
+        string address, ApplyRestRequest? request, SenderPatternService patterns, ISettingsStore settings, CancellationToken ct)
     {
         request ??= new();
         var errors = Normalise(address) is null ? AddressError() : [];
@@ -105,13 +108,18 @@ public static class ReviewEndpoints
             errors["topicLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters, not a Gmail system label."];
         }
 
+        var type = request.DocumentTypeLabel is null
+            ? DocumentTypeChange.Unchanged
+            : DocumentTypeEdit.Validate(request.DocumentTypeLabel, (await settings.GetAsync(ct)).DocumentTypeParent, request.TopicLabel, errors);
+
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
-        return await patterns.ApplyRestAsync(Normalise(address)!, request, ct) switch
+        return await patterns.ApplyRestAsync(Normalise(address)!, request, type, ct) switch
         {
+            (ApplyRestStatus.DocumentTypeIsTopic, _) => DocumentTypeIsTopic(),
             (ApplyRestStatus.Ok, { Batch: { } batch } r) => TypedResults.Accepted($"/api/jobs/{batch.JobId}", r),
             (ApplyRestStatus.Ok, { } r) => TypedResults.Ok(r),
             (ApplyRestStatus.NoPattern, _) => TypedResults.Problem(
@@ -128,19 +136,24 @@ public static class ReviewEndpoints
     /// <summary>
     /// Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied,
     /// then 400 naming the replaced labels the message does not carry and 503 when the Gmail label list cannot be loaded.
+    /// A document-type label needs the document-type parent setting (<see cref="DocumentTypeEdit.Validate"/>); 400 too
+    /// when the topic label would equal the document type the suggestion keeps.
     /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
-        Guid id, EditSuggestionRequest request, ReviewService review, CancellationToken ct)
+        Guid id, EditSuggestionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct)
     {
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
         ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
+        var type = request.DocumentTypeLabel is null
+            ? DocumentTypeChange.Unchanged
+            : DocumentTypeEdit.Validate(request.DocumentTypeLabel, (await settings.GetAsync(ct)).DocumentTypeParent, label, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
         var (result, suggestion, unknown) = await review.EditAsync(
-            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, ct);
+            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type, ct);
         return result == ReviewResult.InvalidReplaceLabels
             ? ReplaceLabelsUnknown("the email does not carry", unknown)
             : ToResult((result, suggestion));
@@ -252,6 +265,7 @@ public static class ReviewEndpoints
             (ReviewResult.Ok, { } s) => TypedResults.Ok(s),
             (ReviewResult.NotFound, _) => TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Suggestion not found"),
             (ReviewResult.LabelsUnavailable, _) => LabelsUnavailable(),
+            (ReviewResult.DocumentTypeIsTopic, _) => DocumentTypeIsTopic(),
             _ => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Already applied",
@@ -298,6 +312,9 @@ public static class ReviewEndpoints
         {
             ["replaceLabels"] = [$"Names labels {what}: {string.Join(", ", unknown.Select(l => $"'{l}'"))}."],
         });
+
+    private static ValidationProblem DocumentTypeIsTopic() => TypedResults.ValidationProblem(
+        new Dictionary<string, string[]> { [DocumentTypeEdit.Field] = [DocumentTypeEdit.SameAsTopicMessage] });
 
     private static ProblemHttpResult LabelsUnavailable() => TypedResults.Problem(
         statusCode: StatusCodes.Status503ServiceUnavailable,

@@ -212,7 +212,7 @@ public sealed partial class FakeGmailClient : IGmailClient
         ArgumentNullException.ThrowIfNull(query);
         query.EnsureValid();
         var matches = FakeGmailQuery.Parse(query.Query);
-        var includeSpamTrash = query.LabelIds?.Any(IsSpamOrTrash) == true || FakeGmailQuery.NamesSpamOrTrash(query.Query);
+        var includeSpamTrash = query.IncludeSpamTrash || query.LabelIds?.Any(IsSpamOrTrash) == true || FakeGmailQuery.NamesSpamOrTrash(query.Query);
         var offset = DecodePageToken(query.PageToken);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 

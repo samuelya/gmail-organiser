@@ -18,6 +18,7 @@ const settings = (over: Partial<SettingsDto> = {}): SettingsDto => ({
   embeddingModel: null,
   actionLabelName: 'Example-Action',
   deleteLabelName: 'Example-Delete',
+  documentTypeParent: null,
   setupWizardSeen: true,
   fetchChunkSize: 500,
   googleClient: {

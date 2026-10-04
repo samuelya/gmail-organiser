@@ -231,6 +231,54 @@ public sealed class FilterService(
         return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(await AddRowAsync(tx, created, restoredFrom), names));
     }
 
+    /// <summary>
+    /// Moves filter <paramref name="id"/> from label <paramref name="fromLabelId"/> to <paramref name="toLabelId"/> (a label
+    /// merge): creates the retargeted filter first (row <c>restored_from</c> = <paramref name="id"/>), then deletes the
+    /// original. A run that died between the two finds the new row and only deletes. NotFound when the original is
+    /// already deleted.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    /// <exception cref="GoogleApiException">Gmail refused the new filter or the delete.</exception>
+    public async Task<FilterResult> RetargetAsync(string id, string fromLabelId, string toLabelId, CancellationToken ct)
+    {
+        await using (var tx = await LockAsync(ct))
+        {
+            var row = await db.Filters.AsNoTracking().SingleOrDefaultAsync(r => r.Id == id && r.DeletedAt == null, ct);
+            if (row is null)
+            {
+                return new FilterResult(FilterOutcome.NotFound);
+            }
+
+            if (!await db.Filters.AnyAsync(r => r.RestoredFrom == id && r.DeletedAt == null, ct))
+            {
+                var action = row.ReadAction();
+                if (!string.IsNullOrEmpty(action.Forward))
+                {
+                    return FilterResult.Conflict("Filter forwards mail", "The app never creates a forwarding filter.");
+                }
+
+                if (await LimitReachedAsync(ct) is { } full)
+                {
+                    return full;
+                }
+
+                var retargeted = new GmailFilterAction(Swap(action.AddLabelIds), Swap(action.RemoveLabelIds));
+                await AddRowAsync(tx, await gmail.CreateFilterAsync(row.ReadCriteria(), retargeted, ct), id);
+            }
+            else
+            {
+                await tx.CommitAsync(ct);
+            }
+        }
+
+        var deleted = await DeleteAsync(id, ct);
+        return deleted.Outcome == FilterOutcome.Conflict ? new FilterResult(FilterOutcome.Ok) : deleted;
+
+        string[] Swap(IReadOnlyList<string> ids) =>
+            [.. ids.Select(l => string.Equals(l, fromLabelId, StringComparison.Ordinal) ? toLabelId : l).Distinct(StringComparer.Ordinal)];
+    }
+
     /// <summary>A conflict when one more filter, less <paramref name="deletesAfter"/>, would pass Gmail's limit.</summary>
     private async Task<FilterResult?> LimitReachedAsync(CancellationToken ct, int deletesAfter = 0) =>
         await db.Filters.CountAsync(r => r.DeletedAt == null, ct) - deletesAfter >= FilterSnapshot.GmailFilterLimit

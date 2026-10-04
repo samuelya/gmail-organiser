@@ -6,6 +6,7 @@ import {
   DestroyRef,
   effect,
   inject,
+  linkedSignal,
   signal,
   untracked,
   viewChild,
@@ -50,6 +51,7 @@ import { isActiveJob, JobDto, JobStatus, newerJob } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
+import { coveringDomain } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
 import { SenderProgress } from './sender-progress.component';
 import {
@@ -131,14 +133,18 @@ export class SendersPage {
 
   readonly columns = ['sender', 'domain', 'total', 'analysed', 'lastSeen', 'actions'];
   readonly pageSizes = PAGE_SIZES;
-  /** "Analyse" links carry the default count; without settings the Analyse page picks it. */
-  readonly analyseCount = toSignal(
-    this.settings.getSettings().pipe(
-      map((s) => s.analysisDefaultCount),
-      catchError(() => of(null)),
-    ),
+  private readonly loadedSettings = toSignal(
+    this.settings.getSettings().pipe(catchError(() => of(null))),
     { initialValue: null },
   );
+  /** "Analyse" links carry the default count; without settings the Analyse page picks it. */
+  readonly analyseCount = computed(() => this.loadedSettings()?.analysisDefaultCount ?? null);
+  /** `protection.allowlistedDomains` as last saved; `null` until loaded, which disables the domain action. */
+  readonly allowlistedDomains = linkedSignal(
+    () => this.loadedSettings()?.protection?.allowlistedDomains ?? null,
+  );
+  /** The domain list is saved whole, so one change at a time. */
+  readonly domainSaving = signal(false);
   /** The URL is the source of truth for search, page, size and sort. */
   readonly query = toSignal(this.route.queryParamMap.pipe(map(parseSenderQuery)), {
     initialValue: DEFAULT_SENDER_QUERY,
@@ -357,6 +363,34 @@ export class SendersPage {
         },
         // The error interceptor shows why; the row keeps its flag.
         error: () => this.allowlisting.update((busy) => without(busy, address)),
+      });
+  }
+
+  /** The listed domain covering the sender's: its own or a parent; null when none is listed. */
+  listedDomain(sender: SenderDto): string | null {
+    return coveringDomain(sender.domain, this.allowlistedDomains() ?? []);
+  }
+
+  /** Adds the sender's domain to the allowlist, or removes the listed one covering it; then reloads. */
+  toggleDomainAllowlist(sender: SenderDto): void {
+    const listed = this.allowlistedDomains();
+    if (!listed || this.domainSaving()) return;
+    const covering = coveringDomain(sender.domain, listed);
+    const next = covering ? listed.filter((d) => d !== covering) : [...listed, sender.domain];
+    this.domainSaving.set(true);
+    this.settings
+      .saveProtection({ protection: { allowlistedDomains: next } })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (saved) => {
+          this.domainSaving.set(false);
+          this.allowlistedDomains.set(saved.protection?.allowlistedDomains ?? next);
+          const done = covering ? `${covering} removed from` : `${sender.domain} added to`;
+          this.snackBar.open(`${done} the allowlist`, undefined, { duration: 3000 });
+          this.reload();
+        },
+        // The error interceptor shows why.
+        error: () => this.domainSaving.set(false),
       });
   }
 

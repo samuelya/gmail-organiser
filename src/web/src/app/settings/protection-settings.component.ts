@@ -3,6 +3,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   effect,
   inject,
@@ -29,6 +30,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { catchError, concatMap, forkJoin, map, merge, of } from 'rxjs';
 import { SenderDto, SenderQuery, normaliseAllowlistAddress } from '../senders/senders.models';
 import { SendersService } from '../senders/senders.service';
+import { AllowlistedDomains } from './allowlisted-domains.component';
 import { PROTECTION_RULES, ProtectionRule, ProtectionSettings } from './settings.models';
 import { SettingsService } from './settings.service';
 
@@ -44,12 +46,13 @@ const ALLOWLIST_QUERY: Omit<SenderQuery, 'page'> = {
 
 /**
  * The Settings page's "Protection" section (#183): the rule toggles, each saved as it changes with
- * only that rule in the request, and the sender allowlist. Saves itself; the page passes the
+ * only that rule in the request, the allowlisted domains and the sender allowlist. Saves itself; the page passes the
  * loaded rules in.
  */
 @Component({
   selector: 'app-protection-settings',
   imports: [
+    AllowlistedDomains,
     DecimalPipe,
     ReactiveFormsModule,
     MatButtonModule,
@@ -80,6 +83,11 @@ export class ProtectionSettingsSection implements OnInit {
 
   /** `null` until loaded; the toggles stay disabled until then. */
   readonly settings = input<ProtectionSettings | null>(null);
+  /** The loaded domain list; an older API without one has none. */
+  readonly domains = computed(() => {
+    const settings = this.settings();
+    return settings ? (settings.allowlistedDomains ?? []) : null;
+  });
   /** The rules as last saved: the loaded ones, then each save's response. */
   private readonly saved = linkedSignal(() => this.settings());
 
@@ -223,7 +231,8 @@ export class ProtectionSettingsSection implements OnInit {
       return;
     }
     this.form.enable({ emitEvent: false });
-    this.form.setValue(settings, { emitEvent: false });
+    const rules = Object.fromEntries(PROTECTION_RULES.map(({ key }) => [key, settings[key]]));
+    this.form.setValue(rules as Record<ProtectionRule, boolean>, { emitEvent: false });
   }
 
   /** Pages `from`..`to`; from page 1 they replace the list, else they are appended. */

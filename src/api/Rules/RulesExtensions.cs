@@ -1,3 +1,4 @@
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Rules.Labels;
 using GmailOrganiser.Rules.Review;
 
@@ -13,6 +14,10 @@ public static class RulesExtensions
         services.AddScoped<FilterProposalQuery>();
         services.AddScoped<LabelPlanService>();
         services.AddScoped<FilterReviewService>();
+
+        // Its account guard comes with FetchJobTypes.ReadsGmail; a cancel is refused while a merge chunk is pending.
+        services.AddKeyedScoped<IJobCancelHook, LabelPlanApplyJob>(LabelPlanApplyJob.JobType);
+        services.AddKeyedScoped<IJobHandler, LabelPlanApplyJob>(LabelPlanApplyJob.JobType);
         return services;
     }
 }

@@ -82,7 +82,7 @@ public sealed partial class GoogleGmailClient(
             request.LabelIds = query.LabelIds is { Count: > 0 } ? new Repeatable<string>(query.LabelIds) : null;
             request.PageToken = query.PageToken;
             request.MaxResults = query.MaxResults;
-            request.IncludeSpamTrash = false;
+            request.IncludeSpamTrash = query.IncludeSpamTrash;
             var response = await request.ExecuteAsync(token);
             var messages = response.Messages?.Select(m => new MessageRef(m.Id, m.ThreadId ?? "")).ToList() ?? [];
             logger.LogDebug("Listed {Count} Gmail message ids", messages.Count);
