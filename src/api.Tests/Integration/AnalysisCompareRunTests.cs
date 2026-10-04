@@ -255,6 +255,39 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Resumed_older_run_does_not_write_over_an_outcome_accepted_from_a_later_created_run()
+    {
+        var (run, stored) = await CrashAfterFirstGroupAsync();
+        var created = (await h.GetRunAsync(run.Id)).CreatedAt;
+        string accepted;
+        await using (var db = postgres.CreateDbContext())
+        {
+            // A later-created run's alternative was accepted into one message the resumed run has not reached yet: the
+            // suggestion now carries that run's id and has no alternative left.
+            var newer = new AnalysisRunRow
+            {
+                Id = Guid.CreateVersion7(),
+                Kind = AnalysisRunKind.Compare,
+                Scope = AnalysisScope.Messages,
+                Status = AnalysisRunStatus.Completed,
+                CreatedAt = created.AddMinutes(1),
+            };
+            db.AnalysisRuns.Add(newer);
+            await db.SaveChangesAsync(Ct);
+            accepted = await db.Suggestions.Where(s => !stored.Contains(s.MessageId)).OrderBy(s => s.MessageId).Select(s => s.MessageId).FirstAsync(Ct);
+            await db.Suggestions.Where(s => s.MessageId == accepted).ExecuteUpdateAsync(s => s.SetProperty(x => x.RunId, newer.Id), Ct);
+        }
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.MessagesCovered, done.SkippedMessages).ShouldBe(("completed", 19, 1));
+        await using var check = postgres.CreateDbContext();
+        (await check.SuggestionAlternatives.AnyAsync(a => a.MessageId == accepted, Ct)).ShouldBeFalse();
+        (await check.SuggestionAlternatives.CountAsync(a => a.RunId == run.Id, Ct)).ShouldBe(19);
+    }
+
+    [Fact]
     public async Task Resume_does_not_count_messages_whose_alternatives_a_reanalyse_cascaded_away()
     {
         var (run, stored) = await CrashAfterFirstGroupAsync();

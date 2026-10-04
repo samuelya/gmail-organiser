@@ -33,29 +33,9 @@ public static class AlternativeEndpoints
             errors["suggestionIds"] = [$"At most {AlternativeService.MaxTargets} ids."];
         }
 
-        var groups = new List<GroupRef>();
-        if (request.Groups is { Length: > AlternativeService.MaxTargets })
-        {
-            errors["groups"] = [$"At most {AlternativeService.MaxTargets} groups."];
-        }
-        else
-        {
-            foreach (var g in request.Groups ?? [])
-            {
-                var sender = g?.SenderAddress?.Trim().ToLowerInvariant();
-                if (string.IsNullOrEmpty(sender) || sender.Length > AnalysisPreviewEndpoint.MaxSenderAddressLength
-                    || string.IsNullOrEmpty(g!.GroupKey) || g.GroupKey.Length > ReviewEndpoints.MaxGroupKeyLength)
-                {
-                    errors["groups"] = [$"Each group needs a sender address (at most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters) and a group key (at most {ReviewEndpoints.MaxGroupKeyLength})."];
-                    break;
-                }
-
-                groups.Add(new GroupRef(sender, g.GroupKey));
-            }
-        }
-
+        var groups = GroupRefs.Normalise(request.Groups, AlternativeService.MaxTargets, errors);
         return errors.Count > 0
             ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await decide(request.SuggestionIds ?? [], [.. groups], ct));
+            : TypedResults.Ok(await decide(request.SuggestionIds ?? [], groups, ct));
     }
 }

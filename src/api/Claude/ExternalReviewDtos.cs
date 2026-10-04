@@ -27,7 +27,11 @@ public sealed record ExternalReviewDto(
 /// <summary>At least one of the three; <c>RunId</c> expands to the run's groups with pending members.</summary>
 public sealed record CreateExternalReviewsRequest(Guid[]? SuggestionIds, GroupRef[]? Groups, Guid? RunId);
 
-public sealed record GroupRef(string SenderAddress, string GroupKey);
+/// <param name="Status">
+/// The review list the group card was shown in (<c>pending|approved|rejected</c>, pending when omitted); alternative
+/// accept/discard act only on members in it. Claude reviews always take a group's pending members.
+/// </param>
+public sealed record GroupRef(string SenderAddress, string GroupKey, string? Status = null);
 
 public sealed record CreateExternalReviewsResponse(int Created, int Skipped, IReadOnlyList<ExternalReviewDto> Items);
 

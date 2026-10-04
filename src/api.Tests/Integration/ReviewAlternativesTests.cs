@@ -43,6 +43,7 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
     {
         await using (var db = postgres.CreateDbContext())
         {
+            await db.ExternalReviews.ExecuteDeleteAsync(Ct);
             await db.ActionLog.Where(l => l.BatchId == batchId).ExecuteDeleteAsync(Ct);
             await db.ActionBatches.Where(b => b.Id == batchId).ExecuteDeleteAsync(Ct);
         }
@@ -175,11 +176,106 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Group_accept_takes_only_the_members_in_the_status_the_card_was_listed_in()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await AnalysisRunHarness.DecideAsync(db, "a00", SuggestionStatus.Approved);
+            await AnalysisRunHarness.DecideAsync(db, "a01", SuggestionStatus.Approved);
+            await AnalysisRunHarness.DecideAsync(db, "a02", SuggestionStatus.Applied);
+        }
+
+        var key = await GroupKeyAsync("a03");
+        var card = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem().Alternative.ShouldNotBeNull();
+        card.Count.ShouldBe(7);
+        (await DecideAsync("accept", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Shop, key, "pending")])))
+            .ShouldBe(new AlternativeDecisionResponse(card.Count, 0, 0));
+        (await DecideAsync("discard", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Shop, key, "approved")])))
+            .ShouldBe(new AlternativeDecisionResponse(0, 2, 0));
+
+        await using var check = postgres.CreateDbContext();
+        var rows = await check.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Shop).ToListAsync(Ct);
+        rows.Where(s => s.TopicLabel == Compared).ShouldAllBe(s => s.Status == SuggestionStatus.Pending);
+        rows.Count(s => s.TopicLabel == Compared).ShouldBe(7);
+        rows.Where(s => s.MessageId == "a00" || s.MessageId == "a01").ShouldAllBe(s => s.Status == SuggestionStatus.Approved && s.TopicLabel == "Shopping");
+        (await check.SuggestionAlternatives.SingleAsync(a => a.MessageId.StartsWith("a"), Ct)).MessageId.ShouldBe("a02");
+    }
+
+    [Fact]
+    public async Task With_the_filter_a_group_is_listed_whole_and_counts_the_members_with_an_alternative()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.SuggestionAlternatives.Where(a => a.MessageId.StartsWith("a") && a.MessageId != "a00" && a.MessageId != "a01")
+                .ExecuteDeleteAsync(Ct);
+        }
+
+        var response = await h.GetAsync($"/api/review/senders/{AnalysisRunHarness.Shop}?hasAlternative=true");
+        var group = (await response.Content.ReadFromJsonAsync<ReviewSenderDetailDto>(Ct))!.Groups.ShouldHaveSingleItem();
+        (group.Size, group.Members.Count, group.Alternative!.Count).ShouldBe((10, 10, 2));
+    }
+
+    [Fact]
+    public async Task Accept_closes_the_open_Claude_reviews_of_the_suggestion_and_its_group()
+    {
+        var ids = await IdsAsync("a00");
+        var key = await GroupKeyAsync("a00");
+        var now = DateTimeOffset.UtcNow;
+        Guid queued = Guid.NewGuid(), reviewed = Guid.NewGuid(), other = Guid.NewGuid();
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.ExternalReviews.AddRange(
+                new ExternalReviewRow { Id = queued, TargetType = ExternalReviewTarget.Suggestion, SuggestionId = ids[0], SenderAddress = AnalysisRunHarness.Shop, GroupKey = key, Status = ExternalReviewStatus.Queued, CreatedAt = now },
+                new ExternalReviewRow { Id = reviewed, TargetType = ExternalReviewTarget.Group, SenderAddress = AnalysisRunHarness.Shop, GroupKey = key, Status = ExternalReviewStatus.Reviewed, Verdict = ReviewVerdict.Agree, CreatedAt = now },
+                new ExternalReviewRow { Id = other, TargetType = ExternalReviewTarget.Group, SenderAddress = AnalysisRunHarness.Billing, GroupKey = await GroupKeyAsync("c00"), Status = ExternalReviewStatus.Queued, CreatedAt = now });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        (await DecideAsync("accept", new AlternativeDecisionRequest(ids, null))).ShouldBe(new AlternativeDecisionResponse(1, 0, 0));
+
+        await using var check = postgres.CreateDbContext();
+        var rows = await check.ExternalReviews.AsNoTracking().ToDictionaryAsync(r => r.Id, Ct);
+        rows[queued].Status.ShouldBe(ExternalReviewStatus.Cancelled);
+        (rows[reviewed].Status, rows[reviewed].Resolution).ShouldBe((ExternalReviewStatus.Reviewed, ExternalReviewResolution.Dismissed));
+        rows[reviewed].ResolvedAt.ShouldNotBeNull();
+        rows[other].Status.ShouldBe(ExternalReviewStatus.Queued);
+    }
+
+    [Fact]
+    public async Task Accept_waiting_on_a_concurrent_discard_counts_the_suggestion_as_skipped()
+    {
+        var ids = await IdsAsync("a00");
+        await using var discard = postgres.CreateDbContext();
+        await using var tx = await discard.Database.BeginTransactionAsync(Ct);
+        await discard.Database.SqlQuery<Guid>($"SELECT id AS \"Value\" FROM suggestions WHERE id = {ids[0]} FOR UPDATE").ToListAsync(Ct);
+        await discard.SuggestionAlternatives.Where(a => a.SuggestionId == ids[0]).ExecuteDeleteAsync(Ct);
+
+        var accept = DecideAsync("accept", new AlternativeDecisionRequest(ids, null));
+        await using (var probe = postgres.CreateDbContext())
+        {
+            // Until the accept waits for the discard's row lock.
+            while (!accept.IsCompleted && await probe.Database
+                .SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM pg_stat_activity WHERE wait_event_type = 'Lock'")
+                .SingleAsync(Ct) == 0)
+            {
+                await Task.Delay(20, Ct);
+            }
+        }
+
+        await tx.CommitAsync(Ct);
+        (await accept).ShouldBe(new AlternativeDecisionResponse(0, 0, 1));
+        await using var check = postgres.CreateDbContext();
+        (await check.Suggestions.AsNoTracking().SingleAsync(s => s.Id == ids[0], Ct)).TopicLabel.ShouldBe("Shopping");
+    }
+
+    [Fact]
     public async Task Invalid_requests_are_400()
     {
         (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest(null, null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.PostAsync("/api/review/alternatives/discard", new AlternativeDecisionRequest([], []))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest(null, [new GroupRef(" ", "key")])))
+            .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Shop, "key", "applied")])))
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([.. Enumerable.Range(0, 1001).Select(_ => Guid.NewGuid())], null)))
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);

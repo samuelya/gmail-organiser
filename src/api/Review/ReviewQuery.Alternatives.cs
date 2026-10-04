@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,32 @@ public sealed partial class ReviewQuery
         return hasAlternative ? suggestions.Where(s => db.SuggestionAlternatives.Any(a => a.SuggestionId == s.Id)) : suggestions;
     }
 
+    /// <summary>
+    /// The sender's suggestions in <paramref name="status"/>; with <paramref name="hasAlternative"/> only the groups (all
+    /// their members in that status) where at least one member has an alternative.
+    /// </summary>
+    private IQueryable<SuggestionRow> InStatus(string address, SuggestionStatus status, bool hasAlternative)
+    {
+        var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && s.Status == status);
+        if (!hasAlternative)
+        {
+            return inStatus;
+        }
+
+        var keys = Suggestions(true).Where(s => s.SenderAddress == address && s.Status == status)
+            .Select(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId);
+        return inStatus.Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId));
+    }
+
+    /// <summary>Per group key, how many of its members in <paramref name="inStatus"/> have an alternative (what group accept takes).</summary>
+    private async Task<Dictionary<string, int>> AlternativeCountsAsync(IQueryable<SuggestionRow> inStatus, List<string> keys, CancellationToken ct) =>
+        await inStatus
+            .Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
+                && db.SuggestionAlternatives.Any(a => a.SuggestionId == s.Id))
+            .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.Key, g => g.Count, StringComparer.Ordinal, ct);
+
     private async Task<Dictionary<Guid, SuggestionAlternativeRow>> AlternativesAsync(IEnumerable<Guid> suggestionIds, CancellationToken ct)
     {
         var ids = suggestionIds.ToArray();
@@ -26,10 +53,7 @@ public sealed partial class ReviewQuery
     private static SuggestionAlternativeDto ToDto(
         SuggestionAlternativeRow a, MessageRow m, IReadOnlyList<string> current, IReadOnlyDictionary<string, string>? labelNames)
     {
-        var stored = a.ReplaceLabelIds
-            .Select((id, i) => (id, labelNames?.GetValueOrDefault(id) ?? (i < a.ReplaceLabels.Length ? a.ReplaceLabels[i] : id)))
-            .ToList();
-        var replaced = Replaced(stored, a.TopicLabel, m, labelNames);
+        var replaced = Replaced(a.Replaced(labelNames), a.TopicLabel, m, labelNames);
         return new SuggestionAlternativeDto(
             a.TopicLabel,
             a.DocumentTypeLabel,
@@ -48,8 +72,9 @@ public sealed partial class ReviewQuery
     /// <summary>
     /// The listed members' alternative: the newest member's of the most common outcome (label, flags, type), with
     /// the union of the replaced labels; <see cref="SuggestionAlternativeDto.Mixed"/> when members disagree.
+    /// <see cref="SuggestionAlternativeDto.Count"/> is <paramref name="count"/>, every member in the status with one.
     /// </summary>
-    private static SuggestionAlternativeDto? GroupAlternative(IReadOnlyList<SuggestionDto> members)
+    private static SuggestionAlternativeDto? GroupAlternative(IReadOnlyList<SuggestionDto> members, int count)
     {
         var alternatives = members.Select(d => d.Alternative).OfType<SuggestionAlternativeDto>().ToList();
         if (alternatives.Count == 0)
@@ -67,7 +92,7 @@ public sealed partial class ReviewQuery
             ReplaceLabels = [.. alternatives.SelectMany(a => a.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
             LabelChange = Combined(alternatives.Select(a => a.LabelChange)),
             Mixed = outcomes.Count > 1,
-            Count = alternatives.Count,
+            Count = Math.Max(count, alternatives.Count),
         };
     }
 

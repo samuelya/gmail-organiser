@@ -368,13 +368,24 @@ public sealed partial class UndoActionsJob(
         var restored = messages.Values.Where(m => m.DeletedInGmail && !m.LabelIds.Contains(Trash, StringComparer.Ordinal)).ToList();
         restored.ForEach(m => m.DeletedInGmail = false);
 
+        // A suggestion still comes from this batch unless an alternative was accepted since (#249): it is no longer
+        // applied, or a later apply batch not undone logged it again. Only those are restored and uncounted; a row
+        // whose suggestion is gone still counted (an auto-archive row has none and never counted).
         var applied = await db.ActionLog
             .Where(l => chunk.LogIds.Contains(l.Id) && reverted.Contains(l.MessageId) && l.SuggestionId != null)
-            .Select(l => new { l.MessageId, SuggestionId = l.SuggestionId!.Value })
+            .Select(l => new
+            {
+                l.MessageId,
+                SuggestionId = l.SuggestionId!.Value,
+                Status = db.Suggestions.Where(s => s.Id == l.SuggestionId).Select(s => (SuggestionStatus?)s.Status).FirstOrDefault(),
+                Superseded = db.ActionLog.Any(n => n.SuggestionId == l.SuggestionId && n.BatchId != l.BatchId
+                    && n.UndoneByBatchId == null && n.CreatedAt > l.CreatedAt
+                    && db.ActionBatches.Any(b => b.Id == n.BatchId && (b.Kind == ActionKind.Apply || b.Kind == ActionKind.ApplyRest))),
+            })
             .ToListAsync(ct);
-        var suggestionIds = applied.ConvertAll(l => l.SuggestionId);
-        // Only rows of an applied suggestion counted towards applied_count (an auto-archive has none).
-        var counted = applied.Select(l => l.MessageId).Distinct(StringComparer.Ordinal).ToArray();
+        var current = applied.Where(l => l.Status is null || (l.Status == SuggestionStatus.Applied && !l.Superseded)).ToList();
+        var suggestionIds = current.ConvertAll(l => l.SuggestionId);
+        var counted = current.Select(l => l.MessageId).Distinct(StringComparer.Ordinal).ToArray();
         var suggestions = await db.Suggestions
             .Where(s => suggestionIds.Contains(s.Id) && s.Status == SuggestionStatus.Applied)
             .ToListAsync(ct);

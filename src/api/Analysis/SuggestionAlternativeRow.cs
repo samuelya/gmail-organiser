@@ -34,6 +34,10 @@ public sealed class SuggestionAlternativeRow
     public string? PromptVersion { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
+    /// <summary>The replaced labels as (id, name), like <see cref="SuggestionRow.Replaced(IReadOnlyDictionary{string, string}?)"/>.</summary>
+    public IReadOnlyList<(string Id, string Name)> Replaced(IReadOnlyDictionary<string, string>? names) =>
+        SuggestionRow.Replaced(ReplaceLabelIds, ReplaceLabels, names);
+
     /// <summary>The alternative a compare run produced for <paramref name="suggestionId"/> from a row it built like a suggestion.</summary>
     public static SuggestionAlternativeRow From(SuggestionRow row, Guid suggestionId, Guid runId, DateTimeOffset now) => new()
     {

@@ -51,33 +51,13 @@ public static class ClaudeReviewEndpoints
             errors["suggestionIds"] = [$"At most {max} ids."];
         }
 
-        var groups = new List<GroupRef>();
-        if (request.Groups is { Length: > ExternalReviewService.MaxTargets })
-        {
-            errors["groups"] = [$"At most {max} groups."];
-        }
-        else
-        {
-            foreach (var g in request.Groups ?? [])
-            {
-                var sender = g?.SenderAddress?.Trim().ToLowerInvariant();
-                if (string.IsNullOrEmpty(sender) || sender.Length > AnalysisPreviewEndpoint.MaxSenderAddressLength
-                    || string.IsNullOrEmpty(g!.GroupKey) || g.GroupKey.Length > ReviewEndpoints.MaxGroupKeyLength)
-                {
-                    errors["groups"] = [$"Each group needs a sender address (at most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters) and a group key (at most {ReviewEndpoints.MaxGroupKeyLength})."];
-                    break;
-                }
-
-                groups.Add(new GroupRef(sender, g.GroupKey));
-            }
-        }
-
+        var groups = GroupRefs.Normalise(request.Groups, max, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
-        return await reviews.CreateAsync(request.SuggestionIds ?? [], [.. groups], request.RunId, ct) switch
+        return await reviews.CreateAsync(request.SuggestionIds ?? [], groups, request.RunId, ct) switch
         {
             (CreateExternalReviewsResult.Ok, { } response) => TypedResults.Ok(response),
             (CreateExternalReviewsResult.RunNotFound, _) => TypedResults.NotFound(),

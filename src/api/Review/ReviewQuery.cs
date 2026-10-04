@@ -76,7 +76,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     /// One page of the sender's suggestions in <paramref name="status"/>, grouped (a message analysed alone is its own
     /// group), largest group first; null when the sender has no suggestion at all. Groups are counted and paged in SQL;
     /// members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
-    /// With <paramref name="hasAlternative"/> only suggestions with a compare-run alternative are counted and listed.
+    /// With <paramref name="hasAlternative"/> the counts take only suggestions with a compare-run alternative, and only
+    /// groups with such a member are listed, whole, so a group card and its approve/reject act on the same members.
     /// </summary>
     public async Task<ReviewSenderDetailDto?> DetailAsync(
         string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct, bool hasAlternative = false)
@@ -99,7 +100,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         }
 
         var sender = await db.Senders.AsNoTracking().SingleOrDefaultAsync(s => s.Address == address, ct);
-        var inStatus = Suggestions(hasAlternative).Where(s => s.SenderAddress == address && s.Status == status);
+        var inStatus = InStatus(address, status, hasAlternative);
         var stats = inStatus
             .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
             .Select(g => new GroupStats
@@ -147,12 +148,13 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
 
         var claude = await ClaudeLookupAsync(address, loaded, ct);
         var alternatives = await AlternativesAsync(loaded.SelectMany(g => g.Members).Select(x => x.S.Id), ct);
+        var alternativeCounts = await AlternativeCountsAsync(inStatus, keys, ct);
         var allowlist = await AllowlistLoader.LoadAsync(db, claude.Settings, ct);
         var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
         var labelNames = personal.IsUnavailable ? null : personal.Names;
         foreach (var (g, members) in loaded)
         {
-            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlist, claude, labelNames, alternatives));
+            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlist, claude, labelNames, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
         }
 
         return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
@@ -308,7 +310,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         Allowlist allowlist,
         ClaudeLookup claude,
         IReadOnlyDictionary<string, string>? labelNames,
-        IReadOnlyDictionary<Guid, SuggestionAlternativeRow> alternatives)
+        IReadOnlyDictionary<Guid, SuggestionAlternativeRow> alternatives,
+        int alternativeCount)
     {
         var all = outcomes.ToList();
         var shared = Shown(all);
@@ -358,7 +361,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             shared.DocumentTypeLabel,
             shared.DocumentTypeLabel is not null
                 && members.Any(x => x.S.DocumentTypeIsNew && x.S.DocumentTypeLabel == shared.DocumentTypeLabel),
-            GroupAlternative(dtos));
+            GroupAlternative(dtos, alternativeCount));
     }
 
     /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags and type.</summary>
