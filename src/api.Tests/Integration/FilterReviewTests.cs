@@ -1,0 +1,235 @@
+using System.Net;
+using System.Net.Http.Json;
+using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
+using GmailOrganiser.Gmail.Fake;
+using GmailOrganiser.Rules;
+using GmailOrganiser.Rules.Review;
+using GmailOrganiser.Tests.Fakes;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+
+namespace GmailOrganiser.Tests.Integration;
+
+/// <summary>
+/// Filter reviews over the fake's seed filters (<c>from:news</c>, a receipt subject that matches nothing, <c>to:lists</c>
+/// adding a missing label) plus <c>from:shop</c> with news' action (mergeable) and an offer subject that adds a missing
+/// label besides <c>Label_1</c> (drop_label).
+/// </summary>
+[Collection(PostgresCollection.Name)]
+public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+{
+    private const string Shop = "shop@example.com";
+    private const string News = "news@example.com";
+    private static readonly DateTimeOffset Now = DateTimeOffset.UtcNow;
+
+    private WebApplicationFactory<Program> host = null!;
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    private FakeGmailClient Gmail => host.Services.GetRequiredService<FakeGmailClient>();
+
+    public async ValueTask InitializeAsync()
+    {
+        await postgres.ResetFetchStateAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.FilterReviews.ExecuteDeleteAsync(Ct);
+            await db.Filters.ExecuteDeleteAsync(Ct);
+            await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.FiltersSyncedAt, (DateTimeOffset?)null), Ct);
+            await db.Suggestions.ExecuteDeleteAsync(Ct);
+            await db.Messages.ExecuteDeleteAsync(Ct);
+            await db.Settings.ExecuteDeleteAsync(Ct);
+            db.Messages.AddRange(Mailbox().Select(m => new MessageRow
+            {
+                Id = m.Id,
+                ThreadId = m.ThreadId,
+                FromAddress = m.From,
+                Subject = m.Subject,
+                ToHeader = m.To,
+                InternalDate = m.Date,
+                LabelIds = [.. m.LabelIds],
+                FetchedAt = Now,
+                UpdatedAt = Now,
+            }));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
+        {
+            var retry = new GmailRetryPolicy(Options.Create(new GmailOptions { MaxRetryAttempts = 1 }), TimeProvider.System);
+            services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), Mailbox(), retry));
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<FakeGmailClient>());
+        }));
+        await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: Shop), new GmailFilterAction(["Label_1"], ["INBOX"]), Ct);
+        await Gmail.CreateFilterAsync(
+            new GmailFilterCriteria(Subject: "Weekly offer"), new GmailFilterAction(["Label_1", FakeFilterStore.MissingLabelId], []), Ct);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await host.DisposeAsync();
+        await using var db = postgres.CreateDbContext();
+        await db.Settings.ExecuteDeleteAsync(Ct);
+    }
+
+    [Fact]
+    public async Task A_review_stores_one_finding_per_check_and_is_served_as_the_latest()
+    {
+        var review = await CreateReviewAsync();
+
+        review.FilterCount.ShouldBe(5);
+        review.Findings.Select(f => (f.Kind, f.Fix.Kind)).ShouldBe(
+        [
+            (FilterFindingKind.DeletedLabel, FilterFixKind.Delete),
+            (FilterFindingKind.DeletedLabel, FilterFixKind.DropLabel),
+            (FilterFindingKind.NoRecentMatches, FilterFixKind.Delete),
+            (FilterFindingKind.Mergeable, FilterFixKind.Merge),
+        ]);
+        review.Findings.ShouldAllBe(f => f.Status == FilterFindingStatus.Open && f.Filters.Count == f.FilterIds.Count);
+        Find(review, FilterFindingKind.NoRecentMatches).FilterIds.ShouldBe(["fake-filter-2"]);
+        Find(review, FilterFindingKind.Mergeable).Description.ShouldContain("Example");
+
+        var latest = await Client().GetFromJsonAsync<FilterReviewDto>("/api/rules/filters/reviews/latest", Ct);
+        latest.ShouldNotBeNull().Id.ShouldBe(review.Id);
+        latest.Findings.Select(f => f.Id).ShouldBe(review.Findings.Select(f => f.Id));
+        (await Client().GetFromJsonAsync<FilterReviewDto>($"/api/rules/filters/reviews/{review.Id}", Ct)).ShouldNotBeNull();
+        (await Client().GetAsync($"/api/rules/filters/reviews/{Guid.NewGuid()}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Latest_is_404_before_the_first_review() =>
+        (await Client().GetAsync("/api/rules/filters/reviews/latest", Ct)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+
+    [Fact]
+    public async Task Applying_a_merge_creates_one_filter_and_deletes_the_originals()
+    {
+        var finding = Find(await CreateReviewAsync(), FilterFindingKind.Mergeable);
+
+        var applied = await ApplyAsync(finding.Id, HttpStatusCode.OK);
+
+        applied.Status.ShouldBe(FilterFindingStatus.Applied);
+        applied.AppliedAt.ShouldNotBeNull();
+        var gmail = await Gmail.ListFiltersAsync(Ct);
+        gmail.ShouldNotContain(f => finding.FilterIds.Contains(f.Id));
+        var merged = gmail.Where(f => f.Criteria.From == $"{News} OR {Shop}").ShouldHaveSingleItem();
+        merged.Action.AddLabelIds.ShouldBe(["Label_1"]);
+        await using var db = postgres.CreateDbContext();
+        (await db.Filters.Where(r => finding.FilterIds.Contains(r.Id)).ToListAsync(Ct)).ShouldAllBe(r => r.DeletedByApp);
+        (await db.Filters.SingleAsync(r => r.Id == merged.Id, Ct)).CreatedByApp.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Applying_a_drop_label_recreates_the_filter_without_the_missing_label()
+    {
+        var finding = Find(await CreateReviewAsync(), FilterFindingKind.DeletedLabel, FilterFixKind.DropLabel);
+
+        (await ApplyAsync(finding.Id, HttpStatusCode.OK)).Status.ShouldBe(FilterFindingStatus.Applied);
+
+        var gmail = await Gmail.ListFiltersAsync(Ct);
+        gmail.ShouldNotContain(f => f.Id == finding.FilterIds[0]);
+        gmail.Where(f => f.Criteria.Subject == "Weekly offer").ShouldHaveSingleItem().Action.AddLabelIds.ShouldBe(["Label_1"]);
+    }
+
+    [Fact]
+    public async Task A_failure_mid_way_leaves_the_finding_open_and_a_re_apply_finishes_without_creating_twice()
+    {
+        var finding = Find(await CreateReviewAsync(), FilterFindingKind.Mergeable);
+        Gmail.FailNext(HttpStatusCode.BadRequest, 1, afterCalls: 2);
+
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/apply")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        var failed = await GetFindingAsync(finding);
+        (failed.Status, failed.Error is null).ShouldBe((FilterFindingStatus.Open, false));
+        (await Gmail.ListFiltersAsync(Ct)).Count(f => finding.FilterIds.Contains(f.Id)).ShouldBe(1);
+
+        var applied = await ApplyAsync(finding.Id, HttpStatusCode.OK);
+
+        (applied.Status, applied.Error).ShouldBe((FilterFindingStatus.Applied, null));
+        var gmail = await Gmail.ListFiltersAsync(Ct);
+        gmail.ShouldNotContain(f => finding.FilterIds.Contains(f.Id));
+        gmail.Count(f => f.Criteria.From == $"{News} OR {Shop}").ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_finding_whose_filter_was_deleted_elsewhere_is_a_conflict()
+    {
+        var finding = Find(await CreateReviewAsync(), FilterFindingKind.NoRecentMatches);
+        (await Client().DeleteAsync($"/api/rules/filters/{finding.FilterIds[0]}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/apply")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await GetFindingAsync(finding)).Status.ShouldBe(FilterFindingStatus.Open);
+    }
+
+    [Fact]
+    public async Task Dismiss_closes_an_open_finding_once()
+    {
+        var finding = Find(await CreateReviewAsync(), FilterFindingKind.NoRecentMatches);
+
+        var response = await PostAsync($"/api/rules/filters/findings/{finding.Id}/dismiss");
+
+        (await response.Content.ReadFromJsonAsync<FilterFindingDto>(Ct)).ShouldNotBeNull().Status.ShouldBe(FilterFindingStatus.Dismissed);
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/dismiss")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await PostAsync($"/api/rules/filters/findings/{finding.Id}/apply")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await PostAsync($"/api/rules/filters/findings/{Guid.NewGuid()}/dismiss")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Gmail.ListFiltersAsync(Ct)).ShouldContain(f => f.Id == finding.FilterIds[0]);
+    }
+
+    [Fact]
+    public async Task A_new_review_supersedes_the_open_findings_of_the_previous_one()
+    {
+        var first = await CreateReviewAsync();
+        var dismissed = Find(first, FilterFindingKind.NoRecentMatches);
+        (await PostAsync($"/api/rules/filters/findings/{dismissed.Id}/dismiss")).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var second = await CreateReviewAsync();
+
+        var old = await Client().GetFromJsonAsync<FilterReviewDto>($"/api/rules/filters/reviews/{first.Id}", Ct);
+        old.ShouldNotBeNull().Findings.Single(f => f.Id == dismissed.Id).Status.ShouldBe(FilterFindingStatus.Dismissed);
+        old.Findings.Where(f => f.Id != dismissed.Id).ShouldAllBe(f => f.Status == FilterFindingStatus.Superseded);
+        second.Findings.ShouldAllBe(f => f.Status == FilterFindingStatus.Open);
+    }
+
+    private static FilterFindingDto Find(FilterReviewDto review, FilterFindingKind kind, FilterFixKind? fix = null) =>
+        review.Findings.Single(f => f.Kind == kind && (fix is null || f.Fix.Kind == fix));
+
+    private async Task<FilterReviewDto> CreateReviewAsync()
+    {
+        var response = await PostAsync("/api/rules/filters/reviews");
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
+        return (await response.Content.ReadFromJsonAsync<FilterReviewDto>(Ct)).ShouldNotBeNull();
+    }
+
+    private async Task<FilterFindingDto> ApplyAsync(Guid id, HttpStatusCode expected)
+    {
+        var response = await PostAsync($"/api/rules/filters/findings/{id}/apply");
+        response.StatusCode.ShouldBe(expected);
+        return (await response.Content.ReadFromJsonAsync<FilterFindingDto>(Ct)).ShouldNotBeNull();
+    }
+
+    private async Task<FilterFindingDto> GetFindingAsync(FilterFindingDto finding)
+    {
+        var latest = await Client().GetFromJsonAsync<FilterReviewDto>("/api/rules/filters/reviews/latest", Ct);
+        return latest.ShouldNotBeNull().Findings.Single(f => f.Id == finding.Id);
+    }
+
+    private static List<FakeMessage> Mailbox() =>
+    [
+        .. Enumerable.Range(0, 2).Select(i => new FakeMessage($"s{i}", $"t-s{i}", Shop, $"Weekly offer {i + 1}", Now.AddDays(-1 - i), ["INBOX"])),
+        .. Enumerable.Range(0, 2).Select(i => new FakeMessage(
+            $"n{i}", $"t-n{i}", News, $"Newsletter issue {i + 1}", Now.AddDays(-3 - i), ["INBOX"], To: "lists@example.com")),
+        new("o0", "t-o0", "old@example.com", "Synthetic receipt", Now.AddYears(-3), ["INBOX"]),
+    ];
+
+    private Task<HttpResponseMessage> PostAsync(string path) => Client().PostAsync(path, null, Ct);
+
+    private HttpClient Client()
+    {
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
+        return client;
+    }
+}

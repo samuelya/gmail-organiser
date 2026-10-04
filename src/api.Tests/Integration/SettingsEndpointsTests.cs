@@ -66,6 +66,26 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
     }
 
     [Fact]
+    public async Task Rules_stale_filter_days_defaults_and_is_saved()
+    {
+        (await GetAsync(factory)).RulesStaleFilterDays.ShouldBe(AppSettings.DefaultRulesStaleFilterDays);
+
+        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, RulesStaleFilterDays: 90));
+
+        (await GetAsync(factory)).RulesStaleFilterDays.ShouldBe(90);
+    }
+
+    [Theory]
+    [InlineData(SettingsValidation.MinRulesStaleFilterDays - 1)]
+    [InlineData(SettingsValidation.MaxRulesStaleFilterDays + 1)]
+    public async Task Rules_stale_filter_days_out_of_range_gets_400_problem_details(int days)
+    {
+        var response = await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, RulesStaleFilterDays: days));
+
+        await ShouldBeValidationProblemAsync(response);
+    }
+
+    [Fact]
     public async Task Analysis_defaults_when_no_row_exists()
     {
         var settings = await GetAsync(factory);
