@@ -8,6 +8,7 @@ using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Rules;
 using GmailOrganiser.Rules.Labels;
+using GmailOrganiser.Rules.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -42,6 +43,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<ExternalReviewRow> ExternalReviews => Set<ExternalReviewRow>();
     public DbSet<FilterRow> Filters => Set<FilterRow>();
     public DbSet<LabelPlanRow> LabelPlans => Set<LabelPlanRow>();
+    public DbSet<FilterReviewRow> FilterReviews => Set<FilterReviewRow>();
+    public DbSet<FilterFindingRow> FilterFindings => Set<FilterFindingRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -123,6 +126,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         ExternalReviewRow.Configure(modelBuilder);
         FilterRow.Configure(modelBuilder);
         LabelPlanRow.Configure(modelBuilder);
+        FilterReviewRow.Configure(modelBuilder);
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>
