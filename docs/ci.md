@@ -59,6 +59,8 @@ docker build -f src/web/Dockerfile -t gmail-organiser-web:ci src/web
 docker build -f src/api/Dockerfile --build-arg WITH_CLAUDE=true -t gmail-organiser-api:ci-claude .   # with the Claude Code CLI
 ```
 
+`docker compose -p <project> up --build` tags its images `<project>-api:local` and `<project>-web:local` (the default project keeps `gmail-organiser-*:local`), so agent and tester stacks need nothing extra; `API_IMAGE`/`WEB_IMAGE` override the tag.
+
 ## End-to-end (Playwright, local only)
 
 Not part of CI, by decision: it moves into a workflow only if an escaped defect shows review plus unit tests are not enough.
