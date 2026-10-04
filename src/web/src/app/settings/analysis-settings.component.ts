@@ -7,6 +7,7 @@ import {
   output,
   untracked,
 } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
   FormControl,
@@ -71,15 +72,6 @@ interface NumberField {
     .prompt {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
-    .preview {
-      white-space: pre-wrap;
-      max-height: 16rem;
-      overflow: auto;
-      margin: 0;
-      padding: 0.5rem;
-      border-radius: 4px;
-      background: var(--mat-sys-surface-container);
-    }
     .warn {
       color: var(--mat-sys-error);
     }
@@ -97,7 +89,7 @@ export class AnalysisSettingsSection {
   readonly saving = input(false);
   /** ValidationProblem `errors` from the last save, keyed by API field name. */
   readonly serverErrors = input<Record<string, string[]> | null>(null);
-  /** The built-in prompt, shown read-only while the field is empty (the page loads it on init, or again on `resetPrompt` if that failed). */
+  /** The built-in prompt, pre-filled while no override is saved (the page loads it on init, or again on `resetPrompt` if that failed). */
   readonly defaultPrompt = input<PromptTemplateDto | null>(null);
 
   readonly changed = output<AnalysisSettingsUpdate>();
@@ -169,6 +161,19 @@ export class AnalysisSettingsSection {
   });
   readonly c = this.form.controls;
 
+  private readonly promptText = toSignal(this.c.analysisPromptTemplate.valueChanges, {
+    initialValue: '',
+  });
+  /** Which prompt the field text amounts to; `unknown` while the built-in prompt is not loaded. */
+  readonly promptSource = computed<'built-in' | 'custom' | 'unknown'>(() => {
+    const builtIn = this.defaultPrompt();
+    if (!builtIn) return 'unknown';
+    const text = this.promptText().trim();
+    return text === '' || text === builtIn.template.trim() ? 'built-in' : 'custom';
+  });
+  /** Reset was pressed before the built-in prompt loaded: fill it in when it arrives. */
+  private pendingReset = false;
+
   constructor() {
     this.form.disable();
     effect(() => {
@@ -181,16 +186,25 @@ export class AnalysisSettingsSection {
       untracked(() => this.applyClusterState());
     });
     effect(() => {
+      const builtIn = this.defaultPrompt();
+      untracked(() => this.fillDefaultPrompt(builtIn));
+    });
+    effect(() => {
       const errors = this.serverErrors();
       untracked(() => this.showServerErrors(errors));
     });
   }
 
-  /** Clears the override so the built-in prompt applies; the default text is never saved as custom. */
+  /** Puts the built-in text back; the default text is never saved as custom, so saving stores no override. */
   resetToDefault(): void {
-    this.c.analysisPromptTemplate.setValue('');
-    this.c.analysisPromptTemplate.markAsDirty();
-    this.resetPrompt.emit();
+    const control = this.c.analysisPromptTemplate;
+    const builtIn = this.defaultPrompt();
+    control.setValue(builtIn?.template ?? '');
+    control.markAsDirty();
+    if (!builtIn) {
+      this.pendingReset = true;
+      this.resetPrompt.emit();
+    }
   }
 
   save(): void {
@@ -243,8 +257,26 @@ export class AnalysisSettingsSection {
       return;
     }
     this.form.enable();
-    this.form.reset({ ...settings, analysisPromptTemplate: settings.analysisPromptTemplate ?? '' });
+    this.pendingReset = false;
+    const prompt = settings.analysisPromptTemplate?.trim() ? settings.analysisPromptTemplate : '';
+    this.form.reset({ ...settings, analysisPromptTemplate: prompt });
+    this.fillDefaultPrompt(this.defaultPrompt());
     this.applyClusterState();
+  }
+
+  /** Shows the built-in text in an untouched field with no override, or after a pending Reset; never overwrites edits. */
+  private fillDefaultPrompt(builtIn: PromptTemplateDto | null): void {
+    const settings = this.settings();
+    const control = this.c.analysisPromptTemplate;
+    if (!builtIn || !settings || control.value !== '') return;
+    if (this.pendingReset) {
+      this.pendingReset = false;
+      control.setValue(builtIn.template);
+      control.markAsDirty();
+    } else if (control.pristine && !settings.analysisPromptTemplate?.trim()) {
+      control.setValue(builtIn.template);
+      control.markAsPristine();
+    }
   }
 
   private applyClusterState(): void {

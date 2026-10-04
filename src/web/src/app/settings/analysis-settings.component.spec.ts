@@ -145,21 +145,111 @@ describe('AnalysisSettingsSection', () => {
     expect(section.changes()).toEqual({});
   });
 
-  it('Reset to default clears the override and previews the built-in prompt', async () => {
-    await render(analysis({ analysisPromptTemplate: 'Old {{emails}}' }));
-    let resets = 0;
-    section.resetPrompt.subscribe(() => resets++);
-    q('reset-prompt')!.click();
-    expect(resets).toBe(1);
+  describe('prompt field', () => {
+    const builtIn = { version: 'test-v1', template: 'Built-in {{emails}}' };
+    const field = () => q<HTMLTextAreaElement>('analysisPromptTemplate')!;
+    const source = () => q('prompt-source')!.textContent!.trim();
 
-    fixture.componentRef.setInput('defaultPrompt', {
-      version: 'test-v1',
-      template: 'New {{emails}}',
+    async function setDefault(prompt: typeof builtIn | null = builtIn) {
+      fixture.componentRef.setInput('defaultPrompt', prompt);
+      await fixture.whenStable();
+    }
+
+    function save() {
+      q('save-analysis')!.click();
+    }
+
+    it('opens pre-filled with the built-in prompt when no override is saved', async () => {
+      await render();
+      await setDefault();
+      expect(field().value).toBe('Built-in {{emails}}');
+      expect(section.c.analysisPromptTemplate.pristine).toBe(true);
+      expect(source()).toBe('Built-in prompt (test-v1)');
+      expect(q('default-prompt-details')).toBeNull();
     });
-    await fixture.whenStable();
-    expect(q<HTMLTextAreaElement>('analysisPromptTemplate')!.value).toBe('');
-    expect(q('default-prompt-preview')!.textContent).toBe('New {{emails}}');
-    expect(section.changes()).toEqual({ analysisPromptTemplate: '' });
+
+    it('opens with the saved override', async () => {
+      await render(analysis({ analysisPromptTemplate: 'Mine {{emails}}' }));
+      await setDefault();
+      expect(field().value).toBe('Mine {{emails}}');
+      expect(source()).toBe('Custom prompt');
+    });
+
+    it('fills when the default arrives before the settings', async () => {
+      await render(null);
+      await setDefault();
+      fixture.componentRef.setInput('settings', analysis());
+      await fixture.whenStable();
+      expect(field().value).toBe('Built-in {{emails}}');
+      expect(section.c.analysisPromptTemplate.pristine).toBe(true);
+    });
+
+    it('a default arriving late never overwrites an edit', async () => {
+      await render();
+      await type('analysisPromptTemplate', 'Typed {{emails}}');
+      await setDefault();
+      expect(field().value).toBe('Typed {{emails}}');
+      expect(source()).toBe('Custom prompt');
+    });
+
+    it('the status follows typing and goes back on Reset', async () => {
+      await render();
+      await setDefault();
+      await type('analysisPromptTemplate', 'Built-in {{emails}} and more');
+      expect(source()).toBe('Custom prompt');
+
+      q('reset-prompt')!.click();
+      await fixture.whenStable();
+      expect(field().value).toBe('Built-in {{emails}}');
+      expect(section.c.analysisPromptTemplate.dirty).toBe(true);
+      expect(source()).toBe('Built-in prompt (test-v1)');
+    });
+
+    it('saving the unedited pre-fill sends nothing', async () => {
+      await render();
+      await setDefault();
+      save();
+      expect(emitted).toEqual([{}]);
+    });
+
+    it('saving after Reset on an override sends an empty string', async () => {
+      await render(analysis({ analysisPromptTemplate: 'Mine {{emails}}' }));
+      await setDefault();
+      let resets = 0;
+      section.resetPrompt.subscribe(() => resets++);
+      q('reset-prompt')!.click();
+      await fixture.whenStable();
+      save();
+      expect(resets).toBe(0);
+      expect(field().value).toBe('Built-in {{emails}}');
+      expect(emitted).toEqual([{ analysisPromptTemplate: '' }]);
+    });
+
+    it('without the built-in prompt, says so and Reset retries the load before filling', async () => {
+      await render(analysis({ analysisPromptTemplate: 'Mine {{emails}}' }));
+      expect(field().value).toBe('Mine {{emails}}');
+      expect(source()).toBe('Built-in prompt (not loaded); an empty field uses it');
+
+      let resets = 0;
+      section.resetPrompt.subscribe(() => resets++);
+      q('reset-prompt')!.click();
+      await fixture.whenStable();
+      expect(resets).toBe(1);
+      expect(field().value).toBe('');
+
+      await setDefault();
+      expect(field().value).toBe('Built-in {{emails}}');
+      expect(section.c.analysisPromptTemplate.dirty).toBe(true);
+      expect(section.changes()).toEqual({ analysisPromptTemplate: '' });
+    });
+
+    it('stays empty with no override when the built-in prompt never loads', async () => {
+      await render();
+      expect(field().value).toBe('');
+      expect(source()).toBe('Built-in prompt (not loaded); an empty field uses it');
+      save();
+      expect(emitted).toEqual([{}]);
+    });
   });
 
   it('never saves a copy of the built-in prompt as an override', async () => {
