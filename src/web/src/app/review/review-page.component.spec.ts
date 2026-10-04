@@ -1,7 +1,7 @@
 import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
-import { provideRouter } from '@angular/router';
+import { provideRouter, Router } from '@angular/router';
 import { of, Subject } from 'rxjs';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
@@ -377,12 +377,21 @@ describe('ReviewPage', () => {
     await settle();
     const dialog = document.querySelector('mat-dialog-container')!.textContent!;
     expect(dialog).toContain('label "Topic/Alpha", "Act"');
-    expect(dialog).toContain('A Gmail filter for this sender can be created in Rules (M6)');
+    expect(dialog).toContain('A Gmail filter for this sender can be created afterwards');
     dialogButton('confirm-ok').click();
     await settle();
     await settle();
     expect(api.applyRest).toHaveBeenCalledWith('news@example.com');
     expect(q('apply-progress')).not.toBeNull();
+    expect(snackText()).toContain('Created 4 suggestions');
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    const action = document.querySelector<HTMLButtonElement>('mat-snack-bar-container button')!;
+    expect(action.textContent).toContain('Create filter');
+    action.click();
+    await settle();
+    expect(navigate).toHaveBeenCalledWith(['/rules'], {
+      queryParams: { propose: 'news@example.com' },
+    });
   });
 
   it('does not apply to the rest when the confirm is cancelled', async () => {

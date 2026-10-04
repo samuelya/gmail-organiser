@@ -381,11 +381,19 @@ export class ReviewPage {
           const adjusted = r.protectedAdjusted
             ? `; ${r.protectedAdjusted} protected ${r.protectedAdjusted === 1 ? 'message is' : 'messages are'} not marked for deletion`
             : '';
-          this.snackBar.open(
-            `Created ${r.created} ${r.created === 1 ? 'suggestion' : 'suggestions'}${adjusted}. A Gmail filter from ${r.filterCandidate.from} can be created in Rules (M6).`,
-            'Dismiss',
-            { duration: 8000 },
-          );
+          this.snackBar
+            .open(
+              `Created ${r.created} ${r.created === 1 ? 'suggestion' : 'suggestions'}${adjusted}.`,
+              'Create filter',
+              { duration: 10_000 },
+            )
+            .onAction()
+            .subscribe(
+              () =>
+                void this.router.navigate(['/rules'], {
+                  queryParams: { propose: r.filterCandidate.from },
+                }),
+            );
         }),
       );
   }

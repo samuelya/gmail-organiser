@@ -1,0 +1,138 @@
+<h2 mat-dialog-title>Create filter</h2>
+<mat-dialog-content>
+  <form [formGroup]="form" class="flex flex-col gap-2" (ngSubmit)="create()">
+    <fieldset class="m-0 flex flex-col gap-1 border-0 p-0">
+      <legend class="mb-2 text-sm font-medium">Criteria</legend>
+      <div class="grid gap-x-3 sm:grid-cols-2">
+        <mat-form-field>
+          <mat-label>From</mat-label>
+          <input matInput formControlName="from" data-testid="preview-from" />
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>To</mat-label>
+          <input matInput formControlName="to" data-testid="preview-to" />
+        </mat-form-field>
+        <mat-form-field class="sm:col-span-2">
+          <mat-label>Subject</mat-label>
+          <input matInput formControlName="subject" data-testid="preview-subject" />
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Has the words</mat-label>
+          <input matInput formControlName="query" data-testid="preview-query" />
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Doesn't have</mat-label>
+          <input matInput formControlName="negatedQuery" data-testid="preview-negated" />
+        </mat-form-field>
+      </div>
+      <mat-checkbox formControlName="hasAttachment" data-testid="preview-attachment"
+        >Has attachment</mat-checkbox
+      >
+    </fieldset>
+
+    <fieldset class="m-0 flex flex-col gap-2 border-0 p-0">
+      <legend class="mb-2 text-sm font-medium">Actions</legend>
+      <mat-form-field class="w-full">
+        <mat-label>Apply label</mat-label>
+        <input matInput formControlName="labelPath" data-testid="preview-label" />
+        @if (pathError(); as e) {
+          <mat-error data-testid="preview-label-error">{{ e }}</mat-error>
+        } @else {
+          <mat-hint>Optional; pick an existing label below or type a new path.</mat-hint>
+        }
+      </mat-form-field>
+      <div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-medium">Existing labels</span>
+          <button mat-button type="button" (click)="refreshLabels()">Refresh labels</button>
+        </div>
+        @if (labels(); as list) {
+          <app-label-tree-picker
+            [labels]="list"
+            [selected]="path().trim()"
+            (pick)="pickLabel($event)"
+          />
+        } @else if (labelsFailed()) {
+          <p class="muted m-0 text-sm">Labels could not be loaded; type the path instead.</p>
+        } @else {
+          <mat-progress-bar mode="indeterminate" aria-label="Loading labels" />
+        }
+      </div>
+      @if (archiveLabels().length) {
+        <mat-form-field class="w-full">
+          <mat-label>Also apply archive-rule label</mat-label>
+          <mat-select formControlName="archiveLabel" data-testid="preview-archive">
+            <mat-option value="">None</mat-option>
+            @for (label of archiveLabels(); track label) {
+              <mat-option [value]="label">{{ label }}</mat-option>
+            }
+          </mat-select>
+          <mat-hint>The auto-archive script archives this label's threads after its rule's days.</mat-hint>
+        </mat-form-field>
+      }
+      <mat-slide-toggle formControlName="skipInbox" data-testid="preview-skip-inbox"
+        >Skip the inbox</mat-slide-toggle
+      >
+      <mat-slide-toggle formControlName="markRead" data-testid="preview-mark-read"
+        >Mark as read</mat-slide-toggle
+      >
+    </fieldset>
+
+    <section class="flex flex-col gap-1" aria-live="polite" data-testid="preview-result">
+      <h3 class="m-0 text-sm font-medium">Preview</h3>
+      @if (previewing()) {
+        <mat-progress-bar mode="indeterminate" aria-label="Loading preview" />
+      }
+      @for (p of problems(); track p) {
+        <p class="muted m-0 text-sm" data-testid="preview-problem">{{ p }}</p>
+      }
+      @if (preview(); as p) {
+        <p class="m-0 text-sm" data-testid="preview-query-text">
+          <span class="muted">Gmail search:</span> <code>{{ p.query }}</code>
+        </p>
+        <p class="m-0 text-sm" data-testid="preview-local">
+          @if (p.localMatches !== null) {
+            {{ p.localMatches | number }} fetched
+            {{ p.localMatches === 1 ? 'message matches' : 'messages match' }}
+          } @else {
+            <span class="muted">Fetched messages are not counted for these criteria.</span>
+          }
+        </p>
+        <p class="m-0 text-sm" data-testid="preview-gmail">
+          @if (p.gmailEstimate !== null) {
+            About {{ p.gmailEstimate | number }} in Gmail
+          } @else {
+            <span class="muted">No Gmail estimate.</span>
+          }
+        </p>
+        @if (p.createsLabels.length) {
+          <p class="m-0 text-sm" data-testid="preview-creates">
+            Creates {{ p.createsLabels.length === 1 ? 'label' : 'labels' }}:
+            {{ p.createsLabels.join(', ') }}
+          </p>
+        }
+        @for (w of p.warnings; track w) {
+          <p class="muted m-0 text-sm" data-testid="preview-warning">{{ w }}</p>
+        }
+      }
+    </section>
+
+    @if (error(); as e) {
+      <p class="error m-0 text-sm" role="alert" data-testid="preview-error">{{ e }}</p>
+    }
+  </form>
+</mat-dialog-content>
+<mat-dialog-actions align="end">
+  <button mat-button type="button" [disabled]="saving()" (click)="cancel()" data-testid="preview-cancel">
+    Cancel
+  </button>
+  <button
+    mat-flat-button
+    type="button"
+    [disabled]="saving() || problems().length > 0"
+    (click)="create()"
+    data-testid="preview-create"
+  >
+    Create filter
+  </button>
+</mat-dialog-actions>
