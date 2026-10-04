@@ -216,12 +216,11 @@ public sealed class LabelPlanService(
         _ => null,
     };
 
-    /// <summary>The labels a plan never proposes or merges into: the action and delete labels.</summary>
-    /// <remarks>The Apps Script rule and keep-in-inbox labels join this list with their settings (#210).</remarks>
+    /// <summary>The labels a plan never proposes, merges into or nests under: the action and delete labels, the Apps Script rule and keep-in-inbox labels.</summary>
     public static IReadOnlyCollection<string> ProtectedNames(AppSettings app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        return [app.ActionLabelName, app.DeleteLabelName];
+        return [app.ActionLabelName, app.DeleteLabelName, .. app.AppsScript.Rules.Select(r => r.Label), .. app.AppsScript.KeepInInboxLabels];
     }
 
     /// <summary>Why <paramref name="name"/> cannot be <paramref name="item"/>'s new name, or null when it can.</summary>
@@ -233,6 +232,11 @@ public sealed class LabelPlanService(
             || protectedNames.Contains(name, StringComparer.OrdinalIgnoreCase))
         {
             return "A label with the proposed name already exists or is reserved by the app.";
+        }
+
+        if (protectedNames.Any(p => name.StartsWith(p + "/", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "The proposed name is under a label the app or the Apps Script relies on.";
         }
 
         if (items.Exists(i => i.Id != item.Id && string.Equals(i.ProposedName, name, StringComparison.OrdinalIgnoreCase)))

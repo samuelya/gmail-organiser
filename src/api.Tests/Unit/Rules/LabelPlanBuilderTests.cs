@@ -1,5 +1,6 @@
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Rules.Labels;
+using GmailOrganiser.Settings;
 
 namespace GmailOrganiser.Tests.Unit.Rules;
 
@@ -28,6 +29,12 @@ public sealed class LabelPlanBuilderTests
     [InlineData("Room 10", "Room 100", false)]
     [InlineData("Invoice", "Invoise", true)]
     [InlineData("Family", "Friends", false)]
+    [InlineData("Health", "Wealth", false)]
+    [InlineData("Team A", "Team B", false)]
+    [InlineData("Unit 1A", "Unit 1B", false)]
+    [InlineData("Clients/Jan", "Clients/Dan", false)]
+    [InlineData("Clients/Example", "Clients/Exmple", true)]
+    [InlineData("Alpha/Newsletter", "Alphb/Newsletter", false)]
     public void Near_duplicates_are_equal_normalised_or_one_edit_apart_from_six_chars(string a, string b, bool expected)
     {
         LabelPlanBuilder.AreNearDuplicates(a, b).ShouldBe(expected);
@@ -205,6 +212,55 @@ public sealed class LabelPlanBuilderTests
         var items = LabelPlanBuilder.Build([User("Label_1", "Example", 5), User("Label_2", "Synthetic Empty", 0)], [], NoFilters, countsAreExact: false);
 
         items.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Short_distinct_leaves_are_not_merged()
+    {
+        var items = Build([User("Label_1", "Clients", 1), User("Label_2", "Clients/Dan", 5), User("Label_3", "Clients/Jan", 3)]);
+
+        items.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_shared_prefix_left_with_one_label_is_not_nested()
+    {
+        var items = Build([User("Label_1", "Proj-A", 0), User("Label_2", "Proj-B", 4)]);
+
+        var item = items.ShouldHaveSingleItem();
+        item.Kind.ShouldBe(LabelPlanItemKind.Empty);
+        item.LabelId.ShouldBe("Label_1");
+    }
+
+    [Fact]
+    public void A_shared_prefix_rationale_counts_the_labels_that_move()
+    {
+        var items = Build([User("Label_1", "Proj-Alpha", 0), User("Label_2", "Proj-Beta", 4), User("Label_3", "Proj-Gamma", 2)]);
+
+        var nests = items.Where(i => i.Kind == LabelPlanItemKind.Nest).ToList();
+        nests.Select(i => i.LabelId).ShouldBe(["Label_2", "Label_3"], ignoreOrder: true);
+        nests.ShouldAllBe(i => i.Rationale.StartsWith("2 labels share"));
+    }
+
+    [Fact]
+    public void Nothing_nests_under_a_protected_label()
+    {
+        var items = Build(
+            [User("Label_1", "Synthetic", 3), User("Label_2", "Synthetic-One", 2), User("Label_3", "Synthetic-Two", 2)],
+            protectedNames: ["synthetic"]);
+
+        items.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Protected_names_include_the_apps_script_labels()
+    {
+        var app = new AppSettings
+        {
+            AppsScript = new AppsScriptSettings { Rules = [new ArchiveRule("Synthetic/Rule", 7)], KeepInInboxLabels = ["Synthetic Keep"] },
+        };
+
+        LabelPlanService.ProtectedNames(app).ShouldBe([app.ActionLabelName, app.DeleteLabelName, "Synthetic/Rule", "Synthetic Keep"]);
     }
 
     private static (GmailLabel Label, long Count) User(string id, string name, long count) =>

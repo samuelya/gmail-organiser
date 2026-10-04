@@ -70,7 +70,7 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         plan.Status.ShouldBe(LabelPlanStatus.Draft);
         plan.CreatedAt.ShouldBe(Now);
         plan.Warnings.ShouldBeEmpty();
-        plan.LabelCount.ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 3);
+        plan.LabelCount.ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 4);
         plan.Items.Count.ShouldBe(3);
 
         var empty = plan.Items.Single(i => i.Kind == LabelPlanItemKind.Empty);
@@ -158,6 +158,7 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, labels.Nested.Name, null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, labels.Protected.Name.ToUpperInvariant(), null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, $"{labels.Duplicate.Name}/Child", null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, $"{labels.Protected.Name}/Child", null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PatchAsync(plan.Id, Guid.NewGuid(), new UpdatePlanItemRequest("accepted", null, null))).StatusCode.ShouldBe(HttpStatusCode.NotFound);
         (await PatchAsync(Guid.NewGuid(), nest.Id, new UpdatePlanItemRequest("accepted", null, null))).StatusCode.ShouldBe(HttpStatusCode.NotFound);
 
@@ -211,7 +212,7 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
 
         var plan = await CreateAsync();
 
-        plan.LabelCount.ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 2);
+        plan.LabelCount.ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 3);
         plan.Items.ShouldNotContain(i => i.LabelId == labels.Unused.Id);
         plan.Items.Count.ShouldBe(2);
     }
@@ -269,6 +270,7 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         var duplicate = await Gmail.CreateLabelAsync("Synthetic Receipt", Ct);
         var protectedLabel = await Gmail.CreateLabelAsync(app.DeleteLabelName, Ct);
         var unused = await Gmail.CreateLabelAsync("Unused Topic", Ct);
+        var parent = await Gmail.CreateLabelAsync("Synthetic", Ct);
         for (var i = 0; i < 3; i++)
         {
             Gmail.AddMessage(Message($"r{i}", receipts.Id));
@@ -276,6 +278,7 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
 
         Gmail.AddMessage(Message("d0", duplicate.Id));
         Gmail.AddMessage(Message("n0", nested.Id));
+        Gmail.AddMessage(Message("p0", parent.Id));
 
         await using var db = postgres.CreateDbContext();
         db.Filters.AddRange(Filter("filter-active", unused.Id, deletedAt: null), Filter("filter-deleted", unused.Id, deletedAt: Now));
