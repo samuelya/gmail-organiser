@@ -1,6 +1,7 @@
 using System.Globalization;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -21,9 +22,9 @@ public enum PlanEditOutcome
 
 public sealed record PlanEditResult(PlanEditOutcome Outcome, LabelPlanDto? Plan = null, string? Detail = null);
 
-/// <summary>Builds, stores and edits label review plans (<c>label_plans</c>). No Gmail writes: #214 applies a plan.</summary>
+/// <summary>Builds, stores and edits label review plans (<c>label_plans</c>), and starts <see cref="LabelPlanApplyJob"/>.</summary>
 public sealed class LabelPlanService(
-    AppDbContext db, IGmailClient gmail, LabelCatalog catalog, ISettingsStore settings, TimeProvider time)
+    AppDbContext db, IGmailClient gmail, LabelCatalog catalog, ISettingsStore settings, IJobService jobs, TimeProvider time)
 {
     /// <summary>Above this many user labels the counts come from the stored messages, not batched <c>labels.get</c> calls.</summary>
     public const int MaxCountedLabels = 1000;
@@ -204,6 +205,34 @@ public sealed class LabelPlanService(
             await db.SaveChangesAsync(ct);
         }
 
+        await tx.CommitAsync(ct);
+        return new PlanEditResult(PlanEditOutcome.Ok, LabelPlanDto.From(row));
+    }
+
+    /// <summary>
+    /// Marks a draft plan with at least one accepted item <c>applying</c> and queues <see cref="LabelPlanApplyJob"/> for
+    /// its accepted items in the order nest, merge, delete; the plan's <see cref="LabelPlanDto.JobId"/> is the job.
+    /// </summary>
+    public async Task<PlanEditResult> ApplyAsync(Guid planId, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        if (await LockAsync(planId, ct) is not { } row)
+        {
+            return new PlanEditResult(PlanEditOutcome.NotFound);
+        }
+
+        var accepted = LabelPlanApplyJob.Order(row.ReadItems().Where(i => i.Status == LabelPlanItemStatus.Accepted));
+        if (row.Status != LabelPlanStatus.Draft || accepted.Length == 0)
+        {
+            return new PlanEditResult(PlanEditOutcome.Conflict, Detail: "Only a draft plan with an accepted item can be applied.");
+        }
+
+        var (job, _) = await jobs.EnqueueAsync(
+            LabelPlanApplyJob.JobType, LabelPlanApplyJob.Queue, new LabelPlanApplyCursor(row.Id, accepted), ct, row.Id.ToString());
+        row.Status = LabelPlanStatus.Applying;
+        row.JobId = job.Id;
+        row.UpdatedAt = time.GetUtcNow();
+        await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return new PlanEditResult(PlanEditOutcome.Ok, LabelPlanDto.From(row));
     }

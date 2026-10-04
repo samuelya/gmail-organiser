@@ -133,7 +133,7 @@ public sealed partial class UndoActionsJob(
 
     /// <summary>
     /// Chunks of the rows still to undo, in log order. The inverse comes from the stored label ids and keeps only
-    /// labels that still exist (the others go to <see cref="UndoChunk.Deleted"/>); rows whose message is gone form their own chunks, which never reach Gmail.
+    /// labels that still exist (the others go to <see cref="UndoChunk.Deleted"/>); rows whose stored message is gone form their own chunks, which never reach Gmail.
     /// </summary>
     private async Task<List<UndoChunk>> PlanAsync(UndoCursor cursor, IReadOnlyList<GmailLabel> labels, CancellationToken ct)
     {
@@ -148,7 +148,8 @@ public sealed partial class UndoActionsJob(
                 l.MessageId,
                 l.LabelIdsBefore,
                 l.LabelIdsAfter,
-                Gone = !db.Messages.Any(m => m.Id == l.MessageId && (!m.DeletedInGmail || m.LabelIds.Contains(Trash))),
+                // Mail the app never stored (a label merge moves unfetched mail too) is reverted, not gone.
+                Gone = db.Messages.Any(m => m.Id == l.MessageId && m.DeletedInGmail && !m.LabelIds.Contains(Trash)),
             })
             .AsNoTracking()
             .ToListAsync(ct);
@@ -194,7 +195,7 @@ public sealed partial class UndoActionsJob(
                     .ToDictionaryAsync(m => m.Id, StringComparer.Ordinal, t);
                 if (originals.Count != ids.Length
                     || originals.Any(o => o.UndoneByBatchId is not null)
-                    || (!chunk.Gone && chunk.MessageIds.Any(id => messages.GetValueOrDefault(id) is not { } m || Gone(m))))
+                    || (!chunk.Gone && chunk.MessageIds.Any(id => messages.GetValueOrDefault(id) is { } m && Gone(m))))
                 {
                     throw new PlanChangedException();
                 }

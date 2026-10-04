@@ -192,6 +192,22 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         return inner.CreateLabelAsync(name, ct);
     }
 
+    public ConcurrentQueue<(string Id, string Name)> RenameLabelCalls { get; } = new();
+
+    public Task<GmailLabel> RenameLabelAsync(string id, string newName, CancellationToken ct)
+    {
+        RenameLabelCalls.Enqueue((id, newName));
+        return inner.RenameLabelAsync(id, newName, ct);
+    }
+
+    public ConcurrentQueue<string> DeleteLabelCalls { get; } = new();
+
+    public Task DeleteLabelAsync(string id, CancellationToken ct)
+    {
+        DeleteLabelCalls.Enqueue(id);
+        return inner.DeleteLabelAsync(id, ct);
+    }
+
     public ConcurrentQueue<IReadOnlyList<string>> BatchModifyCalls { get; } = new();
 
     /// <summary>Runs before the n-th (1-based) batch modify, with its ids, reaches the fake, for example to throw a rate limit.</summary>
