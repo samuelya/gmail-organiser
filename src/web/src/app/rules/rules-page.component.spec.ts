@@ -4,6 +4,7 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, Router, withComponentInputBinding } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { FiltersTab } from './filters-tab.component';
+import { FindingsTab } from './findings-tab.component';
 import { LabelsTab } from './labels-tab.component';
 import { RulesPage } from './rules-page.component';
 
@@ -15,6 +16,9 @@ class FiltersTabStub {
   readonly propose = input<string>();
   readonly proposeHandled = output<void>();
 }
+
+@Component({ selector: 'app-findings-tab', template: '<p data-testid="findings-stub"></p>' })
+class FindingsTabStub {}
 
 @Component({ selector: 'app-labels-tab', template: '<p data-testid="labels-stub"></p>' })
 class LabelsTabStub {}
@@ -28,8 +32,8 @@ describe('RulesPage', () => {
       ],
     });
     TestBed.overrideComponent(RulesPage, {
-      remove: { imports: [FiltersTab, LabelsTab] },
-      add: { imports: [FiltersTabStub, LabelsTabStub] },
+      remove: { imports: [FiltersTab, FindingsTab, LabelsTab] },
+      add: { imports: [FiltersTabStub, FindingsTabStub, LabelsTabStub] },
     });
     const harness = await RouterTestingHarness.create();
     await harness.navigateByUrl(url);
@@ -39,10 +43,10 @@ describe('RulesPage', () => {
     return { harness, el, tabs, selected, router: TestBed.inject(Router) };
   }
 
-  it('opens the tab named by ?tab= and shows the placeholders', async () => {
+  it('opens the tab named by ?tab=', async () => {
     const { el, selected } = await render('/rules?tab=findings');
     expect(selected().textContent).toContain('Findings');
-    expect(el.querySelector('[data-testid="findings-placeholder"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="findings-stub"]')).not.toBeNull();
   });
 
   it('defaults to Filters and passes ?propose= on', async () => {

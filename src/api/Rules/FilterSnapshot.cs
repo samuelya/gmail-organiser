@@ -174,7 +174,11 @@ public sealed class FilterSnapshot(
     }
 
     /// <summary>Label names by id; empty when Gmail cannot be reached.</summary>
-    internal async Task<Dictionary<string, string>> LabelNamesAsync(CancellationToken ct)
+    internal async Task<Dictionary<string, string>> LabelNamesAsync(CancellationToken ct) =>
+        await TryLabelNamesAsync(ct) ?? new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary>Label names by id; null when Gmail cannot be reached, so callers can tell that from a deleted label.</summary>
+    internal async Task<Dictionary<string, string>?> TryLabelNamesAsync(CancellationToken ct)
     {
         try
         {
@@ -182,7 +186,7 @@ public sealed class FilterSnapshot(
         }
         catch (Exception ex) when (ex is GmailNotConnectedException or GmailRateLimitedException)
         {
-            return new Dictionary<string, string>(StringComparer.Ordinal);
+            return null;
         }
     }
 

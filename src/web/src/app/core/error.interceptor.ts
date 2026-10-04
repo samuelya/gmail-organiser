@@ -5,13 +5,13 @@ import { catchError, throwError } from 'rxjs';
 
 export const API_UNREACHABLE = 'API unreachable';
 
+/** Statuses the caller handles itself (e.g. a 404 that means "none yet"): no snackbar for them. */
+export const QUIET_STATUSES = new HttpContextToken<readonly number[]>(() => []);
+
 interface ProblemDetails {
   title?: string;
   detail?: string;
 }
-
-/** Statuses the caller handles itself (e.g. a `404` that means "none yet"): no snackbar for them. */
-export const QUIET_STATUSES = new HttpContextToken<readonly number[]>(() => []);
 
 /** Shows API errors in a snackbar and rethrows them so callers can still react. */
 export const errorInterceptor: HttpInterceptorFn = (req, next) => {

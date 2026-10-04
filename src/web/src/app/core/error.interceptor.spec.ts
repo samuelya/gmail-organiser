@@ -29,6 +29,15 @@ describe('errorInterceptor', () => {
     expect(errors).toHaveLength(1); // still rethrown to the caller
   }
 
+  it('stays quiet for a status the caller handles, and still rethrows', () => {
+    const errors: unknown[] = [];
+    const context = new HttpContext().set(QUIET_STATUSES, [404]);
+    http.get('/api/thing', { context }).subscribe({ error: (e) => errors.push(e) });
+    backend.expectOne('/api/thing').flush(null, { status: 404, statusText: 'Not Found' });
+    expect(errors).toHaveLength(1);
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('shows ProblemDetails title and detail', () => {
     fail(
       { title: 'Validation failed', detail: 'Count must be positive.', status: 400 },
@@ -62,15 +71,6 @@ describe('errorInterceptor', () => {
     http.get('/api/thing').subscribe({ error: (e) => errors.push(e) });
     backend.expectOne('/api/thing').error(new ProgressEvent('error'), { status: 0 });
     expect(open.mock.calls[0][0]).toBe(API_UNREACHABLE);
-    expect(errors).toHaveLength(1);
-  });
-
-  it('stays quiet for the statuses the caller handles', () => {
-    const errors: unknown[] = [];
-    const context = new HttpContext().set(QUIET_STATUSES, [404]);
-    http.get('/api/thing', { context }).subscribe({ error: (e) => errors.push(e) });
-    backend.expectOne('/api/thing').flush(null, { status: 404, statusText: 'Not Found' });
-    expect(open).not.toHaveBeenCalled();
     expect(errors).toHaveLength(1);
   });
 });

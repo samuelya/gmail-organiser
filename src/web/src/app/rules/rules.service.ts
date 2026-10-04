@@ -1,16 +1,18 @@
-import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
+import { catchError, Observable, of, throwError } from 'rxjs';
 import { QUIET_STATUSES } from '../core/error.interceptor';
 import { PagedDto } from '../core/paging.models';
 import { LabelPlanApplyDto, LabelPlanDto, UpdatePlanItemRequest } from './label-plan.models';
 import {
   FilterDto,
   FilterEdit,
+  FilterFindingDto,
   FilterListDto,
   FilterPreviewDto,
   FilterProposalDto,
   FilterRequest,
+  FilterReviewDto,
   FilterSyncResultDto,
   PROPOSALS_PAGE_SIZE,
 } from './rules.models';
@@ -54,6 +56,51 @@ export class RulesService {
   /** `409` at Gmail's limits or on Gmail's refusal, `503` when Gmail is unreachable. */
   create(request: FilterRequest): Observable<FilterDto> {
     return this.http.post<FilterDto>('/api/rules/filters', request);
+  }
+
+  /** The newest filter review, with open findings carried over from earlier ones; null when there is none. */
+  latestReview(): Observable<FilterReviewDto | null> {
+    return this.http
+      .get<FilterReviewDto>('/api/rules/filters/reviews/latest', {
+        context: new HttpContext().set(QUIET_STATUSES, [404]),
+      })
+      .pipe(
+        catchError((e: unknown) =>
+          e instanceof HttpErrorResponse && e.status === 404 ? of(null) : throwError(() => e),
+        ),
+      );
+  }
+
+  /** Syncs the filters and runs the checks; `503` when Gmail is unreachable. */
+  startReview(): Observable<FilterReviewDto> {
+    return this.http.post<FilterReviewDto>('/api/rules/filters/reviews', null);
+  }
+
+  /** `409` when the finding is not open, a filter is gone or Gmail refused a step (the finding keeps `error`). */
+  applyFinding(id: string): Observable<FilterFindingDto> {
+    return this.http.post<FilterFindingDto>(
+      `/api/rules/filters/findings/${encodeURIComponent(id)}/apply`,
+      null,
+    );
+  }
+
+  dismissFinding(id: string): Observable<FilterFindingDto> {
+    return this.http.post<FilterFindingDto>(
+      `/api/rules/filters/findings/${encodeURIComponent(id)}/dismiss`,
+      null,
+    );
+  }
+
+  /**
+   * Asks the local model for a summary; an LLM failure is a 200 with `summaryError`. `409` (no findings)
+   * is left to the caller, `503` (no chat model) shows in a snackbar.
+   */
+  summarise(reviewId: string): Observable<FilterReviewDto> {
+    return this.http.post<FilterReviewDto>(
+      `/api/rules/filters/reviews/${encodeURIComponent(reviewId)}/summary`,
+      null,
+      { context: new HttpContext().set(QUIET_STATUSES, [409]) },
+    );
   }
 
   /** The newest plan that is not discarded; `404` (no snackbar) when there is none. */
