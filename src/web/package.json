@@ -7,8 +7,9 @@
     "build": "ng build",
     "test": "ng test --watch=false",
     "lint": "ng lint",
-    "e2e": "playwright test",
-    "e2e:ui": "playwright test --ui"
+    "e2e": "playwright test --project chromium",
+    "e2e:ui": "playwright test --project chromium --ui",
+    "screenshots": "playwright test --project screenshots"
   },
   "private": true,
   "packageManager": "npm@11.19.1",

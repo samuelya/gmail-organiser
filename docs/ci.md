@@ -73,6 +73,12 @@ npm run e2e:ui                    # Playwright UI mode
 
 Other ports: `E2E_BASE_URL=http://localhost:<web>` and `E2E_API_URL=http://localhost:<api>` (the dev server then proxies to that API, which must list the web origin in `Security__AllowedOrigins__0`). With `E2E_API_URL` set, the spec always starts its own dev server and fails if the web port is already in use, because a running `npm start` would proxy to 5181 instead.
 
+`npm run e2e` runs only the `chromium` project, so it never runs the screenshot spec.
+
+### Screenshots
+
+The README images in `docs/images/<page>.png` come from the same fake stack (`GMAIL_FAKE=true`, `LLM_FAKE=true`), so they show only synthetic `example.com` data. With the API up as above, `npm run screenshots` (in `src/web`) picks the fake models, fetches, runs an analysis, approves and applies the first review group in the UI, applies a second run so Clean-up has content, syncs the filters, and overwrites the eight images at 1440×900 in the light theme. It reruns on a reused database, but a fresh one gives the fullest pictures. On other ports, leave `App__BaseUrl` at its development default so the Settings image shows the default redirect URI (`localhost:4200`). Not part of CI.
+
 ## What CI does not have
 
 - **No Ollama.** LLM code is tested with the fake `IChatClient` / `IEmbeddingGenerator`.
