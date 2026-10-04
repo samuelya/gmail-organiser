@@ -1,19 +1,22 @@
 # Claude review setup
 
 Optional. Claude gives a **second opinion** on the local model's suggestions: you send items from the Review page
-("Send to Claude", "Send all pending to Claude"), Claude reads them over the organiser's MCP server and submits a
-verdict that appears beside the local suggestion. You still accept or dismiss every verdict yourself.
+("Send to Claude", "Send all pending to Claude"), a whole run from the Analyse page ("Send run to Claude"), or a filter
+finding or label plan from the Rules page (Findings and Labels tabs, "Send to Claude"). Claude reads them over the
+organiser's MCP server and submits a verdict that appears beside the local suggestion. You still accept or dismiss
+every verdict yourself.
 
 What it does and does not do:
 
-- Claude gets **review tools only**: `list_pending_reviews`, `get_review_item`, `get_label_tree` (read-only) and
-  `submit_review` (records a verdict). No tool changes Gmail; nothing is applied without your approval.
+- Claude gets **review tools only**: `list_pending_reviews`, `get_review_item`, `get_label_tree`, `get_filters`,
+  `get_label_plan` (read-only), `submit_review` and `submit_taxonomy_feedback` (record a verdict). No tool changes
+  Gmail; nothing is applied without your approval.
 - It uses your Claude subscription, **not an API key**. In headless mode the token is read only by the Claude Code CLI
   inside the `api` container; it is never shown in the UI or logged.
-- No model is passed unless you enter one under Settings → Claude → "Model (optional)"; empty means your subscription's
+- No model is passed unless you enter one under Settings → Claude review → "Model (optional)"; empty means your subscription's
   default.
 
-Pick one mode under **Settings → Claude → Mode**: **Claude Code (headless)** or **Claude Desktop**.
+Pick one mode under **Settings → Claude review → Mode**: **Claude Code (headless)** or **Claude Desktop**.
 
 ## Headless mode (Claude Code in the `api` container)
 
@@ -129,5 +132,6 @@ mangled), use the header through an environment variable instead:
 For each item you send, Claude sees what the review tools return: the local suggestion and its reason, sender counts,
 up to five sample emails per item (subject, date, snippet, labels, attachment flag, list id), your label tree and up
 to ten similar past decisions. Email **bodies** are read from Gmail only when Claude asks for them for a specific item
-(`include_bodies`); they are not stored. Nothing is sent to Claude unless you send it, and what Claude sees is
+(`include_bodies`); they are not stored. For a filter finding or label plan, Claude sees your active Gmail filters
+from the last sync (criteria and actions) or the plan's proposals with message counts, and your label tree. Nothing is sent to Claude unless you send it, and what Claude sees is
 handled under your Claude account's terms.
