@@ -162,8 +162,11 @@ public sealed class McpRulesToolsTests(ApiFactory factory, PostgresFixture postg
             response.StatusCode.ShouldBe(HttpStatusCode.BadRequest, query);
         }
 
-        var tooMany = string.Join('&', Enumerable.Range(0, ExternalReviewService.MaxTargets + 1).Select(_ => $"findingId={Guid.NewGuid()}"));
-        (await http.GetAsync($"/api/claude/reviews?{tooMany}", Ct)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        // The cap (100) keeps the request line under Kestrel's 8 KB limit: the cap is accepted, one more is our 400, not a 414.
+        string FindingIds(int count) => string.Join('&', Enumerable.Range(0, count).Select(_ => $"findingId={Guid.NewGuid()}"));
+        (await ListAsync(FindingIds(ClaudeReviewEndpoints.MaxListFindingIds))).ShouldBeEmpty();
+        (await http.GetAsync($"/api/claude/reviews?{FindingIds(ClaudeReviewEndpoints.MaxListFindingIds + 1)}", Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
 
         async Task<List<Guid>> ListAsync(string query) =>
             (await http.GetFromJsonAsync<PagedDto<ExternalReviewDto>>($"/api/claude/reviews?{query}", Ct)).ShouldNotBeNull()

@@ -15,6 +15,12 @@ namespace GmailOrganiser.Claude;
 /// <summary>The Claude review queue: send items, list them, cancel, retry, accept or dismiss a verdict. No Gmail calls.</summary>
 public static class ClaudeReviewEndpoints
 {
+    /// <summary>
+    /// Most <c>findingId</c> values one list request takes: 100 ids (~47 bytes each) keep the request line well under
+    /// Kestrel's 8 KB limit, so a longer list is this endpoint's 400 rather than the server's 414.
+    /// </summary>
+    public const int MaxListFindingIds = 100;
+
     public static IEndpointRouteBuilder MapClaudeReviewEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/claude/reviews").WithTags("Claude");
@@ -83,7 +89,8 @@ public static class ClaudeReviewEndpoints
 
     /// <summary>
     /// Items in <c>status</c> (any when omitted), for <c>labelPlanId</c> and any of the repeated <c>findingId</c> values
-    /// when given, newest first. Ids are taken as strings so a malformed one is a 400 keyed by its parameter.
+    /// when given, newest first. Ids are taken as strings so a malformed one is a 400 keyed by its parameter; more than
+    /// <see cref="MaxListFindingIds"/> <c>findingId</c> values is a 400.
     /// </summary>
     private static async Task<Results<Ok<PagedDto<ExternalReviewDto>>, ValidationProblem>> ListAsync(
         ExternalReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null,
@@ -109,9 +116,9 @@ public static class ClaudeReviewEndpoints
         }
 
         var findingIds = new Guid[findingId?.Length ?? 0];
-        if (findingIds.Length > ExternalReviewService.MaxTargets)
+        if (findingIds.Length > MaxListFindingIds)
         {
-            errors["findingId"] = [$"At most {ExternalReviewService.MaxTargets} ids."];
+            errors["findingId"] = [$"At most {MaxListFindingIds} ids."];
         }
         else
         {
