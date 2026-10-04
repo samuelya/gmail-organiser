@@ -51,6 +51,14 @@ export const MEMBERS_STEP = 20;
               <span class="new" data-testid="group-new-label">new</span>
             }
           </span>
+          @if (g.documentTypeLabel) {
+            <span class="chip" data-testid="document-type"
+              >{{ g.documentTypeLabel }}
+              @if (g.documentTypeIsNew) {
+                <span class="new" data-testid="document-type-new">new</span>
+              }
+            </span>
+          }
           @if (g.needsAction) {
             <span class="chip" data-testid="group-action">{{ labels().action }}</span>
           }

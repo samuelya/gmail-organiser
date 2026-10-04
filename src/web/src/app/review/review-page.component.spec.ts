@@ -50,6 +50,8 @@ const member = (id: string, over: Partial<SuggestionDto> = {}): SuggestionDto =>
   replaceLabels: [],
   currentLabels: [],
   labelChange: 'add',
+  documentTypeLabel: null,
+  documentTypeIsNew: false,
   ...over,
 });
 
@@ -71,6 +73,8 @@ const group = (over: Partial<ReviewGroupDto> = {}): ReviewGroupDto => ({
   truncated: false,
   replaceLabels: [],
   labelChange: 'add',
+  documentTypeLabel: null,
+  documentTypeIsNew: false,
   ...over,
 });
 
@@ -89,6 +93,7 @@ const noPattern: SenderPatternDto = {
   approvals: 0,
   agreement: 0,
   remaining: 4,
+  documentTypeLabel: null,
 };
 
 const job = (status: JobStatus, over: Partial<JobDto> = {}): JobDto => ({
@@ -245,13 +250,16 @@ describe('ReviewPage', () => {
   });
 
   it("approves a group with the card's outcome and shows the skipped members", async () => {
-    const { api, q, all, expand, settle } = await render();
+    const { api, q, all, expand, settle } = await render(noPattern, 'off', [
+      group({ documentTypeLabel: 'Docs/Invoice' }),
+    ]);
     q('group-approve')!.click();
     await settle();
     expect(api.approveGroup).toHaveBeenCalledWith('news@example.com', 'key-1', {
       topicLabel: 'Topic/Alpha',
       needsAction: false,
       toBeDeleted: true,
+      documentTypeLabel: 'Docs/Invoice',
     });
     expect(snackText()).toContain('1 member was skipped');
     await expand();
@@ -376,6 +384,7 @@ describe('ReviewPage', () => {
       approvals: 4,
       agreement: 0.75,
       remaining: 6,
+      documentTypeLabel: null,
     });
     expect(q('apply-rest')!.textContent).toContain('remaining 6');
     q('apply-rest')!.click();
@@ -386,7 +395,7 @@ describe('ReviewPage', () => {
     dialogButton('confirm-ok').click();
     await settle();
     await settle();
-    expect(api.applyRest).toHaveBeenCalledWith('news@example.com');
+    expect(api.applyRest).toHaveBeenCalledWith('news@example.com', {});
     expect(q('apply-progress')).not.toBeNull();
     expect(snackText()).toContain('Created 4 suggestions');
     // The apply job's completion snackbar replaces this one, so it carries "Create filter".
@@ -402,6 +411,25 @@ describe('ReviewPage', () => {
     expect(navigate).toHaveBeenCalledWith(['/rules'], {
       queryParams: { propose: 'news@example.com' },
     });
+  });
+
+  it('names the pattern\'s document type without a parent in settings and does not re-send it', async () => {
+    const { api, q, settle } = await render({
+      topicLabel: 'Topic/Alpha',
+      needsAction: false,
+      toBeDeleted: false,
+      approvals: 4,
+      agreement: 0.75,
+      remaining: 6,
+      documentTypeLabel: 'Docs/Invoice',
+    });
+    q('apply-rest')!.click();
+    await settle();
+    const dialog = document.querySelector('mat-dialog-container')!.textContent!;
+    expect(dialog).toContain('label "Topic/Alpha", document type "Docs/Invoice"');
+    dialogButton('confirm-ok').click();
+    await settle();
+    expect(api.applyRest).toHaveBeenCalledWith('news@example.com', {});
   });
 
   it('does not apply to the rest when the confirm is cancelled', async () => {
