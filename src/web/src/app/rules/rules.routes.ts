@@ -4,8 +4,7 @@ const routes: Routes = [
   {
     path: '',
     title: 'Rules',
-    loadComponent: () => import('../layout/placeholder-page').then((m) => m.PlaceholderPage),
-    data: { heading: 'Rules', milestone: 'M6' },
+    loadComponent: () => import('./rules-page.component').then((m) => m.RulesPage),
   },
 ];
 
