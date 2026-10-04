@@ -2,6 +2,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -47,14 +48,6 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
         return query;
     }
 
-    /// <summary>The allowlisted addresses among <paramref name="senders"/>.</summary>
-    public static async Task<HashSet<string>> AllowlistedAsync(AppDbContext db, IEnumerable<string> senders, CancellationToken ct)
-    {
-        var addresses = senders.Distinct(StringComparer.Ordinal).ToArray();
-        return (await db.Senders.Where(s => s.Allowlisted && addresses.Contains(s.Address)).Select(s => s.Address).ToListAsync(ct))
-            .ToHashSet(StringComparer.Ordinal);
-    }
-
     /// <exception cref="Gmail.GmailNotConnectedException">The app is not connected to Gmail.</exception>
     public async Task<CleanupSummaryDto> SummaryAsync(CancellationToken ct)
     {
@@ -87,7 +80,8 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
                 || db.Senders.Any(s => s.Address == m.FromAddress && s.DisplayName != null && EF.Functions.ILike(s.DisplayName, pattern, "\\")));
         }
 
-        var groups = Flag(messages, (await settingsStore.GetAsync(ct)).Protection)
+        var settings = await settingsStore.GetAsync(ct);
+        var groups = Flag(messages, settings.Protection)
             .GroupBy(f => f.FromAddress)
             .Select(g => new
             {
@@ -105,10 +99,12 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
         var senders = await db.Senders.AsNoTracking()
             .Where(s => addresses.Contains(s.Address))
             .ToDictionaryAsync(s => s.Address, StringComparer.Ordinal, ct);
+        var domains = settings.Protection.AllowlistedDomains;
         return new PagedDto<CleanupSenderDto>(
             rows.ConvertAll(r => new CleanupSenderDto(
-                r.Address, senders.GetValueOrDefault(r.Address)?.DisplayName, r.Count, r.ProtectedCount,
-                r.OldestAt, r.NewestAt, senders.GetValueOrDefault(r.Address)?.Allowlisted == true)),
+                r.Address, senders.GetValueOrDefault(r.Address)?.DisplayName, r.Count, r.ProtectedCount, r.OldestAt, r.NewestAt,
+                senders.GetValueOrDefault(r.Address)?.Allowlisted == true,
+                Allowlist.CoversDomain(domains, new SenderAddress(r.Address, null).Domain))),
             page, pageSize, total);
     }
 
@@ -126,12 +122,12 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
         var rows = await messages.OrderByDescending(m => m.InternalDate).ThenBy(m => m.Id)
             .Skip((page - 1) * pageSize).Take(pageSize)
             .ToListAsync(ct);
-        var allowlisted = await db.Senders.AnyAsync(s => s.Address == address && s.Allowlisted, ct);
-        var rules = (await settingsStore.GetAsync(ct)).Protection;
+        var settings = await settingsStore.GetAsync(ct);
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, [address], ct);
         return new PagedDto<CleanupMessageDto>(
             rows.ConvertAll(m => new CleanupMessageDto(
                 m.Id, m.Subject, m.Snippet, m.InternalDate, m.SizeEstimate,
-                m.LabelIds.Contains(InboxLabel, StringComparer.Ordinal), MessageProtection.Reason(m, allowlisted, rules))),
+                m.LabelIds.Contains(InboxLabel, StringComparer.Ordinal), MessageProtection.Reason(m, allowlist, settings.Protection))),
             page, pageSize, total);
     }
 
@@ -142,11 +138,16 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
     private IQueryable<Flagged> Flag(IQueryable<MessageRow> messages, ProtectionSettings rules)
     {
         var (attachments, starred, important, replied) = (rules.Attachments, rules.Starred, rules.Important, rules.RepliedThreads);
+        // Allowlist.Reason: addresses are lower-case and entries hold no '@', so on an address with an '@' a suffix
+        // match is a match on the part after the last '@'. A From without '@' has no domain and never matches.
+        var domains = rules.AllowlistedDomains.ToArray();
         return messages.Select(m => new Flagged
         {
             FromAddress = m.FromAddress,
             InternalDate = m.InternalDate,
             Protected = db.Senders.Any(s => s.Address == m.FromAddress && s.Allowlisted)
+                || (m.FromAddress.Contains("@")
+                    && domains.Any(d => m.FromAddress.EndsWith("@" + d) || m.FromAddress.EndsWith("." + d)))
                 || (attachments && m.HasAttachment)
                 || (starred && m.LabelIds.Contains(MessageProtection.StarredLabel))
                 || (important && m.LabelIds.Contains(MessageProtection.ImportantLabel))

@@ -132,12 +132,16 @@ public sealed record UpdateAttachmentSettingsRequest(
     int? MaxPerMessage = null,
     string? ImageMode = null);
 
-/// <summary>Partial update of <see cref="ProtectionSettings"/>: <c>null</c> leaves a rule unchanged.</summary>
+/// <summary>
+/// Partial update of <see cref="ProtectionSettings"/>: <c>null</c> leaves a rule unchanged; a domain list replaces the
+/// whole set.
+/// </summary>
 public sealed record UpdateProtectionSettingsRequest(
     bool? Attachments = null,
     bool? Starred = null,
     bool? Important = null,
-    bool? RepliedThreads = null);
+    bool? RepliedThreads = null,
+    IReadOnlyList<string?>? AllowlistedDomains = null);
 
 /// <param name="Type">An <see cref="Analysis.Attachments.AttachmentType"/> snake_case name; a string so an unknown name is a field error.</param>
 public sealed record AttachmentTypeSettingRequest(string? Type, bool? Enabled);

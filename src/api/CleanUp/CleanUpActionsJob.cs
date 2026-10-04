@@ -71,8 +71,8 @@ public sealed partial class CleanUpActionsJob(
         + (senderAddress is null ? "" : $" from {senderAddress}");
 
     /// <summary>Whether the batch changes <paramref name="m"/>: Delete skips protected mail unless told otherwise.</summary>
-    public static bool Covers(ActionKind kind, bool includeProtected, MessageRow m, IReadOnlySet<string> allowlisted, ProtectionSettings rules) =>
-        kind == ActionKind.Unmark || includeProtected || !MessageProtection.IsProtected(m, allowlisted, rules);
+    public static bool Covers(ActionKind kind, bool includeProtected, MessageRow m, Allowlist allowlist, ProtectionSettings rules) =>
+        kind == ActionKind.Unmark || includeProtected || !MessageProtection.IsProtected(m, allowlist, rules);
 
     public async Task RunAsync(JobContext ctx, CancellationToken ct)
     {
@@ -83,9 +83,9 @@ public sealed partial class CleanUpActionsJob(
         }
 
         var names = (await catalog.GetAsync(ct)).ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
-        var rules = (await settingsStore.GetAsync(ct)).Protection;
+        var settings = await settingsStore.GetAsync(ct);
         // The pending chunk's rows aren't stored as changed yet, so the plan would cover them a second time.
-        var plan = Without(await PlanAsync(cursor, rules, ct), cursor.Pending);
+        var plan = Without(await PlanAsync(cursor, settings, ct), cursor.Pending);
         var total = Done(cursor) + (cursor.Pending?.MessageIds.Length ?? 0) + plan.Sum(c => c.MessageIds.Length);
         if (cursor.Pending is not null)
         {
@@ -101,7 +101,7 @@ public sealed partial class CleanUpActionsJob(
             var replan = false;
             foreach (var chunk in plan)
             {
-                if (await PrepareAsync(ctx, cursor, chunk, rules, names, total, ct) is not { } prepared)
+                if (await PrepareAsync(ctx, cursor, chunk, settings, names, total, ct) is not { } prepared)
                 {
                     replan = true;
                     break;
@@ -119,7 +119,9 @@ public sealed partial class CleanUpActionsJob(
                 break;
             }
 
-            plan = await PlanAsync(cursor, rules, ct);
+            // Fresh settings: the locked re-check reads them as stored now, so the new plan must agree with it.
+            settings = await settingsStore.GetAsync(ct);
+            plan = await PlanAsync(cursor, settings, ct);
             total = Done(cursor) + plan.Sum(c => c.MessageIds.Length);
         }
 
@@ -140,17 +142,24 @@ public sealed partial class CleanUpActionsJob(
             : ([], [deleteLabelId]);
 
     /// <summary>Chunks of the selected messages still to change, in id order; protected ones are counted, not planned.</summary>
-    private async Task<List<CleanUpChunk>> PlanAsync(CleanUpCursor cursor, ProtectionSettings rules, CancellationToken ct)
+    private async Task<List<CleanUpChunk>> PlanAsync(CleanUpCursor cursor, AppSettings settings, CancellationToken ct)
     {
         var skipped = cursor.Skipped ?? [];
         var rows = await CleanUpQuery.Selected(db, cursor.DeleteLabelId, cursor.Selection)
             .Where(m => !skipped.Contains(m.Id))
             .OrderBy(m => m.Id)
-            .Select(m => new MessageRow { Id = m.Id, FromAddress = m.FromAddress, LabelIds = m.LabelIds, HasAttachment = m.HasAttachment })
+            .Select(m => new MessageRow
+            {
+                Id = m.Id,
+                FromAddress = m.FromAddress,
+                LabelIds = m.LabelIds,
+                HasAttachment = m.HasAttachment,
+                ThreadReplied = m.ThreadReplied,
+            })
             .AsNoTracking()
             .ToListAsync(ct);
-        var allowlisted = await CleanUpQuery.AllowlistedAsync(db, rows.Select(r => r.FromAddress), ct);
-        var covered = rows.Where(m => Covers(cursor.Kind, cursor.IncludeProtected, m, allowlisted, rules)).ToList();
+        var allowlist = await AllowlistLoader.LoadAsync(db, settings, ct);
+        var covered = rows.Where(m => Covers(cursor.Kind, cursor.IncludeProtected, m, allowlist, settings.Protection)).ToList();
         skippedProtected = rows.Count - covered.Count;
         var changes = covered.Select(m => (m.Id, Change: Change(cursor.Kind, cursor.DeleteLabelId, m)));
         return [.. LabelChunks.Group(changes, c => c.Change.Add, c => c.Change.Remove, gmailOptions.Value.BatchModifyMaxIds)
@@ -166,7 +175,7 @@ public sealed partial class CleanUpActionsJob(
         JobContext ctx,
         CleanUpCursor cursor,
         CleanUpChunk chunk,
-        ProtectionSettings rules,
+        AppSettings settings,
         IReadOnlyDictionary<string, string> names,
         int total,
         CancellationToken ct)
@@ -180,7 +189,9 @@ public sealed partial class CleanUpActionsJob(
                 var messages = await db.Messages
                     .FromSql($"SELECT * FROM messages WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
                     .ToListAsync(t);
-                var allowlisted = await CleanUpQuery.AllowlistedAsync(db, messages.Select(m => m.FromAddress), t);
+                // Both halves as stored now: an address or a domain allowlisted since the job started is honoured.
+                var allowlist = await AllowlistLoader.LoadAsync(
+                    db, await settingsStore.GetAsync(t), [.. messages.Select(m => m.FromAddress).Distinct()], t);
                 if (messages.Count != ids.Length || messages.Any(m => !Fits(m)))
                 {
                     throw new PlanChangedException();
@@ -210,7 +221,7 @@ public sealed partial class CleanUpActionsJob(
                     return !m.DeletedInGmail
                         && m.LabelIds.Contains(cursor.DeleteLabelId, StringComparer.Ordinal)
                         && !m.LabelIds.Contains(CleanUpQuery.TrashLabel, StringComparer.Ordinal)
-                        && Covers(cursor.Kind, cursor.IncludeProtected, m, allowlisted, rules)
+                        && Covers(cursor.Kind, cursor.IncludeProtected, m, allowlist, settings.Protection)
                         && LabelChunks.Sorted(add).SequenceEqual(chunk.Add)
                         && LabelChunks.Sorted(remove).SequenceEqual(chunk.Remove);
                 }

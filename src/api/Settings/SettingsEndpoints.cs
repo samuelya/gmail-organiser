@@ -139,6 +139,9 @@ public static class SettingsEndpoints
         Starred = request.Starred ?? s.Starred,
         Important = request.Important ?? s.Important,
         RepliedThreads = request.RepliedThreads ?? s.RepliedThreads,
+        AllowlistedDomains = request.AllowlistedDomains is { } domains
+            ? SettingsValidation.NormaliseDomains(domains.OfType<string>())
+            : s.AllowlistedDomains,
     };
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem, ProblemHttpResult>> SetGoogleClientAsync(

@@ -237,7 +237,7 @@ export function patternSummary(
     `Suggest ${outcome} for the ${pattern.remaining} remaining messages and apply it ` +
     `(${percent(pattern.agreement)} of ${pattern.approvals} approvals agree). ` +
     `Protected messages are not marked for deletion. ` +
-    `A Gmail filter for this sender can be created in Rules (M6).`
+    `A Gmail filter for this sender can be created afterwards.`
   );
 }
 
