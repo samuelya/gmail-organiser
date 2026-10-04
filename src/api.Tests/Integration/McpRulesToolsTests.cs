@@ -203,6 +203,25 @@ public sealed class McpRulesToolsTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
+    public async Task Taxonomy_feedback_with_an_empty_structure_is_an_agree()
+    {
+        var item = (await CreateAsync(new(null, null, null, planId))).Items.Single().Id;
+
+        var result = McpTestClient.Structured(await FeedbackAsync(new()
+        {
+            ["plan_id"] = planId.ToString(),
+            ["comments"] = "The plan reads well.",
+            ["alternative_structure"] = Array.Empty<string>(),
+        }));
+        result.GetProperty("ok").GetBoolean().ShouldBeTrue(result.GetRawText());
+
+        var dto = await GetAsync(item);
+        dto.Verdict.ShouldBe("agree");
+        dto.Reasoning.ShouldBe("The plan reads well.");
+        dto.AlternativeStructure.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Taxonomy_feedback_refuses_invalid_paths_a_plan_without_an_item_and_a_discarded_plan()
     {
         McpTestClient.ErrorText(await FeedbackAsync(new() { ["plan_id"] = planId.ToString(), ["comments"] = "Fine." }))

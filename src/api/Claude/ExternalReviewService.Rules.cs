@@ -27,8 +27,8 @@ public sealed partial class ExternalReviewService
                     : s.SenderAddress == r.SenderAddress && s.GroupKey == r.GroupKey)));
 
     /// <summary>
-    /// Stores Claude's taxonomy feedback on the plan's open item: <c>alternative</c> with
-    /// <paramref name="structure"/>, else <c>agree</c>; <paramref name="comments"/> is the reasoning. Returns the item id
+    /// Stores Claude's taxonomy feedback on the plan's open item: <c>alternative</c> with a non-empty
+    /// <paramref name="structure"/>, else <c>agree</c> (an empty array is no structure); <paramref name="comments"/> is the reasoning. Returns the item id
     /// when there is one.
     /// </summary>
     public async Task<(ReviewVerdictResult Result, string? Reason, Guid? ItemId)> SubmitTaxonomyFeedbackAsync(
@@ -44,9 +44,10 @@ public sealed partial class ExternalReviewService
             return (ReviewVerdictResult.NotFound, "This plan has no open review item; the user sends a plan to Claude from the Rules page.", null);
         }
 
+        var alternative = structure is { Count: > 0 } ? structure : null;
         var verdict = new ReviewVerdictInput(
-            structure is null ? ReviewVerdict.Agree : ReviewVerdict.Alternative, null, null, null, null, comments, reviewer, model,
-            AlternativeStructure: structure);
+            alternative is null ? ReviewVerdict.Agree : ReviewVerdict.Alternative, null, null, null, null, comments, reviewer, model,
+            AlternativeStructure: alternative);
         var (result, reason) = await SubmitVerdictAsync(id.Value, verdict, ct);
         return (result, reason, id);
     }
