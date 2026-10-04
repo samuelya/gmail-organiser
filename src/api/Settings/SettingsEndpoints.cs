@@ -27,6 +27,7 @@ public static class SettingsEndpoints
 
         services.AddScoped<ISettingsStore, SettingsStore>();
         services.AddScoped<GoogleClientService>();
+        services.AddScoped<DataPurgeService>();
         return services;
     }
 
@@ -36,6 +37,7 @@ public static class SettingsEndpoints
         group.MapGet("/", GetAsync);
         group.MapPut("/", UpdateAsync);
         group.MapPut("/google-client", SetGoogleClientAsync);
+        group.MapPost("/purge", PurgeAsync);
         return endpoints;
     }
 
@@ -135,6 +137,32 @@ public static class SettingsEndpoints
 
         var settings = await store.GetAsync(ct);
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
+    }
+
+    private static async Task<Results<Ok<PurgeResponse>, ValidationProblem, ProblemHttpResult>> PurgeAsync(
+        PurgeRequest? request, DataPurgeService purge, TimeProvider time, CancellationToken ct)
+    {
+        // A missing or null body is a wrong word too, so the form always gets the confirm field error.
+        if (request?.Confirm?.Trim() != PurgeRequest.ConfirmationWord)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["confirm"] = [$"Type {PurgeRequest.ConfirmationWord} to confirm."],
+            });
+        }
+
+        return await purge.PurgeAsync(ct) switch
+        {
+            PurgeResult.Done done => TypedResults.Ok(new PurgeResponse(done.Tables, time.GetUtcNow())),
+            PurgeResult.GmailChunkPending => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "A Gmail batch is half-applied",
+                detail: "A failed apply, undo or clean-up job stopped part-way through a Gmail batch. Resume it in Jobs so the batch finishes (and can be undone) before purging."),
+            _ => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Jobs are active",
+                detail: "Wait for running jobs to finish or cancel them first."),
+        };
     }
 }
 

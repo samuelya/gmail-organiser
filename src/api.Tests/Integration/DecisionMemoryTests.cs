@@ -134,6 +134,26 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     }
 
     [Fact]
+    public async Task Decisions_purged_during_the_embed_call_end_the_pass_without_an_error()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.Add(Decision(Shop, "Shopping", DecisionOutcome.Approved, Now));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        // The hook runs inside the embed call, like a purge committing while Ollama answers.
+        embeddings.Rejects = _ =>
+        {
+            using var purge = postgres.CreateDbContext();
+            purge.Decisions.ExecuteDelete();
+            return false;
+        };
+
+        (await EmbeddingService().EmbedPendingAsync(Ct)).ShouldBe(0);
+    }
+
+    [Fact]
     public async Task A_rejected_decision_is_isolated_marked_and_retried_after_a_day_while_the_rest_embed()
     {
         var clock = new FakeTimeProvider(Now);

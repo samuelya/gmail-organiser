@@ -98,7 +98,17 @@ public sealed partial class DecisionEmbeddingService(
                 }
             }
 
-            await db.SaveChangesAsync(ct);
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // The rows were deleted during the embed call (a local-data purge); nothing is left to store.
+                db.ChangeTracker.Clear();
+                return embedded;
+            }
+
             db.ChangeTracker.Clear();
             embedded += done;
             if (rows.Count < BatchSize)
