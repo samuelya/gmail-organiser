@@ -151,6 +151,7 @@ export class SettingsPage implements OnInit {
           this.labels.set({
             actionLabelName: settings.actionLabelName,
             deleteLabelName: settings.deleteLabelName,
+            documentTypeParent: settings.documentTypeParent ?? null,
           });
           this.analysis.set(settings);
           this.attachments.set(attachmentsOf(settings));
