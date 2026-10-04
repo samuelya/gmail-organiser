@@ -1,5 +1,6 @@
 using System.Net.Sockets;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;

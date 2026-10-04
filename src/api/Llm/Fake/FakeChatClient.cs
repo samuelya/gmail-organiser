@@ -1,11 +1,11 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 
-namespace GmailOrganiser.Tests.Fakes;
+namespace GmailOrganiser.Llm.Fake;
 
 /// <summary>
-/// Answers with canned JSON (queued responses, then <see cref="DefaultResponse"/>) and records every request.
-/// Set <see cref="Failure"/> to make calls throw.
+/// Answers with canned JSON (queued responses, then <see cref="Responder"/>, then <see cref="DefaultResponse"/>) and
+/// records every request. Set <see cref="Failure"/> to make calls throw. Used by tests and by <c>LLM_FAKE=true</c>.
 /// </summary>
 public sealed class FakeChatClient(params string[] responses) : IChatClient
 {
@@ -14,6 +14,9 @@ public sealed class FakeChatClient(params string[] responses) : IChatClient
     private readonly Lock _gate = new();
 
     public string DefaultResponse { get; set; } = """{"ok":true}""";
+
+    /// <summary>Computes an answer from the request when no response is queued; <c>null</c> falls back to <see cref="DefaultResponse"/>.</summary>
+    public Func<IReadOnlyList<ChatMessage>, string?>? Responder { get; set; }
     public Exception? Failure { get; set; }
     public bool Disposed { get; private set; }
 
@@ -62,13 +65,14 @@ public sealed class FakeChatClient(params string[] responses) : IChatClient
     {
         lock (_gate)
         {
-            _requests.Add(new FakeChatRequest([.. messages], options));
+            var request = new FakeChatRequest([.. messages], options);
+            _requests.Add(request);
             if (Failure is not null)
             {
                 throw Failure;
             }
 
-            return _responses.TryDequeue(out var text) ? text : DefaultResponse;
+            return _responses.TryDequeue(out var text) ? text : Responder?.Invoke(request.Messages) ?? DefaultResponse;
         }
     }
 }
