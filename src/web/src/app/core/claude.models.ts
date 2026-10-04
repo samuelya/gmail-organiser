@@ -40,6 +40,10 @@ export interface ExternalReviewDto {
   verdictTopicLabel: string | null;
   verdictNeedsAction: boolean | null;
   verdictToBeDeleted: boolean | null;
+  /** The alternative's document type; null or `""` with `verdictDocumentTypeSet` clears it. */
+  verdictDocumentTypeLabel: string | null;
+  /** False: the verdict leaves each member's document type unchanged. */
+  verdictDocumentTypeSet: boolean;
   reasoning: string | null;
   /** Shown verbatim. */
   error: string | null;
