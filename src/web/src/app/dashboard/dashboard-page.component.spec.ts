@@ -3,46 +3,15 @@ import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter } from '@angular/router';
 import { of, Subject, throwError } from 'rxjs';
-import { isActiveJob, JobDto, JobsConnectionState, JobStatus } from '../core/jobs.models';
+import { isActiveJob, JobDto, JobsConnectionState } from '../core/jobs.models';
 import { AnalysisSummaryDto } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { JobsService } from '../core/jobs.service';
 import { DashboardPage, STATUS_REFRESH_MS } from './dashboard-page.component';
-import { FetchStatusDto, fetchJobsKey, fetchView, humanise } from './fetch.models';
+import { FetchStatusDto } from './fetch.models';
 import { FetchService } from './fetch.service';
-
-const job = (status: JobStatus, over: Partial<JobDto> = {}): JobDto => ({
-  id: 'job-1',
-  type: 'mailbox_fetch',
-  queue: 'fetch',
-  status,
-  progress: { done: 25, total: 100, message: null },
-  error: null,
-  createdAt: '2026-01-01T00:00:00Z',
-  startedAt: null,
-  updatedAt: '2026-01-01T00:00:00Z',
-  finishedAt: null,
-  version: 1,
-  ...over,
-});
-
-const status = (over: Partial<FetchStatusDto> = {}): FetchStatusDto => ({
-  accountEmail: 'user@example.com',
-  mailboxPhase: 'not_started',
-  inboxFetched: 0,
-  allMailFetched: 0,
-  messagesTotal: null,
-  messagesStored: 0,
-  sendersCount: 0,
-  lastHistoryId: null,
-  startedAt: null,
-  completedAt: null,
-  activeJob: null,
-  failedJob: null,
-  accountMismatch: false,
-  localAccount: null,
-  ...over,
-});
+import { job, status } from './fetch.testing';
+import { SetupService } from '../setup/setup.service';
 
 const analysisSummary: AnalysisSummaryDto = {
   notAnalysed: 0,
@@ -72,82 +41,29 @@ class FakeJobs {
   }
 }
 
-describe('fetchView', () => {
-  it.each([
-    ['not_started', 'Not started', 'Start fetch'],
-    ['inbox', 'Inbox', 'Start fetch'],
-    ['all_mail', 'All mail', 'Start fetch'],
-    ['completed', 'Completed', 'Fetch new mail'],
-  ] as const)('%s with no job: phase %s, Start labelled %s', (phase, label, start) => {
-    const v = fetchView(status({ mailboxPhase: phase }), undefined);
-    expect(v.phase).toBe(label);
-    expect(v.startLabel).toBe(start);
-    expect(v.controls).toEqual({ pause: false, resume: false, cancel: false });
-  });
-
-  it.each([
-    ['queued', { pause: true, resume: false, cancel: true }],
-    ['running', { pause: true, resume: false, cancel: true }],
-    ['paused', { pause: false, resume: true, cancel: true }],
-  ] as const)('an active %s job hides Start and allows %o', (jobStatus, controls) => {
-    const v = fetchView(status({ mailboxPhase: 'inbox', activeJob: job(jobStatus) }), undefined);
-    expect(v.startLabel).toBeNull();
-    expect(v.controls).toEqual(controls);
-  });
-
-  it('an unknown phase and job type are humanised, not dropped', () => {
-    const active = job('running', { type: 'incremental_fetch' });
-    const v = fetchView(status({ mailboxPhase: 'reconcile', activeJob: active }), undefined);
-    expect(v.phase).toBe('Reconcile');
-    expect(v.job!.type).toBe('incremental_fetch');
-    expect(humanise('incremental_fetch')).toBe('Incremental fetch');
-  });
-
-  it('a failed job offers Resume fetch through Start and shows its error', () => {
-    const failed = job('failed', { error: 'Gmail quota exceeded' });
-    const v = fetchView(status({ mailboxPhase: 'all_mail', failedJob: failed }), undefined);
-    expect(v.startLabel).toBe('Resume fetch');
-    expect(v.error).toBe('Gmail quota exceeded');
-  });
-
-  it('shows whichever job the status names, using the newer hub copy', () => {
-    const active = job('running', { type: 'incremental_fetch', version: 3 });
-    const live = job('paused', { type: 'incremental_fetch', version: 4 });
-    expect(fetchView(status({ activeJob: active }), live).job).toBe(live);
-    expect(fetchView(status({ activeJob: live }), active).job).toBe(live);
-  });
-
-  it('an account mismatch disables Start and Resume', () => {
-    const v = fetchView(status({ accountMismatch: true, activeJob: job('paused') }), undefined);
-    expect(v.controls.resume).toBe(false);
-    expect(fetchView(status({ accountMismatch: true }), undefined).startDisabled).toBe(true);
-  });
-
-  it('fetchJobsKey ignores progress and other queues', () => {
-    const a = fetchJobsKey([job('running'), job('running', { id: 'x', queue: 'analysis' })]);
-    const b = fetchJobsKey([job('running', { progress: { done: 99, total: 100, message: null } })]);
-    expect(a).toBe(b);
-    expect(fetchJobsKey([job('paused')])).not.toBe(a);
-    const nextStep = { done: 0, total: 100, message: 'Next step' };
-    expect(fetchJobsKey([job('running', { progress: nextStep })])).not.toBe(a);
-  });
-});
-
 describe('DashboardPage', () => {
   let jobs: FakeJobs;
-  let fetch: { getStatus: ReturnType<typeof vi.fn>; startMailboxFetch: ReturnType<typeof vi.fn> };
+  let fetch: {
+    getStatus: ReturnType<typeof vi.fn>;
+    startMailboxFetch: ReturnType<typeof vi.fn>;
+    resyncLabels: ReturnType<typeof vi.fn>;
+  };
+  let setup: { getGoogleStatus: ReturnType<typeof vi.fn> };
 
-  async function render(initial: FetchStatusDto) {
+  async function render(initial: FetchStatusDto, connected = true) {
     jobs = new FakeJobs();
     fetch = {
       getStatus: vi.fn(() => of(initial)),
       startMailboxFetch: vi.fn(() => of({ jobId: 'job-1' })),
+      resyncLabels: vi.fn(() => of({ jobId: 'job-9' })),
     };
+    setup = { getGoogleStatus: vi.fn(() => of({ connected })) };
     TestBed.configureTestingModule({
       providers: [
         provideRouter([]),
         { provide: JobsService, useValue: jobs },
         { provide: FetchService, useValue: fetch },
+        { provide: SetupService, useValue: setup },
         { provide: AnalysisService, useValue: { summary: () => of(analysisSummary) } },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
@@ -162,9 +78,9 @@ describe('DashboardPage', () => {
   afterEach(() => document.querySelector('.cdk-overlay-container')?.replaceChildren());
 
   it('not started: phase, counts and Start; Start posts and reloads the status', async () => {
-    const { fixture, q } = await render(status({ inboxFetched: 3, sendersCount: 2 }));
+    const { fixture, q } = await render(status({ inboxStored: 3, sendersCount: 2 }));
     expect(q('phase')!.textContent).toContain('Not started');
-    expect(q('inbox-fetched')!.textContent).toContain('3');
+    expect(q('inbox-stored')!.textContent).toContain('3');
     expect(q('senders-count')!.textContent).toContain('2');
     expect(q('fetch-progress')).toBeNull();
     expect(q('pause')).toBeNull();
@@ -195,18 +111,71 @@ describe('DashboardPage', () => {
     expect(jobs.pause).toHaveBeenCalledWith('job-1');
   });
 
-  it('Inbox and All mail show fetched of total with a percentage', async () => {
+  it('Inbox and All mail show stored of the Gmail total, not the run progress', async () => {
     const { q } = await render(
-      status({ inboxFetched: 3200, inboxTotal: 12450, allMailFetched: 7, allMailTotal: 7 }),
+      status({
+        inboxFetched: 1,
+        inboxStored: 3200,
+        inboxTotal: 12450,
+        allMailFetched: 1,
+        allMailStored: 7,
+        allMailTotal: 7,
+      }),
     );
-    expect(q('inbox-fetched')!.textContent!.trim()).toBe('3,200 of 12,450 · 25%');
-    expect(q('all-mail-fetched')!.textContent!.trim()).toBe('7 of 7 · 100%');
+    expect(q('inbox-stored')!.textContent!.trim()).toBe('3,200 of 12,450 · 25%');
+    expect(q('all-mail-stored')!.textContent!.trim()).toBe('7 of 7 · 100%');
   });
 
-  it('null or missing totals show the count only', async () => {
-    const { q } = await render(status({ inboxFetched: 3200, inboxTotal: null }));
-    expect(q('inbox-fetched')!.textContent!.trim()).toBe('3,200');
-    expect(q('all-mail-fetched')!.textContent!.trim()).toBe('0');
+  it('before any fetch: 0 of the Gmail totals', async () => {
+    const { q } = await render(status({ inboxTotal: 400, allMailTotal: 1000 }));
+    expect(q('inbox-stored')!.textContent!.trim()).toBe('0 of 400 · 0%');
+    expect(q('all-mail-stored')!.textContent!.trim()).toBe('0 of 1,000 · 0%');
+  });
+
+  it('null or missing totals show the stored count only', async () => {
+    const { q } = await render(status({ inboxStored: 3200, inboxTotal: null }));
+    expect(q('inbox-stored')!.textContent!.trim()).toBe('3,200');
+    expect(q('all-mail-stored')!.textContent!.trim()).toBe('0');
+  });
+
+  it('a total below stored still renders (the API clamps it; the pipe caps at 100%)', async () => {
+    const { q } = await render(status({ inboxStored: 12, inboxTotal: 10 }));
+    expect(q('inbox-stored')!.textContent!.trim()).toMatch(/^12 of 10/);
+  });
+
+  it('Resync labels posts, reloads the status and shows the hint; no confirm', async () => {
+    const { fixture, q } = await render(status());
+    expect(q('resync-hint')!.textContent).toContain('changes nothing in Gmail');
+    const calls = fetch.getStatus.mock.calls.length;
+    q('resync')!.click();
+    await fixture.whenStable();
+    expect(fetch.resyncLabels).toHaveBeenCalledTimes(1);
+    expect(fetch.getStatus).toHaveBeenCalledTimes(calls + 1);
+    expect(document.querySelector('mat-dialog-container')).toBeNull();
+  });
+
+  it('Resync labels is disabled before Gmail is connected', async () => {
+    const { q } = await render(status(), false);
+    expect(q('resync')!.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('Resync labels is disabled on an account mismatch', async () => {
+    const { q } = await render(status({ accountMismatch: true }));
+    expect(q('resync')!.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('a running resync disables the button and shows in Running jobs with its step', async () => {
+    const { fixture, q } = await render(status());
+    expect(q('resync')!.hasAttribute('disabled')).toBe(false);
+    const progress = { done: 4, total: 8, message: 'Resyncing labels' };
+    jobs.held.set([job('running', { id: 'r', type: 'label_resync', progress })]);
+    await fixture.whenStable();
+    expect(q('resync')!.hasAttribute('disabled')).toBe(true);
+    expect(q('job-row')!.textContent).toContain('Resync labels');
+    const text = q('job-progress-text')!.textContent!.replace(/\s+/g, ' ').trim();
+    expect(text).toBe('4 of 8 · 50% · Resyncing labels');
+    expect(q('job-pause')).not.toBeNull();
+    expect(q('job-cancel')).not.toBeNull();
   });
 
   it('the Running jobs row uses the same done of total formatter', async () => {
@@ -321,7 +290,7 @@ describe('DashboardPage', () => {
       await fixture.whenStable();
       const calls = fetch.getStatus.mock.calls.length;
 
-      fetch.getStatus.mockReturnValue(of(status({ activeJob: job('running'), inboxFetched: 40 })));
+      fetch.getStatus.mockReturnValue(of(status({ activeJob: job('running'), inboxStored: 40 })));
       for (let v = 3; v < 6; v++) {
         jobs.held.set([
           job('running', { version: v, progress: { done: v * 10, total: 100, message: null } }),
@@ -333,7 +302,33 @@ describe('DashboardPage', () => {
       vi.advanceTimersByTime(STATUS_REFRESH_MS);
       await fixture.whenStable();
       expect(fetch.getStatus).toHaveBeenCalledTimes(calls + 1);
-      expect(q('inbox-fetched')!.textContent).toContain('40');
+      expect(q('inbox-stored')!.textContent).toContain('40');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a sender fetch progress tick reloads the stored counters', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const sender = (done: number) =>
+        job('running', {
+          id: 's',
+          type: 'sender_fetch',
+          progress: { done, total: 9, message: null },
+        });
+      const { fixture, q } = await render(status());
+      jobs.held.set([sender(1)]);
+      await fixture.whenStable();
+      const calls = fetch.getStatus.mock.calls.length;
+
+      fetch.getStatus.mockReturnValue(of(status({ allMailStored: 6 })));
+      jobs.held.set([sender(6)]);
+      await fixture.whenStable();
+      vi.advanceTimersByTime(STATUS_REFRESH_MS);
+      await fixture.whenStable();
+      expect(fetch.getStatus).toHaveBeenCalledTimes(calls + 1);
+      expect(q('all-mail-stored')!.textContent!.trim()).toBe('6');
     } finally {
       vi.useRealTimers();
     }
@@ -379,18 +374,18 @@ describe('DashboardPage', () => {
   });
 
   it('a failed refetch shows the error and Retry next to the last status', async () => {
-    const { fixture, q } = await render(status({ inboxFetched: 3 }));
+    const { fixture, q } = await render(status({ inboxStored: 3 }));
     fetch.getStatus.mockReturnValue(throwError(() => new Error('offline')));
     fixture.componentInstance.load();
     await fixture.whenStable();
     expect(q('load-error')!.textContent).toContain('could not be refreshed');
-    expect(q('inbox-fetched')!.textContent).toContain('3');
+    expect(q('inbox-stored')!.textContent).toContain('3');
 
-    fetch.getStatus.mockReturnValue(of(status({ inboxFetched: 4 })));
+    fetch.getStatus.mockReturnValue(of(status({ inboxStored: 4 })));
     q('load-error')!.querySelector('button')!.click();
     await fixture.whenStable();
     expect(q('load-error')).toBeNull();
-    expect(q('inbox-fetched')!.textContent).toContain('4');
+    expect(q('inbox-stored')!.textContent).toContain('4');
   });
 
   it('shows Pausing… until the job status changes and blocks a repeat click', async () => {
