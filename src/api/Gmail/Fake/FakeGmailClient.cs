@@ -228,9 +228,19 @@ public sealed partial class FakeGmailClient : IGmailClient
     public Task<IReadOnlyList<GmailMessageLabels>> GetMessagesLabelsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
         GetMessagesAsync(ids, message => new GmailMessageLabels(message.Id, [.. message.LabelIds]), m => m.Id, ct);
 
-    /// <summary>One <c>messages.get</c> per distinct id, through the same retry path and failure injection as Gmail's batch.</summary>
-    private async Task<IReadOnlyList<T>> GetMessagesAsync<T>(
+    private Task<IReadOnlyList<T>> GetMessagesAsync<T>(
         IReadOnlyList<string> ids, Func<FakeMessage, T> map, Func<T, string> idOf, CancellationToken ct)
+        where T : class =>
+        GetInBatchAsync(ids, id => messages.Find(m => m.Id == id) is { } message ? map(message) : null, idOf, ct);
+
+    /// <summary>One <c>labels.get</c> per distinct id, as a batch; a label not in the store is omitted (Gmail's 404).</summary>
+    public Task<IReadOnlyList<GmailLabelTotal>> GetLabelsMessagesTotalAsync(IReadOnlyList<string> labelIds, CancellationToken ct) =>
+        GetInBatchAsync(labelIds, id => labels.Exists(id) ? new GmailLabelTotal(id, CountLabel(id)) : null, l => l.Id, ct);
+
+    /// <summary>One get per distinct id, through the same retry path and failure injection as Gmail's batch; null lookups are 404s.</summary>
+    private async Task<IReadOnlyList<T>> GetInBatchAsync<T>(
+        IReadOnlyList<string> ids, Func<string, T?> lookup, Func<T, string> idOf, CancellationToken ct)
+        where T : class
     {
         ArgumentNullException.ThrowIfNull(ids);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
@@ -255,9 +265,9 @@ public sealed partial class FakeGmailClient : IGmailClient
 
                 lock (gate)
                 {
-                    if (messages.Find(m => m.Id == id) is { } message)
+                    if (lookup(id) is { } item)
                     {
-                        succeeded.Add(map(message));
+                        succeeded.Add(item);
                     }
                 }
             }
@@ -287,10 +297,13 @@ public sealed partial class FakeGmailClient : IGmailClient
         ArgumentException.ThrowIfNullOrWhiteSpace(labelId);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
-        // Like Gmail, a message in Spam or Trash no longer counts towards its other labels.
-        return await RetryAsync(() => (long)messages.Count(m => m.LabelIds.Contains(labelId, StringComparer.OrdinalIgnoreCase)
-            && (IsSpamOrTrash(labelId) || !m.LabelIds.Any(IsSpamOrTrash))), ct).ConfigureAwait(false);
+        return await RetryAsync(() => CountLabel(labelId), ct).ConfigureAwait(false);
     }
+
+    /// <summary>Like Gmail, a message in Spam or Trash no longer counts towards its other labels. Call under <c>gate</c>.</summary>
+    private long CountLabel(string labelId) =>
+        messages.Count(m => m.LabelIds.Contains(labelId, StringComparer.OrdinalIgnoreCase)
+            && (IsSpamOrTrash(labelId) || !m.LabelIds.Any(IsSpamOrTrash)));
 
     public async Task<GmailMessageBody?> GetMessageBodyAsync(string id, CancellationToken ct)
     {

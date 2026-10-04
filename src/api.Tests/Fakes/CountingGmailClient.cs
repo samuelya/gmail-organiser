@@ -107,6 +107,19 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         }
     }
 
+    /// <summary>Runs before each batched label totals read, for example to delete a label in Gmail meanwhile.</summary>
+    public Func<IReadOnlyList<string>, Task>? BeforeLabelTotals { get; set; }
+
+    public async Task<IReadOnlyList<GmailLabelTotal>> GetLabelsMessagesTotalAsync(IReadOnlyList<string> labelIds, CancellationToken ct)
+    {
+        if (BeforeLabelTotals is { } before)
+        {
+            await before(labelIds);
+        }
+
+        return await inner.GetLabelsMessagesTotalAsync(labelIds, ct);
+    }
+
     /// <summary>Runs before each body (or body and attachments) fetch, for example to hold it and measure how many run at once.</summary>
     public Func<string, CancellationToken, Task>? BeforeBody { get; set; }
 

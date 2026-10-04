@@ -18,10 +18,14 @@ public static partial class LabelPlanBuilder
     /// <param name="labels">The account's labels in catalogue order (oldest first) with their message counts; system labels are ignored.</param>
     /// <param name="protectedNames">Label names (case-insensitive) that are never proposed: the action and delete labels, the Apps Script labels.</param>
     /// <param name="filtersByLabelId">Active filter ids by the label ids their action adds or removes.</param>
+    /// <param name="countsAreExact">
+    /// False when the counts come from the fetched mail only: a count of 0 then proves nothing, so no label is proposed as empty.
+    /// </param>
     public static IReadOnlyList<LabelPlanItem> Build(
         IReadOnlyList<(GmailLabel Label, long Count)> labels,
         IReadOnlyCollection<string> protectedNames,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> filtersByLabelId)
+        IReadOnlyDictionary<string, IReadOnlyList<string>> filtersByLabelId,
+        bool countsAreExact = true)
     {
         ArgumentNullException.ThrowIfNull(labels);
         ArgumentNullException.ThrowIfNull(protectedNames);
@@ -37,23 +41,37 @@ public static partial class LabelPlanBuilder
 
         IReadOnlyList<string> Filters(GmailLabel label) => filtersByLabelId.GetValueOrDefault(label.Id) ?? [];
 
-        // A parent, existing or one a nest proposal points at, keeps its children's place in the tree.
-        bool IsParent(Entry e) =>
-            user.Exists(o => o.Label.Name.StartsWith(e.Label.Name + "/", StringComparison.OrdinalIgnoreCase))
-            || nests.Exists(n => string.Equals(n.Parent, e.Label.Name, StringComparison.OrdinalIgnoreCase));
+        // A parent, existing or one a kept nest proposal points at, keeps its children's place in the tree.
+        bool HasChildren(Entry e) =>
+            user.Exists(o => o.Label.Name.StartsWith(e.Label.Name + "/", StringComparison.OrdinalIgnoreCase));
+        HashSet<string> NestParents(IReadOnlyCollection<string> droppedIds) =>
+            nests.Where(n => !droppedIds.Contains(n.Entry.Label.Id)).Select(n => n.Parent).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var e in candidates.Where(e => e.Count == 0 && !IsParent(e)))
+        // An empty label that a surviving nest moves under stays; keeping it can make it a parent in turn.
+        var empty = countsAreExact ? candidates.Where(e => e.Count == 0 && !HasChildren(e)).ToList() : [];
+        int kept;
+        do
+        {
+            var parents = NestParents([.. empty.Select(e => e.Label.Id)]);
+            kept = empty.RemoveAll(e => parents.Contains(e.Label.Name));
+        }
+        while (kept > 0);
+
+        foreach (var e in empty)
         {
             items.Add(Item(LabelPlanItemKind.Empty, e, Filters(e.Label), "No message carries this label."));
             handled.Add(e.Label.Id);
         }
+
+        // A parent is never merged away. Merging only drops nests, so these parents are a superset of the final ones.
+        var nestParents = NestParents(handled);
+        bool IsParent(Entry e) => HasChildren(e) || nestParents.Contains(e.Label.Name);
 
         // Most messages first, then the older label: each label merges into the first duplicate ahead of it.
         var ordered = candidates.Where(e => !handled.Contains(e.Label.Id))
             .OrderByDescending(e => e.Count)
             .ThenBy(e => e.Index)
             .ToList();
-        var targets = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < ordered.Count; i++)
         {
             var into = ordered[i];
@@ -62,7 +80,7 @@ public static partial class LabelPlanBuilder
                 continue;
             }
 
-            foreach (var e in ordered.Skip(i + 1).Where(e => !handled.Contains(e.Label.Id) && !targets.Contains(e.Label.Id)))
+            foreach (var e in ordered.Skip(i + 1).Where(e => !handled.Contains(e.Label.Id) && !IsParent(e)))
             {
                 if (!AreNearDuplicates(e.Label.Name, into.Label.Name))
                 {
@@ -78,11 +96,11 @@ public static partial class LabelPlanBuilder
                     TargetLabelName = into.Label.Name,
                 });
                 handled.Add(e.Label.Id);
-                targets.Add(into.Label.Id);
             }
         }
 
         // A parent stays where it is; renaming it would split it from its children.
+        nestParents = NestParents(handled);
         foreach (var n in nests.Where(n => !handled.Contains(n.Entry.Label.Id) && !IsParent(n.Entry)))
         {
             items.Add(Item(LabelPlanItemKind.Nest, n.Entry, Filters(n.Entry.Label), n.Rationale) with { ProposedName = n.ProposedName });
@@ -112,8 +130,8 @@ public static partial class LabelPlanBuilder
     }
 
     /// <summary>
-    /// Equal normalised names, or names of at least <see cref="FuzzyMinLength"/> chars one edit apart. A digit changed
-    /// to another digit is not an edit here: <c>2023</c> and <c>2024</c> are different labels, not a typo.
+    /// Equal normalised names, or names of at least <see cref="FuzzyMinLength"/> chars one edit apart. A digit changed,
+    /// inserted or dropped is not a typo: <c>2023</c> and <c>2024</c>, or <c>Sprint 1</c> and <c>Sprint 10</c>, are different labels.
     /// </summary>
     public static bool AreNearDuplicates(string a, string b)
     {
@@ -142,7 +160,7 @@ public static partial class LabelPlanBuilder
                 && longer.AsSpan(at + 1).SequenceEqual(shorter.AsSpan(at + 1));
         }
 
-        return longer.AsSpan(at + 1).SequenceEqual(shorter.AsSpan(at));
+        return !char.IsAsciiDigit(longer[at]) && longer.AsSpan(at + 1).SequenceEqual(shorter.AsSpan(at));
     }
 
     /// <summary>

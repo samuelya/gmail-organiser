@@ -28,6 +28,8 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
 
     private FakeGmailClient Gmail => host.Services.GetRequiredService<FakeGmailClient>();
 
+    private CountingGmailClient Counting => host.Services.GetRequiredService<CountingGmailClient>();
+
     public async ValueTask InitializeAsync()
     {
         await postgres.ResetFetchStateAsync();
@@ -42,7 +44,8 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
             // One attempt, so an injected rate limit fails the request without real backoff delays.
             var retry = new GmailRetryPolicy(Options.Create(new GmailOptions { MaxRetryAttempts = 1 }), TimeProvider.System);
             services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), [], retry));
-            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<FakeGmailClient>());
+            services.AddSingleton(sp => new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>()));
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
             services.AddSingleton<TimeProvider>(time);
         }));
     }
@@ -125,11 +128,11 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         item.ProposedName.ShouldBe("Synthetic/Receipts Archive");
         edited.UpdatedAt.ShouldBe(Now);
 
-        var retargeted = await PatchOkAsync(plan.Id, duplicate.Id, new UpdatePlanItemRequest("rejected", null, labels.Unused.Id));
+        var retargeted = await PatchOkAsync(plan.Id, duplicate.Id, new UpdatePlanItemRequest("rejected", null, labels.Nested.Id));
         var merge = retargeted.Items.Single(i => i.Id == duplicate.Id);
         merge.Status.ShouldBe(LabelPlanItemStatus.Rejected);
-        merge.TargetLabelId.ShouldBe(labels.Unused.Id);
-        merge.TargetLabelName.ShouldBe(labels.Unused.Name);
+        merge.TargetLabelId.ShouldBe(labels.Nested.Id);
+        merge.TargetLabelName.ShouldBe(labels.Nested.Name);
         retargeted.Items.Single(i => i.Id == nest.Id).Status.ShouldBe(LabelPlanItemStatus.Accepted);
 
         (await GetAsync<LabelPlanDto>($"{Plans}/latest")).Items.Single(i => i.Id == duplicate.Id).Status.ShouldBe(LabelPlanItemStatus.Rejected);
@@ -151,6 +154,10 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         (await PatchAsync(plan.Id, duplicate.Id, new UpdatePlanItemRequest(null, null, duplicate.LabelId))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PatchAsync(plan.Id, duplicate.Id, new UpdatePlanItemRequest(null, null, labels.Protected.Id))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, null, labels.Unused.Id))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await PatchAsync(plan.Id, duplicate.Id, new UpdatePlanItemRequest(null, null, labels.Unused.Id))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, labels.Nested.Name, null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, labels.Protected.Name.ToUpperInvariant(), null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await PatchAsync(plan.Id, nest.Id, new UpdatePlanItemRequest(null, $"{labels.Duplicate.Name}/Child", null))).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await PatchAsync(plan.Id, Guid.NewGuid(), new UpdatePlanItemRequest("accepted", null, null))).StatusCode.ShouldBe(HttpStatusCode.NotFound);
         (await PatchAsync(Guid.NewGuid(), nest.Id, new UpdatePlanItemRequest("accepted", null, null))).StatusCode.ShouldBe(HttpStatusCode.NotFound);
 
@@ -175,19 +182,51 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         (await PatchAsync(plan.Id, plan.Items[0].Id, new UpdatePlanItemRequest("accepted", null, null))).StatusCode.ShouldBe(HttpStatusCode.Conflict);
     }
 
-    [Fact]
-    public async Task A_plan_being_applied_cannot_be_discarded_or_edited()
+    [Theory]
+    [InlineData(LabelPlanStatus.Applying)]
+    [InlineData(LabelPlanStatus.Applied)]
+    public async Task A_plan_being_or_already_applied_cannot_be_discarded_or_edited(LabelPlanStatus status)
     {
         await SeedMailboxAsync();
         var plan = await CreateAsync();
         await using (var db = postgres.CreateDbContext())
         {
-            await db.LabelPlans.Where(p => p.Id == plan.Id).ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, LabelPlanStatus.Applying), Ct);
+            await db.LabelPlans.Where(p => p.Id == plan.Id).ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, status), Ct);
         }
 
         (await SendAsync(HttpMethod.Post, $"{Plans}/{plan.Id}/discard")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await PatchAsync(plan.Id, plan.Items[0].Id, new UpdatePlanItemRequest("accepted", null, null))).StatusCode.ShouldBe(HttpStatusCode.Conflict);
-        (await GetAsync<LabelPlanDto>($"{Plans}/{plan.Id}")).Status.ShouldBe(LabelPlanStatus.Applying);
+        (await GetAsync<LabelPlanDto>($"{Plans}/{plan.Id}")).Status.ShouldBe(status);
+    }
+
+    [Fact]
+    public async Task A_label_deleted_in_gmail_while_counting_is_left_out()
+    {
+        var labels = await SeedMailboxAsync();
+        Counting.BeforeLabelTotals = _ =>
+        {
+            Gmail.DeleteLabel(labels.Unused.Id);
+            return Task.CompletedTask;
+        };
+
+        var plan = await CreateAsync();
+
+        plan.LabelCount.ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 2);
+        plan.Items.ShouldNotContain(i => i.LabelId == labels.Unused.Id);
+        plan.Items.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Another_gmail_error_while_counting_is_502_and_stores_no_plan()
+    {
+        await SeedMailboxAsync();
+        Gmail.FailNext(HttpStatusCode.BadRequest, 1, afterCalls: 2);
+
+        var response = await SendAsync(HttpMethod.Post, Plans);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadGateway);
+        await using var db = postgres.CreateDbContext();
+        (await db.LabelPlans.CountAsync(Ct)).ShouldBe(0);
     }
 
     [Fact]
@@ -241,7 +280,7 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         await using var db = postgres.CreateDbContext();
         db.Filters.AddRange(Filter("filter-active", unused.Id, deletedAt: null), Filter("filter-deleted", unused.Id, deletedAt: Now));
         await db.SaveChangesAsync(Ct);
-        return new SeededLabels(receipts, duplicate, protectedLabel, unused);
+        return new SeededLabels(receipts, duplicate, protectedLabel, unused, nested);
     }
 
     private static FakeMessage Message(string id, string labelId) =>
@@ -286,5 +325,5 @@ public sealed class LabelPlanTests(ApiFactory factory, PostgresFixture postgres)
         return client.SendAsync(new HttpRequestMessage(method, path) { Content = content }, Ct);
     }
 
-    private sealed record SeededLabels(GmailLabel Receipts, GmailLabel Duplicate, GmailLabel Protected, GmailLabel Unused);
+    private sealed record SeededLabels(GmailLabel Receipts, GmailLabel Duplicate, GmailLabel Protected, GmailLabel Unused, GmailLabel Nested);
 }

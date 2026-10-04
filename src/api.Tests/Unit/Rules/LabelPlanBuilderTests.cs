@@ -24,6 +24,8 @@ public sealed class LabelPlanBuilderTests
     [InlineData("Shoping", "Shopping", true)]
     [InlineData("Bils", "Bills", false)]
     [InlineData("Invoices 2023", "Invoices 2024", false)]
+    [InlineData("Sprint 1", "Sprint 10", false)]
+    [InlineData("Room 10", "Room 100", false)]
     [InlineData("Invoice", "Invoise", true)]
     [InlineData("Family", "Friends", false)]
     public void Near_duplicates_are_equal_normalised_or_one_edit_apart_from_six_chars(string a, string b, bool expected)
@@ -157,6 +159,52 @@ public sealed class LabelPlanBuilderTests
         items.Select(i => i.LabelId).ShouldBeUnique();
         items.Single(i => i.LabelId == "Label_2").Kind.ShouldBe(LabelPlanItemKind.Empty);
         items.Single(i => i.LabelId == "Label_3").Kind.ShouldBe(LabelPlanItemKind.Nest);
+    }
+
+    [Fact]
+    public void A_parent_is_never_merged_away()
+    {
+        var items = Build([User("Label_1", "Receipts", 2), User("Label_2", "Receipts/2023", 1), User("Label_3", "Receipt", 5)]);
+
+        items.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_label_that_a_nest_moves_under_is_not_merged_away()
+    {
+        var items = Build([User("Label_1", "Invoice", 2), User("Label_2", "Invoices", 5), User("Label_3", "Invoice-2023", 1)]);
+
+        var item = items.ShouldHaveSingleItem();
+        item.Kind.ShouldBe(LabelPlanItemKind.Nest);
+        item.LabelId.ShouldBe("Label_3");
+        item.ProposedName.ShouldBe("Invoice/2023");
+    }
+
+    [Fact]
+    public void An_empty_label_is_deleted_when_its_only_would_be_child_is_deleted_too()
+    {
+        var items = Build([User("Label_1", "Workshop", 0), User("Label_2", "Workshop-Old", 0)]);
+
+        items.Count.ShouldBe(2);
+        items.ShouldAllBe(i => i.Kind == LabelPlanItemKind.Empty);
+    }
+
+    [Fact]
+    public void An_empty_label_stays_while_a_kept_label_nests_under_it()
+    {
+        var items = Build([User("Label_1", "Workshop", 0), User("Label_2", "Workshop-Old", 3)]);
+
+        var item = items.ShouldHaveSingleItem();
+        item.Kind.ShouldBe(LabelPlanItemKind.Nest);
+        item.ProposedName.ShouldBe("Workshop/Old");
+    }
+
+    [Fact]
+    public void Counts_from_fetched_mail_propose_no_empty_label()
+    {
+        var items = LabelPlanBuilder.Build([User("Label_1", "Example", 5), User("Label_2", "Synthetic Empty", 0)], [], NoFilters, countsAreExact: false);
+
+        items.ShouldBeEmpty();
     }
 
     private static (GmailLabel Label, long Count) User(string id, string name, long count) =>

@@ -1,5 +1,6 @@
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using Google;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace GmailOrganiser.Rules.Labels;
@@ -17,7 +18,10 @@ public static class LabelPlanEndpoints
         return endpoints;
     }
 
-    /// <summary>Builds a new draft plan (the previous draft is discarded); 503 when Gmail is not connected or rate-limiting.</summary>
+    /// <summary>
+    /// Builds a new draft plan (the previous draft is discarded); 503 when Gmail is not connected or rate-limiting, 502
+    /// when Gmail refuses a read.
+    /// </summary>
     private static async Task<Results<Created<LabelPlanDto>, ProblemHttpResult>> CreateAsync(LabelPlanService plans, CancellationToken ct)
     {
         try
@@ -32,6 +36,11 @@ public static class LabelPlanEndpoints
         catch (GmailRateLimitedException ex)
         {
             return GmailProblems.RateLimited(ex);
+        }
+        catch (GoogleApiException ex)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status502BadGateway, title: "Gmail refused a label read", detail: ex.Message);
         }
     }
 
@@ -75,7 +84,7 @@ public static class LabelPlanEndpoints
         }
     }
 
-    /// <summary>Discards the plan; 409 while it is being applied.</summary>
+    /// <summary>Discards the plan; 409 once it is being applied.</summary>
     private static async Task<Results<Ok<LabelPlanDto>, NotFound, ProblemHttpResult>> DiscardAsync(
         Guid id, LabelPlanService plans, CancellationToken ct) =>
         ToResult(await plans.DiscardAsync(id, ct));
