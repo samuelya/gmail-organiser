@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Gmail;
@@ -10,6 +11,9 @@ namespace GmailOrganiser.Settings;
 /// <summary>Input checks for the settings endpoints; each returns field errors for a validation ProblemDetails.</summary>
 public static class SettingsValidation
 {
+    // Mirrors SEARCHABLE_LABEL_ in scripts/apps-script/auto-archive.gs: the script skips any other label name.
+    private static readonly Regex ScriptSearchableLabel = new(@"^[\p{L}\p{N}_/][\p{L}\p{N}_/ -]*\z", RegexOptions.CultureInvariant);
+
     public const int MaxModelNameLength = 200;
     public const int MaxUrlLength = 2048;
     public const int MaxClientIdLength = 256;
@@ -50,6 +54,10 @@ public static class SettingsValidation
     public const int MinClaudeMaxTurns = 10;
     public const int MaxClaudeMaxTurns = 300;
     public const int MaxLabelNameLength = GmailLimits.LabelNameMaxLength;
+    public const int MaxAppsScriptRules = 100;
+    public const int MinArchiveRuleDays = 1;
+    public const int MaxArchiveRuleDays = 3650;
+    public const int MaxKeepInInboxLabels = 50;
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
@@ -116,6 +124,11 @@ public static class SettingsValidation
             ValidateAttachments(errors, attachments);
         }
 
+        if (request.AppsScript is { } appsScript)
+        {
+            ValidateAppsScript(errors, appsScript);
+        }
+
         ValidateLabelNames(errors, request, current ?? new AppSettings());
         return errors;
     }
@@ -151,6 +164,57 @@ public static class SettingsValidation
 
     /// <summary>Trims a prompt template; a blank template clears the override so the built-in one applies.</summary>
     public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
+
+    /// <summary>Trims the label names of a validated block; a missing list becomes empty.</summary>
+    public static AppsScriptSettings NormaliseAppsScript(AppsScriptSettings value) => value with
+    {
+        Rules = [.. (value.Rules ?? []).Select(r => r with { Label = r.Label.Trim() })],
+        KeepInInboxLabels = [.. (value.KeepInInboxLabels ?? []).Select(l => l.Trim())],
+    };
+
+    // A rule's label need not exist in Gmail yet: the script skips missing labels.
+    private static void ValidateAppsScript(Dictionary<string, string[]> errors, AppsScriptSettings request)
+    {
+        // The JSON body can carry nulls the non-nullable annotations don't rule out.
+        var rules = request.Rules ?? [];
+        var keep = request.KeepInInboxLabels ?? [];
+        if (rules.Count > MaxAppsScriptRules)
+        {
+            errors["appsScript.rules"] = [$"At most {MaxAppsScriptRules} rules."];
+        }
+        else
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var i = 0; i < rules.Count; i++)
+            {
+                var field = $"appsScript.rules[{i}]";
+                if (rules[i] is not { } rule)
+                {
+                    errors[field] = ["Required."];
+                    continue;
+                }
+
+                // The script searches "A B" as "A-B", so the two would be one rule.
+                if (CheckScriptLabelName(errors, $"{field}.label", rule.Label ?? "") && !seen.Add(rule.Label!.Trim().Replace(' ', '-')))
+                {
+                    errors[$"{field}.label"] = ["Each label may have one rule."];
+                }
+
+                CheckRange(errors, $"{field}.days", rule.Days, MinArchiveRuleDays, MaxArchiveRuleDays);
+            }
+        }
+
+        if (keep.Count > MaxKeepInInboxLabels)
+        {
+            errors["appsScript.keepInInboxLabels"] = [$"At most {MaxKeepInInboxLabels} labels."];
+            return;
+        }
+
+        for (var i = 0; i < keep.Count; i++)
+        {
+            CheckScriptLabelName(errors, $"appsScript.keepInInboxLabels[{i}]", keep[i] ?? "");
+        }
+    }
 
     private static void ValidateAttachments(Dictionary<string, string[]> errors, UpdateAttachmentSettingsRequest request)
     {
@@ -204,6 +268,23 @@ public static class SettingsValidation
         string.Equals(actionLabelName, deleteLabelName, StringComparison.OrdinalIgnoreCase);
 
     // Trimmed, non-empty, a valid user label path with no Gmail system label name at any level, at most 225 characters.
+    /// <summary>A Gmail label name the Apps Script can also search for: letters, digits, '_', '/', ' ' and '-', not leading with ' ' or '-'.</summary>
+    private static bool CheckScriptLabelName(Dictionary<string, string[]> errors, string field, string value)
+    {
+        if (!CheckLabelName(errors, field, value))
+        {
+            return false;
+        }
+
+        if (ScriptSearchableLabel.IsMatch(value.Trim()))
+        {
+            return true;
+        }
+
+        errors[field] = ["The Apps Script can only use labels of letters, digits, spaces, '_', '-' and '/', not starting with '-'."];
+        return false;
+    }
+
     private static bool CheckLabelName(Dictionary<string, string[]> errors, string field, string? value)
     {
         if (value is null)

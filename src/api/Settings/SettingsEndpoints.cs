@@ -113,6 +113,7 @@ public static class SettingsEndpoints
         Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
         ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,
         DeleteLabelName = request.DeleteLabelName?.Trim() ?? s.DeleteLabelName,
+        AppsScript = request.AppsScript is { } appsScript ? SettingsValidation.NormaliseAppsScript(appsScript) : s.AppsScript,
     };
 
     /// <summary>Applies a validated request; listed types change, the others keep their saved value.</summary>
