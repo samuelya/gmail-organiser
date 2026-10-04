@@ -12,8 +12,8 @@ public sealed partial class McpSubmitReviewTests
 {
     [Theory]
     [InlineData(null, "Synthetic Types/Power", "Finance/Invoices", "Document-type labels are off")]
-    [InlineData("Synthetic Types", "Synthetic Types/Power/Deep", "Finance/Invoices", "exactly one level")]
-    [InlineData("Synthetic Types", "Other/Power", "Finance/Invoices", "exactly one level")]
+    [InlineData("Synthetic Types", "Synthetic Types/Power/Grid/Peak/Night", "Finance/Invoices", "1 to 3 levels")]
+    [InlineData("Synthetic Types", "Other/Power", "Finance/Invoices", "1 to 3 levels")]
     [InlineData("Synthetic Types", "INBOX/Power", "Finance/Invoices", "Gmail accepts")]
     [InlineData("Synthetic Types", "Synthetic Types/Power", "synthetic types/power", "differ from the topic")]
     public async Task Alternative_document_type_is_checked_as_the_review_edit_checks_it(
@@ -37,6 +37,7 @@ public sealed partial class McpSubmitReviewTests
     [InlineData("", true, null, null)]
     [InlineData(" synthetic types/Power ", true, "Synthetic Types/Power", "Synthetic Types/Power")]
     [InlineData("Power", true, "Synthetic Types/Power", "Synthetic Types/Power")]
+    [InlineData("Synthetic Types/Utilities/Power", true, "Synthetic Types/Utilities/Power", "Synthetic Types/Utilities/Power")]
     public async Task Alternative_keeps_clears_or_sets_the_document_type_and_accepting_applies_it(
         string? type, bool set, string? stored, string? expected)
     {

@@ -20,7 +20,10 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v4");
+        template.Version.ShouldBe("analysis-v5");
+        template.Text.ShouldContain("`topicLabel` is the processor's organisation label plus `/<Merchant>`");
+        template.Text.ShouldContain("the same processor and merchant always get the same `topicLabel`");
+        template.Text.ShouldContain("A label 1 to 3 levels under the document-type parent");
         Regex.Matches(template.Text, @"\{\{([a-zA-Z]+)\}\}").Select(m => m.Groups[1].Value).Distinct().Order(StringComparer.Ordinal)
             .ShouldBe(["actionLabel", "attachments", "deleteLabel", "documentTypes", "emails", "labelTree", "memory"]);
         template.Text.IndexOf("{{documentTypes}}", StringComparison.Ordinal)
@@ -37,27 +40,34 @@ public sealed class AnalysisPromptBuilderTests
     }
 
     [Fact]
-    public void Document_types_list_the_direct_children_of_the_parent_in_ordinal_order()
+    public void Document_types_list_up_to_three_levels_under_the_parent_in_ordinal_order()
     {
-        var labels = new[] { "Types", "Types/Water", "types/Gas", "Types/Gas/Detail", "TypesOther/X", "Topic/Types/Y", "Types/Electricity", "Types/Electricity" };
+        var labels = new[]
+        {
+            "Types", "Types/Water", "types/Gas", "Types/Gas/Detail", "Types/Gas/Detail/Peak", "Types/Gas/Detail/Peak/Night",
+            "TypesOther/X", "Topic/Types/Y", "Types/Electricity", "Types/Electricity",
+        };
 
         var system = new AnalysisPromptBuilder(PromptTemplate.BuiltIn)
             .Build(Input([Email(1)], labels) with { DocumentTypeParent = "Types" })[0].Text;
 
-        system.ShouldEndWith("Document-type labels live under `Types`. Existing: `Types/Electricity`, `Types/Water`, `types/Gas`.");
+        system.ShouldEndWith("Document-type labels live under `Types`, 1 to 3 levels deep. Existing: `Types/Electricity`, "
+            + "`Types/Gas/Detail`, `Types/Gas/Detail/Peak`, `Types/Water`, `types/Gas`.");
     }
 
     [Fact]
-    public void Document_types_say_none_yet_and_stop_at_the_cap()
+    public void Document_types_say_none_yet_and_stop_at_the_cap_saying_more_were_omitted()
     {
         var builder = new AnalysisPromptBuilder(PromptTemplate.BuiltIn);
         var many = Enumerable.Range(0, AnalysisPromptBuilder.MaxDocumentTypes + 5).Select(i => $"Types/T{i:000}").ToList();
 
         builder.Build(Input([Email(1)]) with { DocumentTypeParent = "Types" })[0].Text
-            .ShouldEndWith("Document-type labels live under `Types`. Existing: none yet.");
+            .ShouldEndWith("Document-type labels live under `Types`, 1 to 3 levels deep. Existing: none yet.");
         var system = builder.Build(Input([Email(1)], many) with { DocumentTypeParent = "Types" })[0].Text;
-        system.ShouldContain($"`Types/T{AnalysisPromptBuilder.MaxDocumentTypes - 1:000}`.");
+        system.ShouldEndWith($"`Types/T{AnalysisPromptBuilder.MaxDocumentTypes - 1:000}`, (more omitted).");
         system.ShouldNotContain($"`Types/T{AnalysisPromptBuilder.MaxDocumentTypes:000}`");
+        builder.Build(Input([Email(1)], many[..AnalysisPromptBuilder.MaxDocumentTypes]) with { DocumentTypeParent = "Types" })[0].Text
+            .ShouldNotContain("(more omitted)");
     }
 
     [Fact]

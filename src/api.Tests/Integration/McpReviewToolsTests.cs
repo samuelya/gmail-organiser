@@ -244,7 +244,7 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         {
             await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { DocumentTypeParent = "Synthetic Types" }, Ct);
             var gmail = scope.ServiceProvider.GetRequiredService<IGmailClient>();
-            foreach (var name in new[] { "Synthetic Types/Power", "Synthetic Types/Gas", "Synthetic Types/Gas/Deep", "Other/Synthetic Types" })
+            foreach (var name in new[] { "Synthetic Types/Power", "Synthetic Types/Gas", "Synthetic Types/Gas/Deep", "Synthetic Types/Gas/Deep/Peak/Night", "Other/Synthetic Types" })
             {
                 await gmail.CreateLabelAsync(name, Ct);
             }
@@ -277,7 +277,7 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         var tree = McpTestClient.Structured(await McpTestClient.CallAsync(client, "get_label_tree", Ct));
         tree.GetProperty("documentTypeParent").GetString().ShouldBe("Synthetic Types");
         tree.GetProperty("documentTypes").EnumerateArray().Select(l => l.GetString())
-            .ShouldBe(["Synthetic Types/Gas", "Synthetic Types/Power"]);
+            .ShouldBe(["Synthetic Types/Gas", "Synthetic Types/Gas/Deep", "Synthetic Types/Power"]);
     }
 
     [Fact]

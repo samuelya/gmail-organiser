@@ -276,8 +276,8 @@ public static class SuggestionOutputParser
     }
 
     /// <summary>
-    /// The optional <c>documentTypeLabel</c> by <see cref="DocumentTypePath"/>: exactly one segment directly under
-    /// <paramref name="parent"/> (case-insensitive, returned with the parent as configured), not the topic label. Absent, null or blank is null, as
+    /// The optional <c>documentTypeLabel</c> by <see cref="DocumentTypePath"/>: 1 to <see cref="DocumentTypePath.MaxDepth"/>
+    /// levels under <paramref name="parent"/> (case-insensitive, returned with the parent as configured), not the topic label. Absent, null or blank is null, as
     /// is anything with the parent off; any other value is dropped with a note in <paramref name="dropped"/> and the
     /// email's suggestion stays valid.
     /// </summary>
@@ -302,7 +302,7 @@ public static class SuggestionOutputParser
         return DocumentTypePath.Normalise(value, parent, topicLabel, out var error) ?? Ignored(error switch
         {
             DocumentTypePathError.InvalidPath => "not a valid label path",
-            DocumentTypePathError.NotOneLevel => "not one level below the document-type parent",
+            DocumentTypePathError.NotUnderParent => "not 1 to 3 levels below the document-type parent",
             _ => "same as topicLabel",
         });
 
@@ -314,8 +314,8 @@ public static class SuggestionOutputParser
     }
 
     /// <summary>
-    /// <paramref name="value"/> (trimmed) as stored for a suggestion: a valid label path exactly one segment directly under
-    /// <paramref name="parent"/> (case-insensitive), spelled with the parent as configured; null otherwise. Memory answers
+    /// <paramref name="value"/> (trimmed) as stored for a suggestion: a valid label path 1 to <see cref="DocumentTypePath.MaxDepth"/> levels
+    /// under <paramref name="parent"/> (case-insensitive), spelled with the parent as configured; null otherwise. Memory answers
     /// with the same spelling as the model's rows, so both group together.
     /// </summary>
     public static string? DocumentTypeUnder(string parent, string value)

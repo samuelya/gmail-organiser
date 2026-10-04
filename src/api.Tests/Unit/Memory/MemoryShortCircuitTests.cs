@@ -73,7 +73,10 @@ public sealed class MemoryShortCircuitTests
     [InlineData("Type", " Type/Invoice ", true, true, "Type/Invoice")]
     [InlineData("Type", "Type/", true, false, null)]
     [InlineData("Type", "Other/Invoice", true, false, null)]
-    [InlineData("Type", "Type/Invoice/Paid", true, false, null)]
+    [InlineData("Type", "type/Utilities/Electricity", true, true, "Type/Utilities/Electricity")]
+    [InlineData("Type", "Type/Invoice/Paid/Card", true, true, "Type/Invoice/Paid/Card")]
+    [InlineData("Type", "Type/Invoice/Paid/Card/Debit", true, false, null)]
+    [InlineData("A/B/C/D", "A/B/C/D/Invoice/Paid", true, false, null)]
     public async Task Document_type_follows_the_parent_and_whether_the_pattern_decided_it(
         string? parent, string? patternType, bool decided, bool answers, string? expectedType)
     {

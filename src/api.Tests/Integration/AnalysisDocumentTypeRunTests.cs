@@ -19,6 +19,7 @@ public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFix
 {
     private const string Parent = "Types";
     private const string Existing = "Types/Invoice";
+    private const string Processor = "Finance/Payco";
     private readonly AnalysisRunHarness h = new(factory, postgres);
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -42,7 +43,27 @@ public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFix
         await AssertRowsAsync();
         await using var db = postgres.CreateDbContext();
         (await db.AnalysisRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id, Ct)).DocumentTypeParent.ShouldBe(Parent);
-        h.Chat.Requests.ShouldAllBe(r => r[0].Text.Contains($"Document-type labels live under `{Parent}`. Existing: `{Existing}`."));
+        h.Chat.Requests.ShouldAllBe(r => r[0].Text.Contains($"Document-type labels live under `{Parent}`, 1 to 3 levels deep. Existing: `{Existing}`."));
+    }
+
+    [Fact]
+    public async Task Nested_document_types_and_a_processor_merchant_topic_are_stored_as_the_model_answered()
+    {
+        await h.Gmail.Inner.CreateLabelAsync("Types/Utilities/Electricity", Ct);
+        await h.Gmail.Inner.CreateLabelAsync(Processor, Ct);
+        h.Chat.Respond = (ids, _, _, _) => Task.FromResult(NestedAnswer(ids));
+        await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+
+        h.Chat.Requests.ShouldAllBe(r => r[0].Text.Contains("`Types/Utilities/Electricity`"));
+        await using var db = postgres.CreateDbContext();
+        var rows = await db.Suggestions.AsNoTracking().ToListAsync(Ct);
+        rows.Where(s => s.SenderAddress == AnalysisRunHarness.Billing).ShouldAllBe(s =>
+            s.TopicLabel == Processor + "/Gridco" && s.IsNewLabel
+            && s.DocumentTypeLabel == "Types/Utilities/Electricity" && !s.DocumentTypeIsNew);
+        rows.Where(s => s.SenderAddress == AnalysisRunHarness.Shop).ShouldAllBe(s =>
+            s.DocumentTypeLabel == "Types/Utilities/Water/Meter" && s.DocumentTypeIsNew);
+        rows.Where(s => s.SenderAddress == AnalysisRunHarness.News).ShouldAllBe(s => s.DocumentTypeLabel == null);
     }
 
     [Fact]
@@ -101,6 +122,31 @@ public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFix
             {
                 'c' => "types/invoice",
                 'a' => "TYPES/Receipt",
+                _ => null,
+            },
+        }),
+    });
+
+    /// <summary>
+    /// A processor's receipt for an invented merchant with an existing nested type in other casing, a new 3-level type,
+    /// and no type for the third sender.
+    /// </summary>
+    private static string NestedAnswer(IEnumerable<string> ids) => JsonSerializer.Serialize(new
+    {
+        suggestions = ids.Select(id => new
+        {
+            id,
+            topicLabel = id[0] == 'c' ? Processor + "/Gridco" : AnalysisRunHarness.LabelFor(id),
+            isNewLabel = id[0] == 'c',
+            needsAction = false,
+            toBeDeleted = false,
+            unsubscribeSuggested = false,
+            confidence = 0.9,
+            reason = "Synthetic reason",
+            documentTypeLabel = id[0] switch
+            {
+                'c' => "types/utilities/electricity",
+                'a' => "TYPES/Utilities/Water/Meter",
                 _ => null,
             },
         }),

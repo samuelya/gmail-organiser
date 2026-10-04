@@ -10,7 +10,7 @@ namespace GmailOrganiser.Memory;
 /// without a model call. Protected members always go to the model, so a memory <c>toBeDeleted</c> never lands on
 /// protected mail. A group already filed under another personal label than the memorised one goes to the model too.
 /// With a document-type parent set, a pattern whose latest approval was not decided under it (or whose type is not
-/// directly under it) goes to the model once; the next approval relearns it. Suggestions only; the user still reviews them.
+/// 1 to <see cref="DocumentTypePath.MaxDepth"/> levels under it) goes to the model once; the next approval relearns it. Suggestions only; the user still reviews them.
 /// </summary>
 public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortCircuit
 {
@@ -41,7 +41,7 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
 
     /// <summary>
     /// The document-type label the pattern answers with: none with the parent off; with it on, the pattern is usable only
-    /// when its latest approval was decided under this parent and its label (if any) is exactly one level under it,
+    /// when its latest approval was decided under this parent and its label (if any) is 1 to 3 levels under it,
     /// spelled as the parser stores the model's (<see cref="SuggestionOutputParser.DocumentTypeUnder"/>).
     /// </summary>
     private static (bool Usable, string? Type) TypeOf(MemoryPattern pattern, ShortCircuitContext context)

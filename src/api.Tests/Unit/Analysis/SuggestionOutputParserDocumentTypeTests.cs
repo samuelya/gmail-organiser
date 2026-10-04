@@ -18,6 +18,10 @@ public sealed class SuggestionOutputParserDocumentTypeTests
     [InlineData(",\"documentTypeLabel\":\"Types/Invoice\"", Parent, "Types/Invoice")]
     [InlineData(",\"documentTypeLabel\":\" types/Invoice \"", Parent, "Types/Invoice")]
     [InlineData(",\"documentTypeLabel\":\"TYPES/Receipt\"", " Types ", "Types/Receipt")]
+    [InlineData(",\"documentTypeLabel\":\"types/Utilities/Electricity\"", Parent, "Types/Utilities/Electricity")]
+    [InlineData(",\"documentTypeLabel\":\"Types/Utilities/Power/Peak\"", Parent, "Types/Utilities/Power/Peak")]
+    [InlineData(",\"documentTypeLabel\":\"A/B/C/Kind/Sub\"", "A/B/C", "A/B/C/Kind/Sub")]
+    [InlineData(",\"documentTypeLabel\":\"A/B/C/D/Kind\"", "A/B/C/D", "A/B/C/D/Kind")]
     [InlineData(",\"documentTypeLabel\":\"Types/Invoice\"", null, null)]
     [InlineData(",\"documentTypeLabel\":\"Types/Invoice\"", " ", null)]
     [InlineData(",\"documentTypeLabel\":42", null, null)]
@@ -32,10 +36,10 @@ public sealed class SuggestionOutputParserDocumentTypeTests
 
     [Theory]
     [InlineData("42", "not a string")]
-    [InlineData("\"Other/Invoice\"", "not one level below the document-type parent")]
-    [InlineData("\"Types\"", "not one level below the document-type parent")]
-    [InlineData("\"TypesInvoice\"", "not one level below the document-type parent")]
-    [InlineData("\"Types/Invoice/Paid\"", "not one level below the document-type parent")]
+    [InlineData("\"Other/Invoice\"", "not 1 to 3 levels below the document-type parent")]
+    [InlineData("\"Types\"", "not 1 to 3 levels below the document-type parent")]
+    [InlineData("\"TypesInvoice\"", "not 1 to 3 levels below the document-type parent")]
+    [InlineData("\"Types/Utilities/Power/Peak/Night\"", "not 1 to 3 levels below the document-type parent")]
     [InlineData("\"Types/ Invoice\"", "not a valid label path")]
     [InlineData("\"Types//Invoice\"", "not a valid label path")]
     [InlineData("\"types/sub\"", "same as topicLabel")]
@@ -46,6 +50,28 @@ public sealed class SuggestionOutputParserDocumentTypeTests
         result.Errors.ShouldBeEmpty();
         result.Valid.ShouldHaveSingleItem().DocumentTypeLabel.ShouldBeNull();
         result.Dropped.ShouldHaveSingleItem().ShouldBe($"Email 'm1': 'documentTypeLabel' ignored ({reason}).");
+    }
+
+    [Theory]
+    [InlineData("A/B/C", "A/B/C/Kind/Sub/Detail")]
+    [InlineData("A/B/C/D", "A/B/C/D/Kind/Sub")]
+    public void A_type_past_gmails_five_levels_is_dropped(string parent, string value)
+    {
+        var result = SuggestionOutputParser.Parse(Item($",\"documentTypeLabel\":\"{value}\""), Ids, documentTypeParent: parent);
+
+        result.Valid.ShouldHaveSingleItem().DocumentTypeLabel.ShouldBeNull();
+        result.Dropped.ShouldHaveSingleItem().ShouldBe("Email 'm1': 'documentTypeLabel' ignored (not a valid label path).");
+    }
+
+    [Fact]
+    public void A_type_past_gmails_length_limit_is_dropped()
+    {
+        var value = $"{Parent}/{new string('a', 100)}/{new string('b', 100)}/{new string('c', 30)}";
+
+        var result = SuggestionOutputParser.Parse(Item($",\"documentTypeLabel\":\"{value}\""), Ids, documentTypeParent: Parent);
+
+        result.Valid.ShouldHaveSingleItem().DocumentTypeLabel.ShouldBeNull();
+        result.Dropped.ShouldHaveSingleItem().ShouldBe("Email 'm1': 'documentTypeLabel' ignored (not a valid label path).");
     }
 
     [Fact]
