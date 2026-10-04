@@ -30,13 +30,14 @@ import { LabelDto } from './labels.models';
 import { labelPathValidator, labelPlacement, LabelsService } from './labels.service';
 import { LabelTreePicker } from './label-tree-picker.component';
 import {
-  changedReplaceLabels,
   currentLabelsOf,
+  decidedReplaceLabels,
   DEFAULT_FLAG_LABELS,
   editableMembers,
   editRequest,
   ReviewEditDialog,
   ReviewGroupDto,
+  replaceState,
   ReviewOutcome,
   SuggestionDto,
 } from './review.models';
@@ -51,8 +52,6 @@ export interface EditSuggestionDialogData {
   group: { display: string; truncated: boolean } | null;
   /** The members' current labels (their union for a group), one "Replace" checkbox each. */
   currentLabels: string[];
-  /** The labels applying replaces now: their checkboxes start checked. */
-  replaceLabels: string[];
 }
 
 /** A member whose save failed, with the server's reason. */
@@ -107,14 +106,21 @@ export class EditSuggestionDialog {
     toBeDeleted: new FormControl(this.data.current.toBeDeleted && !this.allProtected(), {
       nonNullable: true,
     }),
-    /** One per `data.currentLabels`, checked = replaced. */
+    /** One per `data.currentLabels`, checked = every member carrying it replaces it. */
     replace: new FormArray(
       this.data.currentLabels.map(
-        (l) => new FormControl(this.data.replaceLabels.includes(l), { nonNullable: true }),
+        (l) => new FormControl(replaceState(this.data.members, l) === true, { nonNullable: true }),
       ),
     ),
   });
-  private readonly initialReplace = this.checkedReplaceLabels();
+  /** Indexes of labels only some members replace and the user has not ticked or unticked yet. */
+  readonly mixedReplace = signal<ReadonlySet<number>>(
+    new Set(
+      this.data.currentLabels.flatMap((l, i) =>
+        replaceState(this.data.members, l) === null ? [i] : [],
+      ),
+    ),
+  );
 
   readonly flagLabels = toSignal(
     inject(SettingsService)
@@ -180,7 +186,7 @@ export class EditSuggestionDialog {
     }
     const { topicLabel, needsAction, toBeDeleted } = this.form.getRawValue();
     const outcome = { topicLabel, needsAction, toBeDeleted };
-    const replaceLabels = changedReplaceLabels(this.initialReplace, this.checkedReplaceLabels());
+    const decisions = this.replaceDecisions();
     const failures: EditFailure[] = [];
     let labelError: string | null = null;
     this.setSaving(true);
@@ -189,7 +195,7 @@ export class EditSuggestionDialog {
     from(this.data.members.filter((m) => !this.saved.has(m.id)))
       .pipe(
         concatMap((m) =>
-          this.review.edit(m.id, editRequest(m, outcome, replaceLabels)).pipe(
+          this.review.edit(m.id, editRequest(m, outcome, decidedReplaceLabels(m, decisions))).pipe(
             map(() => ({ member: m, err: null as unknown })),
             catchError((err: unknown) => of({ member: m, err })),
           ),
@@ -203,14 +209,15 @@ export class EditSuggestionDialog {
             this.done.set(this.saved.size);
             return;
           }
-          const fieldError =
-            err instanceof HttpErrorResponse ? fieldErrors(err)['topicLabel']?.[0] : undefined;
+          const fields = err instanceof HttpErrorResponse ? fieldErrors(err) : {};
+          const fieldError = fields['topicLabel']?.[0];
           labelError ??= fieldError ?? null;
           failures.push({
             id: member.id,
             name: member.subject || '(no subject)',
             message:
               fieldError ??
+              fields['replaceLabels']?.[0] ??
               (err instanceof HttpErrorResponse ? errorMessage(err) : 'Saving failed.'),
           });
         },
@@ -219,9 +226,18 @@ export class EditSuggestionDialog {
       });
   }
 
-  private checkedReplaceLabels(): string[] {
+  /** A ticked or unticked label stops being mixed. */
+  decideReplace(index: number): void {
+    this.mixedReplace.update((mixed) => new Set([...mixed].filter((i) => i !== index)));
+  }
+
+  /** Label → replace for every label not left mixed; mixed ones keep each member's own choice. */
+  private replaceDecisions(): Map<string, boolean> {
     const checked = this.form.controls.replace.getRawValue();
-    return this.data.currentLabels.filter((_, i) => checked[i]);
+    const mixed = this.mixedReplace();
+    return new Map(
+      this.data.currentLabels.flatMap((l, i) => (mixed.has(i) ? [] : [[l, checked[i]] as const])),
+    );
   }
 
   cancel(): void {
@@ -285,7 +301,6 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       members: editableMembers(group.members),
       group: { display: group.display, truncated: group.truncated },
       currentLabels: currentLabelsOf(editableMembers(group.members)),
-      replaceLabels: group.replaceLabels,
     });
   }
 
@@ -299,7 +314,6 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       members: [suggestion],
       group: null,
       currentLabels: suggestion.currentLabels,
-      replaceLabels: suggestion.replaceLabels,
     });
   }
 

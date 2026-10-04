@@ -252,6 +252,68 @@ describe('EditSuggestionDialog', () => {
     ]);
   });
 
+  it('a group shows a label only some members replace as mixed and never adds that removal', () => {
+    const { api, dialog } = setup();
+    const members = [
+      suggestion('a', { currentLabels: ['Projects', 'Receipts/Old'], replaceLabels: ['Projects'] }),
+      suggestion('b', { currentLabels: ['Projects', 'Receipts/Old'] }),
+    ];
+    dialog.editGroup('news@example.com', group(members)).subscribe();
+    settle();
+    const boxes = all('edit-replace');
+    expect(boxes.map((b) => b.querySelector<HTMLInputElement>('input')!.indeterminate)).toEqual([
+      true,
+      false,
+    ]);
+    boxes[1].querySelector<HTMLInputElement>('input')!.click();
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => [c[0], c[1].replaceLabels])).toEqual([
+      ['a', ['Projects', 'Receipts/Old']],
+      ['b', ['Receipts/Old']],
+    ]);
+  });
+
+  it('a group ticking a mixed label applies it to every member carrying it', async () => {
+    const { api, dialog } = setup();
+    const members = [
+      suggestion('a', { currentLabels: ['Projects'], replaceLabels: ['Projects'] }),
+      suggestion('b', { currentLabels: ['Projects'] }),
+    ];
+    dialog.editGroup('news@example.com', group(members)).subscribe();
+    settle();
+    all('edit-replace')[0].querySelector<HTMLInputElement>('input')!.click();
+    await Promise.resolve();
+    settle();
+    expect(all('edit-replace')[0].querySelector<HTMLInputElement>('input')!.indeterminate).toBe(
+      false,
+    );
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls.map((c) => [c[0], c[1].replaceLabels])).toEqual([
+      ['a', undefined],
+      ['b', ['Projects']],
+    ]);
+  });
+
+  it("shows the server's replace label error for the member", () => {
+    const { dialog } = setup(() =>
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            status: 400,
+            error: { errors: { replaceLabels: ["Names labels the email does not carry: 'X'."] } },
+          }),
+      ),
+    );
+    dialog.editMember(suggestion('a', { currentLabels: ['X'] })).subscribe();
+    settle();
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(q('edit-error')!.textContent).toContain("does not carry: 'X'.");
+  });
+
   it('shows progress for groups over 20 while saving sequentially', () => {
     const pending = new Map<string, Subject<SuggestionDto>>();
     const { api, dialog } = setup((id) => {

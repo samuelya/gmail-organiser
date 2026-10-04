@@ -251,7 +251,7 @@ export function labelChangeText(
     case 'add':
       return `Adds ${change.topicLabel}`;
     case 'move':
-      return `Moves ${change.replaceLabels[0] ?? ''} → ${change.topicLabel}`;
+      return `Moves ${change.replaceLabels.join(', ')} → ${change.topicLabel}`;
     case 'relabel':
       return `Relabels ${change.replaceLabels.join(', ')} → ${change.topicLabel}`;
     default:
@@ -304,14 +304,30 @@ export function currentLabelsOf(members: readonly SuggestionDto[]): string[] {
   return [...new Set(members.flatMap((m) => m.currentLabels))];
 }
 
-/** The checked labels when they differ from the initial set (order ignored), else `undefined`. */
-export function changedReplaceLabels(
-  initial: readonly string[],
-  checked: readonly string[],
+/** Whether every member carrying `label` replaces it (`true`), none does (`false`) or only some (`null`). */
+export function replaceState(members: readonly SuggestionDto[], label: string): boolean | null {
+  const key = label.toLowerCase();
+  const carrying = members.filter((m) => m.currentLabels.some((l) => l.toLowerCase() === key));
+  const replacing = carrying.filter((m) => m.replaceLabels.some((l) => l.toLowerCase() === key));
+  return replacing.length === 0 ? false : replacing.length === carrying.length ? true : null;
+}
+
+/**
+ * The member's replaced labels after the dialog's decisions (label → replace), else `undefined` when they stay
+ * as they are. A label without a decision keeps the member's own choice, so a group edit never adds a removal
+ * the user did not tick.
+ */
+export function decidedReplaceLabels(
+  member: SuggestionDto,
+  decisions: ReadonlyMap<string, boolean>,
 ): string[] | undefined {
-  const before = new Set(initial);
-  const same = checked.length === before.size && checked.every((l) => before.has(l));
-  return same ? undefined : [...checked];
+  const key = (l: string) => l.toLowerCase();
+  const decided = new Map([...decisions].map(([l, replace]) => [key(l), replace]));
+  const carried = new Set(member.currentLabels.map(key));
+  const own = new Set(member.replaceLabels.map(key).filter((l) => carried.has(l)));
+  const next = member.currentLabels.filter((l) => decided.get(key(l)) ?? own.has(key(l)));
+  const same = next.length === own.size && next.every((l) => own.has(key(l)));
+  return same ? undefined : next;
 }
 
 /** What a group card sends to Claude and shows: a message analysed on its own is its one suggestion. */

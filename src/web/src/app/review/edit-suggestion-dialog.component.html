@@ -75,10 +75,15 @@
         <legend class="text-sm font-medium">Current labels</legend>
         <p class="muted m-0 text-sm">
           Replace: checked labels are removed when the new label is applied.
+          @if (mixedReplace().size) {
+            A dash means only some emails replace it; leave it to keep each email's choice.
+          }
         </p>
         @for (label of data.currentLabels; track label; let i = $index) {
           <mat-checkbox
             [formControl]="form.controls.replace.at(i)"
+            [indeterminate]="mixedReplace().has(i)"
+            (change)="decideReplace(i)"
             [aria-label]="'Replace ' + label"
             data-testid="edit-replace"
             >{{ label }}</mat-checkbox
