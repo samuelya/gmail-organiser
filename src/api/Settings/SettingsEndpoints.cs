@@ -57,43 +57,63 @@ public static class SettingsEndpoints
             return TypedResults.ValidationProblem(errors);
         }
 
-        var settings = await store.UpdateAsync(s => s with
+        // The pre-check above reads a snapshot; a concurrent PUT may change the other label name before the row lock,
+        // so the merged pair is checked again inside the locked update and the whole request is dropped on a clash.
+        var clash = false;
+        var settings = await store.UpdateAsync(s =>
         {
-            OllamaBaseUrl = request.OllamaBaseUrl?.Trim() ?? s.OllamaBaseUrl,
-            ChatModel = request.ChatModel is null ? s.ChatModel : SettingsValidation.NormaliseModelName(request.ChatModel),
-            EmbeddingModel = request.EmbeddingModel is null ? s.EmbeddingModel : SettingsValidation.NormaliseModelName(request.EmbeddingModel),
-            VisionModel = request.VisionModel is null ? s.VisionModel : SettingsValidation.NormaliseModelName(request.VisionModel),
-            SetupWizardSeen = request.SetupWizardSeen ?? s.SetupWizardSeen,
-            FetchChunkSize = request.FetchChunkSize ?? s.FetchChunkSize,
-            AnalysisDefaultCount = request.AnalysisDefaultCount ?? s.AnalysisDefaultCount,
-            AnalysisBodyMaxChars = request.AnalysisBodyMaxChars ?? s.AnalysisBodyMaxChars,
-            AnalysisGroupingMode = request.AnalysisGroupingMode ?? s.AnalysisGroupingMode,
-            AnalysisRepresentativesPerGroup = request.AnalysisRepresentativesPerGroup ?? s.AnalysisRepresentativesPerGroup,
-            AnalysisMinGroupSize = request.AnalysisMinGroupSize ?? s.AnalysisMinGroupSize,
-            AnalysisDerivedConfidencePenalty = request.AnalysisDerivedConfidencePenalty ?? s.AnalysisDerivedConfidencePenalty,
-            AnalysisClusterDistance = request.AnalysisClusterDistance ?? s.AnalysisClusterDistance,
-            AnalysisMemoryShortCircuit = request.AnalysisMemoryShortCircuit ?? s.AnalysisMemoryShortCircuit,
-            AnalysisMemoryMinApprovals = request.AnalysisMemoryMinApprovals ?? s.AnalysisMemoryMinApprovals,
-            BulkApproveThreshold = request.BulkApproveThreshold ?? s.BulkApproveThreshold,
-            AutoArchiveOnActionDone = request.AutoArchiveOnActionDone ?? s.AutoArchiveOnActionDone,
-            AnalysisPromptTemplate = request.AnalysisPromptTemplate is null
-                ? s.AnalysisPromptTemplate
-                : SettingsValidation.NormalisePromptTemplate(request.AnalysisPromptTemplate),
-            Attachments = request.Attachments is { } attachments ? Apply(s.Attachments, attachments) : s.Attachments,
-            ClaudeReviewerMode = request.ClaudeReviewerMode ?? s.ClaudeReviewerMode,
-            ClaudeSuggestLowConfidence = request.ClaudeSuggestLowConfidence ?? s.ClaudeSuggestLowConfidence,
-            ClaudeSuggestThreshold = request.ClaudeSuggestThreshold ?? s.ClaudeSuggestThreshold,
-            ClaudeSuggestNewLabels = request.ClaudeSuggestNewLabels ?? s.ClaudeSuggestNewLabels,
-            ClaudeRunTimeoutSeconds = request.ClaudeRunTimeoutSeconds ?? s.ClaudeRunTimeoutSeconds,
-            ClaudeMaxItemsPerRun = request.ClaudeMaxItemsPerRun ?? s.ClaudeMaxItemsPerRun,
-            ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
-            ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
-            Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
-            ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,
-            DeleteLabelName = request.DeleteLabelName?.Trim() ?? s.DeleteLabelName,
+            var merged = Merge(s, request);
+            clash = (request.ActionLabelName is not null || request.DeleteLabelName is not null)
+                && SettingsValidation.LabelNamesClash(merged.ActionLabelName, merged.DeleteLabelName);
+            return clash ? s : merged;
         }, ct);
+        if (clash)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                [SettingsValidation.LabelNamesClashField] = [SettingsValidation.LabelNamesClashMessage],
+            });
+        }
+
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
     }
+
+    /// <summary>Applies a validated request; omitted fields keep their saved value.</summary>
+    private static AppSettings Merge(AppSettings s, UpdateSettingsRequest request) => s with
+    {
+        OllamaBaseUrl = request.OllamaBaseUrl?.Trim() ?? s.OllamaBaseUrl,
+        ChatModel = request.ChatModel is null ? s.ChatModel : SettingsValidation.NormaliseModelName(request.ChatModel),
+        EmbeddingModel = request.EmbeddingModel is null ? s.EmbeddingModel : SettingsValidation.NormaliseModelName(request.EmbeddingModel),
+        VisionModel = request.VisionModel is null ? s.VisionModel : SettingsValidation.NormaliseModelName(request.VisionModel),
+        SetupWizardSeen = request.SetupWizardSeen ?? s.SetupWizardSeen,
+        FetchChunkSize = request.FetchChunkSize ?? s.FetchChunkSize,
+        AnalysisDefaultCount = request.AnalysisDefaultCount ?? s.AnalysisDefaultCount,
+        AnalysisBodyMaxChars = request.AnalysisBodyMaxChars ?? s.AnalysisBodyMaxChars,
+        AnalysisGroupingMode = request.AnalysisGroupingMode ?? s.AnalysisGroupingMode,
+        AnalysisRepresentativesPerGroup = request.AnalysisRepresentativesPerGroup ?? s.AnalysisRepresentativesPerGroup,
+        AnalysisMinGroupSize = request.AnalysisMinGroupSize ?? s.AnalysisMinGroupSize,
+        AnalysisDerivedConfidencePenalty = request.AnalysisDerivedConfidencePenalty ?? s.AnalysisDerivedConfidencePenalty,
+        AnalysisClusterDistance = request.AnalysisClusterDistance ?? s.AnalysisClusterDistance,
+        AnalysisMemoryShortCircuit = request.AnalysisMemoryShortCircuit ?? s.AnalysisMemoryShortCircuit,
+        AnalysisMemoryMinApprovals = request.AnalysisMemoryMinApprovals ?? s.AnalysisMemoryMinApprovals,
+        BulkApproveThreshold = request.BulkApproveThreshold ?? s.BulkApproveThreshold,
+        AutoArchiveOnActionDone = request.AutoArchiveOnActionDone ?? s.AutoArchiveOnActionDone,
+        AnalysisPromptTemplate = request.AnalysisPromptTemplate is null
+            ? s.AnalysisPromptTemplate
+            : SettingsValidation.NormalisePromptTemplate(request.AnalysisPromptTemplate),
+        Attachments = request.Attachments is { } attachments ? Apply(s.Attachments, attachments) : s.Attachments,
+        ClaudeReviewerMode = request.ClaudeReviewerMode ?? s.ClaudeReviewerMode,
+        ClaudeSuggestLowConfidence = request.ClaudeSuggestLowConfidence ?? s.ClaudeSuggestLowConfidence,
+        ClaudeSuggestThreshold = request.ClaudeSuggestThreshold ?? s.ClaudeSuggestThreshold,
+        ClaudeSuggestNewLabels = request.ClaudeSuggestNewLabels ?? s.ClaudeSuggestNewLabels,
+        ClaudeRunTimeoutSeconds = request.ClaudeRunTimeoutSeconds ?? s.ClaudeRunTimeoutSeconds,
+        ClaudeMaxItemsPerRun = request.ClaudeMaxItemsPerRun ?? s.ClaudeMaxItemsPerRun,
+        ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
+        ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
+        Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
+        ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,
+        DeleteLabelName = request.DeleteLabelName?.Trim() ?? s.DeleteLabelName,
+    };
 
     /// <summary>Applies a validated request; listed types change, the others keep their saved value.</summary>
     private static AttachmentSettings Apply(AttachmentSettings s, UpdateAttachmentSettingsRequest request) => s with

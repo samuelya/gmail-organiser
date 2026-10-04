@@ -8,6 +8,7 @@ using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -375,6 +376,35 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
 
         await ShouldBeValidationProblemAsync(response, "deleteLabelName");
         (await GetAsync(factory)).DeleteLabelName.ShouldBe("To-Be-Deleted");
+    }
+
+    [Fact]
+    public async Task Label_name_clash_from_a_concurrent_put_is_caught_inside_the_update()
+    {
+        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, ActionLabelName: "Synthetic/Todo"));
+        // The pre-check sees the defaults, as if the other PUT committed between its read and the locked update.
+        await using var stale = factory.WithWebHostBuilder(b => b.ConfigureTestServices(services =>
+        {
+            services.AddScoped<SettingsStore>();
+            services.AddScoped<ISettingsStore>(sp => new StaleSnapshotStore(sp.GetRequiredService<SettingsStore>()));
+        }));
+
+        var response = await PutAsync(stale, "/api/settings",
+            new UpdateSettingsRequest(null, "chat-model-a", null, null, DeleteLabelName: "synthetic/todo"));
+
+        await ShouldBeValidationProblemAsync(response, "deleteLabelName");
+        var settings = await GetAsync(factory);
+        settings.ActionLabelName.ShouldBe("Synthetic/Todo");
+        settings.DeleteLabelName.ShouldBe("To-Be-Deleted");
+        settings.ChatModel.ShouldBeNull();
+    }
+
+    private sealed class StaleSnapshotStore(ISettingsStore inner) : ISettingsStore
+    {
+        public Task<AppSettings> GetAsync(CancellationToken ct = default) => Task.FromResult(new AppSettings());
+
+        public Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> change, CancellationToken ct = default) =>
+            inner.UpdateAsync(change, ct);
     }
 
     private async Task UpdateInScopeAsync(Func<AppSettings, AppSettings> change)

@@ -50,6 +50,8 @@ public static class SettingsValidation
     public const int MinClaudeMaxTurns = 10;
     public const int MaxClaudeMaxTurns = 300;
     public const int MaxLabelNameLength = GmailLimits.LabelNameMaxLength;
+    public const string LabelNamesClashField = "deleteLabelName";
+    public const string LabelNamesClashMessage = "Must differ from the action label.";
 
     /// <summary>
     /// Checks <paramref name="request"/>; the label names must differ from each other, so a name sent alone is compared with the
@@ -191,12 +193,15 @@ public static class SettingsValidation
         var actionOk = CheckLabelName(errors, "actionLabelName", request.ActionLabelName);
         var deleteOk = CheckLabelName(errors, "deleteLabelName", request.DeleteLabelName);
         if ((request.ActionLabelName is not null || request.DeleteLabelName is not null) && actionOk && deleteOk
-            && string.Equals(request.ActionLabelName?.Trim() ?? current.ActionLabelName, request.DeleteLabelName?.Trim() ?? current.DeleteLabelName,
-                StringComparison.OrdinalIgnoreCase))
+            && LabelNamesClash(request.ActionLabelName?.Trim() ?? current.ActionLabelName, request.DeleteLabelName?.Trim() ?? current.DeleteLabelName))
         {
-            errors["deleteLabelName"] = ["Must differ from the action label."];
+            errors[LabelNamesClashField] = [LabelNamesClashMessage];
         }
     }
+
+    /// <summary>Gmail label names are case-insensitive, so the action and delete labels must differ ignoring case.</summary>
+    public static bool LabelNamesClash(string actionLabelName, string deleteLabelName) =>
+        string.Equals(actionLabelName, deleteLabelName, StringComparison.OrdinalIgnoreCase);
 
     // Trimmed, non-empty, a valid user label path with no Gmail system label name at any level, at most 225 characters.
     private static bool CheckLabelName(Dictionary<string, string[]> errors, string field, string? value)
