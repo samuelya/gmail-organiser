@@ -699,4 +699,46 @@ describe('ReviewPage', () => {
     await settle();
     expect(q('pending-again')).toBeNull();
   });
+
+  it('the Applied tab is read-only except ticks, Re-analyse and Use new / Keep current', async () => {
+    const applied = (id: string) => member(id, { status: 'applied', alternative: alternative() });
+    const { api, el, q, all, expand, tick, settle } = await render(noPattern, 'off', [
+      group({ alternative: alternative({ count: 2 }), members: [applied('a'), applied('b')] }),
+    ]);
+    const tabs = el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button');
+    expect([...tabs].map((t) => t.textContent?.trim())).toContain('Applied');
+    tabs[3].click();
+    await settle();
+    expect(api.listSenders).toHaveBeenLastCalledWith('applied', '', 1, 25, false);
+    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'applied', 1, 20, false);
+    await expand();
+    for (const id of ['group-approve', 'group-reject', 'group-edit']) expect(q(id)).toBeNull();
+    for (const id of ['member-approve', 'member-reject', 'member-edit'])
+      expect(all(id)).toHaveLength(0);
+    await tick(0);
+    expect(q('reanalyse-selection')!.getAttribute('aria-disabled')).not.toBe('true');
+    all('alternative-use')[0].click();
+    await settle();
+    expect(api.acceptAlternatives).toHaveBeenCalledWith({
+      groups: [{ senderAddress: 'news@example.com', groupKey: 'key-1', status: 'applied' }],
+    });
+    expect(q('pending-again')).not.toBeNull();
+  });
+
+  it('a tab or Re-analysed change selects the first listed sender when the selected one is not listed', async () => {
+    const { api, el, settle } = await render(noPattern, 'off', [group()], 4);
+    const only = (address: string) =>
+      of({ items: [sender({ address })], page: 1, pageSize: 25, total: 1 });
+    // The fifth argument is the Re-analysed filter.
+    api.listSenders.mockImplementation((...args: unknown[]) =>
+      only(args[4] ? 'shop@example.com' : 'news@example.com'),
+    );
+    el.querySelector<HTMLButtonElement>('[data-testid="filter-reanalysed"] button')!.click();
+    await settle();
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, true);
+    api.listSenders.mockImplementation(() => of({ items: [], page: 1, pageSize: 25, total: 0 }));
+    el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')[1].click();
+    await settle();
+    expect(el.querySelector('[data-testid="detail-none"]')).not.toBeNull();
+  });
 });

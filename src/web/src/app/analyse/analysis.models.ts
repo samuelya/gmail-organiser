@@ -119,13 +119,20 @@ export function scopeLabel(scope: string): string {
   return SCOPE_LABELS[scope] ?? humanise(scope);
 }
 
-/** "Sender: news@example.com" or the plain scope label; a compare run reads "Re-analysis: …". */
+/**
+ * "Sender: news@example.com" or the plain scope label. A compare run reads "Re-analysis of n emails":
+ * it covers a selection or an earlier run's emails, and the API stores both as the messages scope.
+ */
 export function runTarget(
-  run: Pick<AnalysisRunDto, 'scope' | 'senderAddress'> & { kind?: AnalysisRunKind },
+  run: Pick<AnalysisRunDto, 'scope' | 'senderAddress'> &
+    Partial<Pick<AnalysisRunDto, 'requestedCount'>> & { kind?: AnalysisRunKind },
 ): string {
+  if (run.kind === 'compare') {
+    const n = run.requestedCount ?? 0;
+    return `Re-analysis of ${n} ${n === 1 ? 'email' : 'emails'}`;
+  }
   const label = scopeLabel(run.scope);
-  const target = run.senderAddress ? `${label}: ${run.senderAddress}` : label;
-  return run.kind === 'compare' ? `Re-analysis: ${target}` : target;
+  return run.senderAddress ? `${label}: ${run.senderAddress}` : label;
 }
 
 /**

@@ -111,9 +111,13 @@ describe('analysis models', () => {
   it('labels the labelled scope in the run list and history', () => {
     expect(runTarget({ scope: 'labelled', senderAddress: null })).toBe('Already labelled');
     expect(isScope('labelled')).toBe(true);
-    expect(runTarget({ kind: 'compare', scope: 'messages', senderAddress: null })).toBe(
-      'Re-analysis: Selected emails',
-    );
+  });
+
+  it('labels a re-analysis by its email count, never as selected emails', () => {
+    const compare = { kind: 'compare' as const, scope: 'messages', senderAddress: null };
+    expect(runTarget({ ...compare, requestedCount: 12 })).toBe('Re-analysis of 12 emails');
+    expect(runTarget({ ...compare, requestedCount: 1 })).toBe('Re-analysis of 1 email');
+    expect(runTarget({ scope: 'messages', senderAddress: null })).toBe('Selected emails');
   });
 
   it('the deep link drops an invalid count or sender', () => {
@@ -400,11 +404,20 @@ describe('AnalysePage', () => {
     expect(dialog).toContain('12 emails go to the LLM with the current prompt and settings');
     expect(dialog).toContain('memory shortcut is skipped (memory hints still apply)');
     expect(dialog).toContain('Current suggestions stay as they are until you pick');
-    active.push(run({ id: 'run-cmp', kind: 'compare', scope: 'messages', status: 'queued' }));
+    active.push(
+      run({
+        id: 'run-cmp',
+        kind: 'compare',
+        scope: 'messages',
+        requestedCount: 12,
+        status: 'queued',
+      }),
+    );
     document.querySelector<HTMLButtonElement>('[data-testid="confirm-ok"]')!.click();
     await harness.fixture.whenStable();
     expect(api.startCompareRun).toHaveBeenCalledWith({ runId: 'run-1' });
-    expect(all('active-run')[0].textContent).toContain('Re-analysis: Selected emails');
+    expect(all('active-run')[0].textContent).toContain('Re-analysis of 12 emails');
+    expect(all('active-run')[0].textContent).not.toContain('Selected emails');
   });
 
   it('Re-analyse is disabled with a tooltip while an analysis run is active', async () => {

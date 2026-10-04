@@ -118,6 +118,8 @@ export class ReviewPage {
   private readonly senderPage = signal(1);
   readonly selected = signal<string | null>(null);
   private readonly groupPage = signal(1);
+  /** The status and "Re-analysed" filter of the last senders list shown. */
+  private listedFilter: string | null = null;
   /** Bumped after every action and reconnect: everything shown is re-fetched. */
   private readonly version = signal(0);
 
@@ -178,16 +180,24 @@ export class ReviewPage {
         switchMap((k) =>
           this.review
             .listSenders(k.status, k.search, k.page, SENDER_PAGE_SIZE, k.reanalysed)
-            .pipe(orNull()),
+            .pipe(
+              orNull(),
+              map((page) => ({ listed: `${k.status}|${k.reanalysed}`, page })),
+            ),
         ),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe((page) => {
+      .subscribe(({ listed, page }) => {
         this.sendersLoading.set(false);
         this.sendersFailed.set(!page);
         this.senders.set(page);
-        if (page && !this.selected() && page.items.length > 0)
-          this.selected.set(page.items[0].address);
+        if (!page) return;
+        // A tab or "Re-analysed" change moves to the new list's first sender unless the selected one is in it.
+        const selected = this.selected();
+        const changed = listed !== this.listedFilter;
+        this.listedFilter = listed;
+        if (!selected || (changed && !page.items.some((s) => s.address === selected)))
+          this.selected.set(page.items[0]?.address ?? null);
       });
 
     const detailKey = computed(() => ({

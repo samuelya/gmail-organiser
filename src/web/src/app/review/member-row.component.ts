@@ -118,45 +118,48 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           />
         }
       </div>
-      <div class="ml-auto flex shrink-0">
-        @if (s.status !== 'approved') {
+      <!-- Applied mail is read-only: ticked for re-analysis, decided by Use new / Keep current. -->
+      @if (s.status !== 'applied') {
+        <div class="ml-auto flex shrink-0">
+          @if (s.status !== 'approved') {
+            <button
+              mat-icon-button
+              type="button"
+              [disabled]="busy()"
+              (click)="approve.emit()"
+              matTooltip="Approve"
+              [attr.aria-label]="'Approve ' + subject()"
+              data-testid="member-approve"
+            >
+              <mat-icon aria-hidden="true">check</mat-icon>
+            </button>
+          }
+          @if (s.status !== 'rejected') {
+            <button
+              mat-icon-button
+              type="button"
+              [disabled]="busy()"
+              (click)="reject.emit()"
+              matTooltip="Reject"
+              [attr.aria-label]="'Reject ' + subject()"
+              data-testid="member-reject"
+            >
+              <mat-icon aria-hidden="true">close</mat-icon>
+            </button>
+          }
           <button
             mat-icon-button
             type="button"
-            [disabled]="busy() || s.status === 'applied'"
-            (click)="approve.emit()"
-            matTooltip="Approve"
-            [attr.aria-label]="'Approve ' + subject()"
-            data-testid="member-approve"
+            [disabled]="busy()"
+            (click)="edit.emit()"
+            matTooltip="Edit"
+            [attr.aria-label]="'Edit ' + subject()"
+            data-testid="member-edit"
           >
-            <mat-icon aria-hidden="true">check</mat-icon>
+            <mat-icon aria-hidden="true">edit</mat-icon>
           </button>
-        }
-        @if (s.status !== 'rejected') {
-          <button
-            mat-icon-button
-            type="button"
-            [disabled]="busy() || s.status === 'applied'"
-            (click)="reject.emit()"
-            matTooltip="Reject"
-            [attr.aria-label]="'Reject ' + subject()"
-            data-testid="member-reject"
-          >
-            <mat-icon aria-hidden="true">close</mat-icon>
-          </button>
-        }
-        <button
-          mat-icon-button
-          type="button"
-          [disabled]="busy() || s.status === 'applied'"
-          (click)="edit.emit()"
-          matTooltip="Edit"
-          [attr.aria-label]="'Edit ' + subject()"
-          data-testid="member-edit"
-        >
-          <mat-icon aria-hidden="true">edit</mat-icon>
-        </button>
-      </div>
+        </div>
+      }
     </div>
   `,
   styles: `

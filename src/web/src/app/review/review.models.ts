@@ -8,16 +8,17 @@ import {
 import type { SuggestionAlternativeDto } from './alternative.models';
 import { LabelDto } from './labels.models';
 
-/** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. */
-export type ReviewStatus = 'pending' | 'approved' | 'rejected';
+/** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. Applied is read-only. */
+export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'applied';
 export const REVIEW_STATUSES: readonly { value: ReviewStatus; label: string }[] = [
   { value: 'pending', label: 'Pending' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
+  { value: 'applied', label: 'Applied' },
 ];
 
 /** `SuggestionStatus` as the API writes it. */
-export type SuggestionStatus = ReviewStatus | 'applied';
+export type SuggestionStatus = ReviewStatus;
 /** `SuggestionSource` as the API writes it. */
 export type SuggestionSource = 'llm' | 'derived' | 'memory' | 'sender_pattern';
 

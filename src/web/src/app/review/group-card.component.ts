@@ -113,33 +113,36 @@ export const MEMBERS_STEP = 20;
           />
         }
         <div class="flex flex-wrap items-center gap-2">
-          <button
-            mat-flat-button
-            type="button"
-            [disabled]="busy() || !actionable()"
-            (click)="approveAll.emit()"
-            data-testid="group-approve"
-          >
-            Approve all
-          </button>
-          <button
-            mat-stroked-button
-            type="button"
-            [disabled]="busy() || !actionable()"
-            (click)="rejectAll.emit()"
-            data-testid="group-reject"
-          >
-            Reject all
-          </button>
-          <button
-            mat-stroked-button
-            type="button"
-            [disabled]="busy() || !actionable()"
-            (click)="editGroup.emit()"
-            data-testid="group-edit"
-          >
-            Edit
-          </button>
+          <!-- Applied mail is read-only: only re-analysis and its Use new / Keep current. -->
+          @if (actionable()) {
+            <button
+              mat-flat-button
+              type="button"
+              [disabled]="busy()"
+              (click)="approveAll.emit()"
+              data-testid="group-approve"
+            >
+              Approve all
+            </button>
+            <button
+              mat-stroked-button
+              type="button"
+              [disabled]="busy()"
+              (click)="rejectAll.emit()"
+              data-testid="group-reject"
+            >
+              Reject all
+            </button>
+            <button
+              mat-stroked-button
+              type="button"
+              [disabled]="busy()"
+              (click)="editGroup.emit()"
+              data-testid="group-edit"
+            >
+              Edit
+            </button>
+          }
           <button
             mat-button
             type="button"
