@@ -77,19 +77,21 @@ public sealed partial class DecisionMemory(
     }
 
     public async Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
-        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent, CancellationToken ct)
+        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent,
+        IReadOnlyCollection<string> excludeMessageIds, CancellationToken ct)
     {
         if (messages.Count == 0 || k <= 0)
         {
             return [];
         }
 
+        var excluded = excludeMessageIds.ToArray();
         var hits = new List<(DecisionRow Decision, double Similarity, bool Filled)>();
         foreach (var m in messages)
         {
             if (vectors is not null && vectors.ById.TryGetValue(m.Id, out var vector))
             {
-                hits.AddRange((await NearestAsync(vectors.Model, vector, k, ct)).Select(f => (f.Decision, f.Similarity, false)));
+                hits.AddRange((await NearestAsync(vectors.Model, vector, k, excluded, ct)).Select(f => (f.Decision, f.Similarity, false)));
             }
         }
 
@@ -98,7 +100,7 @@ public sealed partial class DecisionMemory(
             // Once per distinct sender and list: a group's representatives usually share both.
             foreach (var (sender, listId) in messages.Select(m => (m.FromAddress, GroupKey.NormaliseListId(m.ListId))).Distinct())
             {
-                hits.AddRange((await LatestForSenderAsync(sender, listId, k, ct)).Select(f => (f.Decision, f.Similarity, true)));
+                hits.AddRange((await LatestForSenderAsync(sender, listId, k, excluded, ct)).Select(f => (f.Decision, f.Similarity, true)));
             }
         }
 
@@ -218,12 +220,14 @@ public sealed partial class DecisionMemory(
     /// Top <paramref name="k"/> decisions of the same model within <see cref="MaxDistance"/>. A vector of another
     /// dimension under the same model name (a re-pulled model) makes the scan fail: logged, treated as no hits.
     /// </summary>
-    private async Task<List<(DecisionRow Decision, double Similarity)>> NearestAsync(string model, Vector vector, int k, CancellationToken ct)
+    private async Task<List<(DecisionRow Decision, double Similarity)>> NearestAsync(
+        string model, Vector vector, int k, string[] excluded, CancellationToken ct)
     {
         try
         {
             var rows = await db.Decisions.AsNoTracking()
                 .Where(d => d.EmbeddingModel == model && d.Embedding != null)
+                .Where(d => d.MessageId == null || !excluded.Contains(d.MessageId))
                 .Select(d => new { Decision = d, Distance = d.Embedding!.CosineDistance(vector) })
                 .Where(x => x.Distance <= MaxDistance)
                 .OrderBy(x => x.Distance)
@@ -240,10 +244,11 @@ public sealed partial class DecisionMemory(
 
     /// <summary>The latest decisions for the sender (similarity 1) or, failing that, its normalised mailing list.</summary>
     private async Task<List<(DecisionRow Decision, double Similarity)>> LatestForSenderAsync(
-        string sender, string? listId, int k, CancellationToken ct)
+        string sender, string? listId, int k, string[] excluded, CancellationToken ct)
     {
         var rows = await db.Decisions.AsNoTracking()
             .Where(d => d.SenderAddress == sender || (listId != null && d.ListId == listId))
+            .Where(d => d.MessageId == null || !excluded.Contains(d.MessageId))
             .OrderByDescending(d => d.SenderAddress == sender)
             .ThenByDescending(d => d.CreatedAt)
             .Take(k)

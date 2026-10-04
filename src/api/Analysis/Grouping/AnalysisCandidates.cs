@@ -83,6 +83,13 @@ public static class AnalysisCandidates
             _ => m.AnalysisStatus == AnalysisStatus.NotAnalysed,
         };
 
+    /// <summary>
+    /// Whether a compare run still covers a frozen candidate: whatever its analysis status, as long as it is not deleted
+    /// in Gmail and its frozen suggestion still exists (<paramref name="withSuggestion"/>).
+    /// </summary>
+    public static bool IsCompareEligible(MessageRow m, IReadOnlySet<string> withSuggestion) =>
+        !m.DeletedInGmail && withSuggestion.Contains(m.Id);
+
     private static IQueryable<MessageRow> NotAnalysed(IQueryable<MessageRow> query) =>
         query.Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed);
 

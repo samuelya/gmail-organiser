@@ -126,7 +126,7 @@ public sealed class ReviewItemBuilder(
         }
 
         var vectors = messages.Count == 0 ? null : await memory.EmbedMessagesAsync(messages, ct);
-        var similar = await memory.FindSimilarAsync(messages, vectors, MaxSimilarDecisions, current.DocumentTypeParent, ct);
+        var similar = await memory.FindSimilarAsync(messages, vectors, MaxSimilarDecisions, current.DocumentTypeParent, [], ct);
 
         return new ReviewItemDetailDto(
             item,

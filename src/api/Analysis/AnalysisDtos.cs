@@ -32,7 +32,13 @@ public sealed record ReanalyseRequest(string[]? MessageIds, string? SenderAddres
 public sealed record ReanalyseResponse(int Reset);
 
 /// <summary>
-/// One run. <c>status</c> stays <c>running</c> while its job is paused (the run has no paused status; the job shows
+/// Exactly one of <c>suggestionIds</c> (suggestions of any status) or <c>runId</c> (the suggestions an earlier run wrote,
+/// or those a compare run wrote alternatives for); at most the analysis max count messages.
+/// </summary>
+public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
+
+/// <summary>
+/// One run. <c>kind</c> is <c>analyse</c> or <c>compare</c> (results stored as alternatives, #248). <c>status</c> stays <c>running</c> while its job is paused (the run has no paused status; the job shows
 /// it). <c>skippedMessages</c>: ids of a messages scope not analysed because they are approved, applied, deleted or
 /// unknown, plus candidates that stopped qualifying before their group ran. <c>savedPercent</c> is
 /// <c>1 − llmCalls / max(1, messagesCovered)</c>; retries count as calls, so it can go negative.
@@ -40,6 +46,7 @@ public sealed record ReanalyseResponse(int Reset);
 public sealed record AnalysisRunDto(
     Guid Id,
     Guid? JobId,
+    string Kind,
     string Scope,
     string? SenderAddress,
     int RequestedCount,

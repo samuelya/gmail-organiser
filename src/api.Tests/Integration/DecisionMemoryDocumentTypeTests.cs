@@ -146,7 +146,7 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
             Approval(-3, type: null, parent: null));
         await db.SaveChangesAsync(Ct);
 
-        var hints = await Memory(db).FindSimilarAsync([Message("m9")], vectors: null, k: 5, Parent, Ct);
+        var hints = await Memory(db).FindSimilarAsync([Message("m9")], vectors: null, k: 5, Parent, [], Ct);
 
         hints.Select(h => (h.DocumentTypeLabel, h.DocumentTypeDecided))
             .ShouldBe([("Type/Invoice", true), (null, true), ("Old/Invoice", false)]);

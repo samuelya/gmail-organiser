@@ -24,13 +24,15 @@ namespace GmailOrganiser.Analysis;
 /// The run's candidates, frozen at the start; a resume covers exactly these (minus stored, failed and no longer
 /// eligible ones), so mail fetched meanwhile never shifts the window.
 /// </param>
+/// <param name="SuggestionIds">A compare run's suggestion per candidate, frozen at the start; its alternative belongs to it.</param>
 public sealed record AnalysisRunCursor(
     Guid RunId,
     int GroupsDone = 0,
     string? LastGroupKey = null,
     IReadOnlyList<string>? FailedIds = null,
     IReadOnlyList<string>? IndividualIds = null,
-    IReadOnlyList<string>? CandidateIds = null);
+    IReadOnlyList<string>? CandidateIds = null,
+    IReadOnlyDictionary<string, Guid>? SuggestionIds = null);
 
 /// <summary>
 /// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining frozen candidates, then per group asks the model
@@ -174,14 +176,17 @@ public sealed partial class AnalysisRunJob(
     {
         var frozen = cursor.CandidateIds ?? throw new JobRefusedException("The analysis run has no frozen candidates.");
         var failed = (cursor.FailedIds ?? []).ToHashSet(StringComparer.Ordinal);
-        var stored = await db.Suggestions.AsNoTracking()
-            .Where(s => s.RunId == run.Id)
-            .Select(s => s.MessageId)
-            .ToListAsync(ct);
+        var compare = run.Kind == AnalysisRunKind.Compare;
+        var stored = compare
+            ? await db.SuggestionAlternatives.AsNoTracking().Where(a => a.RunId == run.Id).Select(a => a.MessageId).ToListAsync(ct)
+            : await db.Suggestions.AsNoTracking().Where(s => s.RunId == run.Id).Select(s => s.MessageId).ToListAsync(ct);
         var open = frozen.Except(failed, StringComparer.Ordinal).Except(stored, StringComparer.Ordinal).ToArray();
         var rows = await db.Messages.AsNoTracking().Where(m => open.Contains(m.Id)).ToListAsync(ct);
+        var current = compare ? await CurrentSuggestionsAsync(cursor, ct) : null;
         var candidates = rows
-            .Where(m => AnalysisCandidates.IsEligible(run.Scope, m, labels))
+            .Where(m => current is null
+                ? AnalysisCandidates.IsEligible(run.Scope, m, labels)
+                : AnalysisCandidates.IsCompareEligible(m, current))
             .OrderByDescending(m => m.InternalDate)
             .ThenBy(m => m.Id, StringComparer.Ordinal)
             .ToList();
@@ -226,7 +231,8 @@ public sealed partial class AnalysisRunJob(
         var now = time.GetUtcNow();
         var members = group.Members.ToDictionary(m => m.Id, StringComparer.Ordinal);
         var ids = outcome.Suggestions.Select(s => s.MessageId).ToArray();
-        var decided = (await db.Suggestions.AsNoTracking()
+        // A compare run writes alternatives next to suggestions of any status.
+        HashSet<string> decided = run.Kind == AnalysisRunKind.Compare ? [] : (await db.Suggestions.AsNoTracking()
                 .Where(s => ids.Contains(s.MessageId) && (s.Status == SuggestionStatus.Approved || s.Status == SuggestionStatus.Applied))
                 .Select(s => s.MessageId)
                 .ToListAsync(ct))
@@ -251,7 +257,13 @@ public sealed partial class AnalysisRunJob(
         {
             try
             {
-                return await ctx.CheckpointAsync(cursor, Progress(run, cursor), c => WriteGroupAsync(run, members, rows, now, c), ct);
+                return await ctx.CheckpointAsync(
+                    cursor,
+                    Progress(run, cursor),
+                    c => run.Kind == AnalysisRunKind.Compare
+                        ? WriteAlternativesAsync(run, cursor.SuggestionIds ?? new Dictionary<string, Guid>(), rows, now, c)
+                        : WriteGroupAsync(run, members, rows, now, c),
+                    ct);
             }
             catch (DbUpdateException ex) when (attempt < MaxStoreAttempts && IsSuggestionConflict(ex))
             {

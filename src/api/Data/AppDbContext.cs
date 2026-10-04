@@ -37,6 +37,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<JobRow> Jobs => Set<JobRow>();
     public DbSet<AnalysisRunRow> AnalysisRuns => Set<AnalysisRunRow>();
     public DbSet<SuggestionRow> Suggestions => Set<SuggestionRow>();
+    public DbSet<SuggestionAlternativeRow> SuggestionAlternatives => Set<SuggestionAlternativeRow>();
     public DbSet<DecisionRow> Decisions => Set<DecisionRow>();
     public DbSet<ActionBatchRow> ActionBatches => Set<ActionBatchRow>();
     public DbSet<ActionLogRow> ActionLog => Set<ActionLogRow>();
@@ -120,6 +121,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         JobRow.Configure(modelBuilder);
         AnalysisRunRow.Configure(modelBuilder);
         SuggestionRow.Configure(modelBuilder);
+        SuggestionAlternativeRow.Configure(modelBuilder);
         DecisionRow.Configure(modelBuilder);
         ActionBatchRow.Configure(modelBuilder);
         ActionLogRow.Configure(modelBuilder);

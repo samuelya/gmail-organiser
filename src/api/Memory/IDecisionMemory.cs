@@ -35,10 +35,12 @@ public interface IDecisionMemory
     /// Up to <paramref name="k"/> past decisions similar to <paramref name="messages"/> (by their
     /// <paramref name="vectors"/>), filled with the latest decisions of their senders or lists (one query per distinct
     /// sender and list); deduplicated by label, flags and outcome, best first. A hint's document type counts as decided
-    /// only when it was decided under <paramref name="documentTypeParent"/>.
+    /// only when it was decided under <paramref name="documentTypeParent"/>. Decisions about
+    /// <paramref name="excludeMessageIds"/> are left out (a compare run must not hint the answer for its own messages).
     /// </summary>
     Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
-        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent, CancellationToken ct);
+        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent,
+        IReadOnlyCollection<string> excludeMessageIds, CancellationToken ct);
 
     /// <summary>
     /// The consistent approved outcome per scope key (<see cref="DecisionRow.ScopeKey"/>) in one query; keys without
