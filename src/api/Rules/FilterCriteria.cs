@@ -20,7 +20,7 @@ public sealed record FilterSpec(GmailFilterCriteria Criteria, IReadOnlyList<stri
 /// The one mapping of filter criteria: request validation (<see cref="TryRead"/>), the Gmail search query equivalent
 /// (<see cref="ToQuery"/>) and the local count predicate (<see cref="LocalFilter"/>).
 /// </summary>
-public static class FilterCriteria
+public static class FilterCriteriaMapping
 {
     /// <summary>The request as a <see cref="FilterSpec"/>, or null with <paramref name="errors"/> keyed by field.</summary>
     public static FilterSpec? TryRead(FilterCriteriaDto? criteria, FilterActionRequest? action, out Dictionary<string, string[]> errors)

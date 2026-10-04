@@ -43,7 +43,7 @@ public static class RulesEndpoints
     private static async Task<Results<Ok<FilterPreviewDto>, ValidationProblem>> PreviewFilterAsync(
         FilterPreviewRequest request, FilterService filters, CancellationToken ct)
     {
-        if (FilterCriteria.TryRead(request.Criteria, request.Action, out var errors) is not { } spec)
+        if (FilterCriteriaMapping.TryRead(request.Criteria, request.Action, out var errors) is not { } spec)
         {
             return TypedResults.ValidationProblem(errors);
         }
@@ -55,7 +55,7 @@ public static class RulesEndpoints
     private static async Task<Results<Created<FilterDto>, ValidationProblem, ProblemHttpResult>> CreateFilterAsync(
         CreateFilterRequest request, FilterService filters, CancellationToken ct)
     {
-        if (FilterCriteria.TryRead(request.Criteria, request.Action, out var errors) is not { } spec)
+        if (FilterCriteriaMapping.TryRead(request.Criteria, request.Action, out var errors) is not { } spec)
         {
             return TypedResults.ValidationProblem(errors);
         }

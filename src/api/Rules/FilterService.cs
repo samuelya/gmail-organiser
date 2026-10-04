@@ -37,9 +37,9 @@ public sealed class FilterService(
     public async Task<FilterPreviewDto> PreviewAsync(FilterSpec spec, CancellationToken ct)
     {
         var warnings = new List<string>();
-        var query = FilterCriteria.ToQuery(spec.Criteria);
+        var query = FilterCriteriaMapping.ToQuery(spec.Criteria);
         int? local = null;
-        if (FilterCriteria.LocalFilter(spec.Criteria, out var reason) is { } filter)
+        if (FilterCriteriaMapping.LocalFilter(spec.Criteria, out var reason) is { } filter)
         {
             local = await filter(db.Messages.AsNoTracking().Where(m => !m.DeletedInGmail)).CountAsync(ct);
         }
