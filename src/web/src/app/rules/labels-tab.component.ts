@@ -126,6 +126,7 @@ export class LabelsTab {
   readonly trackItem = (_: number, i: LabelPlanItemDto) => i.id;
 
   constructor() {
+    this.claude.follow(() => ({ labelPlanId: this.plan()?.id }));
     this.reloads
       .pipe(
         switchMap(() => this.rules.latestPlan().pipe(catchError((e) => of(notFound(e))))),

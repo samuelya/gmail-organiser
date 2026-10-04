@@ -76,6 +76,7 @@ export class FindingsTab {
   readonly ago = (iso: string) => relativeTime(iso);
 
   constructor() {
+    this.claude.follow(() => ({ findingIds: this.review()?.findings.map((f) => f.id) ?? [] }));
     this.load();
   }
 

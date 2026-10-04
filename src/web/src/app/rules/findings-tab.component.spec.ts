@@ -316,6 +316,9 @@ describe('FindingsTab', () => {
     loaded = [ruleReview({ id: 'x-9', findingId: 'k1', status: 'reviewed', verdict: 'agree' })];
     const { all, card, settle } = await render();
     const dup = card('Two filters do the same thing.');
+    expect(claude['list']).toHaveBeenCalledWith(1, 100, {
+      findingIds: expect.arrayContaining(['k1']),
+    });
     expect(all('claude-verdict', dup)[0].textContent).toContain('Agrees');
     all('claude-accept', dup)[0].click();
     await settle();

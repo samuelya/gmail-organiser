@@ -303,6 +303,7 @@ describe('LabelsTab', () => {
 
   it('sends a draft plan to Claude and shows the alternative structure live', async () => {
     const { fixture, q, el } = await render(() => of(plan()));
+    expect(claude['list']).toHaveBeenCalledWith(1, 100, { labelPlanId: 'p-1' });
     q('claude-send')!.click();
     await fixture.whenStable();
     expect(claude['createReviews']).toHaveBeenCalledWith({ labelPlanId: 'p-1' });
