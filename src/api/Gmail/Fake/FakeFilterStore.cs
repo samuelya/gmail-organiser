@@ -1,11 +1,11 @@
-using System.Globalization;
 using System.Net;
 
 namespace GmailOrganiser.Gmail.Fake;
 
 /// <summary>
 /// The fake account's Gmail filters: three synthetic filters, one of them adding a label id the mailbox does not have
-/// (a filter left behind by a deleted label). New filters get <c>fake-filter-&lt;n&gt;</c> ids. Not thread-safe;
+/// (a filter left behind by a deleted label). New filters get <c>fake-filter-&lt;guid&gt;</c> ids, so they
+/// never collide with rows stored before an api restart reset the store. Not thread-safe;
 /// <see cref="FakeGmailClient"/> calls it under its lock.
 /// </summary>
 public sealed class FakeFilterStore
@@ -24,7 +24,6 @@ public sealed class FakeFilterStore
     ];
 
     private readonly List<GmailFilter> filters = [.. Seed];
-    private int nextId = Seed.Count;
 
     public IReadOnlyList<GmailFilter> All => [.. filters];
 
@@ -40,7 +39,7 @@ public sealed class FakeFilterStore
             throw refused;
         }
 
-        var filter = new GmailFilter(string.Create(CultureInfo.InvariantCulture, $"fake-filter-{++nextId}"), criteria, action);
+        var filter = new GmailFilter($"fake-filter-{Guid.NewGuid():N}", criteria, action);
         filters.Add(filter);
         return filter;
     }

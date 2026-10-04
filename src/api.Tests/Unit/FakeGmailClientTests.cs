@@ -324,4 +324,17 @@ public sealed class FakeGmailClientTests
 
         return await task;
     }
+
+    [Fact]
+    public void FakeFilterStore_Create_never_reuses_an_id_after_a_restart()
+    {
+        var criteria = new GmailFilterCriteria(From: "bob@example.com");
+        var action = new GmailFilterAction([], ["UNREAD"]);
+        var before = new FakeFilterStore().Create(criteria, action);
+
+        var afterRestart = new FakeFilterStore().Create(criteria, action);
+
+        afterRestart.Id.ShouldNotBe(before.Id);
+        FakeFilterStore.Seed.Select(f => f.Id).ShouldNotContain(afterRestart.Id);
+    }
 }
