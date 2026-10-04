@@ -129,9 +129,8 @@ public sealed class ReviewItemBuilder(
         return new ReviewItemDetailDto(
             item,
             SnakeCaseEnumConverter<ExternalReviewStatus>.ToDb(row.Status),
-            sender is null ? null : new SenderDto(
-                sender.Address, sender.Domain, sender.DisplayName, sender.TotalCount, sender.AnalysedCount,
-                sender.AppliedCount, sender.LastSeenAt, sender.Allowlisted, null, sender.UnsubscribedAt),
+            sender is null ? null : SenderQuery.ToDto(
+                sender, Allowlist.Empty with { Domains = (await settings.GetAsync(ct)).Protection.AllowlistedDomains }),
             samples,
             await labels.NamesAsync(AnalysisPromptBuilder.MaxLabelTreeEntries, ct),
             similar);

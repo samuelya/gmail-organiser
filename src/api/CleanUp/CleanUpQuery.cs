@@ -98,7 +98,7 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
         var senders = await db.Senders.AsNoTracking()
             .Where(s => addresses.Contains(s.Address))
             .ToDictionaryAsync(s => s.Address, StringComparer.Ordinal, ct);
-        var domains = new Allowlist(new HashSet<string>(), settings.Protection.AllowlistedDomains);
+        var domains = Allowlist.Empty with { Domains = settings.Protection.AllowlistedDomains };
         return new PagedDto<CleanupSenderDto>(
             rows.ConvertAll(r => new CleanupSenderDto(
                 r.Address, senders.GetValueOrDefault(r.Address)?.DisplayName, r.Count, r.ProtectedCount, r.OldestAt, r.NewestAt,

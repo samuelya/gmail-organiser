@@ -1,5 +1,7 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace GmailOrganiser.Senders;
@@ -17,6 +19,7 @@ public static class SendersEndpoints
     /// <summary>Server-side paged, searchable and sortable senders; defaults to <c>sort=total&amp;dir=desc</c>.</summary>
     private static async Task<Results<Ok<PagedDto<SenderDto>>, ValidationProblem>> ListAsync(
         AppDbContext db,
+        ISettingsStore settings,
         CancellationToken ct,
         string? search = null,
         int? page = null,
@@ -28,7 +31,7 @@ public static class SendersEndpoints
         var query = SenderQuery.Parse(search, page, pageSize, sort, dir, out var errors);
         return query is null
             ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await (query with { Allowlisted = allowlisted }).ExecuteAsync(db, ct));
+            : TypedResults.Ok(await (query with { Allowlisted = allowlisted }).ExecuteAsync(db, await DomainsAsync(settings, ct), ct));
     }
 
     /// <summary>
@@ -36,7 +39,7 @@ public static class SendersEndpoints
     /// one is a 404.
     /// </summary>
     private static async Task<Results<Ok<SenderDto>, ValidationProblem, ProblemHttpResult>> SetAllowlistAsync(
-        string address, AllowlistRequest request, SenderAllowlist allowlist, AppDbContext db, CancellationToken ct)
+        string address, AllowlistRequest request, SenderAllowlist allowlist, AppDbContext db, ISettingsStore settings, CancellationToken ct)
     {
         var normalised = SenderAllowlist.Normalise(address, out var addressError);
         Dictionary<string, string[]> errors = [];
@@ -58,6 +61,10 @@ public static class SendersEndpoints
         var sender = await allowlist.SetAsync(normalised!, request.Allowlisted!.Value, ct);
         return sender is null
             ? TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Sender not found")
-            : TypedResults.Ok(await SenderQuery.ToDtoAsync(sender, db, ct));
+            : TypedResults.Ok(await SenderQuery.ToDtoAsync(sender, await DomainsAsync(settings, ct), db, ct));
     }
+
+    /// <summary>The allowlisted domains only: the DTO reads its address flag from the row.</summary>
+    private static async Task<Allowlist> DomainsAsync(ISettingsStore settings, CancellationToken ct) =>
+        Allowlist.Empty with { Domains = (await settings.GetAsync(ct)).Protection.AllowlistedDomains };
 }
