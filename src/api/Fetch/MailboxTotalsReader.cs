@@ -1,6 +1,6 @@
-using Google;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
+using Google;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Fetch;
