@@ -5,6 +5,7 @@ import {
   ExternalReviewDto,
   MAX_CLAUDE_TARGETS,
 } from '../core/claude.models';
+import { LabelDto } from './labels.models';
 
 /** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. */
 export type ReviewStatus = 'pending' | 'approved' | 'rejected';
@@ -65,6 +66,10 @@ export interface SuggestionDto {
   claudeReview?: ExternalReviewDto | null;
   /** Worth a Claude review by the settings; a hint only. */
   suggestedForClaude?: boolean;
+  /** The second label apply adds next to the topic label; null when none. */
+  documentTypeLabel: string | null;
+  /** Gmail did not have `documentTypeLabel` when it was suggested or edited. */
+  documentTypeIsNew: boolean;
 }
 
 /** `groupKey` is null for a message analysed on its own. */
@@ -92,6 +97,10 @@ export interface ReviewGroupDto {
   claudeReview?: ExternalReviewDto | null;
   /** Any member is worth a Claude review. */
   suggestedForClaude?: boolean;
+  /** The shown outcome's document-type label; null when it has none. */
+  documentTypeLabel: string | null;
+  /** A listed member with the shown document-type label would create it in Gmail. */
+  documentTypeIsNew: boolean;
 }
 
 export interface ReviewSenderDetailDto {
@@ -109,9 +118,19 @@ export interface ReviewOutcome {
   toBeDeleted: boolean;
 }
 
-/** `PUT /api/review/suggestions/{id}`; `replaceLabels` left out keeps the replaced labels as they are. */
+/** The card's outcome with its document type; group approve takes only the members with exactly this outcome. */
+export interface GroupOutcome extends ReviewOutcome {
+  /** Null approves only members without one. */
+  documentTypeLabel: string | null;
+}
+
+/**
+ * `PUT /api/review/suggestions/{id}`; `replaceLabels` left out keeps the replaced labels as they are,
+ * `documentTypeLabel` left out keeps the document type and `""` clears it.
+ */
 export interface EditSuggestionRequest extends ReviewOutcome {
   replaceLabels?: string[];
+  documentTypeLabel?: string;
 }
 
 export interface GroupDecisionResponse {
@@ -154,6 +173,13 @@ export interface SenderPatternDto {
   agreement: number;
   /** Messages without a suggestion. */
   remaining: number;
+  /** The most common document-type label among the outcome's approvals. */
+  documentTypeLabel: string | null;
+}
+
+/** `POST …/senders/{address}/apply-rest`: each value overrides the pattern's; `documentTypeLabel: ""` sets none. */
+export interface ApplyRestRequest {
+  documentTypeLabel?: string;
 }
 
 export interface FilterCandidateDto {
@@ -208,12 +234,42 @@ export function isNewGroupLabel(group: ReviewGroupDto): boolean {
   return group.members.some((m) => m.isNewLabel && m.topicLabel === group.topicLabel);
 }
 
-export function outcomeOf(group: ReviewGroupDto): ReviewOutcome {
+export function outcomeOf(group: ReviewGroupDto): GroupOutcome {
   return {
     topicLabel: group.topicLabel,
     needsAction: group.needsAction,
     toBeDeleted: group.toBeDeleted,
+    documentTypeLabel: group.documentTypeLabel,
   };
+}
+
+/** The labels directly under the document-type `parent`, by name (ordinal), as the edit dialog offers them. */
+export function documentTypeOptions(labels: readonly LabelDto[], parent: string): string[] {
+  const prefix = `${parent}/`.toLowerCase();
+  const names = labels
+    .filter((l) => l.type === 'user' && l.name.toLowerCase().startsWith(prefix))
+    .map((l) => l.name.slice(prefix.length))
+    .filter((n) => n.trim() && !n.includes('/'));
+  return [...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** The document-type label for `text` under `parent`: `""` for none, `null` when `text` has a `/`. */
+export function toDocumentTypeLabel(parent: string, text: string): string | null {
+  const segment = text.trim();
+  if (!segment) return '';
+  return segment.includes('/') ? null : `${parent}/${segment}`;
+}
+
+/**
+ * The apply-rest body: a pattern's own type is never re-sent, so the server keeps it as approved
+ * even when the parent has changed since; `""` only says "none" when the parent is on and the
+ * pattern has no type.
+ */
+export function applyRestRequest(
+  pattern: SenderPatternDto,
+  parent: string | null,
+): ApplyRestRequest {
+  return parent && !pattern.documentTypeLabel ? { documentTypeLabel: '' } : {};
 }
 
 /** A pattern exists and there is mail left to apply it to. */
@@ -223,7 +279,10 @@ export function canApplyRest(pattern: SenderPatternDto | null): pattern is Sende
   return !!pattern?.topicLabel && pattern.remaining > 0;
 }
 
-/** What "Apply to rest of sender" will do, for the confirm dialog. */
+/**
+ * What "Apply to rest of sender" will do, for the confirm dialog. The pattern's type is named
+ * whatever the settings say, since the server applies it either way.
+ */
 export function patternSummary(
   pattern: SenderPatternDto & { topicLabel: string },
   labels: FlagLabels,
@@ -232,7 +291,10 @@ export function patternSummary(
     pattern.needsAction ? labels.action : null,
     pattern.toBeDeleted ? labels.delete : null,
   ].filter((f): f is string => !!f);
-  const outcome = [`label "${pattern.topicLabel}"`, ...flags.map((f) => `"${f}"`)].join(', ');
+  const type = pattern.documentTypeLabel ? [`document type "${pattern.documentTypeLabel}"`] : [];
+  const outcome = [`label "${pattern.topicLabel}"`, ...type, ...flags.map((f) => `"${f}"`)].join(
+    ', ',
+  );
   return (
     `Suggest ${outcome} for the ${pattern.remaining} remaining messages and apply it ` +
     `(${percent(pattern.agreement)} of ${pattern.approvals} approvals agree). ` +
@@ -286,12 +348,14 @@ export function editRequest(
   member: SuggestionDto,
   outcome: ReviewOutcome,
   replaceLabels?: readonly string[],
+  documentTypeLabel?: string,
 ): EditSuggestionRequest {
   const request: EditSuggestionRequest = {
     topicLabel: outcome.topicLabel.trim(),
     needsAction: outcome.needsAction,
     toBeDeleted: outcome.toBeDeleted && !member.protected,
   };
+  if (documentTypeLabel !== undefined) request.documentTypeLabel = documentTypeLabel;
   if (replaceLabels) {
     const carried = new Set(member.currentLabels.map((l) => l.toLowerCase()));
     request.replaceLabels = replaceLabels.filter((l) => carried.has(l.toLowerCase()));
