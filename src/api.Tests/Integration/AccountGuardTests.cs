@@ -234,6 +234,7 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
     {
         var (app, gmail, stored) = await FetchMailboxAsync();
         await using var _ = app;
+        gmail.Inner.DeleteMessage(stored[0]);
         gmail.Inner.SetLabels(stored[1], ["INBOX", "STARRED"]);
         gmail.Inner.AddMessage(NewMessage());
         var before = await SnapshotAsync();
@@ -372,17 +373,18 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
     private static FakeMessage NewMessage() =>
         new("guard-new-1", "guard-thread-1", "new@example.com", "Synthetic", DateTimeOffset.UnixEpoch, ["INBOX"]);
 
-    private async Task<(List<string> Rows, int Senders, string? HistoryId)> SnapshotAsync()
+    private async Task<(List<string> Rows, List<string> Senders, string? HistoryId)> SnapshotAsync()
     {
         await using var db = postgres.CreateDbContext();
         var rows = await db.Messages.AsNoTracking().OrderBy(m => m.Id).ToListAsync(Ct);
         return (
             [.. rows.Select(m => $"{m.Id}|{string.Join(',', m.LabelIds)}|{m.DeletedInGmail}|{m.UpdatedAt:O}")],
-            await db.Senders.CountAsync(Ct),
+            [.. (await db.Senders.AsNoTracking().OrderBy(s => s.Address).ToListAsync(Ct))
+                .Select(s => $"{s.Address}|{s.TotalCount}|{s.LastSeenAt:O}|{s.UpdatedAt:O}")],
             (await db.FetchState.AsNoTracking().SingleAsync(Ct)).LastHistoryId);
     }
 
-    private async Task AssertUnchangedAsync(string jobType, (List<string> Rows, int Senders, string? HistoryId) before)
+    private async Task AssertUnchangedAsync(string jobType, (List<string> Rows, List<string> Senders, string? HistoryId) before)
     {
         await using (var db = postgres.CreateDbContext())
         {
@@ -393,7 +395,7 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
 
         var after = await SnapshotAsync();
         after.Rows.ShouldBe(before.Rows, "no stored message changed");
-        after.Senders.ShouldBe(before.Senders);
+        after.Senders.ShouldBe(before.Senders, "no sender count changed");
         after.HistoryId.ShouldBe(before.HistoryId, "a refused page never advances the stored history id");
     }
 

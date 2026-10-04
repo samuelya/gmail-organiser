@@ -119,8 +119,9 @@ public sealed partial class IncrementalFetchJob(
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        var marked = await pipeline.MarkDeletedAsync([.. deleted], ct);
+        // The sets are disjoint, so the re-read (and its guard) goes first: the page's first write follows the last guard.
         var refreshed = await pipeline.RefreshByIdsAsync(touched, ctx.EnsureMayWriteAsync, ct);
+        var marked = await pipeline.MarkDeletedAsync([.. deleted], ct);
         await ctx.EnsureMayWriteAsync(ct);
         await actionDone.ScanAsync(touched, ct);
         return cursor with
