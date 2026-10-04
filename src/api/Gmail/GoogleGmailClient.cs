@@ -91,27 +91,46 @@ public sealed partial class GoogleGmailClient(
 
     public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {
+        var fetched = await GetInBatchesAsync(ids, GmailMetadataBatch.SendAsync, m => m.Id, ct);
+        logger.LogDebug("Fetched metadata for {Fetched} of {Requested} Gmail messages", fetched.Count, ids.Count);
+        return fetched;
+    }
+
+    public async Task<IReadOnlyList<GmailMessageLabels>> GetMessagesLabelsAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        var fetched = await GetInBatchesAsync(ids, GmailMetadataBatch.SendLabelsAsync, m => m.Id, ct);
+        logger.LogDebug("Fetched labels for {Fetched} of {Requested} Gmail messages", fetched.Count, ids.Count);
+        return fetched;
+    }
+
+    /// <summary>Sends the distinct <paramref name="ids"/> in batches of <see cref="GmailOptions.BatchSize"/>; results in request order.</summary>
+    private async Task<IReadOnlyList<T>> GetInBatchesAsync<T>(
+        IReadOnlyList<string> ids,
+        Func<GmailService, IReadOnlyList<string>, GmailQuotaLimiter, ILogger, CancellationToken, Task<GmailBatchAttempt<string, T>>> send,
+        Func<T, string> idOf,
+        CancellationToken ct)
+    {
         ArgumentNullException.ThrowIfNull(ids);
         if (ids.Count == 0)
         {
             return [];
         }
 
+        var unique = ids.Distinct(StringComparer.Ordinal).ToList();
         var fetched = await RunAsync(async service =>
         {
-            var all = new List<GmailMessageMetadata>(ids.Count);
-            foreach (var chunk in ids.Distinct(StringComparer.Ordinal).Chunk(options.Value.BatchSize))
+            var all = new List<T>(unique.Count);
+            foreach (var chunk in unique.Chunk(options.Value.BatchSize))
             {
-                all.AddRange(await retry.ExecuteBatchAsync<string, GmailMessageMetadata>(
-                    chunk, (pending, token) => GmailMetadataBatch.SendAsync(service, pending, quota, logger, token), ct));
+                all.AddRange(await retry.ExecuteBatchAsync<string, T>(
+                    chunk, (pending, token) => send(service, pending, quota, logger, token), ct));
             }
 
             return all;
         }, ct);
 
-        var byId = fetched.ToDictionary(m => m.Id, StringComparer.Ordinal);
-        logger.LogDebug("Fetched metadata for {Fetched} of {Requested} Gmail messages", byId.Count, ids.Count);
-        return [.. ids.Distinct(StringComparer.Ordinal).Where(byId.ContainsKey).Select(id => byId[id])];
+        var byId = fetched.ToDictionary(idOf, StringComparer.Ordinal);
+        return [.. unique.Where(byId.ContainsKey).Select(id => byId[id])];
     }
 
     public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)

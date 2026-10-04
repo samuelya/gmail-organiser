@@ -13,6 +13,8 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
     public ConcurrentQueue<IReadOnlyList<string>> MetadataCalls { get; } = new();
 
+    public ConcurrentQueue<IReadOnlyList<string>> LabelsCalls { get; } = new();
+
     /// <summary>Runs after the n-th (1-based) metadata call returned.</summary>
     public Func<int, Task>? AfterMetadata { get; set; }
 
@@ -163,5 +165,11 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
         }
 
         return result;
+    }
+
+    public Task<IReadOnlyList<GmailMessageLabels>> GetMessagesLabelsAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        LabelsCalls.Enqueue([.. ids]);
+        return inner.GetMessagesLabelsAsync(ids, ct);
     }
 }

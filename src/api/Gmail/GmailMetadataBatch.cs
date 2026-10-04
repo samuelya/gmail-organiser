@@ -7,7 +7,10 @@ using Google.Apis.Util;
 
 namespace GmailOrganiser.Gmail;
 
-/// <summary>One Gmail batch call of <c>messages.get</c> (<c>format=metadata</c>), classified for <see cref="GmailRetryPolicy"/>.</summary>
+/// <summary>
+/// One Gmail batch call of <c>messages.get</c> (<c>format=metadata</c>, or <c>format=minimal</c> for labels only),
+/// classified for <see cref="GmailRetryPolicy"/>.
+/// </summary>
 public static class GmailMetadataBatch
 {
     private const string Me = "me";
@@ -17,10 +20,28 @@ public static class GmailMetadataBatch
     /// items are returned for retry, any other item error throws. The whole batch goes out as one burst, so its full
     /// quota cost is spent just before it is sent.
     /// </summary>
-    public static async Task<GmailBatchAttempt<string, GmailMessageMetadata>> SendAsync(
-        GmailService service, IReadOnlyList<string> ids, GmailQuotaLimiter quota, ILogger logger, CancellationToken ct)
+    public static Task<GmailBatchAttempt<string, GmailMessageMetadata>> SendAsync(
+        GmailService service, IReadOnlyList<string> ids, GmailQuotaLimiter quota, ILogger logger, CancellationToken ct) =>
+        SendAsync(service, ids, request =>
+        {
+            request.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Metadata;
+            request.MetadataHeaders = new Repeatable<string>(GmailMetadataMapper.MetadataHeaders);
+        }, GmailMetadataMapper.Map, quota, logger, ct);
+
+    /// <summary>
+    /// As <see cref="SendAsync(GmailService, IReadOnlyList{string}, GmailQuotaLimiter, ILogger, CancellationToken)"/>
+    /// with <c>format=minimal</c>: ids and label ids only. Costs the same quota per item; the saving is payload.
+    /// </summary>
+    public static Task<GmailBatchAttempt<string, GmailMessageLabels>> SendLabelsAsync(
+        GmailService service, IReadOnlyList<string> ids, GmailQuotaLimiter quota, ILogger logger, CancellationToken ct) =>
+        SendAsync(service, ids, request => request.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Minimal,
+            message => new GmailMessageLabels(message.Id, [.. message.LabelIds ?? []]), quota, logger, ct);
+
+    private static async Task<GmailBatchAttempt<string, T>> SendAsync<T>(
+        GmailService service, IReadOnlyList<string> ids, Action<UsersResource.MessagesResource.GetRequest> configure,
+        Func<Message, T> map, GmailQuotaLimiter quota, ILogger logger, CancellationToken ct)
     {
-        var succeeded = new List<GmailMessageMetadata>(ids.Count);
+        var succeeded = new List<T>(ids.Count);
         var retry = new List<string>();
         var answered = new HashSet<string>(StringComparer.Ordinal);
         GoogleApiException? failure = null;
@@ -28,14 +49,13 @@ public static class GmailMetadataBatch
         foreach (var id in ids)
         {
             var request = service.Users.Messages.Get(Me, id);
-            request.Format = UsersResource.MessagesResource.GetRequest.FormatEnum.Metadata;
-            request.MetadataHeaders = new Repeatable<string>(GmailMetadataMapper.MetadataHeaders);
+            configure(request);
             batch.Queue<Message>(request, (message, error, _, response) =>
             {
                 answered.Add(id);
                 if (error is null)
                 {
-                    succeeded.Add(GmailMetadataMapper.Map(message));
+                    succeeded.Add(map(message));
                 }
                 else if (response.StatusCode == HttpStatusCode.NotFound)
                 {
@@ -80,7 +100,7 @@ public static class GmailMetadataBatch
             logger.LogDebug("Gmail batch: {Count} of {Total} items to retry", retry.Count, ids.Count);
         }
 
-        return new GmailBatchAttempt<string, GmailMessageMetadata>(succeeded, retry);
+        return new GmailBatchAttempt<string, T>(succeeded, retry);
     }
 
     /// <summary>

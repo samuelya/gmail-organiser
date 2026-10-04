@@ -218,15 +218,23 @@ public sealed partial class FakeGmailClient : IGmailClient
         }, ct).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    public Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
+        GetMessagesAsync(ids, message => GmailMetadataMapper.Map(ToGmailMessage(message)), m => m.Id, ct);
+
+    public Task<IReadOnlyList<GmailMessageLabels>> GetMessagesLabelsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
+        GetMessagesAsync(ids, message => new GmailMessageLabels(message.Id, [.. message.LabelIds]), m => m.Id, ct);
+
+    /// <summary>One <c>messages.get</c> per distinct id, through the same retry path and failure injection as Gmail's batch.</summary>
+    private async Task<IReadOnlyList<T>> GetMessagesAsync<T>(
+        IReadOnlyList<string> ids, Func<FakeMessage, T> map, Func<T, string> idOf, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(ids);
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
         var unique = ids.Distinct(StringComparer.Ordinal).ToList();
 
-        var fetched = await retry.ExecuteBatchAsync<string, GmailMessageMetadata>(unique, async (pending, _) =>
+        var fetched = await retry.ExecuteBatchAsync<string, T>(unique, async (pending, _) =>
         {
-            var succeeded = new List<GmailMessageMetadata>();
+            var succeeded = new List<T>();
             var retryItems = new List<string>();
             foreach (var id in pending)
             {
@@ -245,15 +253,15 @@ public sealed partial class FakeGmailClient : IGmailClient
                 {
                     if (messages.Find(m => m.Id == id) is { } message)
                     {
-                        succeeded.Add(GmailMetadataMapper.Map(ToGmailMessage(message)));
+                        succeeded.Add(map(message));
                     }
                 }
             }
 
-            return new GmailBatchAttempt<string, GmailMessageMetadata>(succeeded, retryItems);
+            return new GmailBatchAttempt<string, T>(succeeded, retryItems);
         }, ct).ConfigureAwait(false);
 
-        var byId = fetched.ToDictionary(m => m.Id, StringComparer.Ordinal);
+        var byId = fetched.ToDictionary(idOf, StringComparer.Ordinal);
         return [.. unique.Where(byId.ContainsKey).Select(id => byId[id])];
     }
 
