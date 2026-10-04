@@ -13,7 +13,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261004055005_M7_SuggestionReplaceLabels")]
+    [Migration("20261004055804_M7_SuggestionReplaceLabels")]
     partial class M7_SuggestionReplaceLabels
     {
         /// <inheritdoc />
@@ -413,6 +413,10 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<DateTimeOffset?>("CompletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("completed_at");
+
+                    b.Property<DateTimeOffset?>("FiltersSyncedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("filters_synced_at");
 
                     b.Property<int>("InboxFetched")
                         .HasColumnType("integer")
@@ -919,6 +923,64 @@ namespace GmailOrganiser.Data.Migrations
                         .HasDatabaseName("ix_action_log_message_id");
 
                     b.ToTable("action_log", (string)null);
+                });
+
+            modelBuilder.Entity("GmailOrganiser.Rules.FilterRow", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("action");
+
+                    b.Property<bool>("CreatedByApp")
+                        .HasColumnType("boolean")
+                        .HasColumnName("created_by_app");
+
+                    b.Property<string>("Criteria")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("criteria");
+
+                    b.Property<string>("CriteriaSummary")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("criteria_summary");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
+
+                    b.Property<bool>("DeletedByApp")
+                        .HasColumnType("boolean")
+                        .HasColumnName("deleted_by_app");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("first_seen_at");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_seen_at");
+
+                    b.Property<string>("RestoredFrom")
+                        .HasColumnType("text")
+                        .HasColumnName("restored_from");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("Id")
+                        .HasName("pk_filters");
+
+                    b.HasIndex("DeletedAt")
+                        .HasDatabaseName("ix_filters_deleted_at");
+
+                    b.ToTable("filters", (string)null);
                 });
 
             modelBuilder.Entity("GmailOrganiser.Senders.SenderRow", b =>
