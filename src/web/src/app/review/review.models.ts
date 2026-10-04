@@ -249,21 +249,36 @@ export function outcomeOf(group: ReviewGroupDto): GroupOutcome {
   };
 }
 
-/** The labels directly under the document-type `parent`, by name (ordinal), as the edit dialog offers them. */
+/** Mirrors the API's `DocumentTypePath.MaxDepth`: a document type is 1 to 3 levels under the parent. */
+export const MAX_DOCUMENT_TYPE_DEPTH = 3;
+
+/**
+ * The user labels 1 to `MAX_DOCUMENT_TYPE_DEPTH` levels under the document-type `parent`, as the
+ * path below it (`Utilities`, `Utilities/Electricity`), deduplicated case-insensitively and
+ * ordinal-sorted so a type comes before its children.
+ */
 export function documentTypeOptions(labels: readonly LabelDto[], parent: string): string[] {
   const prefix = `${parent}/`.toLowerCase();
-  const names = labels
-    .filter((l) => l.type === 'user' && l.name.toLowerCase().startsWith(prefix))
-    .map((l) => l.name.slice(prefix.length))
-    .filter((n) => n.trim() && !n.includes('/'));
-  return [...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const byKey = new Map<string, string>();
+  for (const l of labels) {
+    if (l.type !== 'user' || !l.name.toLowerCase().startsWith(prefix)) continue;
+    const path = l.name.slice(prefix.length);
+    const segments = path.split('/');
+    if (segments.length > MAX_DOCUMENT_TYPE_DEPTH || segments.some((s) => !s.trim())) continue;
+    if (!byKey.has(path.toLowerCase())) byKey.set(path.toLowerCase(), path);
+  }
+  return [...byKey.values()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/** The document-type label for `text` under `parent`: `""` for none, `null` when `text` has a `/`. */
+/**
+ * The document-type label for `text` under `parent`: `""` for none, `<parent>/<path>` for 1 to
+ * `MAX_DOCUMENT_TYPE_DEPTH` trimmed segments, `null` when deeper or a segment is empty.
+ */
 export function toDocumentTypeLabel(parent: string, text: string): string | null {
-  const segment = text.trim();
-  if (!segment) return '';
-  return segment.includes('/') ? null : `${parent}/${segment}`;
+  if (!text.trim()) return '';
+  const segments = text.split('/').map((s) => s.trim());
+  if (segments.length > MAX_DOCUMENT_TYPE_DEPTH || segments.some((s) => !s)) return null;
+  return `${parent}/${segments.join('/')}`;
 }
 
 /**

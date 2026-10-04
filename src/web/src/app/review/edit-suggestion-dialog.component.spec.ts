@@ -77,7 +77,11 @@ describe('EditSuggestionDialog', () => {
   ) {
     const api = { edit: vi.fn(edit) };
     const all = documentTypeParent
-      ? [...labels, { id: 'D1', name: 'Docs/Invoice', type: 'user' }]
+      ? [
+          ...labels,
+          { id: 'D1', name: 'Docs/Invoice', type: 'user' },
+          { id: 'D2', name: 'Docs/Invoice/Paid', type: 'user' },
+        ]
       : labels;
     const labelsApi = { labels: vi.fn(() => of(all)), refresh: vi.fn(() => of(all)) };
     TestBed.configureTestingModule({
@@ -184,22 +188,44 @@ describe('EditSuggestionDialog', () => {
     expect(api.edit.mock.calls[1][1].documentTypeLabel).toBe('');
   });
 
-  it('makes free text a new child of the parent and refuses a nested one', () => {
+  it('starts from a nested type and offers nested existing types', async () => {
+    const { api, dialog } = setup(undefined, 'Docs');
+    dialog.editMember(suggestion('a', { documentTypeLabel: 'Docs/Invoice/Paid' })).subscribe();
+    settle();
+    await Promise.resolve();
+    const input = q<HTMLInputElement>('edit-document-type')!;
+    expect(input.value).toBe('Invoice/Paid');
+    expect(q('edit-document-type-hint')!.textContent).toContain('Existing label under Docs');
+    type('edit-document-type', 'invoice');
+    input.dispatchEvent(new Event('focusin'));
+    settle();
+    const options = Array.from(document.querySelectorAll('mat-option')).map((o) =>
+      o.textContent!.trim(),
+    );
+    expect(options).toEqual(['None', 'Invoice', 'Invoice/Paid']);
+    expect(api.edit).not.toHaveBeenCalled();
+  });
+
+  it('makes free text a new type under the parent and refuses a too-deep or malformed one', () => {
     const { api, dialog } = setup(undefined, 'Docs');
     dialog.editGroup('news@example.com', group([suggestion('a'), suggestion('b')])).subscribe();
     settle();
-    type('edit-document-type', 'A/B');
-    q<HTMLButtonElement>('edit-save')!.click();
-    settle();
-    expect(q('edit-document-type-error')!.textContent).toContain("One level under Docs: no '/'.");
+    for (const bad of ['A/B/C/D', 'A//B', 'A/']) {
+      type('edit-document-type', bad);
+      q<HTMLButtonElement>('edit-save')!.click();
+      settle();
+      expect(q('edit-document-type-error')!.textContent).toContain('1 to 3 levels under Docs.');
+    }
     expect(api.edit).not.toHaveBeenCalled();
-    type('edit-document-type', ' Contract ');
-    expect(q('edit-document-type-hint')!.textContent).toContain('New: Contract under Docs');
+    type('edit-document-type', ' Utilities/Electricity ');
+    expect(q('edit-document-type-hint')!.textContent).toContain(
+      'New: Utilities/Electricity under Docs',
+    );
     q<HTMLButtonElement>('edit-save')!.click();
     settle();
     expect(api.edit.mock.calls.map((c) => c[1].documentTypeLabel)).toEqual([
-      'Docs/Contract',
-      'Docs/Contract',
+      'Docs/Utilities/Electricity',
+      'Docs/Utilities/Electricity',
     ]);
   });
 

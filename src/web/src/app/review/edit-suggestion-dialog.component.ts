@@ -48,6 +48,7 @@ import {
   documentTypeOptions,
   editableMembers,
   editRequest,
+  MAX_DOCUMENT_TYPE_DEPTH,
   ReviewEditDialog,
   ReviewGroupDto,
   replaceState,
@@ -127,7 +128,7 @@ export class EditSuggestionDialog {
     toBeDeleted: new FormControl(this.data.current.toBeDeleted && !this.allProtected(), {
       nonNullable: true,
     }),
-    /** The segment under `documentTypeParent`; blank is none. */
+    /** The path under `documentTypeParent`; blank is none. */
     documentType: new FormControl('', {
       nonNullable: true,
       validators: [(c) => this.documentTypeValidator(String(c.value ?? ''))],
@@ -349,12 +350,15 @@ export class EditSuggestionDialog {
     control.updateValueAndValidity();
   }
 
-  /** The topic field's path rules for `<parent>/<text>`, and one level only. */
+  /** The topic field's path rules for `<parent>/<text>`, and 1 to 3 levels under the parent. */
   private documentTypeValidator(text: string): ValidationErrors | null {
     const parent = this.documentTypeParent();
     if (!parent || !text.trim()) return null;
     const label = toDocumentTypeLabel(parent, text);
-    const error = label === null ? `One level under ${parent}: no '/'.` : labelPathError(label);
+    const error =
+      label === null
+        ? `1 to ${MAX_DOCUMENT_TYPE_DEPTH} levels under ${parent}.`
+        : labelPathError(label);
     return error ? { labelPath: error } : null;
   }
 

@@ -16,26 +16,59 @@ import {
 const label = (name: string, type = 'user'): LabelDto => ({ id: name, name, type });
 
 describe('documentTypeOptions', () => {
-  it('lists the direct user children of the parent, ordinal sorted', () => {
+  it('lists user labels 1 to 3 levels under the parent, deduplicated and ordinal sorted', () => {
     const labels = [
       label('Docs'),
       label('Docs/receipt'),
       label('Docs/Invoice'),
       label('docs/Contract'),
       label('Docs/Invoice/Old'),
+      label('Docs/invoice/old'),
+      label('Docs/Invoice/Old/Paper'),
+      label('Docs/Invoice/Old/Paper/Scan'),
       label('Docsx/Other'),
       label('Docs/System', 'system'),
       label('Topic/Alpha'),
     ];
-    expect(documentTypeOptions(labels, 'Docs')).toEqual(['Contract', 'Invoice', 'receipt']);
+    expect(documentTypeOptions(labels, 'Docs')).toEqual([
+      'Contract',
+      'Invoice',
+      'Invoice/Old',
+      'Invoice/Old/Paper',
+      'receipt',
+    ]);
+  });
+
+  it('puts a type before its children', () => {
+    const labels = [
+      label('Docs/Utilities/Electricity'),
+      label('Docs/Utilities'),
+      label('Docs/Utility'),
+    ];
+    expect(documentTypeOptions(labels, 'Docs')).toEqual([
+      'Utilities',
+      'Utilities/Electricity',
+      'Utility',
+    ]);
   });
 });
 
 describe('toDocumentTypeLabel', () => {
-  it('trims to a child path, blank is none and a nested segment is refused', () => {
+  it('trims 1 to 3 segments into a path under the parent; blank is none', () => {
     expect(toDocumentTypeLabel('Docs', '  Invoice ')).toBe('Docs/Invoice');
+    expect(toDocumentTypeLabel('Docs', 'Utilities / Electricity')).toBe(
+      'Docs/Utilities/Electricity',
+    );
+    expect(toDocumentTypeLabel('Docs', 'A/B/C')).toBe('Docs/A/B/C');
     expect(toDocumentTypeLabel('Docs', '   ')).toBe('');
-    expect(toDocumentTypeLabel('Docs', 'A/B')).toBeNull();
+  });
+
+  it('refuses 4+ levels and empty segments', () => {
+    expect(toDocumentTypeLabel('Docs', 'A/B/C/D')).toBeNull();
+    expect(toDocumentTypeLabel('Docs', 'A//B')).toBeNull();
+    expect(toDocumentTypeLabel('Docs', 'A/')).toBeNull();
+    expect(toDocumentTypeLabel('Docs', '/A')).toBeNull();
+    expect(toDocumentTypeLabel('Docs', 'A/ /B')).toBeNull();
   });
 });
 
@@ -52,7 +85,7 @@ const pattern = (documentTypeLabel: string | null): SenderPatternDto & { topicLa
 describe('apply rest with a document type', () => {
   const flags = { action: 'Act', delete: 'Bin' };
 
-  it('names the pattern\'s document type whether or not settings have loaded', () => {
+  it("names the pattern's document type whether or not settings have loaded", () => {
     expect(patternSummary(pattern('Docs/Invoice'), flags)).toContain(
       'label "Topic/Alpha", document type "Docs/Invoice", "Act"',
     );
@@ -157,6 +190,19 @@ describe('document-type chips', () => {
     );
     expect(chips.map((c) => c.textContent!.trim())).toEqual(['Docs/Invoice', 'Docs/Invoice']);
     expect(chips.some((c) => c.querySelector('[data-testid="document-type-new"]'))).toBe(false);
+  });
+
+  it('shows a nested type in full', async () => {
+    const chips = await render(
+      group({
+        documentTypeLabel: 'Docs/Utilities/Electricity',
+        members: [member({ documentTypeLabel: 'Docs/Utilities/Electricity' })],
+      }),
+    );
+    expect(chips.map((c) => c.textContent!.trim())).toEqual([
+      'Docs/Utilities/Electricity',
+      'Docs/Utilities/Electricity',
+    ]);
   });
 
   it('marks a new type', async () => {
