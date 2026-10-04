@@ -21,7 +21,7 @@ public sealed class LabelResolver(LabelCatalog catalog, IGmailClient gmail)
     /// <paramref name="created"/> runs after each create, before the next.
     /// </summary>
     /// <exception cref="ArgumentException">A path is not <see cref="IsValid"/>.</exception>
-    /// <exception cref="InvalidOperationException">Creating the labels would pass <see cref="MaxLabels"/>.</exception>
+    /// <exception cref="LabelLimitException">Creating the labels would pass <see cref="MaxLabels"/>.</exception>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     public async Task<IReadOnlyDictionary<string, string>> EnsureAsync(
@@ -49,7 +49,7 @@ public sealed class LabelResolver(LabelCatalog catalog, IGmailClient gmail)
                     {
                         if (labels.Count >= MaxLabels)
                         {
-                            throw new InvalidOperationException($"Gmail allows at most {MaxLabels} labels; '{path}' was not created.");
+                            throw new LabelLimitException($"Gmail allows at most {MaxLabels} labels; '{path}' was not created.");
                         }
 
                         label = await gmail.CreateLabelAsync(name, ct);
@@ -86,3 +86,6 @@ public sealed class LabelResolver(LabelCatalog catalog, IGmailClient gmail)
         yield return path;
     }
 }
+
+/// <summary>Creating a label would pass <see cref="LabelResolver.MaxLabels"/>.</summary>
+public sealed class LabelLimitException(string message) : InvalidOperationException(message);

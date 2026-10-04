@@ -1,7 +1,9 @@
+using System.Net;
 using GmailOrganiser.Common;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using Google;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace GmailOrganiser.Rules;
@@ -51,7 +53,7 @@ public static class RulesEndpoints
         return TypedResults.Ok(await filters.PreviewAsync(spec, ct));
     }
 
-    /// <summary>Creates the filter (and any missing label); 409 at Gmail's filter limit, 503 when Gmail is unreachable.</summary>
+    /// <summary>Creates the filter (and any missing label); 409 at Gmail's limits or on Gmail's refusal, 503 when Gmail is unreachable.</summary>
     private static async Task<Results<Created<FilterDto>, ValidationProblem, ProblemHttpResult>> CreateFilterAsync(
         CreateFilterRequest request, FilterService filters, CancellationToken ct)
     {
@@ -140,9 +142,14 @@ public static class RulesEndpoints
     private static ProblemHttpResult ConflictProblem(FilterResult result) =>
         TypedResults.Problem(statusCode: StatusCodes.Status409Conflict, title: result.Title, detail: result.Detail);
 
-    /// <summary>503 when Gmail is not connected or rate-limiting, 409 when the local data belongs to another account.</summary>
+    /// <summary>
+    /// 503 when Gmail is not connected or rate-limiting; 409 when the local data belongs to another account or Gmail
+    /// refused the request (400/409, e.g. "Filter already exists"), with Gmail's message.
+    /// </summary>
     private static ProblemHttpResult? GmailProblem(Exception ex) => ex switch
     {
+        GoogleApiException { HttpStatusCode: HttpStatusCode.BadRequest or HttpStatusCode.Conflict } e => TypedResults.Problem(
+            statusCode: StatusCodes.Status409Conflict, title: "Gmail refused the change", detail: e.Error?.Message ?? e.Message),
         GmailNotConnectedException e => GmailProblems.NotConnected(e),
         GmailRateLimitedException e => GmailProblems.RateLimited(e),
         JobRefusedException => TypedResults.Problem(

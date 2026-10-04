@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 
 namespace GmailOrganiser.Gmail.Fake;
 
@@ -27,8 +28,18 @@ public sealed class FakeFilterStore
 
     public IReadOnlyList<GmailFilter> All => [.. filters];
 
+    /// <summary>Adds a filter; one with the same criteria and action is refused with Gmail's 400 "Filter already exists".</summary>
     public GmailFilter Create(GmailFilterCriteria criteria, GmailFilterAction action)
     {
+        if (filters.Any(f => f.Criteria == criteria
+            && f.Action.AddLabelIds.SequenceEqual(action.AddLabelIds)
+            && f.Action.RemoveLabelIds.SequenceEqual(action.RemoveLabelIds)))
+        {
+            var refused = GmailRetryPolicy.CreateApiException(HttpStatusCode.BadRequest, "failedPrecondition");
+            refused.Error.Message = "Filter already exists";
+            throw refused;
+        }
+
         var filter = new GmailFilter(string.Create(CultureInfo.InvariantCulture, $"fake-filter-{++nextId}"), criteria, action);
         filters.Add(filter);
         return filter;

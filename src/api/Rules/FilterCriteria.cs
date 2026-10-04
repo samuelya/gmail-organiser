@@ -3,6 +3,7 @@ using System.Linq.Expressions;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
+using GmailOrganiser.Senders;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Rules;
@@ -141,13 +142,13 @@ public static class FilterCriteriaMapping
 
         if (!string.IsNullOrWhiteSpace(criteria.To))
         {
-            var pattern = $"%{EscapeLike(criteria.To.Trim())}%";
+            var pattern = $"%{SenderQuery.EscapeLike(criteria.To.Trim())}%";
             steps.Add(m => m.ToHeader != null && EF.Functions.ILike(m.ToHeader, pattern));
         }
 
         if (!string.IsNullOrWhiteSpace(criteria.Subject))
         {
-            var pattern = $"%{EscapeLike(criteria.Subject.Trim())}%";
+            var pattern = $"%{SenderQuery.EscapeLike(criteria.Subject.Trim())}%";
             steps.Add(m => m.Subject != null && EF.Functions.ILike(m.Subject, pattern));
         }
 
@@ -189,38 +190,53 @@ public static class FilterCriteriaMapping
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static Expression<Func<MessageRow, bool>>? FromPredicate(string from)
+    /// <summary>
+    /// The lower-cased terms of a <c>from</c> criterion: addresses and <c>@domain</c>s, from one term or an <c>OR</c>
+    /// list; null when any term is neither.
+    /// </summary>
+    public static IReadOnlyList<string>? FromTerms(string from)
     {
-        var terms = from.Trim().Trim('(', ')').Split(" OR ", StringSplitOptions.TrimEntries);
-        var m = Expression.Parameter(typeof(MessageRow), "m");
-        var address = Expression.Property(m, nameof(MessageRow.FromAddress));
-        Expression? body = null;
-        foreach (var term in terms.Select(t => t.ToLowerInvariant()))
+        ArgumentNullException.ThrowIfNull(from);
+        var terms = from.Trim().Trim('(', ')').Split(" OR ", StringSplitOptions.TrimEntries).Select(t => t.ToLowerInvariant()).ToList();
+        foreach (var term in terms)
         {
             if (term.Length < 2 || term.Any(char.IsWhiteSpace) || term.Any(c => c is '(' or ')' or '"' or '*'))
             {
                 return null;
             }
 
-            Expression next;
-            if (term[0] == '@')
-            {
-                if (term.IndexOf('@', 1) >= 0)
-                {
-                    return null;
-                }
-
-                next = Expression.OrElse(EndsWith(address, term), EndsWith(address, "." + term[1..]));
-            }
-            else if (term.Count(c => c == '@') == 1 && term[^1] != '@')
-            {
-                next = Expression.Equal(address, Expression.Constant(term));
-            }
-            else
+            var domain = term[0] == '@' && term.IndexOf('@', 1) < 0;
+            var address = term.Count(c => c == '@') == 1 && term[0] != '@' && term[^1] != '@';
+            if (!domain && !address)
             {
                 return null;
             }
+        }
 
+        return terms;
+    }
+
+    /// <summary>Whether a <see cref="FromTerms"/> term matches the lower-case <paramref name="address"/> as Gmail would.</summary>
+    public static bool FromTermMatches(string term, string address) =>
+        term[0] == '@'
+            ? address.EndsWith(term, StringComparison.Ordinal) || address.EndsWith("." + term[1..], StringComparison.Ordinal)
+            : address == term;
+
+    private static Expression<Func<MessageRow, bool>>? FromPredicate(string from)
+    {
+        if (FromTerms(from) is not { } terms)
+        {
+            return null;
+        }
+
+        var m = Expression.Parameter(typeof(MessageRow), "m");
+        var address = Expression.Property(m, nameof(MessageRow.FromAddress));
+        Expression? body = null;
+        foreach (var term in terms)
+        {
+            Expression next = term[0] == '@'
+                ? Expression.OrElse(EndsWith(address, term), EndsWith(address, "." + term[1..]))
+                : Expression.Equal(address, Expression.Constant(term));
             body = body is null ? next : Expression.OrElse(body, next);
         }
 
@@ -241,15 +257,10 @@ public static class FilterCriteriaMapping
 
         if (t.StartsWith("list:", StringComparison.OrdinalIgnoreCase) && t.Length > 5 && !t.Any(char.IsWhiteSpace))
         {
-            var id = EscapeLike(t[5..].Trim('<', '>'));
+            var id = SenderQuery.EscapeLike(t[5..].Trim('<', '>'));
             return m => m.ListId != null && EF.Functions.ILike(m.ListId, id);
         }
 
         return null;
     }
-
-    private static string EscapeLike(string value) =>
-        value.Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("%", "\\%", StringComparison.Ordinal)
-            .Replace("_", "\\_", StringComparison.Ordinal);
 }

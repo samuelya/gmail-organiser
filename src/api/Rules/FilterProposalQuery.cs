@@ -2,6 +2,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Review;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,44 +20,51 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
     public async Task<PagedDto<FilterProposalDto>> ListAsync(int page, int pageSize, CancellationToken ct)
     {
         // Pattern suggestions don't make a pattern (SenderPatternService), so they don't make a proposal either.
-        var candidates = await db.Senders.AsNoTracking()
-            .Where(s => db.Suggestions.Any(g => g.SenderAddress == s.Address
+        var candidates = Uncovered(
+            db.Senders.AsNoTracking().Where(s => db.Suggestions.Any(g => g.SenderAddress == s.Address
                 && g.Source != SuggestionSource.SenderPattern
-                && (g.Status == SuggestionStatus.Approved || g.Status == SuggestionStatus.Applied)))
+                && (g.Status == SuggestionStatus.Approved || g.Status == SuggestionStatus.Applied))),
+            await ActiveFromTermsAsync(ct));
+        var total = await candidates.CountAsync(ct);
+        var senders = await candidates
             .OrderByDescending(s => s.TotalCount)
             .ThenBy(s => s.Address)
-            .Select(s => new { s.Address, s.DisplayName, s.TotalCount })
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(s => new { s.Address, s.DisplayName, s.TotalCount, s.Allowlisted })
             .ToListAsync(ct);
-        var filtered = (await ActiveFromCriteriaAsync(ct)) is { Count: > 0 } froms
-            ? candidates.Where(c => !froms.Any(f => f.Contains(c.Address, StringComparison.OrdinalIgnoreCase))).ToList()
-            : candidates;
 
+        string[] addresses = [.. senders.Select(s => s.Address)];
+        var found = await patterns.GetManyAsync(addresses, ct);
+        var listIds = await patterns.CommonListIdsAsync(addresses, ct);
         var settings = await settingsStore.GetAsync(ct);
         var items = new List<FilterProposalDto>();
-        foreach (var sender in filtered.Skip((page - 1) * pageSize).Take(pageSize))
+        foreach (var sender in senders)
         {
-            var pattern = await patterns.GetAsync(sender.Address, ct);
+            // Null only when the sender's approvals were undone between the queries above.
+            var pattern = found[sender.Address];
             if (pattern.TopicLabel is null)
             {
                 continue;
             }
 
             items.Add(new FilterProposalDto(
-                sender.Address, sender.DisplayName, sender.TotalCount, await CommonListIdAsync(sender.Address, ct), pattern,
-                Suggest(sender.Address, pattern, settings.DeleteLabelName)));
+                sender.Address, sender.DisplayName, sender.TotalCount, listIds.GetValueOrDefault(sender.Address), pattern,
+                Suggest(sender.Address, pattern, settings.DeleteLabelName, sender.Allowlisted)));
         }
 
-        return new PagedDto<FilterProposalDto>(items, page, pageSize, filtered.Count);
+        return new PagedDto<FilterProposalDto>(items, page, pageSize, total);
     }
 
     /// <summary>
     /// Labels the sender's mail with its topic label and skips the inbox unless it needs action; a to-be-deleted
-    /// pattern adds the delete label instead, skips the inbox and leaves mail with attachments alone.
+    /// pattern adds the delete label instead, skips the inbox and leaves mail with attachments alone. An allowlisted
+    /// sender is protected (MessageProtection), so it never gets the delete label: its proposal is the topic label.
     /// </summary>
-    public static FilterSuggestionDto Suggest(string address, SenderPatternDto pattern, string deleteLabelName)
+    public static FilterSuggestionDto Suggest(string address, SenderPatternDto pattern, string deleteLabelName, bool allowlisted)
     {
         ArgumentNullException.ThrowIfNull(pattern);
-        var delete = pattern.ToBeDeleted == true;
+        var delete = pattern.ToBeDeleted == true && !allowlisted;
         var criteria = new FilterCriteriaDto(address, null, null, null, delete ? "has:attachment" : null, null, null, null, null);
         var action = delete
             ? new FilterActionRequest([deleteLabelName], SkipInbox: true, MarkRead: false)
@@ -64,20 +72,32 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
         return new FilterSuggestionDto(criteria, action);
     }
 
-    private async Task<List<string>> ActiveFromCriteriaAsync(CancellationToken ct) =>
+    /// <summary>
+    /// <paramref name="senders"/> minus those an active filter's <c>from</c> matches: an exact address, or an
+    /// <c>@domain</c> with its subdomains (<see cref="FilterCriteriaMapping.FromTerms"/>). A <c>from</c> that is not an
+    /// address list hides nobody.
+    /// </summary>
+    private static IQueryable<SenderRow> Uncovered(IQueryable<SenderRow> senders, IReadOnlyList<string> terms)
+    {
+        string[] exact = [.. terms.Where(t => t[0] != '@')];
+        if (exact.Length > 0)
+        {
+            senders = senders.Where(s => !exact.Contains(s.Address));
+        }
+
+        foreach (var domain in terms.Where(t => t[0] == '@'))
+        {
+            var subdomain = "." + domain[1..];
+            senders = senders.Where(s => !s.Address.EndsWith(domain) && !s.Address.EndsWith(subdomain));
+        }
+
+        return senders;
+    }
+
+    private async Task<List<string>> ActiveFromTermsAsync(CancellationToken ct) =>
         [.. (await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct))
             .Select(r => r.ReadCriteria().From)
-            .OfType<string>()];
-
-    /// <summary>The List-Id every stored message of the sender carries, or null when they differ or some have none.</summary>
-    private async Task<string?> CommonListIdAsync(string address, CancellationToken ct)
-    {
-        var listIds = await db.Messages.AsNoTracking()
-            .Where(m => m.FromAddress == address && !m.DeletedInGmail)
-            .Select(m => m.ListId)
-            .Distinct()
-            .Take(2)
-            .ToListAsync(ct);
-        return listIds is [{ } only] ? only : null;
-    }
+            .OfType<string>()
+            .SelectMany(f => FilterCriteriaMapping.FromTerms(f) ?? [])
+            .Distinct(StringComparer.Ordinal)];
 }

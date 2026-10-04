@@ -5,6 +5,7 @@ using GmailOrganiser.Common;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
+using GmailOrganiser.Review;
 using GmailOrganiser.Rules;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -180,6 +181,23 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
         var list = await host.CreateClient().GetFromJsonAsync<FilterListDto>("/api/rules/filters", Ct);
         list.ShouldNotBeNull().SyncedAt.ShouldNotBeNull();
         list.ActiveCount.ShouldBe(FakeFilterStore.Seed.Count + 1);
+        await using var db = postgres.CreateDbContext();
+        var batch = await db.ActionBatches.SingleAsync(Ct);
+        batch.Kind.ShouldBe(ActionKind.FilterLabels);
+        batch.CreatedLabelIds.ShouldBe([(await Gmail.ListLabelsAsync(Ct)).Single(l => l.Name == "Synthetic Filters").Id, label.Id]);
+    }
+
+    [Fact]
+    public async Task A_filter_gmail_already_has_is_409_with_gmails_reason()
+    {
+        (await CreateAsync(Shop)).StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        var response = await CreateAsync(Shop);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("Filter already exists");
+        await using var db = postgres.CreateDbContext();
+        (await db.Filters.CountAsync(r => r.DeletedAt == null && r.CreatedByApp, Ct)).ShouldBe(1);
     }
 
     [Fact]
@@ -200,11 +218,14 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
             await db.SaveChangesAsync(Ct);
         }
 
-        var response = await CreateAsync(Shop);
+        var response = await PostAsync("/api/rules/filters", JsonContent.Create(new CreateFilterRequest(
+            new FilterCriteriaDto(Shop, null, null, null, null, null, null, null, null),
+            new FilterActionRequest(["Synthetic Limit"], SkipInbox: true, MarkRead: false))));
 
         response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("Filter limit reached");
         (await Gmail.ListFiltersAsync(Ct)).Count.ShouldBe(FakeFilterStore.Seed.Count);
+        (await Gmail.ListLabelsAsync(Ct)).ShouldNotContain(l => l.Name == "Synthetic Limit");
     }
 
     [Fact]
@@ -234,6 +255,18 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
         (await Gmail.ListFiltersAsync(Ct)).ShouldContain(f => f.Id == restored.Id);
         (await PostAsync($"/api/rules/filters/{original.Id}/restore", null)).StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await PostAsync($"/api/rules/filters/{restored.Id}/restore", null)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task Concurrent_restores_of_one_filter_create_one()
+    {
+        var original = (await (await CreateAsync(Shop)).Content.ReadFromJsonAsync<FilterDto>(Ct)).ShouldNotBeNull();
+        (await DeleteAsync(original.Id)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => PostAsync($"/api/rules/filters/{original.Id}/restore", null)));
+
+        responses.Select(r => r.StatusCode).Order().ShouldBe([HttpStatusCode.Created, HttpStatusCode.Conflict]);
+        (await Gmail.ListFiltersAsync(Ct)).Count(f => f.Criteria.From == Shop).ShouldBe(1);
     }
 
     [Fact]
@@ -313,6 +346,36 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
+    public async Task Proposals_hide_senders_a_filter_matches_by_address_or_domain_and_spare_allowlisted_senders_the_delete_label()
+    {
+        await SeedSuggestionsAsync(
+            ("s0", "Synthetic/Offers", false, false, SuggestionStatus.Approved),
+            ("b0", "Synthetic/Bills", true, true, SuggestionStatus.Approved));
+        await SyncAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Senders.Where(s => s.Address == Billing).ExecuteUpdateAsync(u => u.SetProperty(s => s.Allowlisted, true), Ct);
+            db.Filters.Add(SyntheticFilter("suffix", $"(x{Shop} OR @example.org)"));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var page = await ProposalsAsync();
+
+        page.Items.Select(p => p.SenderAddress).ShouldBe([Shop, Billing]);
+        var billing = page.Items[1].Suggested;
+        billing.Criteria.NegatedQuery.ShouldBeNull();
+        billing.Action.ShouldBe(new FilterActionRequest(["Synthetic/Bills"], SkipInbox: false, MarkRead: false), new ActionComparer());
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Filters.Add(SyntheticFilter("domain", "@example.com"));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        (await ProposalsAsync()).Total.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task Proposals_page_size_is_capped()
     {
         (await host.CreateClient().GetAsync("/api/rules/filters/proposals?pageSize=101", Ct)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
@@ -367,6 +430,19 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
     private Task<HttpResponseMessage> CreateAsync(string from) => PostAsync("/api/rules/filters", JsonContent.Create(new CreateFilterRequest(
         new FilterCriteriaDto(from, null, null, null, null, null, null, null, null),
         new FilterActionRequest(["Example"], SkipInbox: true, MarkRead: false))));
+
+    private static FilterRow SyntheticFilter(string id, string from) => new()
+    {
+        Id = id,
+        Criteria = FilterRow.WriteCriteria(new GmailFilterCriteria(From: from)),
+        CriteriaSummary = "synthetic",
+        FirstSeenAt = Now,
+        LastSeenAt = Now,
+        UpdatedAt = Now,
+    };
+
+    private async Task<PagedDto<FilterProposalDto>> ProposalsAsync() =>
+        (await host.CreateClient().GetFromJsonAsync<PagedDto<FilterProposalDto>>("/api/rules/filters/proposals", Ct)).ShouldNotBeNull();
 
     private async Task SyncAsync() =>
         (await PostAsync("/api/rules/filters/sync", null)).StatusCode.ShouldBe(HttpStatusCode.OK);
