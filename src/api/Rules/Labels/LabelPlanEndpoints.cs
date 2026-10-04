@@ -15,6 +15,7 @@ public static class LabelPlanEndpoints
         group.MapGet("/plans/{id:guid}", GetAsync);
         group.MapPatch("/plans/{id:guid}/items/{itemId:guid}", UpdateItemAsync);
         group.MapPost("/plans/{id:guid}/discard", DiscardAsync);
+        group.MapPost("/plans/{id:guid}/apply", ApplyAsync).RequireAccountMatch();
         return endpoints;
     }
 
@@ -88,6 +89,20 @@ public static class LabelPlanEndpoints
     private static async Task<Results<Ok<LabelPlanDto>, NotFound, ProblemHttpResult>> DiscardAsync(
         Guid id, LabelPlanService plans, CancellationToken ct) =>
         ToResult(await plans.DiscardAsync(id, ct));
+
+    /// <summary>Starts applying the plan's accepted items: 202 with the job id; 409 unless it is a draft with an accepted item.</summary>
+    private static async Task<Results<Accepted<LabelPlanApplyDto>, NotFound, ProblemHttpResult>> ApplyAsync(
+        Guid id, LabelPlanService plans, CancellationToken ct)
+    {
+        var result = await plans.ApplyAsync(id, ct);
+        return result.Outcome switch
+        {
+            PlanEditOutcome.Ok => TypedResults.Accepted($"/api/jobs/{result.Plan!.JobId}", new LabelPlanApplyDto(result.Plan.JobId!.Value)),
+            PlanEditOutcome.NotFound => TypedResults.NotFound(),
+            _ => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, title: "The plan cannot be applied", detail: result.Detail),
+        };
+    }
 
     private static Results<Ok<LabelPlanDto>, NotFound, ProblemHttpResult> ToResult(PlanEditResult result) => result.Outcome switch
     {

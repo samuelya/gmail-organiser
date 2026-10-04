@@ -106,6 +106,24 @@ public interface IGmailClient
     Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct);
 
     /// <summary>
+    /// Renames the user label <paramref name="id"/> (<c>labels.patch</c>, name only). The id stays, so messages and filters
+    /// keep the label; nested labels are separate labels and keep their names.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="newName"/> is not a valid label name.</exception>
+    /// <exception cref="GmailLabelExistsException">Another label already has <paramref name="newName"/>.</exception>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task<GmailLabel> RenameLabelAsync(string id, string newName, CancellationToken ct);
+
+    /// <summary>
+    /// Deletes the user label <paramref name="id"/> (<c>labels.delete</c>; Gmail takes it off every message); a label
+    /// Gmail no longer has counts as deleted. Callers check that it is empty first.
+    /// </summary>
+    /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
+    Task DeleteLabelAsync(string id, CancellationToken ct);
+
+    /// <summary>
     /// Adds and removes labels on up to <see cref="GmailLimits.BatchModifyMaxIds"/> messages in one call; callers chunk.
     /// Idempotent, so a chunk can be re-sent after a lost response. A thin I/O seam: callers write the action (undo) log.
     /// </summary>
@@ -172,7 +190,7 @@ public static class GmailLimits
         }
     }
 
-    /// <summary>Validates a label name for <see cref="IGmailClient.CreateLabelAsync"/>.</summary>
+    /// <summary>Validates a label name for <see cref="IGmailClient.CreateLabelAsync"/> and <see cref="IGmailClient.RenameLabelAsync"/>.</summary>
     public static void EnsureValidLabelName(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -231,6 +249,9 @@ public sealed record MessageListQuery(string? Query, IReadOnlyList<string>? Labe
 {
     /// <summary>Gmail's maximum page size for <c>messages.list</c>.</summary>
     public const int MaxPageSize = 500;
+
+    /// <summary>Also lists mail in Spam and Trash, which Gmail leaves out by default.</summary>
+    public bool IncludeSpamTrash { get; init; }
 
     public void EnsureValid()
     {
@@ -294,3 +315,6 @@ public sealed class GmailInvalidPageTokenException(string message, Exception? in
 
 /// <summary>Gmail answered 404 to <c>history.list</c>: the start history ID is older than Gmail keeps; resync fully.</summary>
 public sealed class GmailHistoryExpiredException(string message, Exception? inner = null) : Exception(message, inner);
+
+/// <summary>A rename was refused because another label already has the name; nothing changed.</summary>
+public sealed class GmailLabelExistsException(string message, Exception? inner = null) : Exception(message, inner);
