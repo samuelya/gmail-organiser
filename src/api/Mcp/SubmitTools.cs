@@ -38,6 +38,7 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
         ("topic_label", JsonValueKind.String, false),
         ("needs_action", JsonValueKind.True, false),
         ("to_be_deleted", JsonValueKind.True, false),
+        ("document_type_label", JsonValueKind.String, false),
         ("filter_criteria", JsonValueKind.String, false),
         ("model", JsonValueKind.String, false),
     ];
@@ -116,7 +117,7 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
     [McpServerTool(Name = ToolName, Title = "Submit a review verdict", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false)]
     [Description("Submits your verdict on one review item from list_pending_reviews, once per item. 'agree' keeps the local "
         + "suggestion; 'alternative' proposes topic_label (a full label path, levels separated by '/') with the "
-        + "needs_action and to_be_deleted flags; 'needs_human' leaves it to the user. Nothing is applied until the user "
+        + "needs_action and to_be_deleted flags, and optionally document_type_label; 'needs_human' leaves it to the user. Nothing is applied until the user "
         + "accepts it in the portal. Returns { ok, status, reason }: with ok=false the verdict was not stored; do not "
         + "retry the same item.")]
     public async Task<CallToolResult> SubmitReview(
@@ -126,6 +127,9 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
         [Description("For 'alternative': the label path to use instead.")] string? topic_label = null,
         [Description("For 'alternative': whether the mail needs action by the user.")] bool? needs_action = null,
         [Description("For 'alternative': whether the mail can be marked to be deleted.")] bool? to_be_deleted = null,
+        [Description("Only for 'alternative': the document-type label as a full label path, documentTypeParent from "
+            + "get_label_tree, '/', and the type name (a bare name is put under documentTypeParent); omit to keep each "
+            + "email's own type, empty string for none.")] string? document_type_label = null,
         [Description("Optional Gmail filter criteria: a JSON object as text, or plain text of at most 500 characters.")] string? filter_criteria = null,
         [Description("Optional: the model you are.")] string? model = null,
         CancellationToken cancellationToken = default)
@@ -133,7 +137,8 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
         SubmitReviewResultDto result;
         try
         {
-            result = await SubmitAsync(id, verdict, reasoning, topic_label, needs_action, to_be_deleted, filter_criteria, model, cancellationToken);
+            result = await SubmitAsync(
+                id, verdict, reasoning, topic_label, needs_action, to_be_deleted, document_type_label, filter_criteria, model, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -160,7 +165,7 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
 
     private async Task<SubmitReviewResultDto> SubmitAsync(
         string id, string verdict, string reasoning, string? topicLabel, bool? needsAction, bool? toBeDeleted,
-        string? filterCriteria, string? model, CancellationToken ct)
+        string? documentTypeLabel, string? filterCriteria, string? model, CancellationToken ct)
     {
         if (!Guid.TryParse(id, out var guid))
         {
@@ -177,7 +182,7 @@ public sealed class SubmitTools(ExternalReviewService reviews, AppDbContext db, 
             return await ResultAsync(guid, false, $"Filter criteria must be JSON or plain text of at most {MaxPlainFilterCriteriaLength} characters.", ct);
         }
 
-        var input = new ReviewVerdictInput(parsed, topicLabel, needsAction, toBeDeleted, criteria, reasoning ?? "", Reviewer, model);
+        var input = new ReviewVerdictInput(parsed, topicLabel, needsAction, toBeDeleted, criteria, reasoning ?? "", Reviewer, model, documentTypeLabel);
         var (outcome, invalid) = await reviews.SubmitVerdictAsync(guid, input, ct);
         var reason = outcome switch
         {

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Http.Json;
 using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Claude;
@@ -18,7 +19,7 @@ namespace GmailOrganiser.Tests.Integration;
 /// of the harness mailbox: the shop group and the single billing suggestion <c>c00</c> are queued for review.
 /// </summary>
 [Collection(PostgresCollection.Name)]
-public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed partial class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLifetime
 {
     private readonly PostgresFixture postgres;
     private readonly CapturingNotifier notifier = new();
@@ -255,6 +256,7 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
     [InlineData("""{"verdict":"agree","reasoning":"Synthetic reasoning.","filter_criteria":{"from":"a"}}""", "Argument 'filter_criteria' must be a string")]
     [InlineData("""{"verdict":"agree","reasoning":"Synthetic reasoning.","needs_action":"yes"}""", "Argument 'needs_action' must be a boolean")]
     [InlineData("""{"verdict":"agree","reasoning":7}""", "Argument 'reasoning' must be a string")]
+    [InlineData("""{"verdict":"alternative","reasoning":"Synthetic reasoning.","document_type_label":1}""", "Argument 'document_type_label' must be a string")]
     public async Task Missing_or_mistyped_argument_is_ok_false_with_a_reason_and_a_warning_without_values(string arguments, string reason)
     {
         var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(arguments)!;
@@ -297,6 +299,13 @@ public sealed class McpSubmitReviewTests : IClassFixture<ApiFactory>, IAsyncLife
         }
 
         json.GetProperty("reason").GetString().ShouldNotBeNull().ShouldContain(reason, Case.Insensitive);
+    }
+
+    private async Task<ExternalReviewDto> AcceptAsync(Guid id)
+    {
+        var response = await h.PostAsync($"/api/claude/reviews/{id}/accept", new { });
+        response.EnsureSuccessStatusCode();
+        return (await h.Host.CreateClient().GetFromJsonAsync<ExternalReviewDto>($"/api/claude/reviews/{id}", Ct)).ShouldNotBeNull();
     }
 
     private async Task<ExternalReviewRow> RowAsync(Guid id)

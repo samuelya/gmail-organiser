@@ -73,6 +73,18 @@ public sealed class ExternalReviewRow
     public string? VerdictTopicLabel { get; set; }
     public bool? VerdictNeedsAction { get; set; }
     public bool? VerdictToBeDeleted { get; set; }
+
+    /// <summary>
+    /// With <see cref="VerdictDocumentTypeSet"/>, the document type of that outcome: what accepting sets (alternative) or
+    /// matches (agree); null is none.
+    /// </summary>
+    public string? VerdictDocumentTypeLabel { get; set; }
+
+    /// <summary>
+    /// Whether <see cref="VerdictDocumentTypeLabel"/> was recorded. False (an alternative without a document type, or a
+    /// row from before the column) keeps each member's own type on accept.
+    /// </summary>
+    public bool VerdictDocumentTypeSet { get; set; }
     public string? VerdictFilterCriteria { get; set; }
     public string? Reasoning { get; set; }
     public string? Error { get; set; }

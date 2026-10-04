@@ -218,7 +218,7 @@ public sealed class JobsHubTests(ApiFactory factory, PostgresFixture postgres) :
         (await ReadAsync(snapshots)).ShouldBeEmpty();
         var item = new ExternalReviewDto(
             Guid.NewGuid(), "group", null, "sender@example.com", "from:sender@example.com", "Synthetic subject", "reviewed",
-            "mcp", "agree", "Synthetic", false, false, "Synthetic reasoning", null, "none", clock.GetUtcNow(), clock.GetUtcNow(), null);
+            "mcp", "agree", "Synthetic", false, false, null, false, "Synthetic reasoning", null, "none", clock.GetUtcNow(), clock.GetUtcNow(), null);
 
         await host.Services.GetRequiredService<IExternalReviewNotifier>().NotifyAsync(item, Ct);
 

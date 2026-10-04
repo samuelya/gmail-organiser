@@ -3,57 +3,13 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
+using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using Npgsql;
 using GroupOutcome = GmailOrganiser.Review.GroupOutcome;
 
 namespace GmailOrganiser.Claude;
-
-public enum ExternalReviewResult
-{
-    Ok,
-    NotFound,
-
-    /// <summary>The item is not in a status that allows the change.</summary>
-    Conflict,
-
-    /// <summary>The target's suggestions are no longer pending.</summary>
-    AlreadyDecided,
-
-    /// <summary>Claude asked for a human; there is nothing to accept.</summary>
-    NeedsHuman,
-
-    /// <summary>The stored alternative's label is not a valid label path.</summary>
-    InvalidVerdict,
-
-    /// <summary>
-    /// Pending suggestions are left, but none can take Claude's outcome: it would mark protected mail to-be-deleted, or
-    /// (for <c>agree</c>) no member has the outcome Claude reviewed any more.
-    /// </summary>
-    NotApplicable,
-}
-
-public enum CreateExternalReviewsResult
-{
-    Ok,
-    RunNotFound,
-    TooManyTargets,
-}
-
-public enum ReviewVerdictResult
-{
-    Ok,
-    NotFound,
-    AlreadyReviewed,
-
-    /// <summary>Cancelled or unavailable: nobody is waiting for the verdict.</summary>
-    Closed,
-    Invalid,
-
-    /// <summary>The target's suggestions are no longer pending: the user decided them after sending it to Claude.</summary>
-    AlreadyDecided,
-}
 
 /// <summary>
 /// The Claude review queue. Items never touch Gmail; accepting a verdict decides the local suggestions through
@@ -69,6 +25,7 @@ public sealed class ExternalReviewService(
     ExternalReviewQuery query,
     IClaudeReviewStarter starter,
     IExternalReviewNotifier notifier,
+    ISettingsStore settings,
     TimeProvider time)
 {
     /// <summary>Most targets one create request may expand to.</summary>
@@ -234,11 +191,15 @@ public sealed class ExternalReviewService(
     /// Stores Claude's verdict: <c>Queued|Running → Reviewed</c> while the target is still pending (otherwise
     /// <c>→ Cancelled</c> and <see cref="ReviewVerdictResult.AlreadyDecided"/>). The reasoning is truncated, not rejected; an
     /// <c>alternative</c> needs a valid label path (missing flags count as false). For <c>agree</c> the outcome shown
-    /// now (the pending suggestion's, or the group card's) is stored as the one Claude agreed with.
+    /// now (the pending suggestion's, or the group card's) is stored as the one Claude agreed with; an <c>alternative</c>
+    /// without a document type keeps each member's.
     /// </summary>
     public async Task<(ReviewVerdictResult Result, string? Reason)> SubmitVerdictAsync(Guid id, ReviewVerdictInput verdict, CancellationToken ct)
     {
-        if (ReviewVerdictValidation.Validate(verdict) is { } invalid)
+        var parent = verdict is { Verdict: ReviewVerdict.Alternative, DocumentTypeLabel: not null }
+            ? (await settings.GetAsync(ct)).DocumentTypeParent
+            : null;
+        if (ReviewVerdictValidation.Validate(verdict, parent, out var documentType) is { } invalid)
         {
             return (ReviewVerdictResult.Invalid, invalid);
         }
@@ -268,7 +229,8 @@ public sealed class ExternalReviewService(
 
         var outcome = verdict.Verdict switch
         {
-            ReviewVerdict.Alternative => new GroupOutcome(verdict.TopicLabel!.Trim(), verdict.NeedsAction ?? false, verdict.ToBeDeleted ?? false),
+            ReviewVerdict.Alternative => new GroupOutcome(
+                verdict.TopicLabel!.Trim(), verdict.NeedsAction ?? false, verdict.ToBeDeleted ?? false, null, documentType.Label),
             ReviewVerdict.Agree => await ShownOutcomeAsync(row, ct),
             _ => null,
         };
@@ -277,6 +239,8 @@ public sealed class ExternalReviewService(
         row.VerdictTopicLabel = outcome?.TopicLabel;
         row.VerdictNeedsAction = outcome?.NeedsAction;
         row.VerdictToBeDeleted = outcome?.ToBeDeleted;
+        row.VerdictDocumentTypeLabel = outcome?.DocumentTypeLabel;
+        row.VerdictDocumentTypeSet = outcome is not null && (verdict.Verdict == ReviewVerdict.Agree || documentType.IsSet);
         row.VerdictFilterCriteria = string.IsNullOrWhiteSpace(verdict.FilterCriteria) ? null : verdict.FilterCriteria;
         row.Reasoning = Truncate(verdict.Reasoning.Trim(), MaxReasoningLength);
         row.Reviewer = verdict.Reviewer;
@@ -363,13 +327,28 @@ public sealed class ExternalReviewService(
         }
 
         var outcome = row.VerdictTopicLabel is { } label
-            ? new GroupOutcome(label, row.VerdictNeedsAction ?? false, row.VerdictToBeDeleted ?? false)
+            ? new GroupOutcome(label, row.VerdictNeedsAction ?? false, row.VerdictToBeDeleted ?? false, null, row.VerdictDocumentTypeLabel)
             : null;
 
-        // Claude never sees the replaced labels: an alternative removes none, an agree keeps them as shown.
-        // It keeps each member's document type (dropped where it is the new topic label).
+        // An alternative's document type is checked again: the parent setting may have changed since Claude's verdict.
+        var documentType = !alternative || !row.VerdictDocumentTypeSet ? DocumentTypeChange.Unchanged
+            : row.VerdictDocumentTypeLabel is { } type ? DocumentTypeChange.To(type)
+            : DocumentTypeChange.Clear;
+        if (documentType.Label is { } set)
+        {
+            var errors = new Dictionary<string, string[]>();
+            DocumentTypeEdit.Validate(set, (await settings.GetAsync(ct)).DocumentTypeParent, row.VerdictTopicLabel, errors);
+            if (errors.Count > 0)
+            {
+                return ExternalReviewResult.InvalidDocumentType;
+            }
+        }
+
+        // Claude never sees the replaced labels: an alternative removes none, an agree keeps them as shown. An alternative
+        // sets the verdict's document type, or keeps each member's (dropped where it is the new topic label); an agree
+        // approves the members whose type is the one Claude reviewed.
         var edit = alternative
-            ? new GroupEdit(outcome!.TopicLabel, outcome.NeedsAction, outcome.ToBeDeleted, [], DocumentTypeChange.Unchanged)
+            ? new GroupEdit(outcome!.TopicLabel, outcome.NeedsAction, outcome.ToBeDeleted, [], documentType)
             : null;
         GroupDecisionResponse response;
         if (row.TargetType == ExternalReviewTarget.Suggestion)

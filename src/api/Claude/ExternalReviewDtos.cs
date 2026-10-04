@@ -1,6 +1,7 @@
 namespace GmailOrganiser.Claude;
 
 /// <summary>A Claude review item; enums are snake_case. <c>GroupDisplay</c> is the group card's title, computed on read.</summary>
+/// <param name="VerdictDocumentTypeSet">False: accepting keeps each member's document type; <c>VerdictDocumentTypeLabel</c> is null.</param>
 public sealed record ExternalReviewDto(
     Guid Id,
     string TargetType,
@@ -14,6 +15,8 @@ public sealed record ExternalReviewDto(
     string? VerdictTopicLabel,
     bool? VerdictNeedsAction,
     bool? VerdictToBeDeleted,
+    string? VerdictDocumentTypeLabel,
+    bool VerdictDocumentTypeSet,
     string? Reasoning,
     string? Error,
     string Resolution,
@@ -31,6 +34,7 @@ public sealed record CreateExternalReviewsResponse(int Created, int Skipped, IRe
 public sealed record ExternalReviewSummaryDto(int Queued, int Running, int Reviewed, int Unavailable);
 
 /// <summary>Claude's verdict as the MCP <c>submit_review</c> tool passes it.</summary>
+/// <param name="DocumentTypeLabel">For <c>alternative</c> only: null keeps each member's type, blank clears it.</param>
 public sealed record ReviewVerdictInput(
     ReviewVerdict Verdict,
     string? TopicLabel,
@@ -39,4 +43,5 @@ public sealed record ReviewVerdictInput(
     string? FilterCriteria,
     string Reasoning,
     string Reviewer,
-    string? Model);
+    string? Model,
+    string? DocumentTypeLabel = null);

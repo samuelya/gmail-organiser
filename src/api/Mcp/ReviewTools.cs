@@ -22,8 +22,8 @@ public sealed class ReviewTools(ReviewItemBuilder items, LabelTreeBuilder labelT
     [McpServerTool(Name = "list_pending_reviews", Title = "List pending reviews", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Lists the Gmail Organiser items waiting for a Claude review: the running items when a review run is in "
         + "progress, otherwise the queued ones, oldest first. Each item is a single email suggestion or a group of similar "
-        + "emails from one sender, with the local model's suggestion (label path, new-label flag, needs-action, "
-        + "to-be-deleted, confidence, reason, source). Call get_review_item for the details of one item." + Untrusted)]
+        + "emails from one sender, with the local model's suggestion (label path, document-type label, new-label "
+        + "flag, needs-action, to-be-deleted, confidence, reason, source). Call get_review_item for the details of one item." + Untrusted)]
     public Task<CallToolResult> ListPendingReviews(
         [Description("Maximum number of items, 1 to 100.")] int limit = ReviewItemBuilder.DefaultListLimit,
         CancellationToken cancellationToken = default) =>
@@ -46,8 +46,9 @@ public sealed class ReviewTools(ReviewItemBuilder items, LabelTreeBuilder labelT
 
     [McpServerTool(Name = "get_label_tree", Title = "Get the label tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Returns the user's Gmail labels as a nested tree ('/' separates levels) with the number of stored "
-        + "messages carrying each label, marking the configured action label and to-be-deleted label. A node without an "
-        + "id is a parent level that is not itself a label." + Untrusted)]
+        + "messages carrying each label, marking the configured action label and to-be-deleted label, plus the document-type "
+        + "parent (null when off) and its existing child labels. A node without an id is a parent level that is not itself "
+        + "a label." + Untrusted)]
     public Task<CallToolResult> GetLabelTree(CancellationToken cancellationToken = default) =>
         RunAsync("get_label_tree", async () =>
         {

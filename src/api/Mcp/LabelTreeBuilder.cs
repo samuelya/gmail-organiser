@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
@@ -19,7 +20,15 @@ public sealed record LabelNodeDto(
     bool IsDeleteLabel,
     IReadOnlyList<LabelNodeDto> Children);
 
-public sealed record LabelTreeDto(string ActionLabel, string DeleteLabel, int LabelCount, IReadOnlyList<LabelNodeDto> Labels);
+/// <param name="DocumentTypeParent">The document-type parent setting; null when document-type labels are off.</param>
+/// <param name="DocumentTypes">The existing document-type labels (<see cref="DocumentTypePath.Children"/>).</param>
+public sealed record LabelTreeDto(
+    string ActionLabel,
+    string DeleteLabel,
+    string? DocumentTypeParent,
+    IReadOnlyList<string> DocumentTypes,
+    int LabelCount,
+    IReadOnlyList<LabelNodeDto> Labels);
 
 /// <summary>The user's Gmail labels as a tree, with message counts from <c>messages</c>.</summary>
 public sealed partial class LabelTreeBuilder(AppDbContext db, LabelCatalog catalog, ISettingsStore settings, ILogger<LabelTreeBuilder> logger)
@@ -75,7 +84,9 @@ public sealed partial class LabelTreeBuilder(AppDbContext db, LabelCatalog catal
         }
 
         var roots = paths.Where(p => Parent(p) is null).Select(Node).ToList();
-        return new LabelTreeDto(app.ActionLabelName, app.DeleteLabelName, labels.Count, roots);
+        var typeParent = app.DocumentTypeParent;
+        var types = DocumentTypePath.Children(typeParent, byPath.Keys);
+        return new LabelTreeDto(app.ActionLabelName, app.DeleteLabelName, typeParent, types, labels.Count, roots);
     }
 
     /// <summary>

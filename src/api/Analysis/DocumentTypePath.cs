@@ -23,6 +23,28 @@ public enum DocumentTypePathError
 /// </summary>
 public static class DocumentTypePath
 {
+    /// <summary>Most existing document types <see cref="Children"/> lists (the prompt and Claude's label tree).</summary>
+    public const int MaxChildren = 50;
+
+    /// <summary>
+    /// The existing document types: the labels directly under <paramref name="parent"/> (case-insensitive, deduplicated),
+    /// in ordinal order, at most <see cref="MaxChildren"/>; empty when the parent is off.
+    /// </summary>
+    public static IReadOnlyList<string> Children(string? parent, IEnumerable<string> labels)
+    {
+        if (string.IsNullOrWhiteSpace(parent))
+        {
+            return [];
+        }
+
+        var prefix = parent.Trim() + "/";
+        return [.. labels
+            .Where(l => l.Length > prefix.Length && l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !l.AsSpan(prefix.Length).Contains('/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.Ordinal)
+            .Take(MaxChildren)];
+    }
+
     /// <summary>
     /// <paramref name="value"/> (trimmed, not blank) with the parent as configured, or null with the reason in
     /// <paramref name="error"/>.
