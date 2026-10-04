@@ -8,8 +8,10 @@ import {
   AppsScriptUpdate,
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
+  LabelSettingsUpdate,
   PromptTemplateDto,
   ProtectionUpdate,
+  PurgeResponse,
   SettingsDto,
 } from './settings.models';
 
@@ -54,6 +56,16 @@ export class SettingsService {
   /** The script's `CONFIG` block generated from the saved settings. */
   appsScriptConfig(): Observable<AppsScriptConfigDto> {
     return this.http.get<AppsScriptConfigDto>('/api/rules/apps-script/config');
+  }
+
+  /** A partial update of the action and delete label names: names left out stay unchanged. */
+  updateLabels(changes: LabelSettingsUpdate): Observable<SettingsDto> {
+    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** Wipes the local data the app fetched or produced; `confirm` must be the confirmation word. */
+  purge(confirm: string): Observable<PurgeResponse> {
+    return this.http.post<PurgeResponse>('/api/settings/purge', { confirm });
   }
 
   getDefaultPrompt(): Observable<PromptTemplateDto> {

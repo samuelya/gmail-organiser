@@ -141,9 +141,13 @@ describe('SettingsPage', () => {
       'Gmail connection',
       'Ollama',
       'Fetch',
+      'Labels',
       'Analysis',
       'Apps Script',
+      'Data',
     ]);
+    expect(q('section-labels')!.querySelector('app-labels-settings')).not.toBeNull();
+    expect(q('section-data')!.querySelector('app-data-settings')).not.toBeNull();
     expect(q('section-google')!.querySelector('app-google-client-step')).not.toBeNull();
     expect(q('section-gmail')!.querySelector('app-connect-gmail-step')).not.toBeNull();
     expect(q('section-ollama')!.querySelector('app-ollama-url-step')).not.toBeNull();

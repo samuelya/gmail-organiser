@@ -7,6 +7,7 @@ import type {
   AppsScriptUpdate,
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
+  LabelSettingsUpdate,
   ProtectionUpdate,
 } from '../settings/settings.models';
 
@@ -46,7 +47,8 @@ export interface UpdateSettingsRequest
     AttachmentsUpdate,
     ClaudeSettingsUpdate,
     ProtectionUpdate,
-    Partial<AppsScriptUpdate> {
+    Partial<AppsScriptUpdate>,
+    LabelSettingsUpdate {
   ollamaBaseUrl?: string;
   chatModel?: string;
   embeddingModel?: string;

@@ -1,3 +1,4 @@
+import { AbstractControl, ValidationErrors } from '@angular/forms';
 import { AppSettings } from '../setup/setup.service';
 import { labelPathError } from '../review/labels.service';
 
@@ -355,4 +356,48 @@ export function scriptLabelError(path: string): string | null {
 /** Gmail matches labels ignoring case and searches "A B" as "A-B": equal keys are the same label. */
 export function scriptLabelKey(path: string): string {
   return path.trim().replace(/ /g, '-').toLowerCase();
+}
+
+/** The two configurable label names of `SettingsDto` (#198). */
+export interface LabelSettings {
+  actionLabelName: string;
+  deleteLabelName: string;
+}
+
+/** The label part of `UpdateSettingsRequest`: omitted names stay unchanged. */
+export type LabelSettingsUpdate = Partial<LabelSettings>;
+
+/** Same bound as the API's `MaxLabelNameLength`. */
+export const MAX_LABEL_NAME_LENGTH = 225;
+
+/** The API field a document-type parent clash comes back under; this page has no field for it. */
+export const DOCUMENT_TYPE_PARENT_FIELD = 'documentTypeParent';
+
+/**
+ * A Gmail label path: `/`-separated segments, none blank, no leading or trailing `/`. Blank is left
+ * to `Validators.required`; the API checks the rest (system labels, segment count and length).
+ */
+export function labelPathValidator(control: AbstractControl<string>): ValidationErrors | null {
+  const value = control.value?.trim() ?? '';
+  if (!value) return null;
+  return value.split('/').every((segment) => segment.trim().length > 0)
+    ? null
+    : { labelPath: true };
+}
+
+/** The action and delete labels must differ ignoring case, as Gmail label names do; set on the group. */
+export function labelsDifferValidator(group: AbstractControl): ValidationErrors | null {
+  const { actionLabelName, deleteLabelName } = group.value as Partial<LabelSettings>;
+  const action = actionLabelName?.trim().toLowerCase();
+  const del = deleteLabelName?.trim().toLowerCase();
+  return action && del && action === del ? { labelsMatch: true } : null;
+}
+
+/** `PurgeRequest.ConfirmationWord`: what the user types to purge local data. */
+export const PURGE_CONFIRMATION_WORD = 'purge';
+
+/** `PurgeResponse` from `POST /api/settings/purge`. */
+export interface PurgeResponse {
+  tables: string[];
+  purgedAt: string;
 }

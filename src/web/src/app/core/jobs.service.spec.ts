@@ -166,6 +166,17 @@ describe('JobsService', () => {
     expect([0, 1, 2, 5, 50].map(reconnectDelay)).toEqual([1000, 2000, 4000, 30_000, 30_000]);
   });
 
+  it('a data purge drops every held job and bumps reconnects', async () => {
+    await create();
+    hub.snapshot([job('a', 1), job('b', 1, 'completed')]);
+    const before = service.reconnects();
+    hub.handlers.get('dataPurged')!(undefined);
+    expect(service.jobs()).toEqual([]);
+    expect(service.reconnects()).toBe(before + 1);
+    hub.changed(job('a', 1));
+    expect(service.activeJobs().map((j) => j.id)).toEqual(['a']);
+  });
+
   it('pause, resume and cancel post to the job endpoints', async () => {
     await create();
     const http = TestBed.inject(HttpTestingController);

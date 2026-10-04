@@ -15,6 +15,9 @@ public static class ReviewEndpoints
 {
     public const int MaxGroupKeyLength = 2000;
 
+    /// <summary>Most replaced labels one edit names.</summary>
+    public const int MaxReplaceLabels = 100;
+
     public static IEndpointRouteBuilder MapReviewEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/review").WithTags("Review");
@@ -122,18 +125,22 @@ public static class ReviewEndpoints
         };
     }
 
-    /// <summary>Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied.</summary>
+    /// <summary>
+    /// Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied,
+    /// then 400 on a replaced label the message does not carry and 503 when the Gmail label list cannot be loaded.
+    /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, CancellationToken ct)
     {
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
+        ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
         return errors.Count > 0
             ? TypedResults.ValidationProblem(errors)
-            : await ToResultAsync(review.EditAsync(id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, ct));
+            : await ToResultAsync(review.EditAsync(id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, ct));
     }
 
     /// <summary>Reject takes every pending member; approve needs the card's outcome and takes the members that have it.</summary>
-    private static async Task<Results<Ok<GroupDecisionResponse>, ValidationProblem>> DecideGroupAsync(
+    private static async Task<Results<Ok<GroupDecisionResponse>, ValidationProblem, ProblemHttpResult>> DecideGroupAsync(
         GroupDecisionRequest request, DecisionOutcome outcome, ReviewService review, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
@@ -141,7 +148,8 @@ public static class ReviewEndpoints
         if (outcome == DecisionOutcome.Approved)
         {
             errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
-            shown = errors.Count == 0 ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value) : null;
+            ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
+            shown = errors.Count == 0 ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels) : null;
         }
 
         var sender = Normalise(request.SenderAddress);
@@ -155,9 +163,22 @@ public static class ReviewEndpoints
             errors["groupKey"] = [$"Required, at most {MaxGroupKeyLength} characters."];
         }
 
-        return errors.Count > 0
-            ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await review.DecideGroupAsync(sender!, request.GroupKey!, outcome, shown, ct));
+        if (errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        if (outcome == DecisionOutcome.Rejected)
+        {
+            return TypedResults.Ok(await review.DecideGroupAsync(sender!, request.GroupKey!, outcome, null, ct));
+        }
+
+        return await review.ApproveGroupAsync(sender!, request.GroupKey!, shown!, ct) switch
+        {
+            (ReviewResult.Ok, { } response) => TypedResults.Ok(response),
+            (ReviewResult.InvalidReplaceLabels, _) => ReplaceLabelsUnknown("no pending email of the group carries"),
+            _ => LabelsUnavailable(),
+        };
     }
 
     /// <summary>Approves pending model suggestions at or above the threshold (and derived/memory ones when asked).</summary>
@@ -212,6 +233,8 @@ public static class ReviewEndpoints
         {
             (ReviewResult.Ok, { } s) => TypedResults.Ok(s),
             (ReviewResult.NotFound, _) => TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Suggestion not found"),
+            (ReviewResult.InvalidReplaceLabels, _) => ReplaceLabelsUnknown("the email does not carry"),
+            (ReviewResult.LabelsUnavailable, _) => LabelsUnavailable(),
             _ => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict,
                 title: "Already applied",
@@ -240,6 +263,25 @@ public static class ReviewEndpoints
 
         return errors;
     }
+
+    /// <summary>At most <see cref="MaxReplaceLabels"/> non-blank names of at most the Gmail label name length.</summary>
+    private static void ReplaceLabelsShapeErrors(string[]? replaceLabels, Dictionary<string, string[]> errors)
+    {
+        if (replaceLabels is not null
+            && (replaceLabels.Length > MaxReplaceLabels
+                || replaceLabels.Any(l => string.IsNullOrWhiteSpace(l) || l.Trim().Length > GmailLimits.LabelNameMaxLength)))
+        {
+            errors["replaceLabels"] = [$"At most {MaxReplaceLabels} label names of at most {GmailLimits.LabelNameMaxLength} characters, not blank."];
+        }
+    }
+
+    private static ValidationProblem ReplaceLabelsUnknown(string what) =>
+        TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["replaceLabels"] = [$"Names a label {what}."] });
+
+    private static ProblemHttpResult LabelsUnavailable() => TypedResults.Problem(
+        statusCode: StatusCodes.Status503ServiceUnavailable,
+        title: "Gmail labels unavailable",
+        detail: "The Gmail label list could not be loaded; nothing was changed. Try again.");
 
     private static Dictionary<string, string[]> AddressError() =>
         new() { ["address"] = [$"At most {AnalysisPreviewEndpoint.MaxSenderAddressLength} characters, not blank."] };
