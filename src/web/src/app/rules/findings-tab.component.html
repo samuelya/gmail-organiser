@@ -1,0 +1,106 @@
+<div class="flex flex-col gap-4 pt-4">
+  <div class="flex flex-wrap items-center gap-3">
+    <button
+      mat-flat-button
+      type="button"
+      [disabled]="reviewing()"
+      (click)="startReview()"
+      data-testid="findings-review"
+    >
+      <mat-icon aria-hidden="true">fact_check</mat-icon>Review filters
+    </button>
+    @if (reviewing()) {
+      <mat-spinner diameter="24" aria-label="Reviewing filters" data-testid="findings-reviewing" />
+    }
+    @if (review(); as r) {
+      <span class="muted text-sm" data-testid="findings-status">
+        Reviewed {{ ago(r.createdAt) }}, {{ r.filterCount }}
+        {{ r.filterCount === 1 ? 'filter' : 'filters' }}: {{ openCount() }} open,
+        {{ grouped().resolved.length }} resolved
+      </span>
+      <button
+        mat-stroked-button
+        type="button"
+        class="ml-auto"
+        [disabled]="summarising()"
+        (click)="summarise()"
+        data-testid="findings-summarise"
+      >
+        <mat-icon aria-hidden="true">auto_awesome</mat-icon>Summarise with the local model
+      </button>
+    }
+  </div>
+
+  @if (loading()) {
+    <mat-progress-bar mode="indeterminate" aria-label="Loading the filter review" />
+  }
+  @if (loadFailed()) {
+    <p class="m-0 flex items-center gap-2" role="alert" data-testid="findings-error">
+      <mat-icon aria-hidden="true">error</mat-icon>
+      The filter review could not be loaded.
+      <button mat-button type="button" (click)="load()">Retry</button>
+    </p>
+  }
+
+  @if (loaded() && !review()) {
+    <p class="muted m-0" role="status" data-testid="findings-empty">
+      No filter review yet. Review filters to check them for duplicates, overlaps, deleted labels,
+      unused and mergeable filters.
+    </p>
+  }
+
+  @if (review(); as r) {
+    @if (summarising()) {
+      <mat-progress-bar mode="indeterminate" aria-label="Summarising the findings" />
+    }
+    @if (nothingToSummarise()) {
+      <p class="muted m-0" role="status" data-testid="summary-nothing">
+        Nothing to summarise: this review has no findings.
+      </p>
+    }
+    @if (r.summaryError) {
+      <p class="m-0 flex items-center gap-2" role="alert" data-testid="summary-error">
+        <mat-icon aria-hidden="true">error</mat-icon>The summary failed: {{ r.summaryError }}
+      </p>
+    }
+    @if (r.summary) {
+      <section class="summary rounded-lg p-4" aria-label="Summary" data-testid="summary">
+        <p class="m-0">{{ r.summary }}</p>
+        <p class="muted m-0 mt-2 text-sm" data-testid="summary-meta">
+          {{ r.summaryModel }}{{ r.summarisedAt ? ', ' + ago(r.summarisedAt) : '' }}
+        </p>
+      </section>
+    }
+
+    @if (openCount() === 0) {
+      <p class="muted m-0" role="status" data-testid="findings-none">No open findings.</p>
+    }
+    @for (g of grouped().groups; track g.kind) {
+      <section class="flex flex-col gap-3" [attr.aria-label]="g.label" data-testid="finding-group">
+        <h3 class="m-0 text-base font-medium">{{ g.label }} ({{ g.findings.length }})</h3>
+        @for (f of g.findings; track f.id) {
+          <app-finding-card
+            [finding]="f"
+            [reviewId]="r.id"
+            [busy]="busy().has(f.id)"
+            (apply)="apply($event)"
+            (dismiss)="dismiss($event)"
+          />
+        }
+      </section>
+    }
+
+    @if (grouped().resolved.length) {
+      <mat-expansion-panel data-testid="findings-resolved">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Resolved ({{ grouped().resolved.length }})</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="flex flex-col gap-3">
+          @for (f of grouped().resolved; track f.id) {
+            <app-finding-card [finding]="f" [reviewId]="r.id" />
+          }
+        </div>
+      </mat-expansion-panel>
+    }
+  }
+</div>

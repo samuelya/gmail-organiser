@@ -126,3 +126,118 @@ export function actionChips(action: FilterActionDto): string[] {
     ...(action.forwards ? ['forwards'] : []),
   ];
 }
+
+export type FilterFindingKind =
+  'duplicate' | 'overlap' | 'deleted_label' | 'no_recent_matches' | 'mergeable';
+/** `none` is report only: there is no safe fix, so there is nothing to apply. */
+export type FilterFixKind = 'none' | 'delete' | 'merge' | 'merge_actions' | 'drop_label';
+export type FilterFindingStatus = 'open' | 'applied' | 'dismissed' | 'superseded';
+
+/** `FilterFixDto`: apply creates `create` (if any) first, then deletes `deleteFilterIds`. */
+export interface FilterFixDto {
+  kind: FilterFixKind;
+  deleteFilterIds: string[];
+  create: { criteria: FilterCriteria; action: FilterActionDto } | null;
+}
+
+export interface FilterFindingDto {
+  id: string;
+  kind: FilterFindingKind;
+  filterIds: string[];
+  /** The rows of `filterIds`, deleted ones included. */
+  filters: FilterDto[];
+  description: string;
+  fix: FilterFixDto;
+  status: FilterFindingStatus;
+  appliedAt: string | null;
+  /** Why the last apply stopped; the finding stays open. */
+  error: string | null;
+  /** The review that found it; another review's id marks a half-applied finding carried over. */
+  reviewId: string;
+}
+
+/** `FilterReviewDto`: one run of the filter checks, with the optional local-model summary. */
+export interface FilterReviewDto {
+  id: string;
+  createdAt: string;
+  /** Active filters the review checked. */
+  filterCount: number;
+  findings: FilterFindingDto[];
+  summary: string | null;
+  summaryModel: string | null;
+  summarisedAt: string | null;
+  summaryError: string | null;
+}
+
+/** The finding kinds in display order, with their group headings. */
+export const FINDING_KINDS: readonly { kind: FilterFindingKind; label: string }[] = [
+  { kind: 'duplicate', label: 'Duplicates' },
+  { kind: 'overlap', label: 'Overlaps' },
+  { kind: 'deleted_label', label: 'Deleted labels' },
+  { kind: 'no_recent_matches', label: 'No recent matches' },
+  { kind: 'mergeable', label: 'Mergeable' },
+];
+
+export interface FindingGroup {
+  kind: FilterFindingKind;
+  label: string;
+  findings: FilterFindingDto[];
+}
+
+/** Open findings grouped by kind in `FINDING_KINDS` order (empty groups left out), and the resolved ones. */
+export function groupFindings(findings: readonly FilterFindingDto[]): {
+  groups: FindingGroup[];
+  resolved: FilterFindingDto[];
+} {
+  const open = findings.filter((f) => f.status === 'open');
+  return {
+    groups: FINDING_KINDS.map(({ kind, label }) => ({
+      kind,
+      label,
+      findings: open.filter((f) => f.kind === kind),
+    })).filter((g) => g.findings.length > 0),
+    resolved: findings.filter((f) => f.status !== 'open'),
+  };
+}
+
+/** Text of a filter's criteria, in the API's `criteriaSummary` format. */
+export function criteriaText(c: FilterCriteria): string {
+  const parts: string[] = [];
+  if (c.from) parts.push(`from:${c.from}`);
+  if (c.to) parts.push(`to:${c.to}`);
+  if (c.subject) parts.push(`subject:"${c.subject}"`);
+  if (c.hasAttachment === true) parts.push('has:attachment');
+  if (c.size != null) parts.push(`${c.sizeComparison ?? 'size'}:${c.size}`);
+  if (c.negatedQuery) parts.push(`-(${c.negatedQuery})`);
+  if (c.query) parts.push(`(${c.query})`);
+  return parts.join(' ');
+}
+
+/** A proposed fix, ready to render: what it creates and which filters it deletes. */
+export interface FixView {
+  title: string;
+  create: { criteria: string; chips: string[] } | null;
+  /** Criteria summaries of the filters the fix deletes (the id when the row is unknown). */
+  deletes: string[];
+}
+
+const FIX_TITLES: Record<Exclude<FilterFixKind, 'none'>, string> = {
+  delete: 'Delete the redundant filter',
+  merge: 'Merge into one filter',
+  merge_actions: 'Combine the actions into one filter',
+  drop_label: 'Re-create without the deleted label',
+};
+
+/** The fix of a finding for display; null for `none` (report only). */
+export function fixView(finding: FilterFindingDto): FixView | null {
+  const fix = finding.fix;
+  if (fix.kind === 'none') return null;
+  const summary = (id: string) => finding.filters.find((f) => f.id === id)?.criteriaSummary ?? id;
+  return {
+    title: FIX_TITLES[fix.kind],
+    create: fix.create
+      ? { criteria: criteriaText(fix.create.criteria), chips: actionChips(fix.create.action) }
+      : null,
+    deletes: fix.deleteFilterIds.map(summary),
+  };
+}
