@@ -5,8 +5,8 @@ using Pgvector;
 namespace GmailOrganiser.Memory;
 
 /// <summary>A consistent approved outcome for a group scope; <see cref="Approvals"/> distinct messages agree with it.</summary>
-/// <param name="DocumentTypeLabel">The latest decided approval's document-type label; null is none.</param>
-/// <param name="DocumentTypeDecided">The latest approval was recorded with a document-type parent set.</param>
+/// <param name="DocumentTypeLabel">The latest approval's document-type label; null is none.</param>
+/// <param name="DocumentTypeDecided">The latest approval was decided under the document-type parent asked about.</param>
 public sealed record MemoryPattern(
     string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Approvals, double Agreement, string? DocumentTypeLabel, bool DocumentTypeDecided);
 
@@ -34,15 +34,16 @@ public interface IDecisionMemory
     /// <summary>
     /// Up to <paramref name="k"/> past decisions similar to <paramref name="messages"/> (by their
     /// <paramref name="vectors"/>), filled with the latest decisions of their senders or lists (one query per distinct
-    /// sender and list); deduplicated by label, flags and outcome, best first.
+    /// sender and list); deduplicated by label, flags and outcome, best first. A hint's document type counts as decided
+    /// only when it was decided under <paramref name="documentTypeParent"/>.
     /// </summary>
     Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
-        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, CancellationToken ct);
+        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent, CancellationToken ct);
 
     /// <summary>
     /// The consistent approved outcome per scope key (<see cref="DecisionRow.ScopeKey"/>) in one query; keys without
-    /// one are absent.
+    /// one are absent. The document type is judged under <paramref name="documentTypeParent"/> (null: the feature is off).
     /// </summary>
     Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
-        IReadOnlyCollection<string> scopeKeys, int minApprovals, CancellationToken ct);
+        IReadOnlyCollection<string> scopeKeys, int minApprovals, string? documentTypeParent, CancellationToken ct);
 }

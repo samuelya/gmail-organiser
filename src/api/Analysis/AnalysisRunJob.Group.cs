@@ -106,7 +106,7 @@ public sealed partial class AnalysisRunJob
             : await AskModelAsync(
                 context,
                 emails,
-                await memory.FindSimilarAsync(representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, ct),
+                await memory.FindSimilarAsync(representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, context.Run.DocumentTypeParent, ct),
                 attachmentsSection,
                 ct);
         if (outputs.Count == 0)

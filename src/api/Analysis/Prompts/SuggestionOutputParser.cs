@@ -304,24 +304,38 @@ public static class SuggestionOutputParser
             return Ignored("not a valid label path");
         }
 
-        var prefix = parent + "/";
-        if (!value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || value.AsSpan(prefix.Length).Contains('/'))
+        if (DocumentTypeUnder(parent, value) is not { } type)
         {
             return Ignored("not one level below the document-type parent");
         }
 
-        if (string.Equals(value, topicLabel, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(type, topicLabel, StringComparison.OrdinalIgnoreCase))
         {
             return Ignored("same as topicLabel");
         }
 
-        return prefix + value[prefix.Length..];
+        return type;
 
         string? Ignored(string reason)
         {
             dropped.Add($"Email '{id}': 'documentTypeLabel' ignored ({reason}).");
             return null;
         }
+    }
+
+    /// <summary>
+    /// <paramref name="value"/> (trimmed) as stored for a suggestion: a valid label path exactly one segment directly under
+    /// <paramref name="parent"/> (case-insensitive), spelled with the parent as configured; null otherwise. Memory answers
+    /// with the same spelling as the model's rows, so both group together.
+    /// </summary>
+    public static string? DocumentTypeUnder(string parent, string value)
+    {
+        value = value.Trim();
+        var prefix = parent + "/";
+        return LabelPath.IsValid(value) && value.Length > prefix.Length
+            && value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !value.AsSpan(prefix.Length).Contains('/')
+            ? prefix + value[prefix.Length..]
+            : null;
     }
 
     /// <inheritdoc cref="LabelPath.IsValid"/>

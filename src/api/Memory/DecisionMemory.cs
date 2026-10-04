@@ -77,7 +77,7 @@ public sealed partial class DecisionMemory(
     }
 
     public async Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
-        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, CancellationToken ct)
+        IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent, CancellationToken ct)
     {
         if (messages.Count == 0 || k <= 0)
         {
@@ -93,7 +93,7 @@ public sealed partial class DecisionMemory(
             }
         }
 
-        if (hits.DistinctBy(h => Outcome(h.Decision)).Count() < k)
+        if (hits.DistinctBy(h => Outcome(h.Decision, documentTypeParent)).Count() < k)
         {
             // Once per distinct sender and list: a group's representatives usually share both.
             foreach (var (sender, listId) in messages.Select(m => (m.FromAddress, GroupKey.NormaliseListId(m.ListId))).Distinct())
@@ -107,12 +107,12 @@ public sealed partial class DecisionMemory(
             .OrderBy(h => h.Filled)
             .ThenByDescending(h => h.Similarity)
             .ThenByDescending(h => h.Decision.CreatedAt)
-            .DistinctBy(h => Outcome(h.Decision))
+            .DistinctBy(h => Outcome(h.Decision, documentTypeParent))
             .Take(k)
             .Select(h => new MemoryHint(
                 h.Decision.SenderAddress, h.Decision.SubjectTemplate, h.Decision.TopicLabel, h.Decision.NeedsAction,
                 h.Decision.ToBeDeleted, SnakeCaseEnumConverter<DecisionOutcome>.ToDb(h.Decision.Outcome), h.Similarity,
-                h.Decision.DocumentTypeLabel))
+                h.Decision.DocumentTypeLabel, DecidedUnder(h.Decision.DocumentTypeParent, documentTypeParent)))
             .ToList();
     }
 
@@ -120,11 +120,12 @@ public sealed partial class DecisionMemory(
     /// Per scope: the latest <see cref="MaxPatternApprovals"/> approvals a person verified (of model or edited
     /// suggestions, never derived, memory or sender-pattern ones, so memory cannot reinforce itself), one per message;
     /// at least <paramref name="minApprovals"/> of them, all with the same outcome, and no rejection in the scope since the latest.
-    /// Only approvals recorded with a document-type parent set vote on the document-type label (case-insensitive, null is
-    /// none), so approvals from before the feature never contradict the first one after it.
+    /// Only approvals decided under <paramref name="documentTypeParent"/> vote on the document-type label (case-insensitive,
+    /// null is none), so approvals from before the feature or under an earlier parent never contradict the first one under
+    /// this parent.
     /// </summary>
     public async Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
-        IReadOnlyCollection<string> scopeKeys, int minApprovals, CancellationToken ct)
+        IReadOnlyCollection<string> scopeKeys, int minApprovals, string? documentTypeParent, CancellationToken ct)
     {
         var keys = scopeKeys.Distinct(StringComparer.Ordinal).ToArray();
         var patterns = new Dictionary<string, MemoryPattern>(StringComparer.Ordinal);
@@ -137,7 +138,7 @@ public sealed partial class DecisionMemory(
             .Where(d => d.ScopeKey != null && keys.Contains(d.ScopeKey))
             .Where(d => d.Outcome == DecisionOutcome.Rejected
                 || (d.Source != SuggestionSource.SenderPattern && (d.Source == SuggestionSource.Llm || d.Edited)))
-            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel, d.DocumentTypeDecided, d.CreatedAt })
+            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel, d.DocumentTypeParent, d.CreatedAt })
             .ToListAsync(ct);
         foreach (var scope in rows.GroupBy(r => r.ScopeKey, StringComparer.Ordinal))
         {
@@ -153,15 +154,15 @@ public sealed partial class DecisionMemory(
             }
 
             var latest = approvals[0];
-            var typed = approvals.FirstOrDefault(a => a.DocumentTypeDecided);
+            var typed = approvals.FirstOrDefault(a => DecidedUnder(a.DocumentTypeParent, documentTypeParent));
             var consistent = approvals.All(a =>
                 a.TopicLabel == latest.TopicLabel && a.NeedsAction == latest.NeedsAction && a.ToBeDeleted == latest.ToBeDeleted
-                && (!a.DocumentTypeDecided || SameType(a.DocumentTypeLabel, typed!.DocumentTypeLabel)));
+                && (!DecidedUnder(a.DocumentTypeParent, documentTypeParent) || SameType(a.DocumentTypeLabel, typed!.DocumentTypeLabel)));
             if (consistent && !scope.Any(r => r.Outcome == DecisionOutcome.Rejected && r.CreatedAt > latest.CreatedAt))
             {
                 patterns[scope.Key] = new MemoryPattern(
-                    latest.TopicLabel, latest.NeedsAction, latest.ToBeDeleted, approvals.Count, 1.0, typed?.DocumentTypeLabel,
-                    latest.DocumentTypeDecided);
+                    latest.TopicLabel, latest.NeedsAction, latest.ToBeDeleted, approvals.Count, 1.0, latest.DocumentTypeLabel,
+                    DecidedUnder(latest.DocumentTypeParent, documentTypeParent));
             }
         }
 
@@ -170,8 +171,16 @@ public sealed partial class DecisionMemory(
 
     private static bool SameType(string? a, string? b) => string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
 
-    private static (string, bool, bool, string?, DecisionOutcome) Outcome(DecisionRow d) =>
-        (d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel?.Trim().ToUpperInvariant(), d.Outcome);
+    /// <summary>Whether a decision made under <paramref name="decidedParent"/> settles the type under <paramref name="parent"/>.</summary>
+    private static bool DecidedUnder(string? decidedParent, string? parent) =>
+        parent is not null && string.Equals(decidedParent?.Trim(), parent.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A hint's dedup key: an undecided type renders as unknown whatever its stored label.</summary>
+    private static (string, bool, bool, bool, string?, DecisionOutcome) Outcome(DecisionRow d, string? parent)
+    {
+        var decided = DecidedUnder(d.DocumentTypeParent, parent);
+        return (d.TopicLabel, d.NeedsAction, d.ToBeDeleted, decided, decided ? d.DocumentTypeLabel?.Trim().ToUpperInvariant() : null, d.Outcome);
+    }
 
     private sealed record Embedded(string Model, IReadOnlyList<Vector> Vectors);
 

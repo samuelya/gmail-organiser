@@ -9,8 +9,8 @@ namespace GmailOrganiser.Memory;
 /// category, plus subject template) has a consistent approved pattern, every non-protected member gets that suggestion
 /// without a model call. Protected members always go to the model, so a memory <c>toBeDeleted</c> never lands on
 /// protected mail. A group already filed under another personal label than the memorised one goes to the model too.
-/// With a document-type parent set, a pattern whose latest approval predates it (or whose type is not directly under
-/// it) goes to the model once; the next approval relearns it. Suggestions only; the user still reviews them.
+/// With a document-type parent set, a pattern whose latest approval was not decided under it (or whose type is not
+/// directly under it) goes to the model once; the next approval relearns it. Suggestions only; the user still reviews them.
 /// </summary>
 public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortCircuit
 {
@@ -26,7 +26,7 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
         // Members of a group share its key: the first one stands for all.
         var keys = groups.Select(g => g.Members.Count == 0 ? null : GroupKey.For(g.Members[0])).ToList();
         var patterns = await memory.FindPatternsAsync(
-            [.. keys.OfType<string>()], context.Settings.AnalysisMemoryMinApprovals, ct);
+            [.. keys.OfType<string>()], context.Settings.AnalysisMemoryMinApprovals, context.DocumentTypeParent, ct);
         for (var i = 0; i < groups.Count; i++)
         {
             if (keys[i] is { } key && patterns.TryGetValue(key, out var pattern) && TypeOf(pattern, context) is (true, var type)
@@ -41,7 +41,8 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
 
     /// <summary>
     /// The document-type label the pattern answers with: none with the parent off; with it on, the pattern is usable only
-    /// when its latest approval was decided with a parent and its label (if any) is exactly one level under this one.
+    /// when its latest approval was decided under this parent and its label (if any) is exactly one level under it,
+    /// spelled as the parser stores the model's (<see cref="SuggestionOutputParser.DocumentTypeUnder"/>).
     /// </summary>
     private static (bool Usable, string? Type) TypeOf(MemoryPattern pattern, ShortCircuitContext context)
     {
@@ -55,16 +56,12 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
             return (false, null);
         }
 
-        if (pattern.DocumentTypeLabel?.Trim() is not { } type)
+        if (pattern.DocumentTypeLabel is not { } label)
         {
             return (true, null);
         }
 
-        var prefix = parent.Trim() + "/";
-        return type.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && type.Length > prefix.Length
-            && !type.AsSpan(prefix.Length).Contains('/')
-            ? (true, type)
-            : (false, null);
+        return SuggestionOutputParser.DocumentTypeUnder(parent, label) is { } type ? (true, type) : (false, null);
     }
 
     /// <summary>
