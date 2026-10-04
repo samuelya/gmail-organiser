@@ -19,6 +19,7 @@ public sealed class GmailAuthEndpointsTests(ApiFactory factory, PostgresFixture 
     private const string ClientId = "test-client.apps.googleusercontent.com";
     private const string Base = "/api/auth/google";
     private static readonly string SetupUrl = ApiFactory.AllowedOrigin + "/setup";
+    private static readonly string SettingsUrl = ApiFactory.AllowedOrigin + "/settings";
 
     private readonly StubGoogleOAuthClient oauth = new();
 
@@ -169,6 +170,56 @@ public sealed class GmailAuthEndpointsTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Return_to_settings_redirects_to_settings_when_connected()
+    {
+        await using var host = WithGoogle();
+        using var client = CreateClient(host);
+
+        (await CallbackAsync(client, await StartAsync(client, "settings"))).ShouldBe(SettingsUrl + "?gmail=connected");
+    }
+
+    [Fact]
+    public async Task Return_to_settings_redirects_to_settings_with_the_error_reason()
+    {
+        await using var host = WithGoogle();
+        using var client = CreateClient(host);
+        var state = await StartAsync(client, "settings");
+
+        var response = await client.GetAsync($"{Base}/callback?error=access_denied&state={Uri.EscapeDataString(state)}", Ct);
+
+        response.Headers.Location!.ToString().ShouldBe(SettingsUrl + "?gmail=error&reason=access_denied");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("setup")]
+    [InlineData("Settings")]
+    [InlineData("SETTINGS")]
+    [InlineData("/settings")]
+    [InlineData("settings/")]
+    [InlineData("https://example.com")]
+    [InlineData("//example.com")]
+    public async Task Any_other_return_to_redirects_to_setup(string? returnTo)
+    {
+        await using var host = WithGoogle();
+        using var client = CreateClient(host);
+
+        (await CallbackAsync(client, await StartAsync(client, returnTo))).ShouldBe(SetupUrl + "?gmail=connected");
+    }
+
+    [Fact]
+    public async Task State_mismatch_with_a_settings_cookie_redirects_to_settings()
+    {
+        await using var host = WithGoogle();
+        using var client = CreateClient(host);
+        await StartAsync(client, "settings");
+
+        (await CallbackAsync(client, "forged")).ShouldBe(SettingsUrl + "?gmail=error&reason=state_mismatch");
+        oauth.Exchanges.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task Status_reports_reauth_required_after_invalid_grant_until_reconnected()
     {
         await using var host = WithGoogle();
@@ -242,6 +293,18 @@ public sealed class GmailAuthEndpointsTests(ApiFactory factory, PostgresFixture 
         status.MissingScopes.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task Fake_mode_carries_return_to_settings()
+    {
+        await using var host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true"));
+        using var client = CreateClient(host);
+
+        var start = await client.GetAsync($"{Base}/start?returnTo=settings", Ct);
+        var done = await client.GetAsync(start.Headers.Location!.PathAndQuery, Ct);
+
+        done.Headers.Location!.ToString().ShouldBe(SettingsUrl + "?gmail=connected");
+    }
+
     [Theory]
     [InlineData("RevokeTimeout", "-00:00:05")]
     [InlineData("RevokeTimeout", "-00:00:00.001")]
@@ -268,9 +331,10 @@ public sealed class GmailAuthEndpointsTests(ApiFactory factory, PostgresFixture 
         host.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
 
     /// <returns>The state sent to Google.</returns>
-    private static async Task<string> StartAsync(HttpClient client)
+    private static async Task<string> StartAsync(HttpClient client, string? returnTo = null)
     {
-        var response = await client.GetAsync($"{Base}/start", Ct);
+        var url = returnTo is null ? $"{Base}/start" : $"{Base}/start?returnTo={Uri.EscapeDataString(returnTo)}";
+        var response = await client.GetAsync(url, Ct);
         response.StatusCode.ShouldBe(HttpStatusCode.Redirect);
         return QueryHelpers.ParseQuery(response.Headers.Location!.Query)["state"].ToString();
     }
