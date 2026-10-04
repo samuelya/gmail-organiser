@@ -47,6 +47,9 @@ const member = (id: string, over: Partial<SuggestionDto> = {}): SuggestionDto =>
   status: 'pending',
   edited: false,
   protected: false,
+  replaceLabels: [],
+  currentLabels: [],
+  labelChange: 'add',
   ...over,
 });
 
@@ -66,6 +69,8 @@ const group = (over: Partial<ReviewGroupDto> = {}): ReviewGroupDto => ({
   reason: 'Synthetic reason',
   members: [member('a'), member('b', { source: 'derived', protected: true })],
   truncated: false,
+  replaceLabels: [],
+  labelChange: 'add',
   ...over,
 });
 

@@ -7,6 +7,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import { ClaudeVerdict } from './claude-verdict.component';
+import { LabelChangeChip } from './label-change-chip.component';
 import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.models';
 
 /** One suggestion inside a group card: preview, source, confidence and per-member decisions. */
@@ -15,6 +16,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
   imports: [
     ClaudeVerdict,
     DatePipe,
+    LabelChangeChip,
     MatButtonModule,
     MatCheckboxModule,
     MatIconModule,
@@ -38,6 +40,11 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span class="subject min-w-0 font-medium">{{ subject() }}</span>
           <span class="muted text-sm">{{ s.date | date: 'mediumDate' }}</span>
+          @if (s.currentLabels.length) {
+            <span class="muted text-sm" data-testid="member-current-labels"
+              >· Labels: {{ s.currentLabels.join(', ') }}</span
+            >
+          }
         </div>
         @if (s.snippet) {
           <p class="snippet muted m-0 text-sm">{{ s.snippet }}</p>
@@ -64,6 +71,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           @if (s.toBeDeleted) {
             <span class="badge">{{ labels().delete }}</span>
           }
+          <app-label-change-chip [change]="s" />
           @if (s.protected) {
             <mat-icon
               class="small-icon"

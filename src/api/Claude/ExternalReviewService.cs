@@ -337,7 +337,7 @@ public sealed class ExternalReviewService(
             ? await reviewQuery.PendingOutcomeAsync(row.SenderAddress, row.GroupKey!, ct)
             : await db.Suggestions.AsNoTracking()
                 .Where(s => s.Id == row.SuggestionId && s.Status == SuggestionStatus.Pending)
-                .Select(s => new GroupOutcome(s.TopicLabel, s.NeedsAction, s.ToBeDeleted))
+                .Select(s => new GroupOutcome(s.TopicLabel, s.NeedsAction, s.ToBeDeleted, null, s.DocumentTypeLabel))
                 .SingleOrDefaultAsync(ct);
 
     /// <summary>

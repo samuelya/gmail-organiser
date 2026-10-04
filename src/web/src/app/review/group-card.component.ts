@@ -6,6 +6,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import { ClaudeVerdict } from './claude-verdict.component';
+import { LabelChangeChip } from './label-change-chip.component';
 import { MemberRow } from './member-row.component';
 import {
   claudeCardTarget,
@@ -25,6 +26,7 @@ export const MEMBERS_STEP = 20;
   selector: 'app-group-card',
   imports: [
     ClaudeVerdict,
+    LabelChangeChip,
     MatButtonModule,
     MatCardModule,
     MatIconModule,
@@ -55,6 +57,7 @@ export const MEMBERS_STEP = 20;
           @if (g.toBeDeleted) {
             <span class="chip" data-testid="group-delete">{{ labels().delete }}</span>
           }
+          <app-label-change-chip [change]="g" />
           <span class="muted" data-testid="group-confidence">Confidence {{ confidence() }}</span>
           @if (claudeMode() !== 'off' && g.suggestedForClaude) {
             <span

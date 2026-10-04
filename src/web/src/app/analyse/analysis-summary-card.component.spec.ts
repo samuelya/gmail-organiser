@@ -19,6 +19,7 @@ const summary: AnalysisSummaryDto = {
   totalLlmCalls: 60,
   totalMessagesCovered: 300,
   savedPercent: 0.8,
+  labelledNotAnalysed: 42,
 };
 
 class FakeJobs {
@@ -55,6 +56,7 @@ describe('AnalysisSummaryCard', () => {
     expect(q('action-count')!.textContent).toContain('7');
     expect(q('to-be-deleted')!.textContent).toContain('90');
     expect(q('savings')!.textContent).toContain('60 LLM calls for 300 emails (80 % saved)');
+    expect(q('labelled-not-analysed')!.textContent).toContain('Already labelled, not analysed: 42');
     expect(q('link-analyse')!.getAttribute('href')).toBe('/analyse');
     expect(q('link-review')!.getAttribute('href')).toBe('/review');
     expect(q('open-clean-up')!.getAttribute('href')).toBe('/clean-up');

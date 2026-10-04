@@ -39,6 +39,12 @@ public sealed class SuggestionRow
     public SuggestionSource Source { get; set; }
     public string TopicLabel { get; set; } = "";
     public bool IsNewLabel { get; set; }
+
+    /// <summary>The second label under the document-type parent; null when none (memory and sender-pattern rows for now).</summary>
+    public string? DocumentTypeLabel { get; set; }
+
+    /// <summary><see cref="DocumentTypeLabel"/> was not in the label tree at analysis time (case-insensitive).</summary>
+    public bool DocumentTypeIsNew { get; set; }
     public bool NeedsAction { get; set; }
     public bool ToBeDeleted { get; set; }
     public bool UnsubscribeSuggested { get; set; }

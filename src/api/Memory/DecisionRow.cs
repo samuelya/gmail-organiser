@@ -31,6 +31,12 @@ public sealed class DecisionRow
     public string? ScopeKey { get; set; }
     public string? SubjectTemplate { get; set; }
     public string TopicLabel { get; set; } = "";
+
+    /// <summary>The decided document-type label; null when none.</summary>
+    public string? DocumentTypeLabel { get; set; }
+
+    /// <summary>The decision was recorded with a document-type parent set, so a null label means "no type".</summary>
+    public bool DocumentTypeDecided { get; set; }
     public bool NeedsAction { get; set; }
     public bool ToBeDeleted { get; set; }
     public DecisionOutcome Outcome { get; set; }

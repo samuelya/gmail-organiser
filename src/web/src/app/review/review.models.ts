@@ -19,6 +19,9 @@ export type SuggestionStatus = ReviewStatus | 'applied';
 /** `SuggestionSource` as the API writes it. */
 export type SuggestionSource = 'llm' | 'derived' | 'memory' | 'sender_pattern';
 
+/** What applying a suggestion does to the message's own labels, as the API writes it. */
+export type LabelChange = 'none' | 'keep' | 'add' | 'move' | 'relabel';
+
 export const SENDER_PAGE_SIZE = 25;
 /** The API's `ReviewQuery.MaxGroupPageSize` is 50. */
 export const GROUP_PAGE_SIZE = 20;
@@ -53,6 +56,11 @@ export interface SuggestionDto {
   status: SuggestionStatus;
   edited: boolean;
   protected: boolean;
+  /** Current labels (by name) applying removes; never the topic label. */
+  replaceLabels: string[];
+  /** The message's personal label names; empty when Gmail is not reachable. */
+  currentLabels: string[];
+  labelChange: LabelChange;
   /** The newest not-cancelled Claude review item for this suggestion alone. */
   claudeReview?: ExternalReviewDto | null;
   /** Worth a Claude review by the settings; a hint only. */
@@ -77,6 +85,9 @@ export interface ReviewGroupDto {
   members: SuggestionDto[];
   /** Not every member is listed; the counts cover them all. */
   truncated: boolean;
+  /** Union of the listed members' replaced labels. */
+  replaceLabels: string[];
+  labelChange: LabelChange;
   /** The newest not-cancelled Claude review item for the group. */
   claudeReview?: ExternalReviewDto | null;
   /** Any member is worth a Claude review. */
@@ -96,6 +107,11 @@ export interface ReviewOutcome {
   topicLabel: string;
   needsAction: boolean;
   toBeDeleted: boolean;
+}
+
+/** `PUT /api/review/suggestions/{id}`; `replaceLabels` left out keeps the replaced labels as they are. */
+export interface EditSuggestionRequest extends ReviewOutcome {
+  replaceLabels?: string[];
 }
 
 export interface GroupDecisionResponse {
@@ -225,6 +241,24 @@ export function patternSummary(
   );
 }
 
+/** The chip text for a label change; `null` when nothing changes (`none`). */
+export function labelChangeText(
+  change: Pick<ReviewGroupDto, 'labelChange' | 'topicLabel' | 'replaceLabels'>,
+): string | null {
+  switch (change.labelChange) {
+    case 'keep':
+      return `Keeps ${change.topicLabel}`;
+    case 'add':
+      return `Adds ${change.topicLabel}`;
+    case 'move':
+      return `Moves ${change.replaceLabels.join(', ')} → ${change.topicLabel}`;
+    case 'relabel':
+      return `Relabels ${change.replaceLabels.join(', ')} → ${change.topicLabel}`;
+    default:
+      return null;
+  }
+}
+
 /** Why group approve left members pending. */
 export function skippedMessage(count: number): string {
   return `${count} ${count === 1 ? 'member was' : 'members were'} skipped: another outcome than the card's, or a protected message marked for deletion. Review ${count === 1 ? 'it' : 'them'} one by one.`;
@@ -244,13 +278,56 @@ export function editableMembers(members: readonly SuggestionDto[]): SuggestionDt
   return members.filter((m) => m.status !== 'applied');
 }
 
-/** `PUT /api/review/suggestions/{id}` for one member; a protected message is never marked for deletion. */
-export function editRequest(member: SuggestionDto, outcome: ReviewOutcome): ReviewOutcome {
-  return {
+/**
+ * `PUT /api/review/suggestions/{id}` for one member; a protected message is never marked for deletion.
+ * `replaceLabels` (left out when unchanged) is narrowed to the labels the member carries: the API rejects others.
+ */
+export function editRequest(
+  member: SuggestionDto,
+  outcome: ReviewOutcome,
+  replaceLabels?: readonly string[],
+): EditSuggestionRequest {
+  const request: EditSuggestionRequest = {
     topicLabel: outcome.topicLabel.trim(),
     needsAction: outcome.needsAction,
     toBeDeleted: outcome.toBeDeleted && !member.protected,
   };
+  if (replaceLabels) {
+    const carried = new Set(member.currentLabels.map((l) => l.toLowerCase()));
+    request.replaceLabels = replaceLabels.filter((l) => carried.has(l.toLowerCase()));
+  }
+  return request;
+}
+
+/** The current labels the edit dialog lists for these members: their union, in first-seen order. */
+export function currentLabelsOf(members: readonly SuggestionDto[]): string[] {
+  return [...new Set(members.flatMap((m) => m.currentLabels))];
+}
+
+/** Whether every member carrying `label` replaces it (`true`), none does (`false`) or only some (`null`). */
+export function replaceState(members: readonly SuggestionDto[], label: string): boolean | null {
+  const key = label.toLowerCase();
+  const carrying = members.filter((m) => m.currentLabels.some((l) => l.toLowerCase() === key));
+  const replacing = carrying.filter((m) => m.replaceLabels.some((l) => l.toLowerCase() === key));
+  return replacing.length === 0 ? false : replacing.length === carrying.length ? true : null;
+}
+
+/**
+ * The member's replaced labels after the dialog's decisions (label → replace), else `undefined` when they stay
+ * as they are. A label without a decision keeps the member's own choice, so a group edit never adds a removal
+ * the user did not tick.
+ */
+export function decidedReplaceLabels(
+  member: SuggestionDto,
+  decisions: ReadonlyMap<string, boolean>,
+): string[] | undefined {
+  const key = (l: string) => l.toLowerCase();
+  const decided = new Map([...decisions].map(([l, replace]) => [key(l), replace]));
+  const carried = new Set(member.currentLabels.map(key));
+  const own = new Set(member.replaceLabels.map(key).filter((l) => carried.has(l)));
+  const next = member.currentLabels.filter((l) => decided.get(key(l)) ?? own.has(key(l)));
+  const same = next.length === own.size && next.every((l) => own.has(key(l)));
+  return same ? undefined : next;
 }
 
 /** What a group card sends to Claude and shows: a message analysed on its own is its one suggestion. */
