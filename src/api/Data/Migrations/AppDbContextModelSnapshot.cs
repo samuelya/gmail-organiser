@@ -194,6 +194,13 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("reason");
 
+                    b.PrimitiveCollection<string[]>("ReplaceLabelIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("replace_label_ids")
+                        .HasDefaultValueSql("'{}'");
+
                     b.PrimitiveCollection<string[]>("ReplaceLabels")
                         .IsRequired()
                         .ValueGeneratedOnAdd()

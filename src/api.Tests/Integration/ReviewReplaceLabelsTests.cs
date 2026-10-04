@@ -69,7 +69,7 @@ public sealed class ReviewReplaceLabelsTests(ApiFactory factory, PostgresFixture
             var rows = await db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Billing).ToListAsync(Ct);
             rows.Count.ShouldBe(4);
             rows.ShouldContain(s => s.Source == SuggestionSource.Derived);
-            rows.ShouldAllBe(s => s.ReplaceLabels.SequenceEqual(new[] { OldLabel }));
+            rows.ShouldAllBe(s => s.ReplaceLabels.SequenceEqual(new[] { OldLabel }) && s.ReplaceLabelIds.SequenceEqual(new[] { oldId }));
             (await db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Shop).ToListAsync(Ct))
                 .ShouldAllBe(s => s.ReplaceLabels.Length == 0);
         }
@@ -89,11 +89,11 @@ public sealed class ReviewReplaceLabelsTests(ApiFactory factory, PostgresFixture
     {
         var id = await IdAsync("c00");
 
+        var missing = await h.PutAsync($"/api/review/suggestions/{Guid.NewGuid()}", new EditSuggestionRequest(Topic, false, false, ["Synthetic/Nope"]));
+        missing.StatusCode.ShouldBe(HttpStatusCode.NotFound);
         var unknown = await h.PutAsync($"/api/review/suggestions/{id}", new EditSuggestionRequest(Topic, false, false, ["Old/Invoices", "Synthetic/Nope"]));
         unknown.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
-        var problem = await unknown.Content.ReadAsStringAsync(Ct);
-        problem.ShouldContain("replaceLabels");
-        problem.ShouldContain("Synthetic/Nope");
+        (await unknown.Content.ReadAsStringAsync(Ct)).ShouldContain("replaceLabels");
 
         var cleared = await EditAsync(id, new EditSuggestionRequest(Topic, false, false, []));
         (cleared.ReplaceLabels.Count, cleared.LabelChange, cleared.Edited).ShouldBe((0, LabelChange.Add, true));
@@ -103,6 +103,66 @@ public sealed class ReviewReplaceLabelsTests(ApiFactory factory, PostgresFixture
 
         var kept = await EditAsync(id, new EditSuggestionRequest("Finance/Other", true, false));
         kept.ReplaceLabels.ShouldBe([OldLabel]);
+
+        // The topic becomes the replaced label: apply keeps it, and the card says so.
+        var same = await EditAsync(id, new EditSuggestionRequest(OldLabel, true, false));
+        (same.ReplaceLabels.Count, same.LabelChange).ShouldBe((0, LabelChange.Keep));
+    }
+
+    [Fact]
+    public async Task A_replaced_label_renamed_in_gmail_shows_its_new_name()
+    {
+        h.Gmail.Inner.RenameLabel(oldId, "Archive/Invoices");
+        h.Services.GetRequiredService<LabelCatalog>().Invalidate();
+
+        var member = (await DetailAsync(AnalysisRunHarness.Billing)).Groups.Single().Members[0];
+
+        (member.ReplaceLabels.ShouldHaveSingleItem(), member.CurrentLabels.ShouldHaveSingleItem(), member.LabelChange)
+            .ShouldBe(("Archive/Invoices", "Archive/Invoices", LabelChange.Move));
+    }
+
+    [Fact]
+    public async Task Without_the_label_list_an_edit_of_the_replaced_labels_is_refused_and_nothing_changes()
+    {
+        var id = await IdAsync("c00");
+        var key = await KeyOfAsync("c00");
+        h.Gmail.AfterListLabels = () => throw new HttpRequestException("Synthetic outage");
+        h.Services.GetRequiredService<LabelCatalog>().Invalidate();
+
+        var missing = await h.PutAsync($"/api/review/suggestions/{Guid.NewGuid()}", new EditSuggestionRequest(Topic, false, false, [OldLabel]));
+        missing.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        var edit = await h.PutAsync($"/api/review/suggestions/{id}", new EditSuggestionRequest(Topic, false, false, [OldLabel]));
+        edit.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+        var group = await h.PostAsync(
+            "/api/review/groups/approve", new GroupDecisionRequest(AnalysisRunHarness.Billing, key, Topic, false, false, [OldLabel]));
+        group.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+
+        await using var db = postgres.CreateDbContext();
+        (await db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Billing).ToListAsync(Ct))
+            .ShouldAllBe(s => s.ReplaceLabelIds.Length == 1 && !s.Edited && s.Status == SuggestionStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Group_approve_with_the_card_s_labels_keeps_each_member_s_own_and_adds_none()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "c00").ExecuteUpdateAsync(
+                s => s.SetProperty(x => x.ReplaceLabelIds, Array.Empty<string>()).SetProperty(x => x.ReplaceLabels, Array.Empty<string>()), Ct);
+        }
+
+        var group = (await DetailAsync(AnalysisRunHarness.Billing)).Groups.Single();
+        group.ReplaceLabels.ShouldBe([OldLabel]);
+        var response = await h.PostAsync(
+            "/api/review/groups/approve",
+            new GroupDecisionRequest(AnalysisRunHarness.Billing, group.GroupKey, group.TopicLabel, false, false, [OldLabel.ToUpperInvariant()]));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
+
+        await using var after = postgres.CreateDbContext();
+        var rows = await after.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Billing).ToListAsync(Ct);
+        rows.ShouldAllBe(s => !s.Edited && s.Status == SuggestionStatus.Approved);
+        rows.Single(s => s.MessageId == "c00").ReplaceLabelIds.ShouldBeEmpty();
+        rows.Where(s => s.MessageId != "c00").ShouldAllBe(s => s.ReplaceLabelIds.SequenceEqual(new[] { oldId }));
     }
 
     [Fact]
@@ -130,6 +190,12 @@ public sealed class ReviewReplaceLabelsTests(ApiFactory factory, PostgresFixture
         var response = await h.PutAsync($"/api/review/suggestions/{id}", request);
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
         return (await response.Content.ReadFromJsonAsync<SuggestionDto>(Ct)).ShouldNotBeNull();
+    }
+
+    private async Task<string?> KeyOfAsync(string messageId)
+    {
+        await using var db = postgres.CreateDbContext();
+        return await db.Suggestions.Where(s => s.MessageId == messageId).Select(s => s.GroupKey).SingleAsync(Ct);
     }
 
     private async Task<Guid> IdAsync(string messageId)

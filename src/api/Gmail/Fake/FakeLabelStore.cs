@@ -37,6 +37,14 @@ public sealed class FakeLabelStore
     public void Delete(string id) =>
         labels.RemoveAll(l => l.Type == GmailLabelType.User && string.Equals(l.Id, id, StringComparison.Ordinal));
 
+    /// <summary>Renames the user label <paramref name="id"/>, as the user renaming it in Gmail does; the id stays.</summary>
+    public void Rename(string id, string name)
+    {
+        GmailLimits.EnsureValidLabelName(name);
+        var index = labels.FindIndex(l => l.Type == GmailLabelType.User && string.Equals(l.Id, id, StringComparison.Ordinal));
+        labels[index] = labels[index] with { Name = name };
+    }
+
     /// <summary>
     /// Creates a user label, or returns the user label that already has <paramref name="name"/> (Gmail's 409). Reserved
     /// names are refused as Gmail refuses them.

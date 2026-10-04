@@ -11,6 +11,13 @@ namespace GmailOrganiser.Data.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.AddColumn<string[]>(
+                name: "replace_label_ids",
+                table: "suggestions",
+                type: "text[]",
+                nullable: false,
+                defaultValueSql: "'{}'");
+
+            migrationBuilder.AddColumn<string[]>(
                 name: "replace_labels",
                 table: "suggestions",
                 type: "text[]",
@@ -21,6 +28,10 @@ namespace GmailOrganiser.Data.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropColumn(
+                name: "replace_label_ids",
+                table: "suggestions");
+
             migrationBuilder.DropColumn(
                 name: "replace_labels",
                 table: "suggestions");

@@ -8,25 +8,26 @@ namespace GmailOrganiser.Tests.Integration;
 public sealed partial class UndoActionsJobTests
 {
     [Fact]
-    public async Task A_relabel_removes_the_replaced_label_and_undo_restores_it()
+    public async Task A_relabel_removes_the_replaced_label_by_id_even_after_a_rename_and_undo_restores_it()
     {
         var old = await h.Gmail.Inner.CreateLabelAsync("Old/Bills", Ct);
         await SetLabelsAsync("a00", ["INBOX", "CATEGORY_UPDATES", old.Id]);
         await SetLabelsAsync("a01", ["INBOX", "CATEGORY_UPDATES"]);
-        await SeedReplacingAsync("a00", "New/Bills", ["old/bills"]);
-        await SeedReplacingAsync("a01", "New/Bills", ["Gone/Label"]);
+        await SeedReplacingAsync("a00", "New/Bills", (old.Id, "Old/Bills"));
+        await SeedReplacingAsync("a01", "New/Bills", ("Label_999", "Gone/Label"));
+        h.Gmail.Inner.RenameLabel(old.Id, "Archive/Bills");
         var before = new[] { "a00", "a01" }.ToDictionary(id => id, Labels);
 
         var apply = await ApplyAndRunAsync();
 
         var ids = (await h.Gmail.Inner.ListLabelsAsync(Ct)).ToDictionary(l => l.Name, l => l.Id);
-        ids.ShouldContainKey("Old/Bills");
+        ids.ShouldContainKey("Archive/Bills");
         Labels("a00").ShouldBe(["CATEGORY_UPDATES", ids["New/Bills"]], ignoreOrder: true);
         Labels("a01").ShouldBe(["CATEGORY_UPDATES", ids["New/Bills"]], ignoreOrder: true);
         await using (var db = postgres.CreateDbContext())
         {
             var log = await db.ActionLog.SingleAsync(l => l.BatchId == apply.Id && l.MessageId == "a00", Ct);
-            log.LabelsRemoved.ShouldBe(["Old/Bills", "INBOX"], ignoreOrder: true);
+            log.LabelsRemoved.ShouldBe(["Archive/Bills", "INBOX"], ignoreOrder: true);
             log.LabelIdsBefore.ShouldContain(old.Id);
             log.LabelIdsAfter.ShouldNotContain(old.Id);
             (await db.Messages.SingleAsync(m => m.Id == "a00", Ct)).LabelIds.ShouldBe(Labels("a00"), ignoreOrder: true);
@@ -44,7 +45,7 @@ public sealed partial class UndoActionsJobTests
     {
         var old = await h.Gmail.Inner.CreateLabelAsync("Old/Bills", Ct);
         await SetLabelsAsync("a00", ["INBOX", "CATEGORY_UPDATES", old.Id]);
-        await SeedReplacingAsync("a00", "New/Bills", ["Old/Bills"]);
+        await SeedReplacingAsync("a00", "New/Bills", (old.Id, "Old/Bills"));
         h.Gmail.BeforeBatchModify = (call, _) =>
         {
             if (call == 1)
@@ -60,6 +61,10 @@ public sealed partial class UndoActionsJobTests
         apply.MessageCount.ShouldBe(1);
         var ids = (await h.Gmail.Inner.ListLabelsAsync(Ct)).ToDictionary(l => l.Name, l => l.Id);
         Labels("a00").ShouldBe(["CATEGORY_UPDATES", ids["New/Bills"]], ignoreOrder: true);
+        await using var db = postgres.CreateDbContext();
+        var log = await db.ActionLog.SingleAsync(l => l.BatchId == apply.Id && l.MessageId == "a00", Ct);
+        log.LabelsRemoved.ShouldBe(["INBOX"]);
+        log.LabelIdsAfter.ShouldContain(old.Id);
     }
 
     private async Task SetLabelsAsync(string id, string[] labels)
@@ -69,10 +74,12 @@ public sealed partial class UndoActionsJobTests
         await db.Messages.Where(m => m.Id == id).ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, labels), Ct);
     }
 
-    private async Task SeedReplacingAsync(string id, string topic, string[] replace)
+    private async Task SeedReplacingAsync(string id, string topic, (string Id, string Name) replace)
     {
         await SeedAsync((id, topic, false, false));
         await using var db = postgres.CreateDbContext();
-        await db.Suggestions.Where(s => s.MessageId == id).ExecuteUpdateAsync(s => s.SetProperty(x => x.ReplaceLabels, replace), Ct);
+        await db.Suggestions.Where(s => s.MessageId == id).ExecuteUpdateAsync(
+            s => s.SetProperty(x => x.ReplaceLabelIds, new[] { replace.Id }).SetProperty(x => x.ReplaceLabels, new[] { replace.Name }),
+            Ct);
     }
 }

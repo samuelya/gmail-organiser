@@ -303,14 +303,14 @@ public sealed class ReviewService(
         return (ReviewResult.Ok, run);
     }
 
-    /// <summary>Whether Gmail lacks the label; null without a Gmail connection.</summary>
+    /// <summary>Whether Gmail lacks the label; null without a Gmail connection or when the label list cannot be loaded.</summary>
     private async Task<bool?> IsNewLabelAsync(string topicLabel, CancellationToken ct)
     {
         try
         {
             return await labels.FindByNameAsync(topicLabel, ct) is null;
         }
-        catch (GmailNotConnectedException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             return null;
         }

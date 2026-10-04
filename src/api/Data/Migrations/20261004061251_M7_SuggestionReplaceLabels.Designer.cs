@@ -13,7 +13,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261004055804_M7_SuggestionReplaceLabels")]
+    [Migration("20261004061251_M7_SuggestionReplaceLabels")]
     partial class M7_SuggestionReplaceLabels
     {
         /// <inheritdoc />
@@ -196,6 +196,13 @@ namespace GmailOrganiser.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("reason");
+
+                    b.PrimitiveCollection<string[]>("ReplaceLabelIds")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("replace_label_ids")
+                        .HasDefaultValueSql("'{}'");
 
                     b.PrimitiveCollection<string[]>("ReplaceLabels")
                         .IsRequired()
