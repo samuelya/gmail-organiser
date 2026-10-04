@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Common;
 using GmailOrganiser.Senders;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +23,7 @@ public sealed class SenderAllowlistTests(ApiFactory factory, PostgresFixture pos
         await using var db = postgres.CreateDbContext();
         await db.Jobs.ExecuteDeleteAsync();
         await db.Senders.ExecuteDeleteAsync();
+        await db.Settings.ExecuteDeleteAsync();
         db.Senders.AddRange(
             new SenderRow { Address = Known, Domain = "example.com", DisplayName = "Known", TotalCount = 7, AnalysedCount = 3, AppliedCount = 1, LastSeenAt = Seen, UpdatedAt = Seen },
             new SenderRow { Address = "other@example.org", Domain = "example.org", TotalCount = 2, LastSeenAt = Seen, UpdatedAt = Seen });
@@ -160,6 +162,28 @@ public sealed class SenderAllowlistTests(ApiFactory factory, PostgresFixture pos
     }
 
     [Fact]
+    public async Task A_listed_domain_marks_its_senders_and_subdomains_as_allowlisted_by_domain()
+    {
+        var put = await PutJsonAsync("/api/settings", new UpdateSettingsRequest(
+            null, null, null, null, Protection: new UpdateProtectionSettingsRequest(AllowlistedDomains: [" Example.COM ", "example.com"])));
+        put.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var settings = (await factory.CreateClient().GetFromJsonAsync<SettingsDto>("/api/settings", Ct)).ShouldNotBeNull();
+        settings.Protection.AllowlistedDomains.ShouldBe(["example.com"]);
+
+        var list = await ListAsync("?sort=address&dir=asc");
+        list.Items.Select(s => (s.Address, s.Allowlisted, s.AllowlistedByDomain))
+            .ShouldBe([(Known, false, true), ("other@example.org", false, false)]);
+        (await ListAsync("?allowlisted=true")).Total.ShouldBe(0);
+        (await PutOkAsync(Uri.EscapeDataString("new@mail.example.com"), true)).AllowlistedByDomain.ShouldBeTrue();
+
+        var bad = await PutJsonAsync("/api/settings", new UpdateSettingsRequest(
+            null, null, null, null, Protection: new UpdateProtectionSettingsRequest(AllowlistedDomains: ["user@example.com"])));
+        bad.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var problem = (await bad.Content.ReadFromJsonAsync<ValidationProblemDetails>(Ct)).ShouldNotBeNull();
+        problem.Errors.Keys.ShouldBe([SettingsValidation.AllowlistedDomainsField]);
+    }
+
+    [Fact]
     public async Task Without_the_csrf_header_the_put_is_refused()
     {
         var response = await factory.CreateClient().PutAsJsonAsync($"/api/senders/{Known}/allowlist", new AllowlistRequest(true), Ct);
@@ -176,11 +200,13 @@ public sealed class SenderAllowlistTests(ApiFactory factory, PostgresFixture pos
         return (await response.Content.ReadFromJsonAsync<SenderDto>(Ct)).ShouldNotBeNull();
     }
 
-    private Task<HttpResponseMessage> PutAsync(string address, object body)
+    private Task<HttpResponseMessage> PutAsync(string address, object body) => PutJsonAsync($"/api/senders/{address}/allowlist", body);
+
+    private Task<HttpResponseMessage> PutJsonAsync(string path, object body)
     {
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
-        return client.PutAsJsonAsync($"/api/senders/{address}/allowlist", body, Ct);
+        return client.PutAsJsonAsync(path, body, Ct);
     }
 
     private async Task<PagedDto<SenderDto>> ListAsync(string query) =>

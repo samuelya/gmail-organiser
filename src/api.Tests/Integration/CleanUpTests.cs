@@ -109,6 +109,30 @@ public sealed class CleanUpTests(ApiFactory factory, PostgresFixture postgres) :
     }
 
     [Fact]
+    public async Task A_sender_on_an_allowlisted_domain_is_protected_and_a_mere_suffix_is_not()
+    {
+        await SetDomainsAsync(["mple.com"]);
+        (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(6, 2, 2));
+
+        await SetDomainsAsync(["example.com"]);
+        (await GetAsync<CleanupSummaryDto>("/api/clean-up/summary")).ShouldBe(new CleanupSummaryDto(6, 2, 6));
+        var shop = (await GetAsync<PagedDto<CleanupSenderDto>>("/api/clean-up/senders?search=shop")).Items.Single();
+        (shop.ProtectedCount, shop.Allowlisted).ShouldBe((4, true));
+        (await GetAsync<PagedDto<CleanupMessageDto>>($"/api/clean-up/senders/{Shop}/messages")).Items
+            .ShouldAllBe(m => m.ProtectedReason == "allowlisted domain");
+
+        // Delete skips protected mail, so there is nothing to queue.
+        (await h.PostAsync("/api/clean-up/delete", new CleanupSelectionRequest(All: true))).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    private async Task SetDomainsAsync(string[] domains)
+    {
+        await using var scope = h.Services.CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+            .UpdateAsync(s => s with { Protection = s.Protection with { AllowlistedDomains = domains } }, Ct);
+    }
+
+    [Fact]
     public async Task Without_the_delete_label_in_gmail_the_list_is_empty()
     {
         h.Gmail.Inner.DeleteLabel(deleteLabelId);
