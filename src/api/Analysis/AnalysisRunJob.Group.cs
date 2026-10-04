@@ -201,7 +201,8 @@ public sealed partial class AnalysisRunJob
     {
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
         var messages = context.Builder.Build(new PromptInput(
-            emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName));
+            emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName,
+            context.Run.DocumentTypeParent));
 
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
         var parent = context.Run.DocumentTypeParent;
