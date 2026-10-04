@@ -96,7 +96,6 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         }
 
         var sender = await db.Senders.AsNoTracking().SingleOrDefaultAsync(s => s.Address == address, ct);
-        var allowlisted = sender?.Allowlisted ?? false;
         var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && s.Status == status);
         var stats = inStatus
             .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
@@ -144,11 +143,12 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         }
 
         var claude = await ClaudeLookupAsync(address, loaded, ct);
+        var allowlist = await AllowlistLoader.LoadAsync(db, claude.Settings, ct);
         var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
         var labelNames = personal.IsUnavailable ? null : personal.Names;
         foreach (var (g, members) in loaded)
         {
-            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlisted, claude, labelNames));
+            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlist, claude, labelNames));
         }
 
         return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
@@ -196,13 +196,13 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
 
     /// <param name="labelNames">Personal label names by id (<see cref="PersonalLabels.Names"/>) for the current labels; null lists none.</param>
     public static SuggestionDto ToDto(
-        SuggestionRow s, MessageRow m, bool senderAllowlisted, ProtectionSettings rules, IReadOnlyDictionary<string, string>? labelNames = null) =>
-        ToDto(s, m, senderAllowlisted, rules, labelNames, null, false);
+        SuggestionRow s, MessageRow m, Allowlist allowlist, ProtectionSettings rules, IReadOnlyDictionary<string, string>? labelNames = null) =>
+        ToDto(s, m, allowlist, rules, labelNames, null, false);
 
     public static SuggestionDto ToDto(
         SuggestionRow s,
         MessageRow m,
-        bool senderAllowlisted,
+        Allowlist allowlist,
         ProtectionSettings rules,
         IReadOnlyDictionary<string, string>? labelNames,
         ExternalReviewDto? claudeReview,
@@ -226,7 +226,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         s.Reason,
         SnakeCaseEnumConverter<SuggestionStatus>.ToDb(s.Status),
         s.Edited,
-        MessageProtection.IsProtected(m, senderAllowlisted, rules),
+        MessageProtection.IsProtected(m, allowlist, rules),
         replaced,
         current,
         LabelChanges.For(s.TopicLabel, replaced, current),
@@ -296,7 +296,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         GroupStats stats,
         IEnumerable<OutcomeCount> outcomes,
         IReadOnlyList<(SuggestionRow S, MessageRow M)> members,
-        bool allowlisted,
+        Allowlist allowlist,
         ClaudeLookup claude,
         IReadOnlyDictionary<string, string>? labelNames)
     {
@@ -321,7 +321,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         var display = GroupDisplay(newest.M.Subject, key, labelNames);
         var settings = claude.Settings;
         var dtos = members.Select(x => ToDto(
-                x.S, x.M, allowlisted, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
+                x.S, x.M, allowlist, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
                 IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))
             .ToList();
         var changes = dtos.Select(d => d.LabelChange).Distinct().ToList();
