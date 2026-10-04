@@ -43,12 +43,13 @@ public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFix
         await AssertRowsAsync();
         await using var db = postgres.CreateDbContext();
         (await db.AnalysisRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id, Ct)).DocumentTypeParent.ShouldBe(Parent);
-        h.Chat.Requests.ShouldAllBe(r => r[0].Text.Contains($"Document-type labels live under `{Parent}`, 1 to 3 levels deep. Existing: `{Existing}`."));
+        h.Chat.Requests.ShouldAllBe(r => r[0].Text.Contains($"Document-type labels live under `{Parent}`, {DocumentTypePath.LevelsUnder(Parent)} deep. Existing: `{Existing}`."));
     }
 
     [Fact]
     public async Task Nested_document_types_and_a_processor_merchant_topic_are_stored_as_the_model_answered()
     {
+        await h.Gmail.Inner.CreateLabelAsync("Types/Utilities", Ct);
         await h.Gmail.Inner.CreateLabelAsync("Types/Utilities/Electricity", Ct);
         await h.Gmail.Inner.CreateLabelAsync(Processor, Ct);
         h.Chat.Respond = (ids, _, _, _) => Task.FromResult(NestedAnswer(ids));
@@ -128,8 +129,8 @@ public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFix
     });
 
     /// <summary>
-    /// A processor's receipt for an invented merchant with an existing nested type in other casing, a new 3-level type,
-    /// and no type for the third sender.
+    /// A processor's receipt for an invented merchant with an existing nested type in other casing, a new 3-level type
+    /// whose existing ancestor is in other casing (stored in the tree's spelling), and no type for the third sender.
     /// </summary>
     private static string NestedAnswer(IEnumerable<string> ids) => JsonSerializer.Serialize(new
     {
@@ -146,7 +147,7 @@ public sealed class AnalysisDocumentTypeRunTests(ApiFactory factory, PostgresFix
             documentTypeLabel = id[0] switch
             {
                 'c' => "types/utilities/electricity",
-                'a' => "TYPES/Utilities/Water/Meter",
+                'a' => "TYPES/utilities/Water/Meter",
                 _ => null,
             },
         }),

@@ -64,6 +64,14 @@ public sealed class SuggestionOutputParserDocumentTypeTests
     }
 
     [Fact]
+    public void Too_deep_a_type_under_a_deep_parent_names_the_depth_left()
+    {
+        var result = SuggestionOutputParser.Parse(Item(",\"documentTypeLabel\":\"Other/Kind\""), Ids, documentTypeParent: "A/B/C/D");
+
+        result.Dropped.ShouldHaveSingleItem().ShouldBe("Email 'm1': 'documentTypeLabel' ignored (not 1 level below the document-type parent).");
+    }
+
+    [Fact]
     public void A_type_past_gmails_length_limit_is_dropped()
     {
         var value = $"{Parent}/{new string('a', 100)}/{new string('b', 100)}/{new string('c', 30)}";

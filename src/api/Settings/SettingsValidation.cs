@@ -67,7 +67,7 @@ public static class SettingsValidation
     public const int MaxDomainLength = 253;
     public const string AllowlistedDomainsField = "protection.allowlistedDomains";
 
-    // A document-type label is 1 to 3 levels below its parent, so the parent leaves room for at least one in Gmail's limits.
+    // A document-type label is 1 to DocumentTypePath.MaxDepth levels below its parent, so the parent leaves room for at least one in Gmail's limits.
     public const int MaxDocumentTypeParentLength = 200;
     public const int MaxDocumentTypeParentSegments = 4;
     public const string DocumentTypeParentField = "documentTypeParent";

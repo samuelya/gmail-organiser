@@ -10,7 +10,7 @@ Steps:
 5. Call `submit_review` exactly once per item:
    - `agree` when the local suggestion is right as it is;
    - `alternative` with `topic_label` (a full label path, levels separated by `/`) and the `needs_action` and `to_be_deleted` flags you recommend, when it should change;
-     when the label tree has a `documentTypeParent`, you may also set `document_type_label` as a full label path `<documentTypeParent>/<Name>` (one of `documentTypes`, or a new one directly under the parent; `""` for none; omit it to keep each email's own type). Only `alternative` takes a `document_type_label`;
+     when the label tree has a `documentTypeParent`, you may also set `document_type_label` as a full label path `<documentTypeParent>/<Name>` or nested up to `documentTypeMaxDepth` levels, general to specific, such as `<documentTypeParent>/<Kind>/<Subkind>` (one of `documentTypes`, or a new one, nested under an existing more general type when one fits; `""` for none; omit it to keep each email's own type). Only `alternative` takes a `document_type_label`;
    - `needs_human` when you are unsure, the samples disagree, or the decision depends on something only the user knows.
    Give `reasoning` in at most 3 short sentences. If `submit_review` answers `ok: false`, read the `reason`, move on to the next item and do not retry it.
    Items of type `filter_finding` and `label_plan` are not emails:

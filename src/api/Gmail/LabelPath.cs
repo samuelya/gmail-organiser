@@ -5,7 +5,7 @@ namespace GmailOrganiser.Gmail;
 /// <summary>The topic label rule shared by the LLM output parser and the review edit.</summary>
 public static partial class LabelPath
 {
-    /// <summary>Up to five <c>/</c>-separated segments, none blank or starting with whitespace, at most <see cref="GmailLimits.LabelNameMaxLength"/> chars.</summary>
+    /// <summary>Up to <see cref="GmailLimits.LabelMaxSegments"/> <c>/</c>-separated segments, none blank or starting with whitespace, at most <see cref="GmailLimits.LabelNameMaxLength"/> chars.</summary>
     public static bool IsValid(string path) =>
         path.Length <= GmailLimits.LabelNameMaxLength && !path.Any(char.IsControl) && Pattern().IsMatch(path);
 

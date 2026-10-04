@@ -1,3 +1,4 @@
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
 
 namespace GmailOrganiser.Analysis;
@@ -31,9 +32,24 @@ public static class DocumentTypePath
     public const int MaxChildren = 50;
 
     /// <summary>
+    /// Most levels a type may sit under <paramref name="parent"/>: <see cref="MaxDepth"/>, fewer when the parent's own
+    /// levels leave less room within Gmail's <see cref="GmailLimits.LabelMaxSegments"/>.
+    /// </summary>
+    public static int MaxDepthUnder(string parent) =>
+        Math.Clamp(GmailLimits.LabelMaxSegments - (parent.AsSpan().Trim().Count('/') + 1), 1, MaxDepth);
+
+    /// <summary><see cref="MaxDepthUnder"/> in words, "1 level" or "1 to n levels", for the prompt and error messages.</summary>
+    public static string LevelsUnder(string parent)
+    {
+        var depth = MaxDepthUnder(parent);
+        return depth == 1 ? "1 level" : $"1 to {depth} levels";
+    }
+
+    /// <summary>
     /// The existing document types: the labels 1 to <see cref="MaxDepth"/> levels under <paramref name="parent"/>
-    /// (case-insensitive, deduplicated), in ordinal order so a type comes before its children, at most
-    /// <see cref="MaxChildren"/>; empty when the parent is off.
+    /// (case-insensitive, deduplicated), at most <see cref="MaxChildren"/>, kept shallowest level first so a large
+    /// subtree cannot push top-level types out, then in ordinal order so a type comes before its children; empty when
+    /// the parent is off.
     /// </summary>
     public static IReadOnlyList<string> Children(string? parent, IEnumerable<string> labels) =>
         Children(parent, labels, out _);
@@ -52,11 +68,12 @@ public static class DocumentTypePath
         var all = labels
             .Where(l => l.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && IsDepthUnder(l, prefix.Length))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Order(StringComparer.Ordinal)
+            .OrderBy(l => l.AsSpan(prefix.Length).Count('/'))
+            .ThenBy(l => l, StringComparer.Ordinal)
             .Take(MaxChildren + 1)
             .ToList();
         truncated = all.Count > MaxChildren;
-        return truncated ? all.GetRange(0, MaxChildren) : all;
+        return [.. all.Take(MaxChildren).Order(StringComparer.Ordinal)];
     }
 
     /// <summary>
@@ -77,7 +94,20 @@ public static class DocumentTypePath
     // 1 to MaxDepth non-blank segments after the parent's prefix.
     private static bool IsDepthUnder(string label, int prefixLength)
     {
-        var segments = label[prefixLength..].Split('/');
-        return segments.Length <= MaxDepth && segments.All(s => !string.IsNullOrWhiteSpace(s));
+        var rest = label.AsSpan(prefixLength);
+        if (rest.Count('/') >= MaxDepth)
+        {
+            return false;
+        }
+
+        foreach (var range in rest.Split('/'))
+        {
+            if (rest[range].IsWhiteSpace())
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

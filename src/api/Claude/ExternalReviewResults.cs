@@ -17,7 +17,7 @@ public enum ExternalReviewResult
     /// <summary>The stored alternative's label is not a valid label path.</summary>
     InvalidVerdict,
 
-    /// <summary>The stored alternative's document type is not 1 to 3 levels under the current document-type parent (or it is off).</summary>
+    /// <summary>The stored alternative's document type is not 1 to <see cref="Analysis.DocumentTypePath.MaxDepth"/> levels under the current document-type parent (or it is off).</summary>
     InvalidDocumentType,
 
     /// <summary>

@@ -216,6 +216,8 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         tree.GetProperty("labelCount").GetInt32().ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 4);
         tree.GetProperty("documentTypeParent").ValueKind.ShouldBe(JsonValueKind.Null);
         tree.GetProperty("documentTypes").GetArrayLength().ShouldBe(0);
+        tree.GetProperty("documentTypesTruncated").GetBoolean().ShouldBeFalse();
+        tree.GetProperty("documentTypeMaxDepth").ValueKind.ShouldBe(JsonValueKind.Null);
         var roots = tree.GetProperty("labels").EnumerateArray().ToDictionary(n => n.GetProperty("name").GetString()!);
         roots.Keys.Order(StringComparer.Ordinal).ShouldBe(["Action", "Example", "Finance", "Shopping", "Synthetic Receipts", "To-Be-Deleted"]);
         roots["Example"].GetProperty("children").EnumerateArray().Single().GetProperty("path").GetString().ShouldBe("Example/Nested");
@@ -278,6 +280,8 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         tree.GetProperty("documentTypeParent").GetString().ShouldBe("Synthetic Types");
         tree.GetProperty("documentTypes").EnumerateArray().Select(l => l.GetString())
             .ShouldBe(["Synthetic Types/Gas", "Synthetic Types/Gas/Deep", "Synthetic Types/Power"]);
+        tree.GetProperty("documentTypesTruncated").GetBoolean().ShouldBeFalse();
+        tree.GetProperty("documentTypeMaxDepth").GetInt32().ShouldBe(DocumentTypePath.MaxDepth);
     }
 
     [Fact]

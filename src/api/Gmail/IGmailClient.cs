@@ -162,6 +162,9 @@ public static class GmailLimits
 
     public const int LabelNameMaxLength = 225;
 
+    /// <summary>Most <c>/</c>-separated levels a label path may have (<see cref="LabelPath.IsValid"/>).</summary>
+    public const int LabelMaxSegments = 5;
+
     /// <summary>Names Gmail refuses for a user label (system label ids and display names), compared case-insensitively.</summary>
     public static readonly IReadOnlySet<string> ReservedLabelNames = new HashSet<string>(
         [

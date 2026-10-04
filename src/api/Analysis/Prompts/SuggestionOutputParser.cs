@@ -302,7 +302,7 @@ public static class SuggestionOutputParser
         return DocumentTypePath.Normalise(value, parent, topicLabel, out var error) ?? Ignored(error switch
         {
             DocumentTypePathError.InvalidPath => "not a valid label path",
-            DocumentTypePathError.NotUnderParent => "not 1 to 3 levels below the document-type parent",
+            DocumentTypePathError.NotUnderParent => $"not {DocumentTypePath.LevelsUnder(parent)} below the document-type parent",
             _ => "same as topicLabel",
         });
 

@@ -23,7 +23,9 @@ public sealed class AnalysisPromptBuilderTests
         template.Version.ShouldBe("analysis-v5");
         template.Text.ShouldContain("`topicLabel` is the processor's organisation label plus `/<Merchant>`");
         template.Text.ShouldContain("the same processor and merchant always get the same `topicLabel`");
-        template.Text.ShouldContain("A label 1 to 3 levels under the document-type parent");
+        template.Text.ShouldContain("A label under the document-type parent named below, as many levels deep as it allows");
+        template.Text.ShouldContain("Follow the past decisions for the same sender (for processor receipts, only for the same merchant).");
+        template.Text.ShouldNotContain("1 to 3");
         Regex.Matches(template.Text, @"\{\{([a-zA-Z]+)\}\}").Select(m => m.Groups[1].Value).Distinct().Order(StringComparer.Ordinal)
             .ShouldBe(["actionLabel", "attachments", "deleteLabel", "documentTypes", "emails", "labelTree", "memory"]);
         template.Text.IndexOf("{{documentTypes}}", StringComparison.Ordinal)
@@ -53,6 +55,31 @@ public sealed class AnalysisPromptBuilderTests
 
         system.ShouldEndWith("Document-type labels live under `Types`, 1 to 3 levels deep. Existing: `Types/Electricity`, "
             + "`Types/Gas/Detail`, `Types/Gas/Detail/Peak`, `Types/Water`, `types/Gas`.");
+    }
+
+    [Theory]
+    [InlineData("A", "1 to 3 levels")]
+    [InlineData("A/B", "1 to 3 levels")]
+    [InlineData("A/B/C", "1 to 2 levels")]
+    [InlineData("A/B/C/D", "1 level")]
+    public void Document_type_depth_leaves_room_for_the_parents_levels_within_gmails_limit(string parent, string levels)
+    {
+        new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(Input([Email(1)]) with { DocumentTypeParent = parent })[0].Text
+            .ShouldEndWith($"Document-type labels live under `{parent}`, {levels} deep. Existing: none yet.");
+    }
+
+    [Fact]
+    public void Document_types_keep_top_level_types_when_a_subtree_fills_the_cap()
+    {
+        var labels = Enumerable.Range(0, AnalysisPromptBuilder.MaxDocumentTypes + 5).Select(i => $"Types/Bills/B{i:000}")
+            .Append("Types/Bills").Append("Types/Tax").ToList();
+
+        var system = new AnalysisPromptBuilder(PromptTemplate.BuiltIn)
+            .Build(Input([Email(1)], labels) with { DocumentTypeParent = "Types" })[0].Text;
+
+        system.ShouldContain("Existing: `Types/Bills`, `Types/Bills/B000`, ");
+        system.ShouldContain($"`Types/Bills/B{AnalysisPromptBuilder.MaxDocumentTypes - 3:000}`, `Types/Tax`, (more omitted).");
+        system.ShouldNotContain($"`Types/Bills/B{AnalysisPromptBuilder.MaxDocumentTypes - 2:000}`");
     }
 
     [Fact]

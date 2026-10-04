@@ -41,7 +41,7 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
 
     /// <summary>
     /// The document-type label the pattern answers with: none with the parent off; with it on, the pattern is usable only
-    /// when its latest approval was decided under this parent and its label (if any) is 1 to 3 levels under it,
+    /// when its latest approval was decided under this parent and its label (if any) is 1 to <see cref="DocumentTypePath.MaxDepth"/> levels under it,
     /// spelled as the parser stores the model's (<see cref="SuggestionOutputParser.DocumentTypeUnder"/>).
     /// </summary>
     private static (bool Usable, string? Type) TypeOf(MemoryPattern pattern, ShortCircuitContext context)
