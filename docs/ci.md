@@ -15,7 +15,7 @@ GitHub Actions, `.github/workflows/`. Every workflow has `permissions: contents:
 
 A new push to a PR cancels that PR's previous run.
 
-Release: `git tag vX.Y.Z && git push origin vX.Y.Z` on `main`; Publish pushes both images. GHCR packages start private.
+Release: `git tag vX.Y.Z && git push origin vX.Y.Z` on `main`; Publish pushes both images and passes `VERSION=X.Y.Z` to the api image, which `/healthz` and the Settings footer show (a manual run and a local build show `0.0.0-dev`). GHCR packages start private. Steps: "Release checklist" below.
 
 ## Required checks
 
@@ -86,3 +86,24 @@ The README images in `docs/images/<page>.png` come from the same fake stack (`GM
 - No secrets beyond `GITHUB_TOKEN` (used by the secret scan).
 
 What only the real mailbox, real Ollama models or Google's cloud can show is listed as an "Owner check" on the PR.
+
+## Release checklist
+
+The owner follows it top to bottom for every release; agents prepare the version bump PR but never tag, publish or create the release.
+
+1. **Scope done.** Every sub-issue of the release's milestone epics is Done, and no open `found-after-merge` bug has priority P1: `gh issue list --label found-after-merge --state open`.
+2. **`main` green.** The latest `main` run has `Secret scan`, `api` and `web` green.
+3. **Owner checks verified** on the real mailbox, real Ollama models, Claude Desktop and Google's cloud. The lists by epic:
+   - **M1 #4, M2 #21, M3 #22, M4 #23, M5 #24, attachments #68:** the owner-check lists on the epic issues (collected from their merge notes).
+   - **M2 Fetch (#21), later PRs:** #251 Inbox and All mail totals match Gmail; #252 a second mailbox fetch is faster and picks up Gmail label/read changes; #253 "Resync labels" picks up label and read changes (note its duration); #255 the Dashboard loads (`GET /api/fetch/status` 200).
+   - **M6 Rules & Apps Script (#25):** #261 filter sync count and summaries; #262 `auto-archive.gs` dry run, real run and `installDailyTrigger`, nested label with a space via the `-` form; #268 label plan over the real labels (report absurd nest/merge proposals); #269 create a filter from a proposal (incl. `-has:attachment`), delete and restore it, preview estimate vs local count; #272 Apps Script guide against Google's current UI; #285 filter review spot-check, apply one merge or drop_label; #286 nested rename, `labels.patch` clash answer, merge and undo; #303 filter review summary with the real model within 120 s; #316 Claude Desktop `review-label-plan` prompt and one headless run on a filter finding; #327 Send to Claude on a finding and a plan, Accept / Keep local.
+   - **M7 All Mail, labelled phase & release (#26):** #257 purge local data with a real connection; #259 labelled-scope analysis mostly proposes "keep"; #267 move and relabel apply removes the old label, undo restores it; #320 / #322 Settings → Reconnect → consent → back on Settings, and cancel shows the error.
+   - **Document-type labels (#236; merged parts ship in the release):** #278 the real model's format grammar accepts `documentTypeLabel`; #287 analysis-v4 with a document-type parent (reset a custom prompt override first); #291 approve/apply with a new and an existing document-type label, nested under the parent, undo; #296 set the parent in Settings; #301 Claude proposes a different document type; #313 / #328 re-analyse a run and single emails, Use new, apply, undo.
+   - **Release hygiene (#206), still open:** complete `.env.example`; on the main checkout `git log -p --all | grep -icF -f .claude/private-terms.txt` prints `0` (else decide on a history rewrite before going public); read the README as the public will.
+4. **Screenshots.** If the UI changed since the last release, re-run `npm run screenshots` (see "Screenshots") and commit the images.
+5. **Version bump.** One PR "chore: release vX.Y.Z" sets `<Version>` in `Directory.Build.props` and `version` in `src/web/package.json` (and `package-lock.json`).
+6. **Tag** on the merged `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+7. **Publish green**, then on a clean machine with only `docker-compose.yml` and a `.env` made from `.env.example` with `API_IMAGE` / `WEB_IMAGE` set to the `ghcr.io/<owner>/gmail-organiser-{api,web}:X.Y.Z` images (README): `docker compose pull && docker compose up -d`, run the setup wizard with the real Google client, and check Settings shows "Gmail Organiser vX.Y.Z".
+8. **GitHub release:** `gh release create vX.Y.Z --generate-notes`.
+9. **GHCR visibility:** if the repository is public, set both `gmail-organiser-api` and `gmail-organiser-web` packages to public (Package settings → Change visibility).
+10. **Docs:** update the pinned issue #3 and the `docs/DESIGN.md` header for the released version.

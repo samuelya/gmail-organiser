@@ -7,13 +7,15 @@ ARG WITH_CLAUDE=false
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG TARGETARCH
+# Release version from the tag (publish.yml passes it without the leading v); local builds stay 0.0.0-dev.
+ARG VERSION=0.0.0-dev
 WORKDIR /src
 COPY global.json Directory.Build.props ./
 COPY src/api/GmailOrganiser.Api.csproj src/api/
 RUN dotnet restore src/api/GmailOrganiser.Api.csproj ${TARGETARCH:+-a $TARGETARCH}
 COPY src/api/ src/api/
 RUN dotnet publish src/api/GmailOrganiser.Api.csproj -c Release -o /app/publish --no-restore \
-    ${TARGETARCH:+-a $TARGETARCH}
+    -p:Version=$VERSION ${TARGETARCH:+-a $TARGETARCH}
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime-base
 WORKDIR /app

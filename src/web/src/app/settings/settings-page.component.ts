@@ -24,6 +24,7 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { ActivatedRoute, Router } from '@angular/router';
+import { VersionService } from '../core/version.service';
 import { PageHeader } from '../layout/page-header';
 import { GoogleClientSettings, SetupService } from '../setup/setup.service';
 import {
@@ -94,6 +95,12 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
       color: var(--mat-sys-on-surface-variant);
       margin: 0.25rem 0 1rem;
     }
+    .app-version {
+      font: var(--mat-sys-body-small);
+      color: var(--mat-sys-on-surface-variant);
+      text-align: center;
+      margin: 0;
+    }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -105,6 +112,7 @@ export class SettingsPage implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly versionApi = inject(VersionService);
 
   /** Set when the OAuth callback redirected back here (`/settings?gmail=…`); read once. */
   readonly connectResult: ConnectResult | null;
@@ -152,6 +160,9 @@ export class SettingsPage implements OnInit {
   /** `null` until loaded, and on an older API without protection rules, which hides the section. */
   readonly protection = signal<ProtectionSettings | null>(null);
 
+  /** The api's version for the footer; `null` until loaded or when the api is unreachable. */
+  readonly version = signal<string | null>(null);
+
   constructor() {
     const params = this.route.snapshot.queryParamMap;
     this.connectResult = parseConnectResult(params.get('gmail'), params.get('reason'));
@@ -193,6 +204,11 @@ export class SettingsPage implements OnInit {
         error: () => undefined,
       });
     this.loadDefaultPrompt();
+    this.versionApi
+      .getVersion()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      // The error interceptor shows why; the footer stays hidden.
+      .subscribe({ next: (version) => this.version.set(version), error: () => undefined });
   }
 
   onClientChange(client: GoogleClientSettings): void {

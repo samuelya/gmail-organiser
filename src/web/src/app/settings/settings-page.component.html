@@ -165,4 +165,8 @@
       <app-data-settings />
     </mat-card-content>
   </mat-card>
+
+  @if (version(); as v) {
+    <p class="app-version" data-testid="app-version">Gmail Organiser v{{ v }}</p>
+  }
 </div>
