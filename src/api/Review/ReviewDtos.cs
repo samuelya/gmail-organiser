@@ -13,6 +13,8 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="GroupKey">Null for a message analysed on its own.</param>
 /// <param name="Mixed">Members disagree on label, needs-action or to-be-deleted (after edits).</param>
 /// <param name="Truncated">Not every member is listed (<see cref="ReviewQuery.MaxMembers"/>, <see cref="ReviewQuery.MaxResponseMembers"/>); the aggregates count them all.</param>
+/// <param name="ReplaceLabels">Union of the listed members' replaced labels, distinct and ordinal-sorted.</param>
+/// <param name="LabelChange">The listed members' label change when they agree, else <see cref="Review.LabelChange.Relabel"/>.</param>
 /// <param name="ClaudeReview">The newest not-cancelled Claude review item for the group.</param>
 /// <param name="SuggestedForClaude">Any member, listed or not, is worth a Claude review (<see cref="ReviewQuery.IsSuggestedForClaude"/>).</param>
 public sealed record ReviewGroupDto(
@@ -31,9 +33,13 @@ public sealed record ReviewGroupDto(
     string Reason,
     IReadOnlyList<SuggestionDto> Members,
     bool Truncated,
+    IReadOnlyList<string> ReplaceLabels,
+    LabelChange LabelChange,
     ExternalReviewDto? ClaudeReview = null,
     bool SuggestedForClaude = false);
 
+/// <param name="ReplaceLabels">Current labels the suggestion replaces; apply removes them.</param>
+/// <param name="CurrentLabels">The message's personal (user) label names; empty when Gmail is not reachable.</param>
 /// <param name="ClaudeReview">The newest not-cancelled Claude review item for this suggestion alone (not its group's).</param>
 /// <param name="SuggestedForClaude">Worth a Claude review by the settings (<see cref="ReviewQuery.IsSuggestedForClaude"/>); a UI hint only.</param>
 public sealed record SuggestionDto(
@@ -53,17 +59,27 @@ public sealed record SuggestionDto(
     string Status,
     bool Edited,
     bool Protected,
+    IReadOnlyList<string> ReplaceLabels,
+    IReadOnlyList<string> CurrentLabels,
+    LabelChange LabelChange,
     ExternalReviewDto? ClaudeReview = null,
     bool SuggestedForClaude = false);
 
 public sealed record LabelDto(string Id, string Name, string Type);
 
-/// <summary>Every field is required.</summary>
-public sealed record EditSuggestionRequest(string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted);
+/// <summary>Every field but <paramref name="ReplaceLabels"/> is required.</summary>
+/// <param name="ReplaceLabels">Current labels of the message to replace; null leaves them unchanged.</param>
+public sealed record EditSuggestionRequest(string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, string[]? ReplaceLabels = null);
 
 /// <param name="TopicLabel">Approve only: the outcome the card shows; only members with exactly this outcome are approved.</param>
+/// <param name="ReplaceLabels">Approve only, optional: the approved members' replaced labels, each keeping those it carries.</param>
 public sealed record GroupDecisionRequest(
-    string? SenderAddress, string? GroupKey, string? TopicLabel = null, bool? NeedsAction = null, bool? ToBeDeleted = null);
+    string? SenderAddress,
+    string? GroupKey,
+    string? TopicLabel = null,
+    bool? NeedsAction = null,
+    bool? ToBeDeleted = null,
+    string[]? ReplaceLabels = null);
 
 /// <param name="Skipped">Pending members left pending (another outcome than the card's, or a protected deletion), at most <see cref="ReviewService.MaxSkippedIds"/>.</param>
 public sealed record GroupDecisionResponse(int Changed, IReadOnlyList<Guid> Skipped);

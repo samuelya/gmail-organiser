@@ -44,6 +44,12 @@ public sealed class SuggestionRow
     public bool UnsubscribeSuggested { get; set; }
 
     /// <summary>
+    /// Paths of the message's current personal labels the suggestion replaces (labelled phase, DESIGN §6.3); apply
+    /// removes those the message still carries. Empty for memory and sender-pattern suggestions.
+    /// </summary>
+    public string[] ReplaceLabels { get; set; } = [];
+
+    /// <summary>
     /// 0–1. The <c>ck_suggestions_confidence</c> check rejects NaN and out-of-range values and fails the whole
     /// <c>SaveChanges</c>, so callers clamp to [0, 1] and treat NaN as invalid LLM output before saving.
     /// </summary>
@@ -105,6 +111,7 @@ public sealed class SuggestionRow
             e.Property(r => r.Source).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionSource>());
             e.Property(r => r.TopicLabel).IsRequired();
             e.Property(r => r.Reason).IsRequired();
+            e.Property(r => r.ReplaceLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.FilterCriteria).HasColumnType("jsonb");
             e.Property(r => r.Status).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionStatus>());
             e.HasOne<MessageRow>().WithMany().HasForeignKey(r => r.MessageId).OnDelete(DeleteBehavior.Cascade);

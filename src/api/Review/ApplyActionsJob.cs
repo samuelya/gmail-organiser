@@ -198,13 +198,33 @@ public sealed partial class ApplyActionsJob(
         var labelIds = valid.Count == 0
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : await labels.EnsureAsync(paths, (label, _) => RecordCreatedAsync(cursor.BatchId, label), ct);
+        var replaceIds = valid.Any(r => r.Suggestion.ReplaceLabels.Length > 0)
+            ? await ReplaceLabelIdsAsync(settings, ct)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var items = valid.Select(r => new PlannedItem(
-            r.Suggestion, ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress))));
+            r.Suggestion,
+            ActionPlanner.Plan(r.Suggestion, r.Message, labelIds, settings, allowlisted.Contains(r.Message.FromAddress), replaceIds)));
         var chunks = LabelChunks.Group(items, i => i.Plan.Add, i => i.Plan.Remove, gmailOptions.Value.BatchModifyMaxIds)
             .Select(c => new PlannedChunk(c.Items, c.Add, c.Remove))
             .ToList();
-        var names = labelIds.GroupBy(p => p.Value).ToDictionary(g => g.Key, g => g.First().Key, StringComparer.Ordinal);
-        return new Plan(chunks, labelIds, names);
+        var names = labelIds.Concat(replaceIds).GroupBy(p => p.Value).ToDictionary(g => g.Key, g => g.First().Key, StringComparer.Ordinal);
+        return new Plan(chunks, labelIds, replaceIds, names);
+    }
+
+    /// <summary>
+    /// Name to id (case-insensitive) of the personal labels Gmail has now, for the replaced labels: never a system
+    /// label nor the action or delete label, and never created. A name Gmail no longer has resolves to nothing.
+    /// </summary>
+    private async Task<Dictionary<string, string>> ReplaceLabelIdsAsync(AppSettings settings, CancellationToken ct)
+    {
+        var personal = PersonalLabels.From(await catalog.GetAsync(ct), settings);
+        var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, name) in personal.Names.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            ids.TryAdd(name, id);
+        }
+
+        return ids;
     }
 
     /// <summary>
@@ -242,7 +262,7 @@ public sealed partial class ApplyActionsJob(
                 foreach (var suggestion in locked)
                 {
                     var message = messages[suggestion.MessageId];
-                    var fresh = Replan(suggestion, message, plan.LabelIds, settings, allowlisted.Contains(message.FromAddress));
+                    var fresh = Replan(suggestion, message, plan, settings, allowlisted.Contains(message.FromAddress));
                     if (!Sorted(fresh.Add).SequenceEqual(chunk.Add) || !Sorted(fresh.Remove).SequenceEqual(chunk.Remove))
                     {
                         throw new PlanChangedException();
@@ -278,12 +298,11 @@ public sealed partial class ApplyActionsJob(
     }
 
     /// <summary>The plan for a locked row; a label the earlier plan did not resolve (it was not needed then) means it changed.</summary>
-    private static ActionPlan Replan(
-        SuggestionRow suggestion, MessageRow message, IReadOnlyDictionary<string, string> labelIds, AppSettings settings, bool allowlisted)
+    private static ActionPlan Replan(SuggestionRow suggestion, MessageRow message, Plan plan, AppSettings settings, bool allowlisted)
     {
         try
         {
-            return ActionPlanner.Plan(suggestion, message, labelIds, settings, allowlisted);
+            return ActionPlanner.Plan(suggestion, message, plan.LabelIds, settings, allowlisted, plan.ReplaceIds);
         }
         catch (KeyNotFoundException)
         {
@@ -370,9 +389,13 @@ public sealed partial class ApplyActionsJob(
     private sealed record PlannedChunk(IReadOnlyList<PlannedItem> Items, string[] Add, string[] Remove);
 
     /// <param name="LabelIds">Label path to id (case-insensitive), as resolved for this plan.</param>
+    /// <param name="ReplaceIds">Replaced label path to id (lookup only, <see cref="ReplaceLabelIdsAsync"/>).</param>
     /// <param name="Names">Label id to the path it was resolved from, for the log's display names.</param>
     private sealed record Plan(
-        IReadOnlyList<PlannedChunk> Chunks, IReadOnlyDictionary<string, string> LabelIds, IReadOnlyDictionary<string, string> Names)
+        IReadOnlyList<PlannedChunk> Chunks,
+        IReadOnlyDictionary<string, string> LabelIds,
+        IReadOnlyDictionary<string, string> ReplaceIds,
+        IReadOnlyDictionary<string, string> Names)
     {
         public int Messages => Chunks.Sum(c => c.Items.Count);
     }

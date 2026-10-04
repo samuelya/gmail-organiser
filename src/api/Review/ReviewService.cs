@@ -10,7 +10,8 @@ using Microsoft.EntityFrameworkCore;
 namespace GmailOrganiser.Review;
 
 /// <summary>The outcome a group card shows: label, needs-action and to-be-deleted.</summary>
-public sealed record GroupOutcome(string TopicLabel, bool NeedsAction, bool ToBeDeleted);
+/// <param name="ReplaceLabels">As an edit: the labels to replace, each member keeping those it carries; null leaves them unchanged.</param>
+public sealed record GroupOutcome(string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels = null);
 
 public enum ReviewResult
 {
@@ -45,25 +46,41 @@ public sealed class ReviewService(
     /// decision row; <see cref="SuggestionStatus.Applied"/> is a conflict.
     /// </summary>
     public Task<(ReviewResult Result, SuggestionDto? Suggestion)> DecideAsync(Guid id, DecisionOutcome outcome, CancellationToken ct) =>
-        ChangeOneAsync(id, s => s.Status != ToStatus(outcome), _ => { }, outcome, ct);
+        ChangeOneAsync(id, s => s.Status != ToStatus(outcome), (_, _) => { }, outcome, ct);
 
     /// <summary>
     /// Changes the outcome, marks the suggestion edited and approves it; allowed in any status but applied.
     /// <c>IsNewLabel</c> follows the Gmail label list; without a Gmail connection a changed label counts as new.
+    /// <paramref name="replaceLabels"/> (null: unchanged) keeps the message's current labels it names
+    /// (<see cref="UnknownReplaceLabelsAsync(Guid, IReadOnlyList{string}, CancellationToken)"/> validates first).
     /// </summary>
     public async Task<(ReviewResult Result, SuggestionDto? Suggestion)> EditAsync(
-        Guid id, string topicLabel, bool needsAction, bool toBeDeleted, CancellationToken ct)
+        Guid id, string topicLabel, bool needsAction, bool toBeDeleted, IReadOnlyList<string>? replaceLabels, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(topicLabel, ct);
-        return await ChangeOneAsync(id, _ => true, s =>
+        var personal = await PersonalLabelsAsync(ct);
+        return await ChangeOneAsync(id, _ => true, (s, m) =>
         {
             s.IsNewLabel = isNewLabel ?? (s.IsNewLabel || !string.Equals(s.TopicLabel, topicLabel, StringComparison.OrdinalIgnoreCase));
             s.TopicLabel = topicLabel;
             s.NeedsAction = needsAction;
             s.ToBeDeleted = toBeDeleted;
+            SetReplaceLabels(s, m, replaceLabels, personal);
             s.Edited = true;
         }, DecisionOutcome.Approved, ct);
     }
+
+    /// <summary>The names that are not a current personal label of the suggestion's message (case-insensitive).</summary>
+    public async Task<IReadOnlyList<string>> UnknownReplaceLabelsAsync(Guid id, IReadOnlyList<string> replaceLabels, CancellationToken ct) =>
+        await UnknownReplaceLabelsAsync(db.Suggestions.Where(s => s.Id == id), replaceLabels, ct);
+
+    /// <summary>The names that no pending member of the sender's group carries as a personal label (case-insensitive).</summary>
+    public async Task<IReadOnlyList<string>> UnknownReplaceLabelsAsync(
+        string senderAddress, string groupKey, IReadOnlyList<string> replaceLabels, CancellationToken ct) =>
+        await UnknownReplaceLabelsAsync(
+            db.Suggestions.Where(s => s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending),
+            replaceLabels,
+            ct);
 
     /// <summary>
     /// Rejects every pending member of the sender's group, or approves those whose outcome is <paramref name="shown"/>
@@ -79,6 +96,7 @@ public sealed class ReviewService(
 
         var allowlisted = await db.Senders.AnyAsync(s => s.Address == senderAddress && s.Allowlisted, ct);
         var rules = await RulesAsync(ct);
+        var personal = shown?.ReplaceLabels is null ? PersonalLabels.None : await PersonalLabelsAsync(ct);
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
@@ -91,6 +109,11 @@ public sealed class ReviewService(
                     || (s.TopicLabel == shown!.TopicLabel && s.NeedsAction == shown.NeedsAction && s.ToBeDeleted == shown.ToBeDeleted
                         && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, rules))))
                 {
+                    if (outcome == DecisionOutcome.Approved)
+                    {
+                        SetReplaceLabels(s, m, shown!.ReplaceLabels, personal);
+                    }
+
                     return true;
                 }
 
@@ -240,6 +263,7 @@ public sealed class ReviewService(
     {
         var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
         var rules = await RulesAsync(ct);
+        var personal = outcome.ReplaceLabels is null ? PersonalLabels.None : await PersonalLabelsAsync(ct);
         return (s, m) =>
         {
             if (outcome.ToBeDeleted && MessageProtection.IsProtected(m, allowlisted, rules))
@@ -256,10 +280,57 @@ public sealed class ReviewService(
             s.TopicLabel = outcome.TopicLabel;
             s.NeedsAction = outcome.NeedsAction;
             s.ToBeDeleted = outcome.ToBeDeleted;
+            SetReplaceLabels(s, m, outcome.ReplaceLabels, personal);
             s.Edited = true;
             return true;
         };
     }
+
+    /// <summary>
+    /// Sets the replaced labels to the message's current personal labels named in <paramref name="requested"/> (in
+    /// Gmail's spelling, never the topic label); marks the suggestion edited when they change. Null leaves them.
+    /// </summary>
+    private static void SetReplaceLabels(SuggestionRow s, MessageRow m, IReadOnlyList<string>? requested, PersonalLabels personal)
+    {
+        if (requested is null)
+        {
+            return;
+        }
+
+        var wanted = requested.Select(l => l.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string[] carried = [.. personal.NamesOf(m)
+            .Where(n => wanted.Contains(n.Trim()) && !string.Equals(n.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase))];
+        if (!carried.SequenceEqual(s.ReplaceLabels, StringComparer.Ordinal))
+        {
+            s.ReplaceLabels = carried;
+            s.Edited = true;
+        }
+    }
+
+    private async Task<IReadOnlyList<string>> UnknownReplaceLabelsAsync(
+        IQueryable<SuggestionRow> suggestions, IReadOnlyList<string> replaceLabels, CancellationToken ct)
+    {
+        if (replaceLabels.Count == 0)
+        {
+            return [];
+        }
+
+        var personal = await PersonalLabelsAsync(ct);
+        var labelIds = await suggestions.AsNoTracking()
+            .Join(db.Messages.AsNoTracking(), s => s.MessageId, m => m.Id, (_, m) => m.LabelIds)
+            .ToListAsync(ct);
+        var carried = labelIds.SelectMany(ids => ids)
+            .Where(personal.IsPersonal)
+            .Select(id => personal.Names.GetValueOrDefault(id))
+            .OfType<string>()
+            .Select(n => n.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return [.. replaceLabels.Select(l => l.Trim()).Where(l => !carried.Contains(l)).Distinct(StringComparer.OrdinalIgnoreCase)];
+    }
+
+    /// <summary>The personal labels by id; <see cref="PersonalLabels.None"/> (no names) when Gmail is not reachable.</summary>
+    private async Task<PersonalLabels> PersonalLabelsAsync(CancellationToken ct) =>
+        await PersonalLabels.LoadAsync(labels, await settingsStore.GetAsync(ct), ct);
 
     private async Task<ProtectionSettings> RulesAsync(CancellationToken ct) => (await settingsStore.GetAsync(ct)).Protection;
 
@@ -267,8 +338,9 @@ public sealed class ReviewService(
         outcome == DecisionOutcome.Approved ? SuggestionStatus.Approved : SuggestionStatus.Rejected;
 
     private async Task<(ReviewResult Result, SuggestionDto? Suggestion)> ChangeOneAsync(
-        Guid id, Func<SuggestionRow, bool> needsChange, Action<SuggestionRow> change, DecisionOutcome outcome, CancellationToken ct)
+        Guid id, Func<SuggestionRow, bool> needsChange, Action<SuggestionRow, MessageRow> change, DecisionOutcome outcome, CancellationToken ct)
     {
+        var names = (await PersonalLabelsAsync(ct)).Names;
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var suggestion = (await LockAsync([id], ct)).SingleOrDefault();
         if (suggestion is null)
@@ -281,12 +353,12 @@ public sealed class ReviewService(
         var rules = await RulesAsync(ct);
         if (suggestion.Status == SuggestionStatus.Applied)
         {
-            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlisted, rules));
+            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlisted, rules, names));
         }
 
         if (needsChange(suggestion))
         {
-            change(suggestion);
+            change(suggestion, message);
             suggestion.SetStatus(ToStatus(outcome), message, time.GetUtcNow());
             await decisions.RecordAsync(suggestion, message, outcome, ct);
             await db.SaveChangesAsync(ct);
@@ -294,7 +366,7 @@ public sealed class ReviewService(
 
         await tx.CommitAsync(ct);
         decisions.Committed();
-        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlisted, rules));
+        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlisted, rules, names));
     }
 
     /// <summary>

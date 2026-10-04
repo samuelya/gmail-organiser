@@ -15,6 +15,9 @@ public static class ReviewEndpoints
 {
     public const int MaxGroupKeyLength = 2000;
 
+    /// <summary>Most replaced labels one edit names.</summary>
+    public const int MaxReplaceLabels = 100;
+
     public static IEndpointRouteBuilder MapReviewEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/review").WithTags("Review");
@@ -122,14 +125,23 @@ public static class ReviewEndpoints
         };
     }
 
-    /// <summary>Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied.</summary>
+    /// <summary>
+    /// Saves the edited outcome and approves it; 400 on an invalid label path, a missing flag or a replaced label the
+    /// message does not carry, 404, 409 when applied.
+    /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, CancellationToken ct)
     {
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
+        ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
+        if (errors.Count == 0 && request.ReplaceLabels is { } replace)
+        {
+            ReplaceLabelsUnknownErrors(await review.UnknownReplaceLabelsAsync(id, replace, ct), errors);
+        }
+
         return errors.Count > 0
             ? TypedResults.ValidationProblem(errors)
-            : await ToResultAsync(review.EditAsync(id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, ct));
+            : await ToResultAsync(review.EditAsync(id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, ct));
     }
 
     /// <summary>Reject takes every pending member; approve needs the card's outcome and takes the members that have it.</summary>
@@ -141,7 +153,8 @@ public static class ReviewEndpoints
         if (outcome == DecisionOutcome.Approved)
         {
             errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
-            shown = errors.Count == 0 ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value) : null;
+            ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
+            shown = errors.Count == 0 ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels) : null;
         }
 
         var sender = Normalise(request.SenderAddress);
@@ -153,6 +166,11 @@ public static class ReviewEndpoints
         if (string.IsNullOrEmpty(request.GroupKey) || request.GroupKey.Length > MaxGroupKeyLength)
         {
             errors["groupKey"] = [$"Required, at most {MaxGroupKeyLength} characters."];
+        }
+
+        if (errors.Count == 0 && shown?.ReplaceLabels is { } replace)
+        {
+            ReplaceLabelsUnknownErrors(await review.UnknownReplaceLabelsAsync(sender!, request.GroupKey!, replace, ct), errors);
         }
 
         return errors.Count > 0
@@ -239,6 +257,25 @@ public static class ReviewEndpoints
         }
 
         return errors;
+    }
+
+    /// <summary>At most <see cref="MaxReplaceLabels"/> non-blank names of at most the Gmail label name length.</summary>
+    private static void ReplaceLabelsShapeErrors(string[]? replaceLabels, Dictionary<string, string[]> errors)
+    {
+        if (replaceLabels is not null
+            && (replaceLabels.Length > MaxReplaceLabels
+                || replaceLabels.Any(l => string.IsNullOrWhiteSpace(l) || l.Trim().Length > GmailLimits.LabelNameMaxLength)))
+        {
+            errors["replaceLabels"] = [$"At most {MaxReplaceLabels} label names of at most {GmailLimits.LabelNameMaxLength} characters, not blank."];
+        }
+    }
+
+    private static void ReplaceLabelsUnknownErrors(IReadOnlyList<string> unknown, Dictionary<string, string[]> errors)
+    {
+        if (unknown.Count > 0)
+        {
+            errors["replaceLabels"] = [$"Not a current label of the message: {string.Join(", ", unknown)}."];
+        }
     }
 
     private static Dictionary<string, string[]> AddressError() =>

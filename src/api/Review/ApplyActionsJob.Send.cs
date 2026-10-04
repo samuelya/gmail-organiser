@@ -208,23 +208,34 @@ public sealed partial class ApplyActionsJob
 
     /// <summary>
     /// Reloads the labels; when one the chunk adds no longer exists, creates its path again (from the log's display
-    /// names) and checkpoints the chunk and its log rows with the new id. Null when every label still exists.
+    /// names) and checkpoints the chunk and its log rows with the new id. A user label the chunk removes that no longer
+    /// exists is dropped from the chunk (nothing to remove; Gmail refuses the call otherwise). Null when every label
+    /// still exists.
     /// </summary>
     private async Task<ApplyCursor?> ReResolveLabelsAsync(JobContext ctx, ApplyCursor cursor, int total, CancellationToken ct)
     {
         var pending = cursor.Pending!;
         var existing = (await catalog.RefreshAsync(ct)).Select(l => l.Id).ToHashSet(StringComparer.Ordinal);
+        string[] remove = [.. pending.Remove.Where(id => !GmailLabelIds.IsUser(id) || existing.Contains(id))];
+        var dropped = remove.Length < pending.Remove.Length;
+        if (dropped)
+        {
+            pending = pending with { Remove = remove };
+            cursor = cursor with { Pending = pending };
+            await ctx.CheckpointAsync(cursor, Progress(cursor, total), ct);
+        }
+
         var missing = Enumerable.Range(0, pending.Add.Length).Where(i => !existing.Contains(pending.Add[i])).ToList();
         if (missing.Count == 0)
         {
-            return null;
+            return dropped ? cursor : null;
         }
 
         var log = await db.ActionLog.AsNoTracking()
             .FirstAsync(l => l.BatchId == cursor.BatchId && l.MessageId == pending.MessageIds[0], ct);
         if (log.LabelsAdded.Length != pending.Add.Length)
         {
-            return null;
+            return dropped ? cursor : null;
         }
 
         var paths = missing.ConvertAll(i => log.LabelsAdded[i]);

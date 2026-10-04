@@ -133,7 +133,7 @@ public sealed partial class AnalysisRunJob
 
         var decision = DerivationRule.Decide(
             [.. representatives.Select(m => outputs.TryGetValue(m.Id, out var o)
-                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence)
+                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels)
                 : null)],
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
@@ -147,7 +147,11 @@ public sealed partial class AnalysisRunJob
         var isNewLabel = outputs.Values.Any(o => o.IsNewLabel && string.Equals(o.TopicLabel.Trim(), agreed.TopicLabel, StringComparison.OrdinalIgnoreCase));
         var derived = new SuggestionOutput(
             "", agreed.TopicLabel, isNewLabel, agreed.NeedsAction, agreed.ToBeDeleted, agreed.UnsubscribeSuggested, agreed.Confidence,
-            $"Same as {outputs.Count} analysed emails of this group");
+            $"Same as {outputs.Count} analysed emails of this group")
+        {
+            // Apply intersects with what each member carries, so a member without a replaced label loses nothing.
+            ReplaceLabels = agreed.ReplaceLabels,
+        };
         foreach (var m in others)
         {
             if (agreed.ToBeDeleted && MessageProtection.IsProtected(m, context.Allowlisted, context.Settings.Protection))
@@ -269,7 +273,6 @@ public sealed partial class AnalysisRunJob
             Mixed: false);
     }
 
-    // ReplaceLabels is parsed but not stored yet (#196); storing and applying it comes next.
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson) => new()
         {
@@ -283,6 +286,7 @@ public sealed partial class AnalysisRunJob
             NeedsAction = output.NeedsAction,
             ToBeDeleted = output.ToBeDeleted,
             UnsubscribeSuggested = output.UnsubscribeSuggested,
+            ReplaceLabels = [.. output.ReplaceLabels],
             // The DB check rejects NaN and out-of-range values; the parser and DerivationRule already clamp, this keeps it so.
             Confidence = double.IsFinite(output.Confidence) ? Math.Clamp(output.Confidence, 0, 1) : 0,
             Reason = output.Reason,
