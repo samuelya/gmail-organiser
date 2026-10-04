@@ -33,6 +33,7 @@ import { ClaudeSettingsSection } from './claude-settings.component';
 import { DataSettingsSection } from './data-settings.component';
 import { LabelsSettingsSection } from './labels-settings.component';
 import { ProtectionSettingsSection } from './protection-settings.component';
+import { AppsScriptSettingsSection } from './apps-script-settings.component';
 import {
   AnalysisSettings,
   AnalysisSettingsUpdate,
@@ -71,6 +72,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     AttachmentSettingsSection,
     ClaudeSettingsSection,
     ProtectionSettingsSection,
+    AppsScriptSettingsSection,
     LabelsSettingsSection,
     DataSettingsSection,
   ],

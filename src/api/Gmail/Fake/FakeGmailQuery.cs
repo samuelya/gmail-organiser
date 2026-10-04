@@ -1,15 +1,17 @@
+using System.Text.RegularExpressions;
+
 namespace GmailOrganiser.Gmail.Fake;
 
 /// <summary>
 /// The subset of Gmail search the fake understands: <c>from:&lt;address&gt;</c>, <c>from:@&lt;domain&gt;</c> (subdomains
-/// included), <c>in:inbox</c>, <c>in:spam</c>, <c>in:trash</c>, <c>label:&lt;id&gt;</c> and <c>has:attachment</c>, combined with AND. Anything else throws.
+/// included), <c>in:inbox</c>, <c>in:spam</c>, <c>in:trash</c>, <c>label:&lt;id&gt;</c> and <c>has:attachment</c>, combined with AND;
+/// a term negated with <c>-</c>, and <c>key:(a OR b)</c> for any of those keys. Anything else throws.
 /// </summary>
-public static class FakeGmailQuery
+public static partial class FakeGmailQuery
 {
     public static Func<FakeMessage, bool> Parse(string? query)
     {
-        var terms = (query ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var predicates = terms.Select(ParseTerm).ToList();
+        var predicates = Terms().Matches(query ?? "").Select(t => ParseGroup(t.Value)).ToList();
         return m => predicates.TrueForAll(p => p(m));
     }
 
@@ -18,6 +20,29 @@ public static class FakeGmailQuery
         (query ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(t => t.ToLowerInvariant())
             .Any(t => t is "in:spam" or "in:trash" or "label:spam" or "label:trash");
+
+    private static Func<FakeMessage, bool> ParseGroup(string term)
+    {
+        if (term.StartsWith('-'))
+        {
+            var negated = ParseGroup(term[1..]);
+            return m => !negated(m);
+        }
+
+        var open = term.IndexOf(":(", StringComparison.Ordinal);
+        if (open > 0 && term.EndsWith(')'))
+        {
+            var key = term[..(open + 1)];
+            var any = term[(open + 2)..^1].Split(" OR ", StringSplitOptions.TrimEntries).Select(v => ParseTerm(key + v)).ToList();
+            return m => any.Exists(p => p(m));
+        }
+
+        return ParseTerm(term);
+    }
+
+    /// <summary>A whitespace-free term, optionally ending in one parenthesised group (<c>from:(a OR b)</c>).</summary>
+    [GeneratedRegex(@"[^\s(]*\([^)]*\)|\S+")]
+    private static partial Regex Terms();
 
     private static Func<FakeMessage, bool> ParseTerm(string term)
     {

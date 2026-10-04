@@ -4,6 +4,7 @@ import { inject, Injectable, InjectionToken } from '@angular/core';
 import { Observable, of, shareReplay, tap } from 'rxjs';
 import type {
   AnalysisSettingsUpdate,
+  AppsScriptUpdate,
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
   LabelSettingsUpdate,
@@ -46,6 +47,7 @@ export interface UpdateSettingsRequest
     AttachmentsUpdate,
     ClaudeSettingsUpdate,
     ProtectionUpdate,
+    Partial<AppsScriptUpdate>,
     LabelSettingsUpdate {
   ollamaBaseUrl?: string;
   chatModel?: string;

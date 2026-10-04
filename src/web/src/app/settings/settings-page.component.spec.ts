@@ -73,6 +73,11 @@ const models: LlmModels = {
 
 const PROMPT = 'Synthetic instructions.\n\n{{emails}}';
 const defaultPrompt = { version: 'test-v1', template: PROMPT };
+const appsScriptConfig = {
+  scriptVersion: 1,
+  config: 'const CONFIG = {};',
+  generatedAt: '2026-01-01T00:00:00Z',
+};
 
 describe('SettingsPage', () => {
   let http: HttpTestingController;
@@ -93,6 +98,7 @@ describe('SettingsPage', () => {
         else if (path === '/api/setup/status') req.flush(setupStatus);
         else if (path === '/api/llm/models') req.flush(models);
         else if (path === '/api/analysis/prompt/default') req.flush(defaultPrompt);
+        else if (path === '/api/rules/apps-script/config') req.flush(appsScriptConfig);
         else throw new Error(`unexpected GET ${path}`);
       }
     }
@@ -137,6 +143,7 @@ describe('SettingsPage', () => {
       'Fetch',
       'Labels',
       'Analysis',
+      'Apps Script',
       'Data',
     ]);
     expect(q('section-labels')!.querySelector('app-labels-settings')).not.toBeNull();
@@ -364,6 +371,12 @@ describe('SettingsPage', () => {
       claudeModel: null,
       claudeTokenSet: false,
     };
+
+    it('shows the Apps Script section with the generated config', async () => {
+      const { q } = await render();
+      expect(q('section-apps-script')).not.toBeNull();
+      expect(q('config-block')?.textContent).toBe(appsScriptConfig.config);
+    });
 
     it('is hidden when the API has no Claude fields', async () => {
       const { q } = await render();

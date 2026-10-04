@@ -30,19 +30,49 @@ public sealed class SenderPatternService(
 {
     public const string Reason = "Applied the approved pattern of this sender";
 
-    public async Task<SenderPatternDto> GetAsync(string address, CancellationToken ct)
+    public async Task<SenderPatternDto> GetAsync(string address, CancellationToken ct) =>
+        (await GetManyAsync([address], ct))[address];
+
+    /// <summary><see cref="GetAsync"/> for each of <paramref name="addresses"/>, in two grouped queries.</summary>
+    public async Task<IReadOnlyDictionary<string, SenderPatternDto>> GetManyAsync(
+        IReadOnlyCollection<string> addresses, CancellationToken ct)
     {
-        var outcomes = await OutcomesAsync(address, ct);
-        var approvals = outcomes.Sum(o => o.Count);
-        var top = outcomes.FirstOrDefault();
-        return new SenderPatternDto(
-            top?.TopicLabel,
-            top?.NeedsAction,
-            top?.ToBeDeleted,
-            approvals,
-            top is null ? 0 : (double)top.Count / approvals,
-            await Remaining(address).CountAsync(ct));
+        var outcomes = await OutcomesAsync(addresses, ct);
+        var remaining = await Remaining()
+            .Where(m => addresses.Contains(m.FromAddress))
+            .GroupBy(m => m.FromAddress)
+            .Select(g => new { Address = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.Address, g => g.Count, StringComparer.Ordinal, ct);
+        return addresses.Distinct(StringComparer.Ordinal).ToDictionary(
+            a => a,
+            a =>
+            {
+                var sender = outcomes.GetValueOrDefault(a) ?? [];
+                var approvals = sender.Sum(o => o.Count);
+                var top = sender.FirstOrDefault();
+                return new SenderPatternDto(
+                    top?.TopicLabel,
+                    top?.NeedsAction,
+                    top?.ToBeDeleted,
+                    approvals,
+                    top is null ? 0 : (double)top.Count / approvals,
+                    remaining.GetValueOrDefault(a));
+            },
+            StringComparer.Ordinal);
     }
+
+    /// <summary>
+    /// The List-Id every stored message of each sender carries; a sender whose messages differ or some have none is
+    /// absent. This is the <see cref="FilterCandidateDto.ListId"/> rule.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, string>> CommonListIdsAsync(
+        IReadOnlyCollection<string> addresses, CancellationToken ct) =>
+        await db.Messages
+            .Where(m => addresses.Contains(m.FromAddress) && !m.DeletedInGmail)
+            .GroupBy(m => m.FromAddress)
+            .Where(g => g.Count(m => m.ListId == null) == 0 && g.Min(m => m.ListId) == g.Max(m => m.ListId))
+            .Select(g => new { Address = g.Key, ListId = g.Max(m => m.ListId)! })
+            .ToDictionaryAsync(g => g.Address, g => g.ListId, StringComparer.Ordinal, ct);
 
     /// <summary>
     /// Creates an approved suggestion for every remaining message of <paramref name="address"/> (each request value
@@ -51,7 +81,7 @@ public sealed class SenderPatternService(
     public async Task<(ApplyRestStatus Status, ApplyRestResponse? Response)> ApplyRestAsync(
         string address, ApplyRestRequest request, CancellationToken ct)
     {
-        var outcomes = await OutcomesAsync(address, ct);
+        var outcomes = (await OutcomesAsync([address], ct)).GetValueOrDefault(address) ?? [];
         var top = outcomes.FirstOrDefault();
         var label = request.TopicLabel?.Trim() ?? top?.TopicLabel;
         if (label is null || !LabelResolver.IsValid(label))
@@ -67,7 +97,7 @@ public sealed class SenderPatternService(
             .Sum(o => o.Count);
         var agreement = approvals == 0 ? 0 : (double)agreeing / approvals;
         var edited = top is not null && (top.TopicLabel != label || top.NeedsAction != needsAction || top.ToBeDeleted != toBeDeleted);
-        var filter = new FilterCandidateDto(address, await CommonListIdAsync(address, ct));
+        var filter = new FilterCandidateDto(address, (await CommonListIdsAsync([address], ct)).GetValueOrDefault(address));
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
@@ -80,7 +110,7 @@ public sealed class SenderPatternService(
         await db.Database
             .SqlQuery<string>($"SELECT id AS \"Value\" FROM messages WHERE from_address = {address} ORDER BY id FOR UPDATE")
             .ToListAsync(ct);
-        var messages = await Remaining(address).OrderBy(m => m.Id).ToListAsync(ct);
+        var messages = await Remaining().Where(m => m.FromAddress == address).OrderBy(m => m.Id).ToListAsync(ct);
         if (messages.Count == 0)
         {
             return (ApplyRestStatus.Ok, new ApplyRestResponse(0, 0, null, filter));
@@ -150,40 +180,38 @@ public sealed class SenderPatternService(
         return (ApplyRestStatus.Ok, new ApplyRestResponse(messages.Count, protectedAdjusted, batch, filter));
     }
 
-    /// <summary>The sender's messages nobody has suggested anything for yet and that still exist in Gmail.</summary>
-    private IQueryable<MessageRow> Remaining(string address) =>
-        db.Messages.Where(m => m.FromAddress == address
-            && !m.DeletedInGmail
+    /// <summary>Messages nobody has suggested anything for yet and that still exist in Gmail.</summary>
+    private IQueryable<MessageRow> Remaining() =>
+        db.Messages.Where(m => !m.DeletedInGmail
             && m.AnalysisStatus == AnalysisStatus.NotAnalysed
             && !db.Suggestions.Any(s => s.MessageId == m.Id));
 
-    /// <summary>The user's approved outcomes for the sender, most common first, ties to the latest decision.</summary>
-    private async Task<List<Outcome>> OutcomesAsync(string address, CancellationToken ct)
+    /// <summary>Each sender's approved outcomes, most common first, ties to the latest decision.</summary>
+    private async Task<Dictionary<string, List<Outcome>>> OutcomesAsync(IReadOnlyCollection<string> addresses, CancellationToken ct)
     {
         var rows = await db.Suggestions
-            .Where(s => s.SenderAddress == address
+            .Where(s => addresses.Contains(s.SenderAddress)
                 && s.Source != SuggestionSource.SenderPattern
                 && (s.Status == SuggestionStatus.Approved || s.Status == SuggestionStatus.Applied))
-            .GroupBy(s => new { s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
-            .Select(g => new { g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, Count = g.Count(), Last = g.Max(s => s.DecidedAt) })
+            .GroupBy(s => new { s.SenderAddress, s.TopicLabel, s.NeedsAction, s.ToBeDeleted })
+            .Select(g => new
+            {
+                g.Key.SenderAddress,
+                g.Key.TopicLabel,
+                g.Key.NeedsAction,
+                g.Key.ToBeDeleted,
+                Count = g.Count(),
+                Last = g.Max(s => s.DecidedAt),
+            })
             .ToListAsync(ct);
-        return [.. rows
-            .OrderByDescending(o => o.Count)
-            .ThenByDescending(o => o.Last)
-            .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
-            .Select(o => new Outcome(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.Count))];
-    }
-
-    /// <summary>The List-Id every stored message of the sender carries, or null when they differ or some have none.</summary>
-    private async Task<string?> CommonListIdAsync(string address, CancellationToken ct)
-    {
-        var listIds = await db.Messages
-            .Where(m => m.FromAddress == address && !m.DeletedInGmail)
-            .Select(m => m.ListId)
-            .Distinct()
-            .Take(2)
-            .ToListAsync(ct);
-        return listIds is [{ } only] ? only : null;
+        return rows.GroupBy(r => r.SenderAddress, StringComparer.Ordinal).ToDictionary(
+            g => g.Key,
+            g => g.OrderByDescending(o => o.Count)
+                .ThenByDescending(o => o.Last)
+                .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
+                .Select(o => new Outcome(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.Count))
+                .ToList(),
+            StringComparer.Ordinal);
     }
 
     private static bool IsSuggestionConflict(DbUpdateException ex) =>

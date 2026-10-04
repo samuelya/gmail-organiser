@@ -131,6 +131,16 @@
     </mat-card>
   }
 
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-apps-script">
+    <mat-card-content data-testid="section-apps-script">
+      <h2 id="settings-apps-script" class="section-title">Apps Script</h2>
+      <p class="section-hint">
+        Time-based archiving by the script that runs in your Google account.
+      </p>
+      <app-apps-script-settings />
+    </mat-card-content>
+  </mat-card>
+
   @if (claude(); as claudeSettings) {
     <mat-card appearance="outlined" role="region" aria-labelledby="settings-claude">
       <mat-card-content data-testid="section-claude">

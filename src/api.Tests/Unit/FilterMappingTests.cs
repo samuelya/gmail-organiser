@@ -122,6 +122,35 @@ public sealed class FilterMappingTests
             new GmailFilterCriteria(ExcludeChats: true, Size: 1000, SizeComparison: GmailSizeComparison.Larger), label));
     }
 
+    [Theory]
+    [InlineData("from")]
+    [InlineData("to")]
+    [InlineData("subject")]
+    [InlineData("query")]
+    [InlineData("negatedQuery")]
+    public void A_whitespace_only_criterion_is_no_criterion(string field)
+    {
+        var criteria = field switch
+        {
+            "from" => new GmailFilterCriteria(From: "   "),
+            "to" => new GmailFilterCriteria(To: "\t"),
+            "subject" => new GmailFilterCriteria(Subject: " "),
+            "query" => new GmailFilterCriteria(Query: "  "),
+            _ => new GmailFilterCriteria(NegatedQuery: " \n"),
+        };
+
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(criteria, new GmailFilterAction(["Label_1"], [])));
+    }
+
+    [Fact]
+    public void A_blank_label_id_is_refused()
+    {
+        var criteria = new GmailFilterCriteria(From: "a@example.com");
+
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(criteria, new GmailFilterAction([" "], [])));
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(criteria, new GmailFilterAction(["Label_1"], [""])));
+    }
+
     [Fact]
     public void Size_comparison_is_stored_as_gmails_string_and_read_back()
     {
