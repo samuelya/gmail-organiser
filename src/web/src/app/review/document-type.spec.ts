@@ -52,7 +52,7 @@ const pattern = (documentTypeLabel: string | null): SenderPatternDto & { topicLa
 describe('apply rest with a document type', () => {
   const flags = { action: 'Act', delete: 'Bin' };
 
-  it('names the pattern\'s document type whether or not settings have loaded', () => {
+  it("names the pattern's document type whether or not settings have loaded", () => {
     expect(patternSummary(pattern('Docs/Invoice'), flags)).toContain(
       'label "Topic/Alpha", document type "Docs/Invoice", "Act"',
     );

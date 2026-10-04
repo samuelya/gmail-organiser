@@ -15,6 +15,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { debounceTime, distinctUntilChanged, filter, map } from 'rxjs';
 import { PagedDto } from '../core/paging.models';
 import { cleanSearch, MAX_SEARCH_LENGTH } from '../senders/senders.models';
@@ -33,6 +34,7 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
     MatListModule,
     MatPaginatorModule,
     MatProgressBarModule,
+    MatSlideToggleModule,
     ReactiveFormsModule,
   ],
   template: `
@@ -48,6 +50,14 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
           <mat-button-toggle [value]="s.value">{{ s.label }}</mat-button-toggle>
         }
       </mat-button-toggle-group>
+      @if (reanalysed() || (alternatives() ?? 0) > 0) {
+        <mat-slide-toggle
+          [checked]="reanalysed()"
+          (change)="reanalysedChange.emit($event.checked)"
+          data-testid="filter-reanalysed"
+          >Re-analysed ({{ alternatives() ?? 0 }})</mat-slide-toggle
+        >
+      }
       <mat-form-field subscriptSizing="dynamic">
         <mat-label>Search senders</mat-label>
         <mat-icon matPrefix aria-hidden="true">search</mat-icon>
@@ -122,6 +132,11 @@ export class SenderList {
   readonly pageSize = input.required<number>();
   readonly loading = input(false);
   readonly failed = input(false);
+  /** The "Re-analysed" filter is on: only suggestions with a re-analysis result waiting. */
+  readonly reanalysed = input(false);
+  /** How many suggestions have one, from the summary. */
+  readonly alternatives = input<number | null>(null);
+  readonly reanalysedChange = output<boolean>();
   readonly statusChange = output<ReviewStatus>();
   readonly searchChange = output<string>();
   readonly pageChange = output<number>();

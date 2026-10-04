@@ -413,7 +413,7 @@ describe('ReviewPage', () => {
     });
   });
 
-  it('names the pattern\'s document type without a parent in settings and does not re-send it', async () => {
+  it("names the pattern's document type without a parent in settings and does not re-send it", async () => {
     const { api, q, settle } = await render({
       topicLabel: 'Topic/Alpha',
       needsAction: false,

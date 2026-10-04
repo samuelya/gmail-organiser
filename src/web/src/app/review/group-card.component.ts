@@ -5,6 +5,8 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
+import { AlternativeCompare } from './alternative-compare.component';
+import { AlternativeTarget } from './alternative.models';
 import { ClaudeVerdict } from './claude-verdict.component';
 import { LabelChangeChip } from './label-change-chip.component';
 import { MemberRow } from './member-row.component';
@@ -25,6 +27,7 @@ export const MEMBERS_STEP = 20;
 @Component({
   selector: 'app-group-card',
   imports: [
+    AlternativeCompare,
     ClaudeVerdict,
     LabelChangeChip,
     MatButtonModule,
@@ -98,6 +101,17 @@ export const MEMBERS_STEP = 20;
             (changed)="claudeChange.emit($event)"
           />
         }
+        @if (g.alternative; as alt) {
+          <app-alternative-compare
+            [current]="g"
+            [alternative]="alt"
+            [labels]="labels()"
+            [busy]="busy()"
+            (useNew)="useNew.emit({ group: g })"
+            (keepCurrent)="keepCurrent.emit({ group: g })"
+            (showMembers)="expanded.set(true)"
+          />
+        }
         <div class="flex flex-wrap items-center gap-2">
           <button
             mat-flat-button
@@ -153,6 +167,8 @@ export const MEMBERS_STEP = 20;
                 (toggleSelect)="toggleMember.emit(m)"
                 [claudeMode]="g.groupKey === null ? 'off' : claudeMode()"
                 (claudeChange)="claudeChange.emit($event)"
+                (useNew)="useNew.emit({ member: m })"
+                (keepCurrent)="keepCurrent.emit({ member: m })"
               />
             }
             @if (shownMembers().length < g.members.length) {
@@ -231,6 +247,9 @@ export class GroupCard {
   readonly toggleMember = output<SuggestionDto>();
   /** A Claude item of the card or one of its members changed. A message analysed on its own shows its item on the card only. */
   readonly claudeChange = output<ExternalReviewDto>();
+  /** "Use new" / "Keep current" on the card's or a member's re-analysis result. */
+  readonly useNew = output<AlternativeTarget>();
+  readonly keepCurrent = output<AlternativeTarget>();
 
   readonly step = MEMBERS_STEP;
   readonly expanded = signal(false);

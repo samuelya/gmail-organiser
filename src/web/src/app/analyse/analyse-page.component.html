@@ -126,7 +126,9 @@
         [active]="active()"
         [finished]="finished()"
         [cancelling]="cancelling()"
+        [runActive]="runActive()"
         (cancelRun)="cancel($event)"
+        (reanalyseRun)="reanalyse($event)"
       />
     </mat-card-content>
   </mat-card>

@@ -36,10 +36,14 @@ export interface GroupingPreviewDto {
   largestGroups: GroupPreviewDto[];
 }
 
+/** `analyse` writes suggestions; `compare` stores its results as alternatives next to them (a re-analysis). */
+export type AnalysisRunKind = 'analyse' | 'compare';
+
 /** `AnalysisRunDto`; `savedPercent` is a fraction (`1 − llmCalls / max(1, messagesCovered)`) and can be negative. */
 export interface AnalysisRunDto {
   id: string;
   jobId: string | null;
+  kind: AnalysisRunKind;
   scope: string;
   senderAddress: string | null;
   requestedCount: number;
@@ -77,7 +81,12 @@ export interface AnalysisSummaryDto {
   savedPercent: number;
   /** Mail with a personal label that no run has analysed yet: the labelled phase's backlog. */
   labelledNotAnalysed: number;
+  /** Suggestions with a re-analysis result waiting for "Use new" or "Keep current". */
+  alternatives: number;
 }
+
+/** `CompareRunRequest`: exactly one of the two. */
+export type CompareRunRequest = { suggestionIds: string[] } | { runId: string };
 
 /** `analysis_run`, the job type a run enqueues. */
 export const ANALYSIS_RUN_JOB = 'analysis_run';
@@ -110,10 +119,13 @@ export function scopeLabel(scope: string): string {
   return SCOPE_LABELS[scope] ?? humanise(scope);
 }
 
-/** "Sender: news@example.com" or the plain scope label. */
-export function runTarget(run: Pick<AnalysisRunDto, 'scope' | 'senderAddress'>): string {
+/** "Sender: news@example.com" or the plain scope label; a compare run reads "Re-analysis: …". */
+export function runTarget(
+  run: Pick<AnalysisRunDto, 'scope' | 'senderAddress'> & { kind?: AnalysisRunKind },
+): string {
   const label = scopeLabel(run.scope);
-  return run.senderAddress ? `${label}: ${run.senderAddress}` : label;
+  const target = run.senderAddress ? `${label}: ${run.senderAddress}` : label;
+  return run.kind === 'compare' ? `Re-analysis: ${target}` : target;
 }
 
 /**

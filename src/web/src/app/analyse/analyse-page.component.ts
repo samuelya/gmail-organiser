@@ -55,6 +55,7 @@ import {
   SCOPE_OPTIONS,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
+import { confirmCompareRun, injectAnalysisRunActive } from './compare-run';
 import { GroupingPreview } from './grouping-preview.component';
 import { RunList } from './run-list.component';
 
@@ -180,6 +181,9 @@ export class AnalysePage {
   /** The last start answered 409: no chat model is selected. */
   readonly noChatModel = signal(false);
   readonly cancelling = signal<ReadonlySet<string>>(new Set());
+  private readonly hubRunActive = injectAnalysisRunActive();
+  /** A run is queued or running (by the hub or the last list): no re-analysis can start. */
+  readonly runActive = computed(() => this.hubRunActive() || this.active().length > 0);
 
   /** Run lists reload when an analysis job appears or changes status, or after a reconnect. */
   private readonly runsKey = computed(
@@ -300,6 +304,21 @@ export class AnalysePage {
           this.starting.set(false);
           this.noChatModel.set(error instanceof HttpErrorResponse && error.status === 409);
         },
+      });
+  }
+
+  /** Re-analyses a finished run's suggestions; the results wait on Review next to the current ones. */
+  reanalyse(run: AnalysisRunDto): void {
+    if (this.runActive()) return;
+    confirmCompareRun(this.dialog, this.analysis, { runId: run.id }, run.messagesCovered)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      // The error interceptor shows the server's problem detail (a 409 among them).
+      .subscribe({
+        next: (started) => {
+          this.active.update((runs) => [...runs.filter((r) => r.id !== started.id), started]);
+          this.loadRuns();
+        },
+        error: () => this.loadRuns(),
       });
   }
 

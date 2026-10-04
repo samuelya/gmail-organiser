@@ -5,6 +5,7 @@ import {
   AnalysisRunDto,
   AnalysisSelection,
   AnalysisSummaryDto,
+  CompareRunRequest,
   GroupingPreviewDto,
 } from './analysis.models';
 
@@ -21,6 +22,14 @@ export class AnalysisService {
   /** `202` with the queued run; `409` when no chat model is selected. */
   start(selection: AnalysisSelection): Observable<AnalysisRunDto> {
     return this.http.post<AnalysisRunDto>('/api/analysis/runs', selection);
+  }
+
+  /**
+   * `202` with the queued re-analysis: its results are stored next to the current suggestions until the
+   * user picks; `400` for an empty or too large selection, `409` when no chat model is selected.
+   */
+  startCompareRun(request: CompareRunRequest): Observable<AnalysisRunDto> {
+    return this.http.post<AnalysisRunDto>('/api/analysis/compare-runs', request);
   }
 
   /** Newest first: active (queued or running) or finished runs. */
