@@ -11,14 +11,19 @@ const DAY = 24 * 60 * 60 * 1000;
 
 /**
  * In-memory GmailApp: understands exactly the search operators the script emits and throws on anything else.
- * A thread matches `older_than` through its oldest message (`ageDays`), as Gmail does; `lastAgeDays` is its
- * newest message. `label:` accepts only plain tokens (letters, digits, `_`, `/`, `-`) and matches a label
+ * Labels and ages are per message, and a thread matches when one message matches every term, as in Gmail.
+ * Shorthand `{ labels, ageDays, lastAgeDays }` is one message, plus a reply with the same labels when
+ * `lastAgeDays` is set. `label:` accepts only plain tokens (letters, digits, `_`, `/`, `-`) and matches a label
  * whose name equals the token once each `-` is read as a space or a `-`, case-insensitively.
  * `archiveLag` = number of searches that still list a thread after it was archived.
  */
 class FakeGmailApp {
   constructor(threads, labels = [], { now = NOW, archiveLag = 0 } = {}) {
-    this.threads = threads.map((t, i) => ({ id: `t${i}`, inbox: true, ageDays: 0, labels: [], ...t }));
+    this.threads = threads.map((t, i) => {
+      const { labels = [], ageDays = 0, lastAgeDays, messages, ...rest } = t;
+      const fallback = [{ labels, ageDays }, ...(lastAgeDays === undefined ? [] : [{ labels, ageDays: lastAgeDays }])];
+      return { id: `t${i}`, inbox: true, ...rest, messages: messages ?? fallback };
+    });
     this.labels = new Set(labels);
     this.now = now;
     this.archiveLag = archiveLag;
@@ -36,12 +41,13 @@ class FakeGmailApp {
     this.queries.push({ query, start, max });
     const predicates = query.split(' ').map((token) => this.#predicate(token));
     return this.threads
-      .filter((thread) => predicates.every((matches) => matches(thread)))
+      .filter((thread) => thread.messages.some((message) => predicates.every((matches) => matches(thread, message))))
       .slice(start, start + max)
       .map((thread) => ({
         getId: () => thread.id,
         getFirstMessageSubject: () => thread.subject ?? '',
-        getLastMessageDate: () => new Date(this.now - (thread.lastAgeDays ?? thread.ageDays) * DAY),
+        getLastMessageDate: () => new Date(this.now - Math.min(...thread.messages.map((m) => m.ageDays)) * DAY),
+        getLabels: () => [...new Set(thread.messages.flatMap((m) => m.labels))].map((name) => ({ getName: () => name })),
         thread,
       }));
   }
@@ -63,13 +69,13 @@ class FakeGmailApp {
   #predicate(token) {
     let match;
     if (token === 'in:inbox') return (t) => t.inbox;
-    if (token === 'has:userlabels') return (t) => t.labels.length > 0;
-    if ((match = /^older_than:(\d+)d$/.exec(token))) return (t) => t.ageDays > Number(match[1]);
+    if (token === 'has:userlabels') return (t, m) => m.labels.length > 0;
+    if ((match = /^older_than:(\d+)d$/.exec(token))) return (t, m) => m.ageDays > Number(match[1]);
     if ((match = /^(-?)label:([A-Za-z0-9_/][A-Za-z0-9_/-]*)$/.exec(token))) {
       const [, negate, name] = match;
       const pattern = new RegExp(`^${name.split('-').map((part) => part.replace(/[/]/g, '\\/')).join('[ -]')}$`, 'i');
-      const has = (t) => t.labels.some((label) => pattern.test(label));
-      return negate ? (t) => !has(t) : has;
+      const has = (t, m) => m.labels.some((label) => pattern.test(label));
+      return negate ? (t, m) => !has(t, m) : has;
     }
     throw new Error(`FakeGmailApp: unsupported search token "${token}"`);
   }
@@ -233,6 +239,43 @@ test('action done archives labelled threads, skipping the action label, keep lab
   const result = archiveActionDone_(config({ keepInInboxLabels: ['Example/Keep'] }), fixedClock, gmail, quiet, NOW);
   assert.equal(result.archived, 1);
   assert.deepEqual(gmail.inboxIds(), ['t1', 't2', 't3']);
+});
+
+test('action done leaves a thread whose other message carries the action or a keep label', () => {
+  const gmail = new FakeGmailApp([
+    { messages: [{ labels: ['Action/ToDo'], ageDays: 5 }, { labels: ['Example/Work'], ageDays: 4 }] },
+    { messages: [{ labels: ['Example/Keep'], ageDays: 5 }, { labels: ['Example/Work'], ageDays: 4 }] },
+    { messages: [{ labels: [], ageDays: 5 }, { labels: ['Example/Work'], ageDays: 4 }] },
+  ], ['Action/ToDo', 'Example/Keep', 'Example/Work']);
+  const { archiveActionDone_ } = load(gmail);
+  const logs = [];
+  const result = archiveActionDone_(config({ keepInInboxLabels: ['Example/Keep'] }), fixedClock, gmail, (m) => logs.push(m), NOW);
+  assert.equal(result.archived, 1);
+  assert.deepEqual(gmail.inboxIds(), ['t0', 't1']);
+  assert.ok(logs.some((m) => m.includes('2 left: action, keep or rule label on another message')));
+});
+
+test('a young rule label on an earlier message keeps the thread out of action done', () => {
+  const gmail = new FakeGmailApp([
+    { messages: [{ labels: ['Example/News'], ageDays: 3 }, { labels: ['Example/Work'], ageDays: 2 }] },
+  ], ['Action/ToDo', 'Example/News', 'Example/Work'], { now: Date.now() });
+  const { CONFIG, runAutoArchive } = load(gmail);
+  CONFIG.labelRules = [{ label: 'Example/News', days: 30 }];
+  CONFIG.dryRun = false;
+  runAutoArchive();
+  assert.deepEqual(gmail.inboxIds(), ['t0']);
+});
+
+test('label rule leaves an old thread whose other message carries the action or a keep label', () => {
+  const gmail = new FakeGmailApp([
+    { messages: [{ labels: ['Example/News'], ageDays: 40 }, { labels: ['Action/ToDo'], ageDays: 35 }] },
+    { messages: [{ labels: ['Example/News'], ageDays: 40 }, { labels: ['example/keep'], ageDays: 35 }] },
+    { messages: [{ labels: ['Example/News'], ageDays: 40 }, { labels: ['Example/Work'], ageDays: 35 }] },
+  ], ['Action/ToDo', 'Example/Keep', 'Example/News']);
+  const { archiveByLabelRules_ } = load(gmail);
+  const cfg = config({ labelRules: [{ label: 'Example/News', days: 30 }], keepInInboxLabels: ['Example/Keep'] });
+  assert.equal(archiveByLabelRules_(cfg, fixedClock, gmail, quiet, NOW).archived, 1);
+  assert.deepEqual(gmail.inboxIds(), ['t0', 't1']);
 });
 
 test('action done does nothing when switched off', () => {

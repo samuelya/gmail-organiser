@@ -2,10 +2,12 @@
  * Gmail Organiser: time-based auto-archive (Google Apps Script).
  *
  * Runs in Google's cloud on a daily trigger, so archiving works while the PC is off.
- * - Label rules: inbox threads carrying `label` whose last message is older than `days` are archived.
+ * - Label rules: inbox threads carrying `label` whose last message is older than `days` are archived,
+ *   unless a message of the thread carries `actionLabel` or a keep-in-inbox label.
  * - Action done: inbox threads that have a user label but not `actionLabel`, a keep-in-inbox label
  *   or a label-rule label are archived (mail without any user label is never touched; rule labels
- *   follow only their `days`).
+ *   follow only their `days`). Gmail search matches single messages, so each match is re-checked
+ *   against the labels of all its messages before archiving.
  * When in doubt the script archives less: a missing or unsearchable action/keep label skips the
  * action-done phase. It only archives (removes from the inbox); it never trashes, spams or deletes.
  *
@@ -79,7 +81,8 @@ function removeTriggers() {
  * @return {{ archived: number, stopped: boolean }} archived = threads new to `seen` (in a dry run: would be archived)
  */
 function archiveByLabelRules_(config, now, gmail, log, startedAt, seen = new Set()) {
-  const run = { config, now, gmail, log, deadline: deadline_(config, startedAt), seen };
+  const guard = guardLabels_([config.actionLabel, ...(config.keepInInboxLabels || [])]);
+  const run = { config, now, gmail, log, deadline: deadline_(config, startedAt), seen, guard };
   let archived = 0;
   for (const rule of config.labelRules || []) {
     if (!isValidRule_(rule)) {
@@ -111,7 +114,19 @@ function archiveActionDone_(config, now, gmail, log, startedAt, seen = new Set()
   if (!config.actionDoneArchive) return { archived: 0, stopped: false };
   const query = buildActionDoneQuery_(config, gmail, log);
   if (query === null) return { archived: 0, stopped: false };
-  return archiveQuery_(query, null, { config, now, gmail, log, deadline: deadline_(config, startedAt), seen });
+  const guard = guardLabels_([config.actionLabel, ...(config.keepInInboxLabels || []),
+    ...(config.labelRules || []).map((rule) => rule && rule.label)]);
+  return archiveQuery_(query, null, { config, now, gmail, log, deadline: deadline_(config, startedAt), seen, guard });
+}
+
+/** Lower-cased, trimmed label names a thread must not carry on any message to be archived. */
+function guardLabels_(names) {
+  return new Set(names.filter(isNonEmpty_).map((name) => name.trim().toLowerCase()));
+}
+
+/** True when any message of `thread` carries a label in `guard` (search matched only one message). */
+function carriesGuardLabel_(thread, guard) {
+  return guard.size > 0 && thread.getLabels().some((label) => guard.has(label.getName().trim().toLowerCase()));
 }
 
 /** `in:inbox older_than:<days>d label:<name>` */
@@ -160,7 +175,8 @@ function labelQueryName_(name) {
 
 /**
  * Pages through `query` and archives the new matches in groups of ≤ 100. With a `cutoff`, a thread
- * whose last message is not older than it (a recent reply) is left alone.
+ * whose last message is not older than it (a recent reply) is left alone, as is a thread carrying a
+ * `run.guard` label on any message.
  * Archived threads leave `in:inbox`, so a live run re-reads from the start after archiving and only
  * moves `start` past a page with nothing new. Search can still list just-archived threads (lagging
  * index), so a pass that met them is repeated from the start, at most MAX_RESCANS_ times, before the
@@ -168,8 +184,10 @@ function labelQueryName_(name) {
  */
 function archiveQuery_(query, cutoff, run) {
   const { config, now, gmail, log, deadline, seen } = run;
+  const guard = run.guard || new Set();
   const pageSize = pageSize_(config);
   const tooRecent = new Set();
+  const guarded = new Set();
   let start = 0;
   let matched = 0;
   let staleInPass = false;
@@ -193,9 +211,11 @@ function archiveQuery_(query, cutoff, run) {
       const id = thread.getId();
       if (seen.has(id)) {
         staleInPass = true;
-      } else if (!tooRecent.has(id)) {
+      } else if (!tooRecent.has(id) && !guarded.has(id)) {
         if (cutoff !== null && thread.getLastMessageDate().getTime() >= cutoff) {
           tooRecent.add(id);
+        } else if (carriesGuardLabel_(thread, guard)) {
+          guarded.add(id);
         } else {
           fresh.push(thread);
         }
@@ -218,8 +238,11 @@ function archiveQuery_(query, cutoff, run) {
       start += page.length;
     }
   }
-  const recent = tooRecent.size > 0 ? ` (${tooRecent.size} left: recent reply)` : '';
-  log(`${config.dryRun ? 'Would archive' : 'Archived'} ${matched} thread(s) for "${query}"${recent}.`);
+  const left = [];
+  if (tooRecent.size > 0) left.push(`${tooRecent.size} left: recent reply`);
+  if (guarded.size > 0) left.push(`${guarded.size} left: action, keep or rule label on another message`);
+  const note = left.length > 0 ? ` (${left.join('; ')})` : '';
+  log(`${config.dryRun ? 'Would archive' : 'Archived'} ${matched} thread(s) for "${query}"${note}.`);
   return { archived: matched, stopped: false };
 }
 
