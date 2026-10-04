@@ -5,6 +5,7 @@ import { provideRouter, Router, withComponentInputBinding } from '@angular/route
 import { RouterTestingHarness } from '@angular/router/testing';
 import { FiltersTab } from './filters-tab.component';
 import { FindingsTab } from './findings-tab.component';
+import { LabelsTab } from './labels-tab.component';
 import { RulesPage } from './rules-page.component';
 
 @Component({
@@ -19,6 +20,9 @@ class FiltersTabStub {
 @Component({ selector: 'app-findings-tab', template: '<p data-testid="findings-stub"></p>' })
 class FindingsTabStub {}
 
+@Component({ selector: 'app-labels-tab', template: '<p data-testid="labels-stub"></p>' })
+class LabelsTabStub {}
+
 describe('RulesPage', () => {
   async function render(url: string) {
     TestBed.configureTestingModule({
@@ -28,8 +32,8 @@ describe('RulesPage', () => {
       ],
     });
     TestBed.overrideComponent(RulesPage, {
-      remove: { imports: [FiltersTab, FindingsTab] },
-      add: { imports: [FiltersTabStub, FindingsTabStub] },
+      remove: { imports: [FiltersTab, FindingsTab, LabelsTab] },
+      add: { imports: [FiltersTabStub, FindingsTabStub, LabelsTabStub] },
     });
     const harness = await RouterTestingHarness.create();
     await harness.navigateByUrl(url);
@@ -59,6 +63,7 @@ describe('RulesPage', () => {
     await harness.fixture.whenStable();
     expect(router.url).toBe('/rules?tab=labels');
     expect(selected().textContent).toContain('Labels');
+    expect(harness.routeNativeElement!.querySelector('[data-testid="labels-stub"]')).not.toBeNull();
   });
 
   it('drops ?propose= once the preview opened', async () => {

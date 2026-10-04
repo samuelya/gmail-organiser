@@ -5,12 +5,13 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { PageHeader } from '../layout/page-header';
 import { FiltersTab } from './filters-tab.component';
 import { FindingsTab } from './findings-tab.component';
+import { LabelsTab } from './labels-tab.component';
 import { RULES_TABS } from './rules.models';
 
 /** `/rules`: Filters, Findings and Labels tabs; the active tab is `?tab=`, `?propose=<address>` opens a filter preview. */
 @Component({
   selector: 'app-rules-page',
-  imports: [FiltersTab, FindingsTab, MatCardModule, MatTabsModule, PageHeader],
+  imports: [FiltersTab, FindingsTab, LabelsTab, MatCardModule, MatTabsModule, PageHeader],
   template: `
     <app-page-header title="Rules" />
     <mat-card appearance="outlined">
@@ -28,9 +29,9 @@ import { RULES_TABS } from './rules.models';
             <app-findings-tab />
           </mat-tab>
           <mat-tab label="Labels">
-            <p class="muted m-0 pt-4" data-testid="labels-placeholder">
-              The label tree editor is coming with a later release.
-            </p>
+            <ng-template matTabContent>
+              <app-labels-tab />
+            </ng-template>
           </mat-tab>
         </mat-tab-group>
       </mat-card-content>

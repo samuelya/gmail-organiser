@@ -1,0 +1,152 @@
+<div class="flex flex-col gap-4 pt-4">
+  <div class="flex flex-wrap items-center gap-3">
+    <button
+      mat-flat-button
+      type="button"
+      [disabled]="working() || plan()?.status === 'applying'"
+      (click)="review()"
+      data-testid="plan-review"
+    >
+      <mat-icon aria-hidden="true">label</mat-icon>Review labels
+    </button>
+    @if (draft()) {
+      <button
+        mat-stroked-button
+        type="button"
+        [disabled]="working() || !accepted()"
+        (click)="apply()"
+        data-testid="plan-apply"
+      >
+        Apply accepted ({{ accepted() | number }})
+      </button>
+      <button
+        mat-button
+        type="button"
+        [disabled]="working()"
+        (click)="discard()"
+        data-testid="plan-discard"
+      >
+        Discard plan
+      </button>
+    }
+    @if (plan(); as p) {
+      <span class="muted text-sm" data-testid="plan-summary">
+        {{ p.items.length | number }} proposals for {{ p.labelCount | number }} labels ·
+        {{ p.status }}
+      </span>
+      <mat-button-toggle-group
+        class="ml-auto"
+        hideSingleSelectionIndicator
+        [value]="view()"
+        (change)="view.set($event.value)"
+        aria-label="Plan view"
+      >
+        <mat-button-toggle value="list" data-testid="plan-view-list">By kind</mat-button-toggle>
+        <mat-button-toggle value="tree" data-testid="plan-view-tree">Label tree</mat-button-toggle>
+      </mat-button-toggle-group>
+    }
+  </div>
+
+  @if (loading() || working()) {
+    <mat-progress-bar mode="indeterminate" aria-label="Loading the label plan" />
+  }
+  @if (loadFailed()) {
+    <p class="m-0 flex items-center gap-2" role="alert" data-testid="plan-error">
+      <mat-icon aria-hidden="true">error</mat-icon>
+      The label plan could not be loaded.
+      <button mat-button type="button" (click)="reload()">Retry</button>
+    </p>
+  }
+  @if (none() && !plan()) {
+    <p class="muted m-0" role="status" data-testid="plan-empty">
+      No label plan yet. "Review labels" looks for empty labels, near-duplicate names and flat names
+      that could be nested.
+    </p>
+  }
+
+  @if (plan(); as p) {
+    @if (p.warnings.length) {
+      <div class="banner flex gap-2 rounded p-3" role="status" data-testid="plan-warnings">
+        <mat-icon aria-hidden="true">warning</mat-icon>
+        <ul class="m-0 list-none p-0">
+          @for (w of p.warnings; track $index) {
+            <li>{{ w }}</li>
+          }
+        </ul>
+      </div>
+    }
+
+    @if (p.status === 'applying') {
+      <div class="flex flex-col gap-2" role="status" data-testid="plan-progress">
+        @if (job(); as j) {
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="text-sm">
+              Applying {{ j.progress?.done ?? 0 | number }} of
+              {{ j.progress?.total ?? accepted() | number }}
+              @if (j.progress?.message; as m) {
+                · {{ m }}
+              }
+              @if (j.status === 'failed') {
+                · failed: {{ j.error }}
+              }
+            </span>
+            <button
+              mat-button
+              type="button"
+              class="ml-auto"
+              [disabled]="cancelling()"
+              (click)="cancelApply()"
+              data-testid="plan-cancel"
+            >
+              Cancel
+            </button>
+          </div>
+          @if (percent() !== null) {
+            <mat-progress-bar mode="determinate" [value]="percent()" aria-label="Apply progress" />
+          } @else {
+            <mat-progress-bar mode="indeterminate" aria-label="Apply progress" />
+          }
+        } @else {
+          <span class="text-sm">Applying…</span>
+          <mat-progress-bar mode="indeterminate" aria-label="Apply progress" />
+        }
+      </div>
+    }
+    @if (p.status === 'applied' && failed()) {
+      <p class="m-0 flex items-center gap-2" role="status" data-testid="plan-failed">
+        <mat-icon aria-hidden="true">error</mat-icon>
+        {{ failed() | number }} {{ failed() === 1 ? 'change' : 'changes' }} failed. Review the
+        labels again to retry them.
+      </p>
+    }
+
+    @if (p.items.length === 0) {
+      <p class="muted m-0" role="status" data-testid="plan-no-items">
+        Nothing to propose: no empty, near-duplicate or flat labels.
+      </p>
+    } @else if (view() === 'tree') {
+      <app-label-plan-tree [labels]="labels()" [items]="p.items" />
+    } @else {
+      @for (group of groups(); track group.kind) {
+        @if (group.items.length) {
+          <section [attr.aria-label]="titles[group.kind]" data-testid="plan-group">
+            <h3 class="m-0 text-base font-medium">
+              {{ titles[group.kind] }} ({{ group.items.length | number }})
+            </h3>
+            @for (item of group.items; track item.id; let last = $last) {
+              <app-label-plan-item
+                [item]="item"
+                [labels]="labels()"
+                [editable]="draft() && !isBusy(item.id)"
+                (update)="updateItem(item, $event)"
+              />
+              @if (!last) {
+                <mat-divider />
+              }
+            }
+          </section>
+        }
+      }
+    }
+  }
+</div>
