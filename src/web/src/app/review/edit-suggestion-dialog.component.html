@@ -7,6 +7,9 @@
       @if (data.current.needsAction) {
         · {{ flags.action }}
       }
+      @if (data.documentTypeLabel) {
+        · {{ data.documentTypeLabel }}
+      }
       @if (data.current.toBeDeleted) {
         · {{ flags.delete }}
       }
@@ -69,6 +72,30 @@
         <mat-progress-bar mode="indeterminate" aria-label="Loading labels" />
       }
     </div>
+
+    @if (documentTypeParent()) {
+      <mat-form-field class="w-full">
+        <mat-label>Document type</mat-label>
+        <input
+          matInput
+          formControlName="documentType"
+          [matAutocomplete]="documentTypes"
+          placeholder="None"
+          data-testid="edit-document-type"
+        />
+        <mat-autocomplete #documentTypes="matAutocomplete">
+          <mat-option value="" data-testid="edit-document-type-none">None</mat-option>
+          @for (t of documentTypeChoices(); track t) {
+            <mat-option [value]="t" data-testid="edit-document-type-option">{{ t }}</mat-option>
+          }
+        </mat-autocomplete>
+        @if (documentTypeError(); as e) {
+          <mat-error data-testid="edit-document-type-error">{{ e }}</mat-error>
+        } @else {
+          <mat-hint data-testid="edit-document-type-hint">{{ documentTypeHint() }}</mat-hint>
+        }
+      </mat-form-field>
+    }
 
     @if (data.currentLabels.length) {
       <fieldset class="m-0 flex flex-col border-0 p-0" data-testid="edit-current-labels">

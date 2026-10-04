@@ -58,6 +58,7 @@ const proposal = (address: string, count = 10): FilterProposalDto => ({
     approvals: 3,
     agreement: 1,
     remaining: 0,
+    documentTypeLabel: null,
   },
   suggested: {
     criteria: { ...filterDto().criteria, from: address },

@@ -32,6 +32,7 @@ import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
 import {
   APPLY_JOB,
+  applyRestRequest,
   canApplyRest,
   DEFAULT_FLAG_LABELS,
   GROUP_PAGE_SIZE,
@@ -368,9 +369,11 @@ export class ReviewPage {
     const address = this.selected();
     const pattern = this.restPattern();
     if (!address || !pattern || this.applyJobId()) return;
+    const parent = this.settings()?.documentTypeParent ?? null;
+    const request = applyRestRequest(pattern, parent);
     openConfirm(this.dialog, {
       title: 'Apply to rest of sender?',
-      message: patternSummary(pattern, this.flagLabels()),
+      message: patternSummary(pattern, this.flagLabels(), parent),
       confirm: 'Apply',
     })
       .pipe(
@@ -378,7 +381,7 @@ export class ReviewPage {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe(() =>
-        this.run(this.review.applyRest(address), (r) => {
+        this.run(this.review.applyRest(address, request), (r) => {
           const jobId = r.batch?.jobId ?? null;
           this.track(jobId);
           const adjusted = r.protectedAdjusted

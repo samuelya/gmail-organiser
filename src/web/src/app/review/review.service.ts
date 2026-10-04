@@ -6,12 +6,13 @@ import { JobDto } from '../core/jobs.models';
 import { PagedDto } from '../core/paging.models';
 import {
   ActionBatchDto,
+  ApplyRestRequest,
   ApplyRestResponse,
   BulkApproveRequest,
   BulkApproveResponse,
   GroupDecisionResponse,
   EditSuggestionRequest,
-  ReviewOutcome,
+  GroupOutcome,
   ReviewSenderDetailDto,
   ReviewSenderDto,
   ReviewStatus,
@@ -80,7 +81,7 @@ export class ReviewService {
   approveGroup(
     senderAddress: string,
     groupKey: string,
-    outcome: ReviewOutcome,
+    outcome: GroupOutcome,
   ): Observable<GroupDecisionResponse> {
     return this.http.post<GroupDecisionResponse>('/api/review/groups/approve', {
       senderAddress,
@@ -116,10 +117,10 @@ export class ReviewService {
   }
 
   /** Applies the sender's pattern to its messages without a suggestion (the body may override it). */
-  applyRest(address: string): Observable<ApplyRestResponse> {
+  applyRest(address: string, request: ApplyRestRequest = {}): Observable<ApplyRestResponse> {
     return this.http.post<ApplyRestResponse>(
       `/api/review/senders/${encodeURIComponent(address)}/apply-rest`,
-      {},
+      request,
     );
   }
 

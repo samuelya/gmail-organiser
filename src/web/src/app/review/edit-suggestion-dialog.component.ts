@@ -9,7 +9,14 @@ import {
   signal,
 } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { FormArray, FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
+import {
+  FormArray,
+  FormControl,
+  FormGroup,
+  ReactiveFormsModule,
+  ValidationErrors,
+} from '@angular/forms';
+import { MatAutocompleteModule } from '@angular/material/autocomplete';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import {
@@ -27,12 +34,18 @@ import { catchError, concatMap, from, map, Observable, of } from 'rxjs';
 import { errorMessage } from '../core/error.interceptor';
 import { SettingsService } from '../settings/settings.service';
 import { LabelDto } from './labels.models';
-import { labelPathValidator, labelPlacement, LabelsService } from './labels.service';
+import {
+  labelPathError,
+  labelPathValidator,
+  labelPlacement,
+  LabelsService,
+} from './labels.service';
 import { LabelTreePicker } from './label-tree-picker.component';
 import {
   currentLabelsOf,
   decidedReplaceLabels,
   DEFAULT_FLAG_LABELS,
+  documentTypeOptions,
   editableMembers,
   editRequest,
   ReviewEditDialog,
@@ -40,6 +53,7 @@ import {
   replaceState,
   ReviewOutcome,
   SuggestionDto,
+  toDocumentTypeLabel,
 } from './review.models';
 import { ReviewService } from './review.service';
 
@@ -52,6 +66,8 @@ export interface EditSuggestionDialogData {
   group: { display: string; truncated: boolean } | null;
   /** The members' current labels (their union for a group), one "Replace" checkbox each. */
   currentLabels: string[];
+  /** The document-type label the dialog starts from: the member's, or the group card's. */
+  documentTypeLabel: string | null;
 }
 
 /** A member whose save failed, with the server's reason. */
@@ -69,6 +85,7 @@ export const EDIT_PROGRESS_THRESHOLD = 20;
   selector: 'app-edit-suggestion-dialog',
   imports: [
     LabelTreePicker,
+    MatAutocompleteModule,
     MatButtonModule,
     MatCheckboxModule,
     MatDialogModule,
@@ -97,6 +114,10 @@ export class EditSuggestionDialog {
   private readonly labelsApi = inject(LabelsService);
   private readonly destroyRef = inject(DestroyRef);
 
+  readonly flagLabels = signal(DEFAULT_FLAG_LABELS);
+  /** The document-type parent from settings; null hides the field and nothing is sent. */
+  readonly documentTypeParent = signal<string | null>(null);
+
   readonly form = new FormGroup({
     topicLabel: new FormControl(this.data.current.topicLabel, {
       nonNullable: true,
@@ -105,6 +126,11 @@ export class EditSuggestionDialog {
     needsAction: new FormControl(this.data.current.needsAction, { nonNullable: true }),
     toBeDeleted: new FormControl(this.data.current.toBeDeleted && !this.allProtected(), {
       nonNullable: true,
+    }),
+    /** The segment under `documentTypeParent`; blank is none. */
+    documentType: new FormControl('', {
+      nonNullable: true,
+      validators: [(c) => this.documentTypeValidator(String(c.value ?? ''))],
     }),
     /** One per `data.currentLabels`, checked = every member carrying it replaces it. */
     replace: new FormArray(
@@ -122,15 +148,6 @@ export class EditSuggestionDialog {
     ),
   );
 
-  readonly flagLabels = toSignal(
-    inject(SettingsService)
-      .getSettings()
-      .pipe(
-        map((s) => ({ action: s.actionLabelName, delete: s.deleteLabelName })),
-        catchError(() => of(DEFAULT_FLAG_LABELS)),
-      ),
-    { initialValue: DEFAULT_FLAG_LABELS },
-  );
   readonly labels = signal<LabelDto[] | null>(null);
   readonly labelsFailed = signal(false);
   readonly path = toSignal(this.form.controls.topicLabel.valueChanges, {
@@ -139,6 +156,27 @@ export class EditSuggestionDialog {
   readonly placement = computed(() => {
     const labels = this.labels();
     return labels ? labelPlacement(this.path(), labels) : null;
+  });
+  readonly documentType = toSignal(this.form.controls.documentType.valueChanges, {
+    initialValue: '',
+  });
+  /** The parent's direct children matching the typed text. */
+  readonly documentTypeChoices = computed(() => {
+    const parent = this.documentTypeParent();
+    const labels = this.labels();
+    if (!parent || !labels) return [];
+    const text = this.documentType().trim().toLowerCase();
+    return documentTypeOptions(labels, parent).filter((t) => t.toLowerCase().includes(text));
+  });
+  readonly documentTypeHint = computed(() => {
+    const parent = this.documentTypeParent();
+    const text = this.documentType().trim();
+    if (!parent || !text) return 'None: no document-type label.';
+    const labels = this.labels();
+    const exists = labels
+      ? documentTypeOptions(labels, parent).some((t) => t.toLowerCase() === text.toLowerCase())
+      : false;
+    return exists ? `Existing label under ${parent}` : `New: ${text} under ${parent}`;
   });
 
   readonly protectedCount = this.data.members.filter((m) => m.protected).length;
@@ -154,6 +192,17 @@ export class EditSuggestionDialog {
   constructor() {
     if (this.allProtected()) this.form.controls.toBeDeleted.disable();
     this.loadLabels(this.labelsApi.labels());
+    inject(SettingsService)
+      .getSettings()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (s) => {
+          this.flagLabels.set({ action: s.actionLabelName, delete: s.deleteLabelName });
+          this.startDocumentType(s.documentTypeParent ?? null);
+        },
+        // The error interceptor shows why; the dialog keeps the default flag names and no document type.
+        error: () => undefined,
+      });
   }
 
   allProtected(): boolean {
@@ -162,6 +211,11 @@ export class EditSuggestionDialog {
 
   pathError(): string | null {
     const errors = this.form.controls.topicLabel.errors;
+    return (errors?.['labelPath'] ?? errors?.['server'] ?? null) as string | null;
+  }
+
+  documentTypeError(): string | null {
+    const errors = this.form.controls.documentType.errors;
     return (errors?.['labelPath'] ?? errors?.['server'] ?? null) as string | null;
   }
 
@@ -187,18 +241,22 @@ export class EditSuggestionDialog {
     const { topicLabel, needsAction, toBeDeleted } = this.form.getRawValue();
     const outcome = { topicLabel, needsAction, toBeDeleted };
     const decisions = this.replaceDecisions();
+    const documentType = this.documentTypeChange();
     const failures: EditFailure[] = [];
     let labelError: string | null = null;
+    let typeError: string | null = null;
     this.setSaving(true);
     this.error.set(null);
     this.failures.set([]);
     from(this.data.members.filter((m) => !this.saved.has(m.id)))
       .pipe(
         concatMap((m) =>
-          this.review.edit(m.id, editRequest(m, outcome, decidedReplaceLabels(m, decisions))).pipe(
-            map(() => ({ member: m, err: null as unknown })),
-            catchError((err: unknown) => of({ member: m, err })),
-          ),
+          this.review
+            .edit(m.id, editRequest(m, outcome, decidedReplaceLabels(m, decisions), documentType))
+            .pipe(
+              map(() => ({ member: m, err: null as unknown })),
+              catchError((err: unknown) => of({ member: m, err })),
+            ),
         ),
         takeUntilDestroyed(this.destroyRef),
       )
@@ -211,18 +269,21 @@ export class EditSuggestionDialog {
           }
           const fields = err instanceof HttpErrorResponse ? fieldErrors(err) : {};
           const fieldError = fields['topicLabel']?.[0];
+          const documentTypeError = fields['documentTypeLabel']?.[0];
           labelError ??= fieldError ?? null;
+          typeError ??= documentTypeError ?? null;
           failures.push({
             id: member.id,
             name: member.subject || '(no subject)',
             message:
               fieldError ??
+              documentTypeError ??
               fields['replaceLabels']?.[0] ??
               (err instanceof HttpErrorResponse ? errorMessage(err) : 'Saving failed.'),
           });
         },
         complete: () =>
-          failures.length ? this.failed(failures, labelError) : this.ref.close(true),
+          failures.length ? this.failed(failures, labelError, typeError) : this.ref.close(true),
       });
   }
 
@@ -251,14 +312,22 @@ export class EditSuggestionDialog {
     this.ref.disableClose = saving;
   }
 
-  private failed(failures: EditFailure[], labelError: string | null): void {
+  private failed(
+    failures: EditFailure[],
+    labelError: string | null,
+    typeError: string | null,
+  ): void {
     this.setSaving(false);
     if (labelError) {
       this.form.controls.topicLabel.setErrors({ server: labelError });
       this.form.controls.topicLabel.markAsTouched();
     }
-    // A single edit rejected for its label only needs the inline field error.
-    if (this.total === 1 && labelError) return;
+    if (typeError) {
+      this.form.controls.documentType.setErrors({ server: typeError });
+      this.form.controls.documentType.markAsTouched();
+    }
+    // A single edit rejected for its label or document type only needs the inline field error.
+    if (this.total === 1 && (labelError || typeError)) return;
     this.failures.set(this.total > 1 ? failures : []);
     const saved = this.done() ? ` ${this.done()} of ${this.total} were saved.` : '';
     this.error.set(
@@ -266,6 +335,36 @@ export class EditSuggestionDialog {
         ? `${failures.length} of ${this.total} could not be saved.${saved}`
         : failures[0].message,
     );
+  }
+
+  /** Shows the field once the parent is known, starting from the current type when it is under the parent. */
+  private startDocumentType(parent: string | null): void {
+    this.documentTypeParent.set(parent);
+    const control = this.form.controls.documentType;
+    const prefix = `${parent}/`;
+    const current = this.data.documentTypeLabel;
+    if (parent && !control.dirty && current?.toLowerCase().startsWith(prefix.toLowerCase())) {
+      control.setValue(current.slice(prefix.length));
+    }
+    control.updateValueAndValidity();
+  }
+
+  /** The topic field's path rules for `<parent>/<text>`, and one level only. */
+  private documentTypeValidator(text: string): ValidationErrors | null {
+    const parent = this.documentTypeParent();
+    if (!parent || !text.trim()) return null;
+    const label = toDocumentTypeLabel(parent, text);
+    const error = label === null ? `One level under ${parent}: no '/'.` : labelPathError(label);
+    return error ? { labelPath: error } : null;
+  }
+
+  /** The document-type label to send: only when the user changed it (`""` for none). */
+  private documentTypeChange(): string | undefined {
+    const parent = this.documentTypeParent();
+    const control = this.form.controls.documentType;
+    if (!parent || !control.dirty) return undefined;
+    const label = toDocumentTypeLabel(parent, control.value);
+    return label === null || label === (this.data.documentTypeLabel ?? '') ? undefined : label;
   }
 
   private loadLabels(source: Observable<LabelDto[]>): void {
@@ -301,6 +400,7 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       members: editableMembers(group.members),
       group: { display: group.display, truncated: group.truncated },
       currentLabels: currentLabelsOf(editableMembers(group.members)),
+      documentTypeLabel: group.documentTypeLabel,
     });
   }
 
@@ -314,6 +414,7 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       members: [suggestion],
       group: null,
       currentLabels: suggestion.currentLabels,
+      documentTypeLabel: suggestion.documentTypeLabel,
     });
   }
 
