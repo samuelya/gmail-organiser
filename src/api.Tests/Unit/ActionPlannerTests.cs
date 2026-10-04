@@ -104,11 +104,48 @@ public sealed class ActionPlannerTests
         allowlisted.Note.ShouldBe("protected: allowlisted sender");
     }
 
-    private static ActionPlan Plan(SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null) =>
-        ActionPlanner.Plan(suggestion, message, Ids, settings ?? Settings, allowlisted);
-
-    private static SuggestionRow Suggestion(string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false) => new()
+    private static readonly Dictionary<string, string> ReplaceIds = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["Old/Sub"] = "Label_7",
+        ["Other"] = "Label_8",
+        ["Topic/Sub"] = "L1",
+        ["System"] = "CATEGORY_UPDATES",
+    };
+
+    [Fact]
+    public void Replaced_labels_the_message_carries_are_removed_with_the_inbox()
+    {
+        var plan = Plan(Suggestion(replace: ["Old/Sub", "Other"]), Message("INBOX", "Label_7"), replaceIds: ReplaceIds);
+
+        plan.Add.ShouldBe(["L1"]);
+        plan.Remove.ShouldBe(["Label_7", "INBOX"]);
+    }
+
+    [Fact]
+    public void Replaced_labels_never_remove_a_system_label_an_added_label_or_an_unknown_one()
+    {
+        var plan = Plan(
+            Suggestion(replace: ["Topic/Sub", "System", "Gone/Label"], needsAction: true),
+            Message("INBOX", "L1", "CATEGORY_UPDATES"),
+            replaceIds: ReplaceIds);
+
+        plan.Add.ShouldBe(["L2"]);
+        plan.Remove.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Without_a_lookup_nothing_replaced_is_removed()
+    {
+        Plan(Suggestion(replace: ["Old/Sub"]), Message("INBOX", "Label_7")).Remove.ShouldBe(["INBOX"]);
+    }
+
+    private static ActionPlan Plan(
+        SuggestionRow suggestion, MessageRow message, bool allowlisted = false, AppSettings? settings = null, Dictionary<string, string>? replaceIds = null) =>
+        ActionPlanner.Plan(suggestion, message, Ids, settings ?? Settings, allowlisted, replaceIds);
+
+    private static SuggestionRow Suggestion(string topic = "Topic/Sub", bool needsAction = false, bool toBeDeleted = false, string[]? replace = null) => new()
+    {
+        ReplaceLabels = replace ?? [],
         Id = Guid.NewGuid(),
         MessageId = "m1",
         SenderAddress = "sender@example.com",
