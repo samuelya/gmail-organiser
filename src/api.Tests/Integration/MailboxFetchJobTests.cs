@@ -331,7 +331,7 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         state.MailboxPhase.ShouldBe(MailboxPhase.AllMail);
         state.CompletedAt.ShouldBeNull();
         state.LastHistoryId.ShouldBeNull();
-        (await db.FetchRunMessages.CountAsync(Ct)).ShouldBe(InboxCount);
+        (await db.FetchRunMessages.CountAsync(Ct)).ShouldBe(MessageCount);
 
         // Re-running from the stored cursor repeats only the last chunk and still skips the Inbox ids.
         await db.Database.ExecuteSqlAsync($"UPDATE jobs SET status = 'queued', error = NULL, finished_at = NULL WHERE id = {job.Id}", Ct);

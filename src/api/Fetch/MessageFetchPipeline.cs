@@ -108,7 +108,8 @@ public sealed partial class MessageFetchPipeline(
     /// <summary>
     /// Re-reads only the labels of <paramref name="ids"/> (<c>format=minimal</c>) and writes <c>label_ids</c>, the
     /// derived category and <c>deleted_in_gmail</c> of their stored rows; every other column is untouched and no row
-    /// is inserted. Ids Gmail no longer knows are marked deleted. Senders are refreshed for rows whose deleted state changed.
+    /// is inserted. Ids Gmail no longer knows are marked deleted. The senders of every row read are recomputed, as after an
+    /// upsert, so a full fetch still repairs stale sender counts.
     /// </summary>
     public async Task<RefreshResult> RefreshLabelsByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {
@@ -125,21 +126,14 @@ public sealed partial class MessageFetchPipeline(
         var live = labels.Select(l => l.Id).ToList();
         var rows = await db.Messages.Where(m => live.Contains(m.Id)).ToListAsync(ct);
         var now = time.GetUtcNow();
-        List<string> changed = [];
         foreach (var row in rows)
         {
             var labelIds = byId[row.Id].LabelIds;
-            // The same TRASH rule as MessageUpserter: in Trash is not live, out of Trash is live again.
-            var inTrash = labelIds.Contains(MailboxFetchJob.TrashLabelId, StringComparer.OrdinalIgnoreCase);
-            if (inTrash != row.DeletedInGmail)
-            {
-                changed.Add(row.FromAddress);
-            }
-
             var entry = db.Entry(row);
             row.LabelIds = [.. labelIds];
             row.Category = MessageUpserter.CategoryOf(labelIds);
-            row.DeletedInGmail = inTrash;
+            // The same TRASH rule as MessageUpserter: in Trash is not live, out of Trash is live again.
+            row.DeletedInGmail = labelIds.Contains(MailboxFetchJob.TrashLabelId, StringComparer.OrdinalIgnoreCase);
             entry.DetectChanges();
             if (entry.State == EntityState.Modified)
             {
@@ -148,7 +142,7 @@ public sealed partial class MessageFetchPipeline(
         }
 
         await db.SaveChangesAsync(ct);
-        await senders.UpdateAsync(changed.Concat(deleted), ct);
+        await senders.UpdateAsync(rows.Select(r => r.FromAddress).Concat(deleted), ct);
         db.ChangeTracker.Clear();
         return new RefreshResult(rows.Count, deleted.Count);
     }
