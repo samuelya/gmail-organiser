@@ -42,7 +42,12 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
             .SetProperty(r => r.CompletedAt, (DateTimeOffset?)null));
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    /// <summary>Removes the jobs these tests queue, so later classes in the collection claim only their own.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        await using var db = postgres.CreateDbContext();
+        await db.Jobs.ExecuteDeleteAsync();
+    }
 
     [Fact]
     public async Task Status_before_any_fetch_is_not_started_with_zeros_and_the_Gmail_totals()
@@ -333,6 +338,23 @@ public sealed class FetchEndpointsTests(ApiFactory factory, PostgresFixture post
         second.StatusCode.ShouldBe(HttpStatusCode.OK);
         var id = (await first.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
         (await second.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId.ShouldBe(id);
+    }
+
+    [Fact]
+    public async Task Labels_resync_twice_returns_202_then_200_with_the_same_job_shown_as_the_active_fetch_job()
+    {
+        await using var host = FakeGmailHost();
+
+        var first = await PostStartAsync(host, "/api/fetch/labels/resync");
+        var second = await PostStartAsync(host, "/api/fetch/labels/resync");
+
+        first.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        second.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var id = (await first.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId;
+        (await second.Content.ReadFromJsonAsync<StartFetchResponse>(Ct)).ShouldNotBeNull().JobId.ShouldBe(id);
+        var job = (await StatusAsync(host)).ActiveJob.ShouldNotBeNull();
+        job.Id.ShouldBe(id);
+        job.Type.ShouldBe(LabelResyncJob.JobType);
     }
 
     [Fact]

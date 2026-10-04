@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Fetch;
 
-/// <summary>Mailbox fetch start and status. Pause, resume and cancel are the generic <c>/api/jobs/{id}/...</c> endpoints.</summary>
+/// <summary>Mailbox fetch start, labels resync and status. Pause, resume and cancel are the generic <c>/api/jobs/{id}/...</c> endpoints.</summary>
 public static class FetchEndpoints
 {
     public static IEndpointRouteBuilder MapFetchEndpoints(this IEndpointRouteBuilder endpoints)
@@ -16,6 +16,7 @@ public static class FetchEndpoints
         group.MapPost("/incremental", StartIncrementalAsync).RequireAccountMatch();
         group.MapGet("/status", GetStatusAsync);
         group.MapPost("/sender", StartSenderAsync).RequireAccountMatch();
+        group.MapPost("/labels/resync", StartLabelResyncAsync).RequireAccountMatch();
         return endpoints;
     }
 
@@ -85,6 +86,28 @@ public static class FetchEndpoints
         }
 
         return await EnqueueAsync(jobs, IncrementalFetchJob.JobType, IncrementalFetchJob.Queue, ct);
+    }
+
+    /// <summary>
+    /// 202 with a new job; 200 with the active one, or with the latest failed or paused one after resuming it from its
+    /// cursor; 409 when the local data belongs to another account or Gmail is not connected.
+    /// </summary>
+    private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> StartLabelResyncAsync(
+        ITokenStore tokens, IJobService jobs, AppDbContext db, CancellationToken ct)
+    {
+        if (!await IsConnectedAsync(tokens, ct))
+        {
+            return GmailNotConnected("Connect Gmail in Setup before resyncing labels.");
+        }
+
+        var latest = await LatestJobAsync(db, [LabelResyncJob.JobType], ct);
+        if (latest is { Status: JobStatus.Failed or JobStatus.Paused }
+            && await jobs.ResumeAsync(latest.Id, ct) == JobActionResult.Ok)
+        {
+            return TypedResults.Ok(new StartFetchResponse(latest.Id));
+        }
+
+        return await EnqueueAsync(jobs, LabelResyncJob.JobType, LabelResyncJob.Queue, ct);
     }
 
     private static async Task<Results<Accepted<StartFetchResponse>, Ok<StartFetchResponse>, ProblemHttpResult>> EnqueueAsync(
@@ -160,7 +183,7 @@ public static class FetchEndpoints
             })
             .SingleAsync(ct);
         var state = counts.State;
-        var latest = await LatestJobAsync(db, [MailboxFetchJob.JobType, IncrementalFetchJob.JobType], ct);
+        var latest = await LatestJobAsync(db, [MailboxFetchJob.JobType, IncrementalFetchJob.JobType, LabelResyncJob.JobType], ct);
         var check = AccountGuard.Compare(state.AccountEmail, (await tokens.GetAsync(ct))?.AccountEmail);
         var totals = await totalsReader.GetAsync(refresh: false, ct);
 

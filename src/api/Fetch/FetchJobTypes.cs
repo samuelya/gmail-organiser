@@ -11,10 +11,13 @@ public static class FetchJobTypes
     /// <summary>The <c>history.list</c> replay after a completed mailbox fetch.</summary>
     public const string Incremental = "incremental_fetch";
 
+    /// <summary>The labels-only refresh of every stored row ("Resync labels").</summary>
+    public const string LabelResync = "label_resync";
+
     /// <summary>
     /// The job types tied to the local data's account: each gets <see cref="FetchAccountJobGuard"/>, and a connect to
     /// another account is refused while one is active. The fetches also call <see cref="LocalAccountClaim"/>; the apply
     /// and undo jobs (<see cref="Review.ReviewJobTypes.WritesGmail"/>) write Gmail from the local data.
     /// </summary>
-    public static readonly string[] ReadsGmail = [Mailbox, Sender, Incremental, .. Review.ReviewJobTypes.WritesGmail];
+    public static readonly string[] ReadsGmail = [Mailbox, Sender, Incremental, LabelResync, .. Review.ReviewJobTypes.WritesGmail];
 }
