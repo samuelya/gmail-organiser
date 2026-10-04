@@ -77,7 +77,9 @@ public sealed record FilterProposalDto(
     string SenderAddress, string? DisplayName, int MessageCount, string? ListId, SenderPatternDto Pattern, FilterSuggestionDto Suggested);
 
 /// <param name="FilterCount">Active filters the review checked.</param>
-/// <param name="Summary">The LLM summary (#215); null until summarised.</param>
+/// <param name="Summary">The LLM summary (#215); null until summarised. A failed summary keeps the previous one.</param>
+/// <param name="SummaryPromptVersion">The prompt version that wrote <paramref name="Summary"/>.</param>
+/// <param name="SummaryError">Why the last summary attempt failed; null after a successful one.</param>
 public sealed record FilterReviewDto(
     Guid Id,
     DateTimeOffset CreatedAt,
@@ -85,6 +87,7 @@ public sealed record FilterReviewDto(
     IReadOnlyList<FilterFindingDto> Findings,
     string? Summary,
     string? SummaryModel,
+    string? SummaryPromptVersion,
     DateTimeOffset? SummarisedAt,
     string? SummaryError);
 

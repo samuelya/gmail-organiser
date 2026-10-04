@@ -24,6 +24,7 @@ public static class RulesEndpoints
         group.MapPost("/filters/reviews", CreateReviewAsync).RequireAccountMatch();
         group.MapGet("/filters/reviews/latest", LatestReviewAsync);
         group.MapGet("/filters/reviews/{id:guid}", GetReviewAsync);
+        group.MapPost("/filters/reviews/{id:guid}/summary", SummariseReviewAsync);
         group.MapPost("/filters/findings/{id:guid}/apply", ApplyFindingAsync).RequireAccountMatch();
         group.MapPost("/filters/findings/{id:guid}/dismiss", DismissFindingAsync).RequireAccountMatch();
         return endpoints;
@@ -161,6 +162,23 @@ public static class RulesEndpoints
     private static async Task<Results<Ok<FilterReviewDto>, NotFound>> GetReviewAsync(
         Guid id, FilterReviewService reviews, CancellationToken ct) =>
         await reviews.GetAsync(id, ct) is { } review ? TypedResults.Ok(review) : TypedResults.NotFound();
+
+    /// <summary>
+    /// Asks the chat model for a summary of the review's findings; a model failure is the same 200 with
+    /// <c>summaryError</c> set. 409 when the review has no findings, 503 when no chat model is chosen.
+    /// </summary>
+    private static async Task<Results<Ok<FilterReviewDto>, NotFound, ProblemHttpResult>> SummariseReviewAsync(
+        Guid id, FilterReviewSummariser summariser, CancellationToken ct) =>
+        await summariser.SummariseAsync(id, ct) switch
+        {
+            { Outcome: SummaryOutcome.Ok, Review: { } review } => TypedResults.Ok(review),
+            { Outcome: SummaryOutcome.NoFindings } => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, title: "Nothing to summarise", detail: "The review has no findings."),
+            { Outcome: SummaryOutcome.NotConfigured } => TypedResults.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable, title: "LLM not configured",
+                detail: "No chat model is selected. Choose one in Settings."),
+            _ => TypedResults.NotFound(),
+        };
 
     /// <summary>
     /// Runs the finding's fix; 409 when it is not open, a referenced filter is gone or Gmail refuses a step (the finding
