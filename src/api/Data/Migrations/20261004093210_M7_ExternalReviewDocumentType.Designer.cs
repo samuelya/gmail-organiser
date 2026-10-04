@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -13,9 +14,11 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261004093210_M7_ExternalReviewDocumentType")]
+    partial class M7_ExternalReviewDocumentType
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -755,10 +758,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("document_type_label");
 
-                    b.Property<string>("DocumentTypeParent")
-                        .HasColumnType("text")
-                        .HasColumnName("document_type_parent");
-
                     b.Property<bool>("Edited")
                         .HasColumnType("boolean")
                         .HasColumnName("edited");
@@ -1067,117 +1066,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.ToTable("label_plans", (string)null);
                 });
 
-            modelBuilder.Entity("GmailOrganiser.Rules.Review.FilterFindingRow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset?>("AppliedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("applied_at");
-
-                    b.Property<string>("CreatedFilterId")
-                        .HasColumnType("text")
-                        .HasColumnName("created_filter_id");
-
-                    b.PrimitiveCollection<List<string>>("DeletedFilterIds")
-                        .IsRequired()
-                        .HasColumnType("text[]")
-                        .HasColumnName("deleted_filter_ids");
-
-                    b.Property<string>("Description")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("description");
-
-                    b.Property<string>("Error")
-                        .HasColumnType("text")
-                        .HasColumnName("error");
-
-                    b.PrimitiveCollection<List<string>>("FilterIds")
-                        .IsRequired()
-                        .HasColumnType("text[]")
-                        .HasColumnName("filter_ids");
-
-                    b.Property<string>("Fix")
-                        .IsRequired()
-                        .HasColumnType("jsonb")
-                        .HasColumnName("fix");
-
-                    b.Property<string>("Kind")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("kind");
-
-                    b.Property<Guid>("ReviewId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("review_id");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("status");
-
-                    b.HasKey("Id")
-                        .HasName("pk_filter_findings");
-
-                    b.HasIndex("Status")
-                        .HasDatabaseName("ix_filter_findings_status");
-
-                    b.HasIndex("ReviewId", "Status")
-                        .HasDatabaseName("ix_filter_findings_review_id_status");
-
-                    b.ToTable("filter_findings", (string)null);
-                });
-
-            modelBuilder.Entity("GmailOrganiser.Rules.Review.FilterReviewRow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<int>("FilterCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("filter_count");
-
-                    b.Property<int>("FindingCount")
-                        .HasColumnType("integer")
-                        .HasColumnName("finding_count");
-
-                    b.Property<DateTimeOffset?>("SummarisedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("summarised_at");
-
-                    b.Property<string>("Summary")
-                        .HasColumnType("text")
-                        .HasColumnName("summary");
-
-                    b.Property<string>("SummaryError")
-                        .HasColumnType("text")
-                        .HasColumnName("summary_error");
-
-                    b.Property<string>("SummaryModel")
-                        .HasColumnType("text")
-                        .HasColumnName("summary_model");
-
-                    b.Property<string>("SummaryPromptVersion")
-                        .HasColumnType("text")
-                        .HasColumnName("summary_prompt_version");
-
-                    b.HasKey("Id")
-                        .HasName("pk_filter_reviews");
-
-                    b.HasIndex("CreatedAt")
-                        .HasDatabaseName("ix_filter_reviews_created_at");
-
-                    b.ToTable("filter_reviews", (string)null);
-                });
-
             modelBuilder.Entity("GmailOrganiser.Senders.SenderRow", b =>
                 {
                     b.Property<string>("Address")
@@ -1293,16 +1181,6 @@ namespace GmailOrganiser.Data.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_action_log_action_batches_batch_id");
-                });
-
-            modelBuilder.Entity("GmailOrganiser.Rules.Review.FilterFindingRow", b =>
-                {
-                    b.HasOne("GmailOrganiser.Rules.Review.FilterReviewRow", null)
-                        .WithMany()
-                        .HasForeignKey("ReviewId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_filter_findings_filter_reviews_review_id");
                 });
 #pragma warning restore 612, 618
         }

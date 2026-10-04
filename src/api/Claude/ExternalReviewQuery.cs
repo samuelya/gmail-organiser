@@ -133,6 +133,7 @@ public sealed class ExternalReviewQuery(AppDbContext db)
         r.VerdictTopicLabel,
         r.VerdictNeedsAction,
         r.VerdictToBeDeleted,
+        r.VerdictDocumentTypeLabel,
         r.Reasoning,
         r.Error,
         SnakeCaseEnumConverter<ExternalReviewResolution>.ToDb(r.Resolution),

@@ -6,6 +6,7 @@ using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Mcp;
 using GmailOrganiser.Review;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -213,6 +214,8 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         var tree = McpTestClient.Structured(await McpTestClient.CallAsync(client, "get_label_tree", Ct));
 
         tree.GetProperty("labelCount").GetInt32().ShouldBe(FakeLabelStore.SeedUserLabelNames.Count + 4);
+        tree.GetProperty("documentTypeParent").ValueKind.ShouldBe(JsonValueKind.Null);
+        tree.GetProperty("documentTypes").GetArrayLength().ShouldBe(0);
         var roots = tree.GetProperty("labels").EnumerateArray().ToDictionary(n => n.GetProperty("name").GetString()!);
         roots.Keys.Order(StringComparer.Ordinal).ShouldBe(["Action", "Example", "Finance", "Shopping", "Synthetic Receipts", "To-Be-Deleted"]);
         roots["Example"].GetProperty("children").EnumerateArray().Single().GetProperty("path").GetString().ShouldBe("Example/Nested");
@@ -232,6 +235,49 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
             .ShouldBe([.. FakeLabelStore.SeedUserLabelNames.Concat(["Action/ToDo", "Finance/Invoices", "Shopping", "To-Be-Deleted"]).Order(StringComparer.Ordinal)]);
         item.GetProperty("samples").EnumerateArray().First()
             .GetProperty("labels").EnumerateArray().Select(l => l.GetString()).ShouldContain("Shopping");
+    }
+
+    [Fact]
+    public async Task Group_item_shows_the_card_document_type_and_the_label_tree_lists_the_document_types()
+    {
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { DocumentTypeParent = "Synthetic Types" }, Ct);
+            var gmail = scope.ServiceProvider.GetRequiredService<IGmailClient>();
+            foreach (var name in new[] { "Synthetic Types/Power", "Synthetic Types/Gas", "Synthetic Types/Gas/Deep", "Other/Synthetic Types" })
+            {
+                await gmail.CreateLabelAsync(name, Ct);
+            }
+
+            scope.ServiceProvider.GetRequiredService<LabelCatalog>().Invalidate();
+        }
+
+        // The card's outcome is the typed one (7 of 10); the untyped members are the only model-analysed ones, so a
+        // pick that ignored the type would show one of them.
+        await using (var db = postgres.CreateDbContext())
+        {
+            foreach (var s in await db.Suggestions.Where(s => s.SenderAddress == AnalysisRunHarness.Shop).OrderBy(s => s.MessageId).ToListAsync(Ct))
+            {
+                var typed = string.CompareOrdinal(s.MessageId, "a07") < 0;
+                s.DocumentTypeLabel = typed ? "Synthetic Types/Power" : null;
+                s.Source = typed ? SuggestionSource.Derived : SuggestionSource.Llm;
+                s.Reason = typed ? "Typed reason." : "Untyped reason.";
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var item = McpTestClient.Structured(await McpTestClient.CallAsync(client, "get_review_item", Ct,
+            new Dictionary<string, object?> { ["id"] = groupItem.ToString() }));
+        var local = item.GetProperty("item").GetProperty("local");
+        local.GetProperty("documentTypeLabel").GetString().ShouldBe("Synthetic Types/Power");
+        local.GetProperty("reason").GetString().ShouldBe("Typed reason.");
+        local.GetProperty("source").GetString().ShouldBe("derived");
+
+        var tree = McpTestClient.Structured(await McpTestClient.CallAsync(client, "get_label_tree", Ct));
+        tree.GetProperty("documentTypeParent").GetString().ShouldBe("Synthetic Types");
+        tree.GetProperty("documentTypes").EnumerateArray().Select(l => l.GetString())
+            .ShouldBe(["Synthetic Types/Gas", "Synthetic Types/Power"]);
     }
 
     [Fact]

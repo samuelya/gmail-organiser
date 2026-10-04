@@ -14,6 +14,7 @@ public sealed record ExternalReviewDto(
     string? VerdictTopicLabel,
     bool? VerdictNeedsAction,
     bool? VerdictToBeDeleted,
+    string? VerdictDocumentTypeLabel,
     string? Reasoning,
     string? Error,
     string Resolution,
@@ -31,6 +32,7 @@ public sealed record CreateExternalReviewsResponse(int Created, int Skipped, IRe
 public sealed record ExternalReviewSummaryDto(int Queued, int Running, int Reviewed, int Unavailable);
 
 /// <summary>Claude's verdict as the MCP <c>submit_review</c> tool passes it.</summary>
+/// <param name="DocumentTypeLabel">For <c>alternative</c>: null keeps the type Claude was shown, blank clears it.</param>
 public sealed record ReviewVerdictInput(
     ReviewVerdict Verdict,
     string? TopicLabel,
@@ -39,4 +41,5 @@ public sealed record ReviewVerdictInput(
     string? FilterCriteria,
     string Reasoning,
     string Reviewer,
-    string? Model);
+    string? Model,
+    string? DocumentTypeLabel = null);

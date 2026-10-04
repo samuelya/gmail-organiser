@@ -10,6 +10,7 @@ Steps:
 5. Call `submit_review` exactly once per item:
    - `agree` when the local suggestion is right as it is;
    - `alternative` with `topic_label` (a full label path, levels separated by `/`) and the `needs_action` and `to_be_deleted` flags you recommend, when it should change;
+     when the label tree has a `documentTypeParent`, you may also set `document_type_label` (one of its direct children, or a new one directly under it; `""` for none; omit it to keep the local one);
    - `needs_human` when you are unsure, the samples disagree, or the decision depends on something only the user knows.
    Give `reasoning` in at most 3 short sentences. If `submit_review` answers `ok: false`, read the `reason`, move on to the next item and do not retry it.
 6. End with a one-line summary: how many items you agreed with, changed and left to the user.

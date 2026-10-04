@@ -1,13 +1,36 @@
 using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Review;
 
 namespace GmailOrganiser.Claude;
 
 /// <summary>Checks a verdict as <c>submit_review</c> passes it; the message is the client's error.</summary>
 internal static class ReviewVerdictValidation
 {
-    public static string? Validate(ReviewVerdictInput v)
+    /// <summary>
+    /// <paramref name="documentType"/> is an <c>alternative</c>'s document-type change, checked as the review edit
+    /// checks it (<see cref="DocumentTypeEdit.Validate"/>) against <paramref name="parent"/>; unchanged otherwise.
+    /// </summary>
+    public static string? Validate(ReviewVerdictInput v, string? parent, out DocumentTypeChange documentType)
+    {
+        documentType = DocumentTypeChange.Unchanged;
+        if (Validate(v) is { } invalid)
+        {
+            return invalid;
+        }
+
+        if (v.Verdict != ReviewVerdict.Alternative)
+        {
+            return null;
+        }
+
+        var errors = new Dictionary<string, string[]>();
+        documentType = DocumentTypeEdit.Validate(v.DocumentTypeLabel, parent, v.TopicLabel!.Trim(), errors);
+        return errors.TryGetValue(DocumentTypeEdit.Field, out var messages) ? $"Document-type label: {messages[0]}" : null;
+    }
+
+    private static string? Validate(ReviewVerdictInput v)
     {
         if (!Enum.IsDefined(v.Verdict))
         {

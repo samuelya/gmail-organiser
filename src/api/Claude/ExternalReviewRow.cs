@@ -73,6 +73,9 @@ public sealed class ExternalReviewRow
     public string? VerdictTopicLabel { get; set; }
     public bool? VerdictNeedsAction { get; set; }
     public bool? VerdictToBeDeleted { get; set; }
+
+    /// <summary>The document type of that outcome: what accepting sets (alternative) or matches (agree); null is none.</summary>
+    public string? VerdictDocumentTypeLabel { get; set; }
     public string? VerdictFilterCriteria { get; set; }
     public string? Reasoning { get; set; }
     public string? Error { get; set; }
