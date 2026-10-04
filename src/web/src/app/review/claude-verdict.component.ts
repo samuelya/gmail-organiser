@@ -157,9 +157,15 @@ export function resolutionText(item: ExternalReviewDto): string {
               </p>
             }
             @if (structure().length) {
-              <ul class="m-0 list-none p-0" aria-label="Claude's label structure" data-testid="claude-structure">
+              <ul
+                class="m-0 list-none p-0"
+                aria-label="Claude's label structure"
+                data-testid="claude-structure"
+              >
                 @for (row of structure(); track $index) {
-                  <li class="reasoning" [style.padding-left.rem]="row.depth * 1.25">{{ row.name }}</li>
+                  <li class="reasoning" [style.padding-left.rem]="row.depth * 1.25">
+                    {{ row.name }}
+                  </li>
                 }
               </ul>
             }
@@ -169,11 +175,7 @@ export function resolutionText(item: ExternalReviewDto): string {
           }
         }
         <!-- A disabled button shows no tooltip; the wrapper does. -->
-        <span
-          class="self-start"
-          [matTooltip]="sendTooltip()"
-          data-testid="claude-send-tooltip"
-        >
+        <span class="self-start" [matTooltip]="sendTooltip()" data-testid="claude-send-tooltip">
           <button
             mat-button
             type="button"

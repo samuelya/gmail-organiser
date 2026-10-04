@@ -36,6 +36,14 @@ describe('ClaudeService', () => {
     expect(prompt).toBe('Review the pending items.');
   });
 
+  it('lists the newest review items', () => {
+    service.list().subscribe();
+    const req = backend.expectOne((r) => r.url === '/api/claude/reviews');
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.get('page')).toBe('1');
+    expect(req.request.params.get('pageSize')).toBe('100');
+  });
+
   it('posts a connection test', () => {
     service.testConnection().subscribe();
     expect(backend.expectOne('/api/claude/test').request.method).toBe('POST');

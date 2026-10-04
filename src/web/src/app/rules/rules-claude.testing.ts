@@ -1,0 +1,30 @@
+import { ExternalReviewDto } from '../core/claude.models';
+
+/** A synthetic Claude review item for a filter finding; override `targetType` and `labelPlanId` for a plan. */
+export const ruleReview = (over: Partial<ExternalReviewDto> = {}): ExternalReviewDto => ({
+  id: 'x-1',
+  targetType: 'filter_finding',
+  suggestionId: null,
+  senderAddress: '',
+  groupKey: null,
+  groupDisplay: null,
+  status: 'queued',
+  reviewer: null,
+  verdict: null,
+  verdictTopicLabel: null,
+  verdictNeedsAction: null,
+  verdictToBeDeleted: null,
+  verdictDocumentTypeLabel: null,
+  verdictDocumentTypeSet: false,
+  reasoning: null,
+  error: null,
+  resolution: 'none',
+  createdAt: '2026-01-01T00:00:00Z',
+  reviewedAt: null,
+  resolvedAt: null,
+  labelPlanId: null,
+  findingId: 'f1',
+  alternativeStructure: null,
+  verdictFilterCriteria: null,
+  ...over,
+});
