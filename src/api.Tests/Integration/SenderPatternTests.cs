@@ -186,6 +186,26 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
     }
 
     [Fact]
+    public async Task Apply_rest_records_the_document_type_parent_it_was_decided_under()
+    {
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(s => s with { DocumentTypeParent = "Synthetic Types" }, Ct);
+        }
+
+        var response = await h.PostAsync(
+            $"/api/review/senders/{AnalysisRunHarness.Shop}/apply-rest",
+            new ApplyRestRequest(TopicLabel: Topic, DocumentTypeLabel: "Synthetic Types/Receipt"));
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+
+        await using var db = postgres.CreateDbContext();
+        var decision = await db.Decisions.SingleAsync(d => d.Source == SuggestionSource.SenderPattern, Ct);
+        (decision.DocumentTypeLabel, decision.DocumentTypeDecided, decision.DocumentTypeParent)
+            .ShouldBe(("Synthetic Types/Receipt", true, "Synthetic Types"));
+    }
+
+    [Fact]
     public async Task Apply_rest_waits_for_a_group_being_stored_and_leaves_its_messages()
     {
         await SeedAsync(("a00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm));
