@@ -186,10 +186,18 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
     public ConcurrentQueue<string> CreateLabelCalls { get; } = new();
 
-    public Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct)
+    /// <summary>Runs before each label create; throw to fail it.</summary>
+    public Func<string, Task>? BeforeCreateLabel { get; set; }
+
+    public async Task<GmailLabel> CreateLabelAsync(string name, CancellationToken ct)
     {
         CreateLabelCalls.Enqueue(name);
-        return inner.CreateLabelAsync(name, ct);
+        if (BeforeCreateLabel is { } before)
+        {
+            await before(name);
+        }
+
+        return await inner.CreateLabelAsync(name, ct);
     }
 
     public ConcurrentQueue<(string Id, string Name)> RenameLabelCalls { get; } = new();

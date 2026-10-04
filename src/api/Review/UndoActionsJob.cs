@@ -68,12 +68,12 @@ public sealed partial class UndoActionsJob(
             throw new JobRefusedException("The action batch no longer exists.");
         }
 
-        var labels = await catalog.RefreshAsync(ct);
-        var plan = await PlanAsync(cursor, labels, ct);
+        var (labels, moved) = await RestoreMergeSourcesAsync(cursor, await catalog.RefreshAsync(ct), ct);
+        var plan = await PlanAsync(cursor, labels, moved, ct);
         var total = Done(cursor) + (cursor.Pending?.LogIds.Length ?? 0) + plan.Sum(c => c.LogIds.Length);
         if (cursor.Pending is not null)
         {
-            cursor = await DropDeletedLabelsAsync(ctx, cursor, labels, total, ct);
+            cursor = await DropDeletedLabelsAsync(ctx, cursor, labels, moved, total, ct);
             (cursor, var signal, total) = await SendAsync(ctx, cursor, resent: true, total, ct);
             if (signal != JobSignal.Continue)
             {
@@ -104,7 +104,7 @@ public sealed partial class UndoActionsJob(
                 break;
             }
 
-            plan = await PlanAsync(cursor, labels, ct);
+            plan = await PlanAsync(cursor, labels, moved, ct);
             total = Done(cursor) + plan.Sum(c => c.LogIds.Length);
         }
 
@@ -133,9 +133,11 @@ public sealed partial class UndoActionsJob(
 
     /// <summary>
     /// Chunks of the rows still to undo, in log order. The inverse comes from the stored label ids and keeps only
-    /// labels that still exist (the others go to <see cref="UndoChunk.Deleted"/>); rows whose stored message is gone form their own chunks, which never reach Gmail.
+    /// labels that still exist (the others go to <see cref="UndoChunk.Deleted"/>), a re-created merge source under its
+    /// new id (<paramref name="moved"/>); rows whose stored message is gone form their own chunks, which never reach Gmail.
     /// </summary>
-    private async Task<List<UndoChunk>> PlanAsync(UndoCursor cursor, IReadOnlyList<GmailLabel> labels, CancellationToken ct)
+    private async Task<List<UndoChunk>> PlanAsync(
+        UndoCursor cursor, IReadOnlyList<GmailLabel> labels, Dictionary<string, string> moved, CancellationToken ct)
     {
         var skipped = cursor.Skipped ?? [];
         var existing = labels.Select(l => l.Id).ToHashSet(StringComparer.Ordinal);
@@ -157,7 +159,7 @@ public sealed partial class UndoActionsJob(
         var gone = rows.Where(r => r.Gone).Chunk(cap)
             .Select(c => new UndoChunk([.. c.Select(r => r.Id)], [.. c.Select(r => r.MessageId)], [], [], Gone: true));
         var inverse = rows.Where(r => !r.Gone).Select(r => (r.Id, r.MessageId,
-            Add: Inverse(r.LabelIdsBefore, r.LabelIdsAfter, existing), Remove: Inverse(r.LabelIdsAfter, r.LabelIdsBefore, existing)));
+            Add: Inverse(r.LabelIdsBefore, r.LabelIdsAfter), Remove: Inverse(r.LabelIdsAfter, r.LabelIdsBefore)));
         var deleted = rows.Where(r => !r.Gone)
             .SelectMany(r => r.LabelIdsBefore.Concat(r.LabelIdsAfter))
             .Where(id => !existing.Contains(id))
@@ -169,8 +171,8 @@ public sealed partial class UndoActionsJob(
                 Deleted: deleted.Length == 0 ? null : LabelChunks.Sorted(deleted)));
         return [.. gone, .. send];
 
-        static string[] Inverse(string[] from, string[] minus, HashSet<string> existing) =>
-            [.. from.Except(minus, StringComparer.Ordinal).Where(existing.Contains)];
+        string[] Inverse(string[] from, string[] minus) =>
+            [.. from.Except(minus, StringComparer.Ordinal).Select(id => moved.GetValueOrDefault(id, id)).Where(existing.Contains)];
     }
 
     /// <summary>
@@ -236,25 +238,26 @@ public sealed partial class UndoActionsJob(
     /// <summary>
     /// Drops from the pending chunk the labels deleted in Gmail since it was prepared, so the resend isn't refused: a
     /// label to remove is gone already, a label to re-add is skipped with <see cref="LabelDeletedNote"/>; both move to
-    /// <see cref="UndoChunk.Deleted"/>. Rewrites the chunk and its inverse rows in one transaction; unchanged when every
-    /// label still exists.
+    /// <see cref="UndoChunk.Deleted"/>. A re-created merge source (<paramref name="moved"/>) is re-added under its new id.
+    /// Rewrites the chunk and its inverse rows in one transaction; unchanged when every label still exists.
     /// </summary>
     private async Task<UndoCursor> DropDeletedLabelsAsync(
-        JobContext ctx, UndoCursor cursor, IReadOnlyList<GmailLabel> labels, int total, CancellationToken ct)
+        JobContext ctx, UndoCursor cursor, IReadOnlyList<GmailLabel> labels, Dictionary<string, string> moved, int total, CancellationToken ct)
     {
         var pending = cursor.Pending!;
         var existing = labels.Select(l => l.Id).ToHashSet(StringComparer.Ordinal);
-        var keepAdd = Array.ConvertAll(pending.Add, existing.Contains);
+        var add = Array.ConvertAll(pending.Add, id => moved.GetValueOrDefault(id, id));
+        var keepAdd = Array.ConvertAll(add, existing.Contains);
         var keepRemove = Array.ConvertAll(pending.Remove, existing.Contains);
         var addDropped = keepAdd.Contains(false);
-        if (pending.Gone || (!addDropped && !keepRemove.Contains(false)))
+        if (pending.Gone || (!addDropped && !keepRemove.Contains(false) && add.SequenceEqual(pending.Add)))
         {
             return cursor;
         }
 
         var chunk = pending with
         {
-            Add = Keep(pending.Add, keepAdd),
+            Add = Keep(add, keepAdd),
             Remove = Keep(pending.Remove, keepRemove),
             Deleted = LabelChunks.Sorted(pending.Add.Concat(pending.Remove).Where(id => !existing.Contains(id))
                 .Concat(pending.Deleted ?? []).Distinct(StringComparer.Ordinal)),

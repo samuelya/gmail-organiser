@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailOrganiser.Tests.Integration;
 
-/// <summary>The review round on #286: stopping jobs, Spam and Trash, re-sent chunks, current names, pause between chunks.</summary>
+/// <summary>The review round on #286: stopping jobs, Spam and Trash, re-sent chunks, current names, pause between chunks, undo after delete (#293).</summary>
 public sealed partial class LabelPlanApplyJobTests
 {
     [Fact]
@@ -143,5 +143,68 @@ public sealed partial class LabelPlanApplyJobTests
         var batch = await db.ActionBatches.AsNoTracking().SingleAsync(Ct);
         batch.MessageCount.ShouldBe(2);
         (await db.ActionLog.CountAsync(l => l.BatchId == batch.Id, Ct)).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Undo_of_a_merge_whose_emptied_source_was_deleted_re_creates_the_source_and_keeps_the_mail_labelled()
+    {
+        var (source, target, batchId) = await MergeThenDeleteSourceAsync("Synthetic GoneSrc", "Synthetic GoneTgt");
+
+        await UndoAsync(batchId);
+
+        var recreated = (await Gmail.ListLabelsAsync(Ct)).Single(l => l.Name == source.Name);
+        recreated.Id.ShouldNotBe(source.Id);
+        Labels("b00").ShouldContain(recreated.Id);
+        Labels("b00").ShouldNotContain(target.Id);
+        await using var db = postgres.CreateDbContext();
+        var undo = await db.ActionBatches.AsNoTracking().SingleAsync(b => b.UndoOf == batchId, Ct);
+        undo.CreatedLabelIds.ShouldBe([recreated.Id]);
+        (await db.ActionBatches.AsNoTracking().SingleAsync(b => b.Id == batchId, Ct)).UndoneAt.ShouldNotBeNull();
+        (await db.Messages.AsNoTracking().SingleAsync(m => m.Id == "b00", Ct)).LabelIds.ShouldBe(Labels("b00"), ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Undo_of_a_merge_whose_source_cannot_be_re_created_stops_and_removes_nothing()
+    {
+        var (source, target, batchId) = await MergeThenDeleteSourceAsync("Synthetic NoSrc", "Synthetic NoTgt");
+        h.Gmail.BeforeCreateLabel = _ => throw GmailRetryPolicy.CreateApiException(HttpStatusCode.BadRequest, "invalidArgument");
+        var modifies = h.Gmail.BatchModifyCalls.Count;
+
+        var job = await UndoAsync(batchId);
+
+        job.Status.ShouldBe(JobStatus.Failed);
+        job.Error.ShouldNotBeNull().ShouldContain(source.Name);
+        h.Gmail.BatchModifyCalls.Count.ShouldBe(modifies);
+        Labels("b00").ShouldContain(target.Id);
+        await using var db = postgres.CreateDbContext();
+        (await db.ActionBatches.AsNoTracking().SingleAsync(b => b.Id == batchId, Ct)).UndoneAt.ShouldBeNull();
+        (await db.ActionLog.CountAsync(l => l.BatchId == batchId && l.UndoneByBatchId == null, Ct)).ShouldBe(1);
+    }
+
+    /// <summary>The flow of #293: merge one message's source into the target, then delete the emptied source.</summary>
+    private async Task<(GmailLabel Source, GmailLabel Target, Guid BatchId)> MergeThenDeleteSourceAsync(string sourceName, string targetName)
+    {
+        var source = await LabelAsync(sourceName);
+        var target = await LabelAsync(targetName);
+        Tag("b00", source.Id);
+        await ApplyAsync((await SeedPlanAsync(Item(LabelPlanItemKind.NearDuplicate, source, target: target))).Id);
+        await h.RunNextAsync();
+        await ApplyAsync((await SeedPlanAsync(Item(LabelPlanItemKind.Empty, source))).Id);
+        await h.RunNextAsync();
+        (await Gmail.ListLabelsAsync(Ct)).ShouldNotContain(l => l.Id == source.Id);
+        Labels("b00").ShouldContain(target.Id);
+        Labels("b00").ShouldNotContain(source.Id);
+        await using var db = postgres.CreateDbContext();
+        var batch = await db.ActionBatches.AsNoTracking().SingleAsync(b => b.Kind == ActionKind.LabelMerge, Ct);
+        return (source, target, batch.Id);
+    }
+
+    private async Task<JobRow> UndoAsync(Guid batchId)
+    {
+        (await h.PostAsync($"/api/history/{batchId}/undo", new { })).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+        await using var db = postgres.CreateDbContext();
+        var undo = await db.ActionBatches.AsNoTracking().SingleAsync(b => b.UndoOf == batchId, Ct);
+        return await JobAsync(undo.JobId.ShouldNotBeNull());
     }
 }
