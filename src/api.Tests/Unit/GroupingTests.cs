@@ -40,6 +40,31 @@ public sealed class GroupingTests
         groups.Select(g => g.Key).ShouldBe(["msg:m003", "msg:m002", "msg:m001"]);
     }
 
+    [Fact]
+    public async Task Mail_of_one_sender_filed_under_different_user_labels_never_shares_a_group()
+    {
+        IReadOnlyList<MessageRow> messages =
+        [
+            .. Enumerable.Range(1, 3).Select(i => WithLabels(Msg(i, subject: $"Order {i} shipped"), "INBOX", "Label_1")),
+            .. Enumerable.Range(4, 3).Select(i => WithLabels(Msg(i, subject: $"Order {i} shipped"), "Label_2", "Label_1")),
+            .. Enumerable.Range(7, 3).Select(i => Msg(i, subject: $"Order {i} shipped")),
+        ];
+
+        var groups = await GroupAsync(messages, Defaults with { MinGroupSize = 2 });
+
+        groups.Select(g => (g.Key, string.Join(',', g.Members.Select(m => m.Id)))).ShouldBe([
+            ("from:shop@example.com|promotions|order # shipped", "m009,m008,m007"),
+            ("from:shop@example.com|promotions|order # shipped|labels:Label_1,Label_2", "m006,m005,m004"),
+            ("from:shop@example.com|promotions|order # shipped|labels:Label_1", "m003,m002,m001"),
+        ]);
+    }
+
+    private static MessageRow WithLabels(MessageRow m, params string[] labels)
+    {
+        m.LabelIds = labels;
+        return m;
+    }
+
     [Theory]
     [InlineData(AnalysisGroupingMode.SenderSubject)]
     [InlineData(AnalysisGroupingMode.Auto)]

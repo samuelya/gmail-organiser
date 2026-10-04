@@ -83,6 +83,31 @@ public sealed class AnalysisPreviewTests(ApiFactory factory, PostgresFixture pos
     }
 
     [Fact]
+    public async Task Labelled_scope_takes_not_analysed_mail_with_a_user_label()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            async Task Label(string id, params string[] labels) =>
+                await db.Messages.Where(m => m.Id == id).ExecuteUpdateAsync(x => x.SetProperty(m => m.LabelIds, labels), Ct);
+            await Label("f-normal-1", "INBOX", "Label_3");
+            await Label("f-normal-2", "Label_3");
+            await Label("f-normal-3", "INBOX", "Label_4");
+            await Label("f-archived", "LabelX1", "LABEL_2");
+            await Label("f-analysed", "Label_5");
+            await Label("f-deleted", "Label_6");
+            await Label("shop-0001", "CATEGORY_PERSONAL", "INBOX");
+        }
+
+        await using var read = postgres.CreateDbContext();
+        (await AnalysisCandidates.QueryAsync(read, AnalysisScope.Labelled, null, null, 50, Ct)).Select(m => m.Id)
+            .ShouldBe(["f-normal-3", "f-normal-2", "f-normal-1"]);
+        (await AnalysisCandidates.CountLabelledAsync(read, Ct)).ShouldBe(3);
+
+        var preview = await PreviewAsync(new { scope = "labelled", count = 50 });
+        preview.Messages.ShouldBe(3);
+    }
+
+    [Fact]
     public async Task Preview_of_1000_inbox_candidates_groups_without_model_calls_within_the_bound()
     {
         var watch = Stopwatch.StartNew();

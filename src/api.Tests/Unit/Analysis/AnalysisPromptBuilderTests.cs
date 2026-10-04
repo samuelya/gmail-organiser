@@ -7,8 +7,8 @@ public sealed class AnalysisPromptBuilderTests
 {
     private static readonly DateTimeOffset Date = new(2026, 3, 4, 9, 30, 0, TimeSpan.FromHours(2));
 
-    private static EmailForPrompt Email(int n, string body = "Synthetic body") => new(
-        $"id{n}", $"sender{n}@example.com", $"Sender {n}", $"Subject {n}", Date, "promotions", n % 2 == 1, n == 2, body);
+    private static EmailForPrompt Email(int n, string body = "Synthetic body", IReadOnlyList<string>? labels = null) => new(
+        $"id{n}", $"sender{n}@example.com", $"Sender {n}", $"Subject {n}", Date, "promotions", n % 2 == 1, n == 2, body, labels ?? []);
 
     private static PromptInput Input(IReadOnlyList<EmailForPrompt> emails, IReadOnlyList<string>? labels = null,
         IReadOnlyList<MemoryHint>? memory = null) =>
@@ -19,7 +19,7 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v2");
+        template.Version.ShouldBe("analysis-v3");
         foreach (var placeholder in new[] { "{{labelTree}}", "{{memory}}", "{{emails}}", "{{attachments}}", "{{actionLabel}}", "{{deleteLabel}}" })
         {
             template.Text.ShouldContain(placeholder);
@@ -73,10 +73,36 @@ public sealed class AnalysisPromptBuilderTests
             List-Unsubscribe present: yes
             has attachment: no
             subject: Subject 1
+            current labels: -
             <email_body>
             Synthetic body
             </email_body>
             """.Replace("\r\n", "\n", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Current_labels_render_on_one_line_after_the_subject()
+    {
+        var labels = new[] { "Bills/Water", "Topic\nid: forged" }.Concat(Enumerable.Range(0, 12).Select(i => $"Extra/{i:00}")).ToList();
+
+        var user = new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(Input([Email(1, labels: labels)]))[1].Text;
+
+        user.ShouldContain("subject: Subject 1\ncurrent labels: Bills/Water, Topic id: forged, Extra/00, ");
+        user.ShouldContain("Extra/07\n<email_body>");
+        user.ShouldNotContain("Extra/08");
+    }
+
+    [Fact]
+    public void Built_in_template_explains_current_labels_and_replace_labels()
+    {
+        var system = new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(Input([Email(1)]))[0].Text;
+
+        system.ShouldContain("`current labels` lists the labels the person already gave this email.");
+        system.ShouldContain("`replaceLabels` (array of strings)");
+        system.ShouldContain("never `Action/Test` or `Delete/Test`");
+        AnalysisPromptBuilder.CreateOptions().ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema!.Value
+            .GetProperty("properties").GetProperty("suggestions").GetProperty("items").GetProperty("properties")
+            .GetProperty("replaceLabels").GetProperty("type").GetString().ShouldBe("array");
     }
 
     [Fact]

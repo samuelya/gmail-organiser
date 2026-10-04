@@ -46,7 +46,7 @@ public sealed class AnalysisRunJobTests(ApiFactory factory, PostgresFixture post
         (done.MessagesCovered, done.MessagesLlm, done.MessagesDerived).ShouldBe((20, 9, 11));
         done.SavedPercent.ShouldBe(1 - (3 / 20.0), 1e-9);
         done.Model.ShouldBe(AnalysisRunHarness.ChatModel);
-        done.PromptVersion.ShouldBe("analysis-v2");
+        done.PromptVersion.ShouldBe("analysis-v3");
         h.Chat.Calls.ShouldBe(3);
 
         await using var db = postgres.CreateDbContext();

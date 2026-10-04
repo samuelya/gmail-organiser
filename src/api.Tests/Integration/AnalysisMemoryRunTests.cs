@@ -85,6 +85,36 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
     }
 
     [Fact]
+    public async Task Labelled_run_shows_current_labels_and_memory_answers_only_where_they_match()
+    {
+        // Label_1 is the first seeded user label, Label_3 the last; Label_99 was deleted in Gmail since the fetch.
+        var (first, last) = (FakeLabelStore.SeedUserLabelNames[0], FakeLabelStore.SeedUserLabelNames[^1]);
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Decisions.ExecuteUpdateAsync(s => s.SetProperty(d => d.TopicLabel, last.ToLowerInvariant()), Ct);
+            string[] filedFirst = ["a01", "a02", StarredId, "a04"];
+            await db.Messages.Where(m => filedFirst.Contains(m.Id))
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "Label_1" }), Ct);
+            await db.Messages.Where(m => m.Id == "a00")
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "Label_99", "Label_1" }), Ct);
+            await db.Messages.Where(m => m.Id.StartsWith("a0") && !filedFirst.Contains(m.Id) && m.Id != "a00")
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "Label_3" }), Ct);
+        }
+
+        var run = await h.StartAsync(new StartAnalysisRunRequest("labelled", null, null, 20, null));
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.MessagesCovered, done.MessagesFromMemory).ShouldBe(("completed", 10, 5));
+        h.Chat.Requests.ShouldNotContain(r => r.Any(m => m.Text.Contains("id: b00")));
+        h.Chat.Requests.Single(r => r.Any(m => m.Text.Contains("id: a00")))
+            .ShouldContain(m => m.Text.Contains($"current labels: {first}\n"));
+        await using var check = postgres.CreateDbContext();
+        (await check.Suggestions.AsNoTracking().Where(s => s.Source == SuggestionSource.Memory).Select(s => s.MessageId)
+            .OrderBy(id => id).ToListAsync(Ct)).ShouldBe(["a05", "a06", "a07", "a08", "a09"]);
+    }
+
+    [Fact]
     public async Task With_the_short_circuit_off_the_model_sees_the_sender_decisions_as_memory()
     {
         await using (var scope = h.Services.CreateAsyncScope())

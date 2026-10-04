@@ -129,10 +129,17 @@ public sealed class AnalysisRunEndpointsTests(ApiFactory factory, PostgresFixtur
             await AnalysisRunHarness.DecideAsync(db, "b00", SuggestionStatus.Applied, s => s.ToBeDeleted = true);
             await AnalysisRunHarness.DecideAsync(db, "c00", SuggestionStatus.Applied, s => s.NeedsAction = true);
             await AnalysisRunHarness.DecideAsync(db, "c01", SuggestionStatus.Rejected);
+
+            // Two not-analysed messages filed under a user label, and an analysed one the labelled scope no longer covers.
+            var labelled = await db.Messages.Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed)
+                .OrderBy(m => m.Id).Select(m => m.Id).Take(2).ToListAsync(Ct);
+            labelled.Add("a00");
+            await db.Messages.Where(m => labelled.Contains(m.Id))
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "Label_1" }), Ct);
         }
 
         var summary = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
 
-        summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0)));
+        summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0), 2));
     }
 }

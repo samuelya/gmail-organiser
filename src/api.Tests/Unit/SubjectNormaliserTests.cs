@@ -83,4 +83,17 @@ public sealed class SubjectNormaliserTests
         GroupKey.For(m).ShouldBe(expected);
         GroupKey.IsList(expected).ShouldBeFalse();
     }
+
+    [Fact]
+    public void Grouping_key_adds_sorted_user_labels_and_keeps_the_scope_key()
+    {
+        MessageRow Message(params string[] labels) =>
+            new() { FromAddress = "shop@example.com", Subject = "Order 42 shipped", LabelIds = labels };
+
+        GroupKey.ForGrouping(Message("INBOX", "CATEGORY_UPDATES")).ShouldBe("from:shop@example.com|-|order # shipped");
+        GroupKey.ForGrouping(Message("Label_9", "INBOX", "Label_10", "Label_9"))
+            .ShouldBe("from:shop@example.com|-|order # shipped|labels:Label_10,Label_9");
+        GroupKey.ForGrouping(Message("Label_1")).ShouldNotBe(GroupKey.ForGrouping(Message("Label_2")));
+        GroupKey.For(Message("Label_1")).ShouldBe("from:shop@example.com|-|order # shipped");
+    }
 }

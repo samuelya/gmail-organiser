@@ -23,6 +23,35 @@ public sealed class SuggestionOutputParserTests
     }
 
     [Fact]
+    public void Replace_labels_are_trimmed_and_deduplicated()
+    {
+        var raw = $"[{Item("m1", label: "Bills/Water", extra: ",\"replaceLabels\":[\" Water \",\"water\",\"Old/Bills\"]")},{Item("m2", extra: ",\"replaceLabels\":null")}]";
+
+        var (valid, errors, _) = SuggestionOutputParser.Parse(raw, Ids);
+
+        errors.ShouldBeEmpty();
+        valid[0].ReplaceLabels.ShouldBe(["Water", "Old/Bills"]);
+        valid[1].ReplaceLabels.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("\"Water\"")]
+    [InlineData("[3]")]
+    [InlineData("[\"INBOX\"]")]
+    [InlineData("[\"topic/sub\"]")]
+    [InlineData("[\" \"]")]
+    [InlineData("[\"A/B/C/D/E/F\"]")]
+    public void Invalid_replace_labels_are_an_error_for_that_email(string value)
+    {
+        var raw = $"[{Item("m1", extra: $",\"replaceLabels\":{value}")},{Item("m2")}]";
+
+        var (valid, errors, _) = SuggestionOutputParser.Parse(raw, Ids);
+
+        valid.Select(v => v.Id).ShouldBe(["m2"]);
+        errors.ShouldHaveSingleItem().ShouldStartWith("Email 'm1': 'replaceLabels'");
+    }
+
+    [Fact]
     public void Suggestions_object_with_a_top_level_filter_parses()
     {
         var raw = $$$"""{"suggestions":{{{Both}}},"filterCriteria":{"from":null,"listId":"list.example.com","subjectContains":null}}""";
