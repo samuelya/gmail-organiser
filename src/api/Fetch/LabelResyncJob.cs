@@ -16,6 +16,7 @@ public sealed record LabelResyncCursor(string? After, int Done, int Total);
 /// included, in id order and chunks of <see cref="AppSettings.FetchChunkSize"/>, checkpointing the last id after every
 /// chunk. Refreshing is idempotent, so a chunk replayed after a crash only repeats Gmail reads. It never writes Gmail and
 /// leaves <c>fetch_state</c>'s history ID alone: a label change after a row's read is still replayed by the incremental fetch.
+/// The account guard runs after each chunk's Gmail read and before its writes.
 /// </summary>
 public sealed class LabelResyncJob(
     IGmailClient gmail,
@@ -50,7 +51,7 @@ public sealed class LabelResyncJob(
                 await accountClaim.ClaimAsync((await gmail.GetProfileAsync(ct)).EmailAddress, ct);
             }
 
-            await pipeline.RefreshLabelsByIdsAsync(ids, ct);
+            await pipeline.RefreshLabelsByIdsAsync(ids, ctx.EnsureMayWriteAsync, ct);
             var done = cursor.Done + ids.Count;
             cursor = cursor with
             {

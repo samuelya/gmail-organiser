@@ -110,7 +110,15 @@ public sealed partial class MessageFetchPipeline(
     /// marked deleted; ids not stored yet that are in Spam or Trash are skipped, as the mailbox fetch never lists them.
     /// </summary>
     public Task<RefreshResult> RefreshByIdsAsync(IReadOnlyList<string> ids, CancellationToken ct) =>
-        StoreAsync(ids, refresh: true, null, ct);
+        RefreshByIdsAsync(ids, null, ct);
+
+    /// <summary>
+    /// As <see cref="RefreshByIdsAsync(IReadOnlyList{string}, CancellationToken)"/>; <paramref name="beforeWrite"/> runs
+    /// after the Gmail read and before the first write, so a throw leaves the chunk unwritten.
+    /// </summary>
+    public Task<RefreshResult> RefreshByIdsAsync(
+        IReadOnlyList<string> ids, Func<CancellationToken, Task>? beforeWrite, CancellationToken ct) =>
+        StoreAsync(ids, refresh: true, beforeWrite, ct);
 
     /// <summary>
     /// Re-reads only the labels of <paramref name="ids"/> (<c>format=minimal</c>) and writes <c>label_ids</c>, the
