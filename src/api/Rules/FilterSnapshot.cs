@@ -20,7 +20,7 @@ public sealed class FilterSnapshot(
     public const int GmailFilterLimit = 1000;
 
     /// <summary>The <c>pg_advisory_xact_lock</c> key that serialises filter syncs.</summary>
-    private const long SyncLockKey = 0x6D6F_6669_6C74;
+    internal const long SyncLockKey = 0x6D6F_6669_6C74;
 
     /// <summary>
     /// Upserts every filter Gmail lists (<c>last_seen_at = now</c>, a deleted mark cleared) and marks the ones it no
