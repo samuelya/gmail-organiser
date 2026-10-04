@@ -15,6 +15,9 @@ public enum ActionKind
 
     /// <summary>Clean-up: the delete label removed (#179).</summary>
     Unmark,
+
+    /// <summary>Labels created for a new Gmail filter (#211): no messages, only <see cref="ActionBatchRow.CreatedLabelIds"/>.</summary>
+    FilterLabels,
 }
 
 /// <summary>One History entry (<c>action_batches</c>): the header of a set of <see cref="ActionLogRow"/>s undone together.</summary>

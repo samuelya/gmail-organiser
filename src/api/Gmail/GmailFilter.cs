@@ -57,15 +57,15 @@ public sealed record GmailFilterCriteria(
 {
     /// <summary>True when a criterion other than <see cref="ExcludeChats"/> matches mail; Gmail rejects a filter without one.</summary>
     public bool MatchesMail =>
-        !string.IsNullOrEmpty(From) || !string.IsNullOrEmpty(To) || !string.IsNullOrEmpty(Subject)
-        || !string.IsNullOrEmpty(Query) || !string.IsNullOrEmpty(NegatedQuery) || HasAttachment == true || Size is not null;
+        !string.IsNullOrWhiteSpace(From) || !string.IsNullOrWhiteSpace(To) || !string.IsNullOrWhiteSpace(Subject)
+        || !string.IsNullOrWhiteSpace(Query) || !string.IsNullOrWhiteSpace(NegatedQuery) || HasAttachment == true || Size is not null;
 }
 
 /// <summary>What a Gmail filter does to a matching message.</summary>
 /// <param name="Forward">An address the message is forwarded to; read only, the app never creates a forwarding filter.</param>
 public sealed record GmailFilterAction(IReadOnlyList<string> AddLabelIds, IReadOnlyList<string> RemoveLabelIds, string? Forward = null)
 {
-    public bool IsEmpty => AddLabelIds.Count == 0 && RemoveLabelIds.Count == 0 && string.IsNullOrEmpty(Forward);
+    public bool IsEmpty => AddLabelIds.Count == 0 && RemoveLabelIds.Count == 0 && string.IsNullOrWhiteSpace(Forward);
 }
 
 public sealed record GmailFilter(string Id, GmailFilterCriteria Criteria, GmailFilterAction Action)
@@ -95,6 +95,11 @@ public sealed record GmailFilter(string Id, GmailFilterCriteria Criteria, GmailF
         if (action.IsEmpty)
         {
             throw new ArgumentException("A filter needs at least one label to add or remove.", nameof(action));
+        }
+
+        if (action.AddLabelIds.Concat(action.RemoveLabelIds).Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("A filter label id must not be blank.", nameof(action));
         }
     }
 }
