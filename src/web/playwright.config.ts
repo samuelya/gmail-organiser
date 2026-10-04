@@ -15,7 +15,25 @@ export default defineConfig({
     baseURL,
     trace: 'on-first-retry',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      testIgnore: /screenshots\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    // `npm run screenshots`: the README images in docs/images (see docs/ci.md).
+    {
+      name: 'screenshots',
+      testMatch: /screenshots\.spec\.ts/,
+      retries: 0,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 900 },
+        deviceScaleFactor: 1,
+        colorScheme: 'light',
+      },
+    },
+  ],
   webServer: {
     command: `npx ng serve --port ${port} --proxy-config e2e/proxy.conf.mjs`,
     url: baseURL,
