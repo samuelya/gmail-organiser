@@ -52,11 +52,20 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         await WithAsync<ISettingsStore, AppSettings>(s => s.UpdateAsync(x => x with { FetchChunkSize = 1000 }, Ct));
     }
 
+    /// <summary>Leaves fetch_state as migrated, for the later classes in the collection.</summary>
     public async ValueTask DisposeAsync()
     {
         await host.DisposeAsync();
         await using var db = postgres.CreateDbContext();
         await db.Settings.ExecuteDeleteAsync();
+        await db.FetchState.ExecuteUpdateAsync(s => s
+            .SetProperty(r => r.AccountEmail, (string?)null)
+            .SetProperty(r => r.MailboxPhase, MailboxPhase.NotStarted)
+            .SetProperty(r => r.PageToken, (string?)null)
+            .SetProperty(r => r.InboxFetched, 0)
+            .SetProperty(r => r.AllMailFetched, 0)
+            .SetProperty(r => r.LastHistoryId, (string?)null)
+            .SetProperty(r => r.CompletedAt, (DateTimeOffset?)null));
     }
 
     [Fact]
