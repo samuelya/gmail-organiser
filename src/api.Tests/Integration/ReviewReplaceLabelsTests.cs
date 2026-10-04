@@ -4,6 +4,7 @@ using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Review;
 using GmailOrganiser.Tests.Fakes;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -93,7 +94,8 @@ public sealed class ReviewReplaceLabelsTests(ApiFactory factory, PostgresFixture
         missing.StatusCode.ShouldBe(HttpStatusCode.NotFound);
         var unknown = await h.PutAsync($"/api/review/suggestions/{id}", new EditSuggestionRequest(Topic, false, false, ["Old/Invoices", "Synthetic/Nope"]));
         unknown.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
-        (await unknown.Content.ReadAsStringAsync(Ct)).ShouldContain("replaceLabels");
+        var error = ReplaceLabelsError(await unknown.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct));
+        (error.Contains("'Synthetic/Nope'"), error.Contains(OldLabel)).ShouldBe((true, false));
 
         var cleared = await EditAsync(id, new EditSuggestionRequest(Topic, false, false, []));
         (cleared.ReplaceLabels.Count, cleared.LabelChange, cleared.Edited).ShouldBe((0, LabelChange.Add, true));
@@ -173,7 +175,7 @@ public sealed class ReviewReplaceLabelsTests(ApiFactory factory, PostgresFixture
             "/api/review/groups/approve",
             new GroupDecisionRequest(AnalysisRunHarness.Billing, group.GroupKey, group.TopicLabel, false, false, ["Synthetic/Nope"]));
         unknown.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
-        (await unknown.Content.ReadAsStringAsync(Ct)).ShouldContain("replaceLabels");
+        ReplaceLabelsError(await unknown.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct)).ShouldContain("'Synthetic/Nope'");
 
         var response = await h.PostAsync(
             "/api/review/groups/approve", new GroupDecisionRequest(AnalysisRunHarness.Billing, group.GroupKey, group.TopicLabel, false, false, []));
@@ -210,4 +212,8 @@ public sealed class ReviewReplaceLabelsTests(ApiFactory factory, PostgresFixture
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
         return (await response.Content.ReadFromJsonAsync<ReviewSenderDetailDto>(Ct)).ShouldNotBeNull();
     }
+
+    /// <summary>The single <c>replaceLabels</c> field error, which names the unknown labels.</summary>
+    private static string ReplaceLabelsError(HttpValidationProblemDetails? problem) =>
+        problem.ShouldNotBeNull().Errors["replaceLabels"].ShouldHaveSingleItem();
 }

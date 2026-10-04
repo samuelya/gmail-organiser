@@ -60,13 +60,15 @@ public sealed class ReviewService(
     /// Changes the outcome, marks the suggestion edited and approves it; allowed in any status but applied.
     /// <c>IsNewLabel</c> follows the Gmail label list; without a Gmail connection a changed label counts as new.
     /// <paramref name="replaceLabels"/> (null: unchanged) are current labels of the message, by name; one it does not
-    /// carry is <see cref="ReviewResult.InvalidReplaceLabels"/>, no label list <see cref="ReviewResult.LabelsUnavailable"/>.
+    /// carry is <see cref="ReviewResult.InvalidReplaceLabels"/> with the names it does not carry in <c>Unknown</c>,
+    /// no label list <see cref="ReviewResult.LabelsUnavailable"/>.
     /// </summary>
-    public async Task<(ReviewResult Result, SuggestionDto? Suggestion)> EditAsync(
+    public async Task<(ReviewResult Result, SuggestionDto? Suggestion, IReadOnlyList<string> Unknown)> EditAsync(
         Guid id, string topicLabel, bool needsAction, bool toBeDeleted, IReadOnlyList<string>? replaceLabels, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(topicLabel, ct);
-        return await ChangeOneAsync(id, _ => true, (s, m, personal) =>
+        IReadOnlyList<string> unknown = [];
+        var (result, suggestion) = await ChangeOneAsync(id, _ => true, (s, m, personal) =>
         {
             IReadOnlyList<(string Id, string Name)>? replaced = null;
             if (replaceLabels is { Count: > 0 })
@@ -77,7 +79,8 @@ public sealed class ReviewService(
                 }
 
                 var current = personal.NamesOf(m).Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                if (!replaceLabels.All(l => current.Contains(l.Trim())))
+                unknown = Unknown(replaceLabels, current);
+                if (unknown.Count > 0)
                 {
                     return ReviewResult.InvalidReplaceLabels;
                 }
@@ -97,14 +100,16 @@ public sealed class ReviewService(
             s.Edited = true;
             return ReviewResult.Ok;
         }, DecisionOutcome.Approved, ct);
+        return (result, suggestion, unknown);
     }
 
     /// <summary>
     /// Approves the pending members with the card's outcome (<see cref="DecideGroupAsync"/>). With
     /// <see cref="GroupOutcome.ReplaceLabels"/>: a name no pending member carries is
-    /// <see cref="ReviewResult.InvalidReplaceLabels"/>, no label list <see cref="ReviewResult.LabelsUnavailable"/>.
+    /// <see cref="ReviewResult.InvalidReplaceLabels"/> with those names in <c>Unknown</c>, no label list
+    /// <see cref="ReviewResult.LabelsUnavailable"/>.
     /// </summary>
-    public async Task<(ReviewResult Result, GroupDecisionResponse? Response)> ApproveGroupAsync(
+    public async Task<(ReviewResult Result, GroupDecisionResponse? Response, IReadOnlyList<string> Unknown)> ApproveGroupAsync(
         string senderAddress, string groupKey, GroupOutcome shown, CancellationToken ct)
     {
         IReadOnlyDictionary<string, string>? names = null;
@@ -113,7 +118,7 @@ public sealed class ReviewService(
             var personal = await PersonalLabelsAsync(ct);
             if (personal.IsUnavailable)
             {
-                return (ReviewResult.LabelsUnavailable, null);
+                return (ReviewResult.LabelsUnavailable, null, []);
             }
 
             var labelIds = await db.Suggestions.AsNoTracking()
@@ -125,16 +130,21 @@ public sealed class ReviewService(
                 .OfType<string>()
                 .Select(n => n.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (labelIds.Count > 0 && !replace.All(l => carried.Contains(l.Trim())))
+            var unknown = labelIds.Count > 0 ? Unknown(replace, carried) : [];
+            if (unknown.Count > 0)
             {
-                return (ReviewResult.InvalidReplaceLabels, null);
+                return (ReviewResult.InvalidReplaceLabels, null, unknown);
             }
 
             names = personal.Names;
         }
 
-        return (ReviewResult.Ok, await DecideGroupAsync(senderAddress, groupKey, DecisionOutcome.Approved, shown, names, ct));
+        return (ReviewResult.Ok, await DecideGroupAsync(senderAddress, groupKey, DecisionOutcome.Approved, shown, names, ct), []);
     }
+
+    /// <summary>The trimmed names of <paramref name="replaceLabels"/> not in <paramref name="carried"/>, distinct, in request order.</summary>
+    private static IReadOnlyList<string> Unknown(IReadOnlyList<string> replaceLabels, HashSet<string> carried) =>
+        [.. replaceLabels.Select(l => l.Trim()).Where(l => !carried.Contains(l)).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// Rejects every pending member of the sender's group, or approves those whose outcome is <paramref name="shown"/>
