@@ -396,6 +396,35 @@ public sealed class ApplyActionsJobTests(ApiFactory factory, PostgresFixture pos
         log.LabelsAdded.ShouldNotContain(DeleteLabel);
     }
 
+    [Fact]
+    public async Task A_domain_allowlisted_between_chunks_never_gets_the_delete_label()
+    {
+        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 1;
+        await SeedAsync(("a00", "Example", false, true, SuggestionStatus.Approved), ("a01", "Example", false, true, SuggestionStatus.Approved));
+        string? later = null;
+        h.Gmail.BeforeBatchModify = async (call, ids) =>
+        {
+            if (call == 1)
+            {
+                later = ids[0] == "a00" ? "a01" : "a00";
+                await using var scope = h.Services.CreateAsyncScope();
+                await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                    .UpdateAsync(s => s with { Protection = s.Protection with { AllowlistedDomains = ["example.com"] } }, Ct);
+            }
+        };
+        var batch = await ApplyAsync(new ApplyRequest());
+
+        await h.RunNextAsync();
+
+        var deleteId = (await h.Gmail.Inner.ListLabelsAsync(Ct)).Single(l => l.Name == DeleteLabel).Id;
+        Labels(later!).ShouldNotContain(deleteId);
+        await using var db = postgres.CreateDbContext();
+        var log = await db.ActionLog.SingleAsync(l => l.BatchId == batch.Id && l.MessageId == later, Ct);
+        log.Note.ShouldBe("protected: allowlisted domain");
+        log.LabelsAdded.ShouldNotContain(DeleteLabel);
+        (await JobAsync(batch)).Status.ShouldBe(JobStatus.Completed);
+    }
+
     private static Task Stop(CancellationTokenSource stop)
     {
         stop.Cancel();
