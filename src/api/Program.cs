@@ -78,6 +78,7 @@ app.MapClaudeReviewEndpoints();
 app.MapUnsubscribeEndpoints();
 app.MapRulesEndpoints();
 app.MapLabelPlanEndpoints();
+app.MapAppsScriptEndpoints();
 app.MapMcpServer();
 app.MapHub<JobsHub>(JobsHub.Path);
 
