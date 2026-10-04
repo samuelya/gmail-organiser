@@ -75,6 +75,7 @@ public sealed record AnalysisRunDto(
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed
 /// messages the labelled scope still covers.
 /// </summary>
+/// <param name="Alternatives">Suggestions with a compare-run alternative waiting to be accepted or discarded (#249).</param>
 public sealed record AnalysisSummaryDto(
     int NotAnalysed,
     int Analysed,
@@ -86,4 +87,5 @@ public sealed record AnalysisSummaryDto(
     long TotalLlmCalls,
     long TotalMessagesCovered,
     double SavedPercent,
-    int LabelledNotAnalysed);
+    int LabelledNotAnalysed,
+    int Alternatives);

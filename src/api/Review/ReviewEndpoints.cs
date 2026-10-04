@@ -37,12 +37,17 @@ public static class ReviewEndpoints
         group.MapPost("/bulk-approve", BulkApproveAsync);
         group.MapPost("/analyse-individually", AnalyseIndividuallyAsync).RequireAccountMatch();
         group.MapApplyEndpoints();
+        group.MapAlternativeEndpoints();
         return endpoints;
     }
 
-    /// <summary>Senders with suggestions in <c>status</c> (default pending), most of them first; <c>search</c> as on the senders page.</summary>
+    /// <summary>
+    /// Senders with suggestions in <c>status</c> (default pending), most of them first; <c>search</c> as on the senders
+    /// page; <c>hasAlternative=true</c> counts only suggestions with a compare-run alternative.
+    /// </summary>
     private static async Task<Results<Ok<PagedDto<ReviewSenderDto>>, ValidationProblem>> ListSendersAsync(
-        ReviewQuery query, CancellationToken ct, string? search = null, int? page = null, int? pageSize = null, string? status = null)
+        ReviewQuery query, CancellationToken ct, string? search = null, int? page = null, int? pageSize = null, string? status = null,
+        bool hasAlternative = false)
     {
         var paging = SenderQuery.Parse(search, page, pageSize, null, null, out var errors);
         var parsed = ReviewQuery.ParseStatus(status);
@@ -53,12 +58,16 @@ public static class ReviewEndpoints
 
         return paging is null || parsed is not { } s
             ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await query.ListAsync(s, paging.Search, paging.Page, paging.PageSize, ct));
+            : TypedResults.Ok(await query.ListAsync(s, paging.Search, paging.Page, paging.PageSize, ct, hasAlternative));
     }
 
-    /// <summary>One page of the sender's groups in <c>status</c>, largest first; 404 when the sender has no suggestions.</summary>
+    /// <summary>
+    /// One page of the sender's groups in <c>status</c>, largest first (<c>hasAlternative=true</c>: only suggestions with
+    /// a compare-run alternative); 404 when the sender has no such suggestions.
+    /// </summary>
     private static async Task<Results<Ok<ReviewSenderDetailDto>, NotFound, ValidationProblem>> GetSenderAsync(
-        string address, ReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null)
+        string address, ReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null,
+        bool hasAlternative = false)
     {
         var errors = new Dictionary<string, string[]>();
         if (page is < 1 or > SenderQuery.MaxPage)
@@ -83,7 +92,7 @@ public static class ReviewEndpoints
         }
 
         return Normalise(address) is { } a
-            && await query.DetailAsync(a, parsed!.Value, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct) is { } detail
+            && await query.DetailAsync(a, parsed!.Value, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct, hasAlternative) is { } detail
             ? TypedResults.Ok(detail)
             : TypedResults.NotFound();
     }

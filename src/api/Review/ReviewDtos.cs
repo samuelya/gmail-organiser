@@ -19,6 +19,7 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="SuggestedForClaude">Any member, listed or not, is worth a Claude review (<see cref="ReviewQuery.IsSuggestedForClaude"/>).</param>
 /// <param name="DocumentTypeLabel">The shown outcome's document-type label; null when it has none.</param>
 /// <param name="DocumentTypeIsNew">A listed member with the shown document-type label would create it in Gmail.</param>
+/// <param name="Alternative">The listed members' compare-run alternative (<see cref="SuggestionAlternativeDto.Mixed"/> when they disagree); null when none has one.</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -40,7 +41,8 @@ public sealed record ReviewGroupDto(
     ExternalReviewDto? ClaudeReview = null,
     bool SuggestedForClaude = false,
     string? DocumentTypeLabel = null,
-    bool DocumentTypeIsNew = false);
+    bool DocumentTypeIsNew = false,
+    SuggestionAlternativeDto? Alternative = null);
 
 /// <param name="ReplaceLabels">Current labels apply removes: the replaced labels the message still carries, never the topic label.</param>
 /// <param name="CurrentLabels">The message's personal (user) label names; empty when Gmail is not reachable.</param>
@@ -48,6 +50,7 @@ public sealed record ReviewGroupDto(
 /// <param name="SuggestedForClaude">Worth a Claude review by the settings (<see cref="ReviewQuery.IsSuggestedForClaude"/>); a UI hint only.</param>
 /// <param name="DocumentTypeLabel">The second label apply adds next to the topic label; null when none.</param>
 /// <param name="DocumentTypeIsNew">Gmail did not have <paramref name="DocumentTypeLabel"/> when it was suggested or edited.</param>
+/// <param name="Alternative">The compare run's answer stored next to it (#248); null when none.</param>
 public sealed record SuggestionDto(
     Guid Id,
     string MessageId,
@@ -71,7 +74,34 @@ public sealed record SuggestionDto(
     ExternalReviewDto? ClaudeReview = null,
     bool SuggestedForClaude = false,
     string? DocumentTypeLabel = null,
-    bool DocumentTypeIsNew = false);
+    bool DocumentTypeIsNew = false,
+    SuggestionAlternativeDto? Alternative = null);
+
+/// <summary>A compare run's alternative to a suggestion, shown next to it; nothing changes until it is accepted.</summary>
+/// <param name="ReplaceLabels">As on <see cref="SuggestionDto.ReplaceLabels"/>, for the alternative's topic label.</param>
+/// <param name="Mixed">Group only: the listed members' alternatives disagree; the fields show the most common one.</param>
+/// <param name="Count">Listed members with an alternative (1 for a suggestion).</param>
+public sealed record SuggestionAlternativeDto(
+    string TopicLabel,
+    string? DocumentTypeLabel,
+    IReadOnlyList<string> ReplaceLabels,
+    LabelChange LabelChange,
+    bool NeedsAction,
+    bool ToBeDeleted,
+    bool UnsubscribeSuggested,
+    double Confidence,
+    string Reason,
+    string? PromptVersion,
+    string? Model,
+    DateTimeOffset CreatedAt,
+    bool Mixed = false,
+    int Count = 1);
+
+/// <summary>Suggestions by id and every suggestion of the named groups (any status); at least one of the two.</summary>
+public sealed record AlternativeDecisionRequest(Guid[]? SuggestionIds, GroupRef[]? Groups);
+
+/// <param name="Skipped">Suggestions with an alternative left alone: part of an active apply batch.</param>
+public sealed record AlternativeDecisionResponse(int Accepted, int Discarded, int Skipped);
 
 public sealed record LabelDto(string Id, string Name, string Type);
 

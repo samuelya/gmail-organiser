@@ -13,7 +13,8 @@ public sealed record ActionPlan(IReadOnlyList<string> Add, IReadOnlyList<string>
 /// the action label and staying in the inbox when it needs action, plus the delete label when deletable; everything
 /// else leaves the inbox.
 /// A protected message (§6.4) never gets the delete label, whichever way it was asked for. The replaced labels
-/// (labelled phase) are removed when the message carries them: user labels only, never one the plan adds. Pure.
+/// (labelled phase, or an applied outcome an accepted alternative replaces) are removed when the message carries them:
+/// user labels only, never one the plan adds. Pure.
 /// </summary>
 public static class ActionPlanner
 {
@@ -26,8 +27,8 @@ public static class ActionPlanner
     /// <param name="labelIds">Label path to Gmail label id (case-insensitive): the topic label, the document-type label
     /// when <see cref="AppliesDocumentType"/> (otherwise it is skipped), the action label when the suggestion needs
     /// action and the delete label when it is deletable and not protected.</param>
-    /// <param name="removable">Ids of the personal labels Gmail has now; a replaced label not in it (deleted, or now
-    /// the action or delete label) is skipped. Null removes no replaced label.</param>
+    /// <param name="removable">Ids of the user labels Gmail has now (the action and delete label included: an accepted
+    /// alternative replaces them); a replaced label not in it (deleted) is skipped. Null removes no replaced label.</param>
     /// <exception cref="KeyNotFoundException">A label the plan needs is missing from <paramref name="labelIds"/>.</exception>
     public static ActionPlan Plan(
         SuggestionRow suggestion,

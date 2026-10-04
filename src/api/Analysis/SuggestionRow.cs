@@ -88,7 +88,15 @@ public sealed class SuggestionRow
 
     /// <summary>The replaced labels as (id, name): the current Gmail name when <paramref name="names"/> knows it, else the stored one.</summary>
     public IReadOnlyList<(string Id, string Name)> Replaced(IReadOnlyDictionary<string, string>? names) =>
-        [.. ReplaceLabelIds.Select((id, i) => (id, names?.GetValueOrDefault(id) ?? (i < ReplaceLabels.Length ? ReplaceLabels[i] : id)))];
+        Replaced(ReplaceLabelIds, ReplaceLabels, names);
+
+    /// <summary>
+    /// Pairs <paramref name="ids"/> with their names: the current Gmail name when <paramref name="names"/> knows it, else
+    /// the index-aligned <paramref name="stored"/> one, else the id.
+    /// </summary>
+    public static IReadOnlyList<(string Id, string Name)> Replaced(
+        string[] ids, string[] stored, IReadOnlyDictionary<string, string>? names) =>
+        [.. ids.Select((id, i) => (id, names?.GetValueOrDefault(id) ?? (i < stored.Length ? stored[i] : id)))];
 
     /// <summary>
     /// Sets <see cref="Status"/> and mirrors it onto <paramref name="message"/>; the only writer of both.

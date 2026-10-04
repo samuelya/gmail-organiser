@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 namespace GmailOrganiser.Review;
 
 /// <summary>The review sender list and one sender's suggestions grouped by <see cref="SuggestionRow.GroupKey"/>.</summary>
-public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, LabelCatalog labelCatalog)
+public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, LabelCatalog labelCatalog)
 {
     /// <summary>Most members listed for one group.</summary>
     public const int MaxMembers = 500;
@@ -33,12 +33,13 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
 
     /// <summary>
     /// Senders with at least one suggestion in <paramref name="status"/>, with their counts per status, the most
-    /// suggestions in that status first (pending by default), then by address.
+    /// suggestions in that status first (pending by default), then by address. With <paramref name="hasAlternative"/>
+    /// only suggestions with a compare-run alternative count.
     /// </summary>
     public async Task<PagedDto<ReviewSenderDto>> ListAsync(
-        SuggestionStatus status, string? search, int page, int pageSize, CancellationToken ct)
+        SuggestionStatus status, string? search, int page, int pageSize, CancellationToken ct, bool hasAlternative = false)
     {
-        var suggestions = db.Suggestions.AsNoTracking();
+        var suggestions = Suggestions(hasAlternative);
         if (search is not null)
         {
             var matching = SenderQuery.Filter(db.Senders.AsNoTracking(), search).Select(x => x.Address);
@@ -75,10 +76,13 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
     /// One page of the sender's suggestions in <paramref name="status"/>, grouped (a message analysed alone is its own
     /// group), largest group first; null when the sender has no suggestion at all. Groups are counted and paged in SQL;
     /// members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
+    /// With <paramref name="hasAlternative"/> the counts take only suggestions with a compare-run alternative, and only
+    /// groups with such a member are listed, whole, so a group card and its approve/reject act on the same members.
     /// </summary>
-    public async Task<ReviewSenderDetailDto?> DetailAsync(string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct)
+    public async Task<ReviewSenderDetailDto?> DetailAsync(
+        string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct, bool hasAlternative = false)
     {
-        var counts = await db.Suggestions.AsNoTracking()
+        var counts = await Suggestions(hasAlternative)
             .Where(s => s.SenderAddress == address)
             .GroupBy(s => s.SenderAddress)
             .Select(g => new StatusCounts
@@ -96,7 +100,7 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         }
 
         var sender = await db.Senders.AsNoTracking().SingleOrDefaultAsync(s => s.Address == address, ct);
-        var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && s.Status == status);
+        var inStatus = InStatus(address, status, hasAlternative);
         var stats = inStatus
             .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
             .Select(g => new GroupStats
@@ -143,12 +147,15 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         }
 
         var claude = await ClaudeLookupAsync(address, loaded, ct);
+        var alternatives = await AlternativesAsync(loaded.SelectMany(g => g.Members).Select(x => x.S.Id), ct);
+        var alternativeCounts = await AlternativeCountsAsync(inStatus, keys, ct);
         var allowlist = await AllowlistLoader.LoadAsync(db, claude.Settings, ct);
         var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
         var labelNames = personal.IsUnavailable ? null : personal.Names;
         foreach (var (g, members) in loaded)
         {
-            groups.Add(ToGroup(g, outcomes[g.Key], members, allowlist, claude, labelNames));
+            groups.Add(ToGroup(
+                g, outcomes[g.Key], members, allowlist, claude, labelNames, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
         }
 
         return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
@@ -195,9 +202,16 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
             || (settings.ClaudeSuggestNewLabels && isNewLabel));
 
     /// <param name="labelNames">Personal label names by id (<see cref="PersonalLabels.Names"/>) for the current labels; null lists none.</param>
+    /// <param name="appLabelIds">The action and delete label ids (<see cref="PersonalLabels.AppLabelIds"/>): replaced too
+    /// when an accepted alternative replaces an applied outcome.</param>
     public static SuggestionDto ToDto(
-        SuggestionRow s, MessageRow m, Allowlist allowlist, ProtectionSettings rules, IReadOnlyDictionary<string, string>? labelNames = null) =>
-        ToDto(s, m, allowlist, rules, labelNames, null, false);
+        SuggestionRow s,
+        MessageRow m,
+        Allowlist allowlist,
+        ProtectionSettings rules,
+        IReadOnlyDictionary<string, string>? labelNames = null,
+        IReadOnlyList<string>? appLabelIds = null) =>
+        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds);
 
     public static SuggestionDto ToDto(
         SuggestionRow s,
@@ -206,10 +220,12 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         ProtectionSettings rules,
         IReadOnlyDictionary<string, string>? labelNames,
         ExternalReviewDto? claudeReview,
-        bool suggestedForClaude)
+        bool suggestedForClaude,
+        SuggestionAlternativeRow? alternative = null,
+        IReadOnlyList<string>? appLabelIds = null)
     {
         var current = CurrentLabels(m, labelNames);
-        var replaced = Replaced(s, m, labelNames);
+        var replaced = Replaced(s.Replaced(labelNames), s.TopicLabel, m, labelNames, appLabelIds);
         return new SuggestionDto(
         s.Id,
         s.MessageId,
@@ -233,18 +249,25 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         claudeReview,
         suggestedForClaude,
         s.DocumentTypeLabel,
-        s.DocumentTypeIsNew);
+        s.DocumentTypeIsNew,
+        alternative is null ? null : ToDto(alternative, m, current, labelNames));
     }
 
     /// <summary>
     /// The names of the replaced labels apply would remove now: those the message still carries, never the topic label,
-    /// and (when the label list is known) only personal labels Gmail still has. Distinct and ordinal-sorted.
+    /// and (when the label list is known) only personal labels or <paramref name="appLabelIds"/> Gmail still has.
+    /// Distinct and ordinal-sorted.
     /// </summary>
-    private static string[] Replaced(SuggestionRow s, MessageRow m, IReadOnlyDictionary<string, string>? labelNames) =>
-        [.. s.Replaced(labelNames)
+    private static string[] Replaced(
+        IReadOnlyList<(string Id, string Name)> stored,
+        string topicLabel,
+        MessageRow m,
+        IReadOnlyDictionary<string, string>? labelNames,
+        IReadOnlyList<string>? appLabelIds = null) =>
+        [.. stored
             .Where(l => m.LabelIds.Contains(l.Id, StringComparer.Ordinal)
-                && (labelNames is null || labelNames.ContainsKey(l.Id))
-                && !string.Equals(l.Name.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase))
+                && (labelNames is null || labelNames.ContainsKey(l.Id) || appLabelIds?.Contains(l.Id, StringComparer.Ordinal) == true)
+                && !string.Equals(l.Name.Trim(), topicLabel.Trim(), StringComparison.OrdinalIgnoreCase))
             .Select(l => l.Name)
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)];
@@ -300,7 +323,10 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         IReadOnlyList<(SuggestionRow S, MessageRow M)> members,
         Allowlist allowlist,
         ClaudeLookup claude,
-        IReadOnlyDictionary<string, string>? labelNames)
+        IReadOnlyDictionary<string, string>? labelNames,
+        IReadOnlyList<string> appLabelIds,
+        IReadOnlyDictionary<Guid, SuggestionAlternativeRow> alternatives,
+        int alternativeCount)
     {
         var all = outcomes.ToList();
         var shared = Shown(all);
@@ -324,12 +350,9 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
         var settings = claude.Settings;
         var dtos = members.Select(x => ToDto(
                 x.S, x.M, allowlist, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
-                IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel)))
+                IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel), alternatives.GetValueOrDefault(x.S.Id), appLabelIds))
             .ToList();
-        var changes = dtos.Select(d => d.LabelChange).Distinct().ToList();
-        var change = changes.Count == 1 ? changes[0]
-            : changes.Any(c => c is LabelChange.Move or LabelChange.Relabel) ? LabelChange.Relabel
-            : LabelChange.Add;
+        var change = Combined(dtos.Select(d => d.LabelChange));
         return new ReviewGroupDto(
             key,
             display,
@@ -352,7 +375,8 @@ public sealed class ReviewQuery(AppDbContext db, ISettingsStore settingsStore, L
             IsSuggestedForClaude(settings, stats.ConfidenceMin, stats.NewLabels > 0),
             shared.DocumentTypeLabel,
             shared.DocumentTypeLabel is not null
-                && members.Any(x => x.S.DocumentTypeIsNew && x.S.DocumentTypeLabel == shared.DocumentTypeLabel));
+                && members.Any(x => x.S.DocumentTypeIsNew && x.S.DocumentTypeLabel == shared.DocumentTypeLabel),
+            GroupAlternative(dtos, alternativeCount));
     }
 
     /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags and type.</summary>

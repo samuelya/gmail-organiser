@@ -78,7 +78,8 @@ public sealed partial class ReviewService(
     /// <see cref="ReviewResult.DocumentTypeIsTopic"/>.
     /// <paramref name="replaceLabels"/> (null: unchanged) are current labels of the message, by name; one it does not
     /// carry is <see cref="ReviewResult.InvalidReplaceLabels"/> with the names it does not carry in <c>Unknown</c>,
-    /// no label list <see cref="ReviewResult.LabelsUnavailable"/>.
+    /// no label list <see cref="ReviewResult.LabelsUnavailable"/>. Replaced action and delete labels stay
+    /// (<see cref="ReplacedLabels"/>).
     /// </summary>
     public async Task<(ReviewResult Result, SuggestionDto? Suggestion, IReadOnlyList<string> Unknown)> EditAsync(
         Guid id, string topicLabel, bool needsAction, bool toBeDeleted, IReadOnlyList<string>? replaceLabels,
@@ -86,6 +87,7 @@ public sealed partial class ReviewService(
     {
         var isNewLabel = await IsNewLabelAsync(topicLabel, ct);
         var (type, typeIsNew) = await DocumentTypeEdit.ResolveAsync(labels, documentType, ct);
+        var settings = await settingsStore.GetAsync(ct);
         IReadOnlyList<string> unknown = [];
         var (result, suggestion) = await ChangeOneAsync(id, _ => true, (s, m, personal) =>
         {
@@ -102,8 +104,9 @@ public sealed partial class ReviewService(
                     return ReviewResult.LabelsUnavailable;
                 }
 
-                var current = personal.NamesOf(m).Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                unknown = Unknown(replaceLabels, current);
+                var current = personal.NamesOf(m).Concat(ReplacedLabels.AppOf(s, settings).Select(l => l.Name))
+                    .Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                unknown = ReplacedLabels.Unknown(replaceLabels, current);
                 if (unknown.Count > 0)
                 {
                     return ReviewResult.InvalidReplaceLabels;
@@ -119,7 +122,7 @@ public sealed partial class ReviewService(
             DocumentTypeEdit.Apply(s, type, typeIsNew);
             if (replaceLabels is not null)
             {
-                s.SetReplaced(replaced ?? []);
+                s.SetReplaced([.. (replaced ?? []).Concat(ReplacedLabels.AppOf(s, settings)).DistinctBy(l => l.Id, StringComparer.Ordinal)]);
             }
 
             s.Edited = true;
@@ -140,22 +143,24 @@ public sealed partial class ReviewService(
         IReadOnlyDictionary<string, string>? names = null;
         if (shown.ReplaceLabels is { Count: > 0 } replace)
         {
-            var personal = await PersonalLabelsAsync(ct);
+            var settings = await settingsStore.GetAsync(ct);
+            var personal = await PersonalLabels.LoadAsync(labels, settings, ct);
             if (personal.IsUnavailable)
             {
                 return (ReviewResult.LabelsUnavailable, null, []);
             }
 
-            var labelIds = await db.Suggestions.AsNoTracking()
+            var members = await db.Suggestions.AsNoTracking()
                 .Where(s => s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending)
-                .Join(db.Messages.AsNoTracking(), s => s.MessageId, m => m.Id, (_, m) => m.LabelIds)
+                .Join(db.Messages.AsNoTracking(), s => s.MessageId, m => m.Id, (s, m) => new { S = s, m.LabelIds })
                 .ToListAsync(ct);
-            var carried = labelIds.SelectMany(ids => ids)
+            var carried = members.SelectMany(x => x.LabelIds)
                 .Select(id => personal.IsPersonal(id) ? personal.Names.GetValueOrDefault(id) : null)
                 .OfType<string>()
+                .Concat(members.SelectMany(x => ReplacedLabels.AppOf(x.S, settings)).Select(l => l.Name))
                 .Select(n => n.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var unknown = labelIds.Count > 0 ? Unknown(replace, carried) : [];
+            var unknown = members.Count > 0 ? ReplacedLabels.Unknown(replace, carried) : [];
             if (unknown.Count > 0)
             {
                 return (ReviewResult.InvalidReplaceLabels, null, unknown);
@@ -166,10 +171,6 @@ public sealed partial class ReviewService(
 
         return (ReviewResult.Ok, await DecideGroupAsync(senderAddress, groupKey, DecisionOutcome.Approved, shown, names, ct), []);
     }
-
-    /// <summary>The trimmed names of <paramref name="replaceLabels"/> not in <paramref name="carried"/>, distinct, in request order.</summary>
-    private static IReadOnlyList<string> Unknown(IReadOnlyList<string> replaceLabels, HashSet<string> carried) =>
-        [.. replaceLabels.Select(l => l.Trim()).Where(l => !carried.Contains(l)).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// Rejects every pending member of the sender's group, or approves those whose outcome is <paramref name="shown"/>
@@ -189,7 +190,7 @@ public sealed partial class ReviewService(
             ArgumentNullException.ThrowIfNull(shown);
         }
 
-        var (allowlist, rules) = await ProtectionAsync([senderAddress], ct);
+        var (allowlist, rules, settings) = await ProtectionAsync([senderAddress], ct);
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
@@ -205,7 +206,7 @@ public sealed partial class ReviewService(
                 {
                     if (outcome == DecisionOutcome.Approved)
                     {
-                        KeepReplaced(s, shown!.ReplaceLabels, names);
+                        ReplacedLabels.Keep(s, shown!.ReplaceLabels, names, settings);
                     }
 
                     return true;
@@ -345,7 +346,7 @@ public sealed partial class ReviewService(
     {
         var isNewLabel = await IsNewLabelAsync(outcome.TopicLabel, ct);
         var (type, typeIsNew) = await DocumentTypeEdit.ResolveAsync(labels, outcome.DocumentType, ct);
-        var (allowlist, rules) = await ProtectionAsync(senders, ct);
+        var (allowlist, rules, settings) = await ProtectionAsync(senders, ct);
         var names = outcome.ReplaceLabels is { Count: > 0 } ? (await PersonalLabelsAsync(ct)).Names : null;
         return (s, m) =>
         {
@@ -370,40 +371,22 @@ public sealed partial class ReviewService(
                 DocumentTypeEdit.Apply(s, DocumentTypeChange.Clear, null);
             }
 
-            KeepReplaced(s, outcome.ReplaceLabels, names);
+            ReplacedLabels.Keep(s, outcome.ReplaceLabels, names, settings);
             s.Edited = true;
             return true;
         };
-    }
-
-    /// <summary>
-    /// Keeps the suggestion's own replaced labels whose name (current, else as stored) is in <paramref name="requested"/>;
-    /// never adds one. Marks the suggestion edited when that drops any. Null leaves them.
-    /// </summary>
-    private static void KeepReplaced(SuggestionRow s, IReadOnlyList<string>? requested, IReadOnlyDictionary<string, string>? names)
-    {
-        if (requested is null)
-        {
-            return;
-        }
-
-        var wanted = requested.Select(l => l.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (s.SetReplaced([.. s.Replaced(names).Where(l => wanted.Contains(l.Name.Trim()))]))
-        {
-            s.Edited = true;
-        }
     }
 
     /// <summary>The personal labels by id; <see cref="PersonalLabels.None"/> (no names) when Gmail is not reachable.</summary>
     private async Task<PersonalLabels> PersonalLabelsAsync(CancellationToken ct) =>
         await PersonalLabels.LoadAsync(labels, await settingsStore.GetAsync(ct), ct);
 
-    /// <summary>The allowlist for <paramref name="senders"/> and the protection rules, from one settings read.</summary>
-    private async Task<(Allowlist Allowlist, ProtectionSettings Rules)> ProtectionAsync(
+    /// <summary>The allowlist for <paramref name="senders"/>, the protection rules and the settings, from one settings read.</summary>
+    private async Task<(Allowlist Allowlist, ProtectionSettings Rules, AppSettings Settings)> ProtectionAsync(
         IReadOnlyCollection<string> senders, CancellationToken ct)
     {
         var settings = await settingsStore.GetAsync(ct);
-        return (await AllowlistLoader.LoadAsync(db, settings, senders, ct), settings.Protection);
+        return (await AllowlistLoader.LoadAsync(db, settings, senders, ct), settings.Protection, settings);
     }
 
     private static SuggestionStatus ToStatus(DecisionOutcome outcome) =>
@@ -432,7 +415,7 @@ public sealed partial class ReviewService(
         var rules = settings.Protection;
         if (suggestion.Status == SuggestionStatus.Applied)
         {
-            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names));
+            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds));
         }
 
         if (needsChange(suggestion))
@@ -451,7 +434,7 @@ public sealed partial class ReviewService(
 
         await tx.CommitAsync(ct);
         decisions.Committed();
-        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names));
+        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds));
     }
 
     /// <summary>

@@ -262,7 +262,8 @@ public sealed class AnalysisRunService(
 
     /// <summary>
     /// Deletes the pending and rejected suggestions of the given messages (or of every message of a sender) and sets
-    /// those messages back to not analysed; approved and applied ones are kept.
+    /// those messages back to not analysed; approved and applied ones are kept. A deleted suggestion's compare-run
+    /// alternative goes with it (cascade), unseen.
     /// </summary>
     public async Task<(ReanalyseResult Result, int Reset)> ReanalyseAsync(string[]? messageIds, string? senderAddress, CancellationToken ct)
     {
@@ -320,6 +321,7 @@ public sealed class AnalysisRunService(
             .FirstOrDefaultAsync(ct);
         var llmCalls = totals?.LlmCalls ?? 0;
         var covered = totals?.Covered ?? 0;
+        var alternatives = await db.SuggestionAlternatives.CountAsync(ct);
 
         return new AnalysisSummaryDto(
             counts.GetValueOrDefault(AnalysisStatus.NotAnalysed),
@@ -332,7 +334,8 @@ public sealed class AnalysisRunService(
             llmCalls,
             covered,
             SavedPercent(llmCalls, covered),
-            labelled);
+            labelled,
+            alternatives);
     }
 
     /// <summary><c>1 − llmCalls / max(1, covered)</c>; negative when retries cost more calls than emails covered.</summary>
