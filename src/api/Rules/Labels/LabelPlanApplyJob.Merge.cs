@@ -8,18 +8,15 @@ namespace GmailOrganiser.Rules.Labels;
 
 public sealed partial class LabelPlanApplyJob
 {
-    public static string DescribeMerge(LabelPlanItem item)
-    {
-        ArgumentNullException.ThrowIfNull(item);
-        return $"Merged label {item.LabelName} into {item.TargetLabelName}";
-    }
+    public static string DescribeMerge(string source, string target) => $"Merged label {source} into {target}";
 
     /// <summary>
     /// Moves every message of the source label to the target: a pending chunk is re-sent first, then the label's message
-    /// ids are listed in full (nothing changes while paging) and moved in chunks, each logged in the item's
-    /// <see cref="ActionKind.LabelMerge"/> batch before its <c>batchModify</c>, as <see cref="UndoActionsJob"/> does. Then
-    /// each affected filter is retargeted. Both steps re-run safely: moved mail no longer lists, a retargeted filter is
-    /// found by its <c>restored_from</c>.
+    /// ids are listed in full, Spam and Trash included (nothing changes while paging), and moved in chunks, each logged in
+    /// the item's <see cref="ActionKind.LabelMerge"/> batch before its <c>batchModify</c>, as <see cref="UndoActionsJob"/>
+    /// does. Then each affected filter is retargeted. Both steps re-run safely: moved mail no longer lists, a retargeted
+    /// filter is found by its <c>restored_from</c>. Log rows and History use the label names at apply time, after any
+    /// rename earlier in the plan.
     /// </summary>
     private async Task<(LabelPlanApplyCursor, JobSignal, LabelPlanItemStatus, string?)> MergeAsync(
         JobContext ctx, LabelPlanApplyCursor cursor, LabelPlanItem item, CancellationToken ct)
@@ -36,14 +33,25 @@ public sealed partial class LabelPlanApplyJob
         }
 
         var labels = await catalog.RefreshAsync(ct);
-        if (item.TargetLabelId is not { } target || !labels.Any(l => l.Id == item.LabelId) || !labels.Any(l => l.Id == target))
+        if (item.TargetLabelId is not { } target
+            || labels.FirstOrDefault(l => l.Id == item.LabelId) is not { } source
+            || labels.FirstOrDefault(l => l.Id == target) is not { } targetLabel)
         {
             return (cursor, JobSignal.Continue, LabelPlanItemStatus.Failed, MissingError);
         }
 
-        foreach (var chunk in (await ListAsync(item.LabelId, ct)).Chunk(gmailOptions.Value.BatchModifyMaxIds))
+        var names = new MergeNames(source.Name, targetLabel.Name);
+        var ids = await ListAsync([item.LabelId], ct);
+        var hadTarget = (await ListAsync([item.LabelId, target], ct)).ToHashSet(StringComparer.Ordinal);
+        foreach (var chunk in ids.Chunk(gmailOptions.Value.BatchModifyMaxIds))
         {
-            cursor = await PrepareAsync(ctx, cursor, item, chunk, ct);
+            (cursor, signal) = await PrepareAsync(ctx, cursor, item, names, chunk, hadTarget, ct);
+            if (signal != JobSignal.Continue)
+            {
+                // A pause or cancel came in while the chunk was prepared: Gmail has not seen it, so it is taken back.
+                return (await RevertAsync(ctx, cursor, item), signal, LabelPlanItemStatus.Failed, null);
+            }
+
             (cursor, signal, error) = await SendAsync(ctx, cursor, item, resent: false, ct);
             if (signal != JobSignal.Continue || error is not null)
             {
@@ -56,10 +64,15 @@ public sealed partial class LabelPlanApplyJob
         {
             try
             {
+                var summary = await db.Filters.AsNoTracking().Where(f => f.Id == filterId).Select(f => f.CriteriaSummary).SingleOrDefaultAsync(ct);
                 var result = await filters.RetargetAsync(filterId, item.LabelId, target, ct);
                 if (result.Outcome == FilterOutcome.Conflict)
                 {
                     errors.Add($"filter {filterId}: {result.Detail}");
+                }
+                else if (result.Outcome == FilterOutcome.Ok)
+                {
+                    await RecordAsync(ctx.JobId, $"Filter {summary ?? filterId} moved from label {names.Source} to {names.Target}", ct);
                 }
             }
             catch (Exception ex) when (ItemError(ex) is { } refused)
@@ -73,14 +86,15 @@ public sealed partial class LabelPlanApplyJob
             : (cursor, JobSignal.Continue, LabelPlanItemStatus.Failed, string.Join("; ", errors));
     }
 
-    /// <summary>Every message id carrying <paramref name="labelId"/>, read page by page before anything changes.</summary>
-    private async Task<List<string>> ListAsync(string labelId, CancellationToken ct)
+    /// <summary>Every message id carrying all of <paramref name="labelIds"/>, Spam and Trash included, read page by page before anything changes.</summary>
+    private async Task<List<string>> ListAsync(string[] labelIds, CancellationToken ct)
     {
         var ids = new List<string>();
         string? token = null;
         do
         {
-            var page = await gmail.ListMessageIdsAsync(new MessageListQuery(null, [labelId], token, MessageListQuery.MaxPageSize), ct);
+            var query = new MessageListQuery(null, labelIds, token, MessageListQuery.MaxPageSize) { IncludeSpamTrash = true };
+            var page = await gmail.ListMessageIdsAsync(query, ct);
             ids.AddRange(page.Messages.Select(m => m.Id));
             token = page.NextPageToken;
         }
@@ -91,17 +105,16 @@ public sealed partial class LabelPlanApplyJob
 
     /// <summary>
     /// Writes the chunk's log rows (and the item's batch with the first chunk) and checkpoints it as pending, in one
-    /// transaction. The labels before are Gmail's (<c>format=minimal</c>), plus the source for a message Gmail no longer lists.
+    /// transaction. Undo only needs what the merge changed, so the labels before are the source, plus the target for mail
+    /// that already had it (<paramref name="hadTarget"/>): undo then re-adds the source and keeps such mail's target.
     /// </summary>
-    private async Task<LabelPlanApplyCursor> PrepareAsync(
-        JobContext ctx, LabelPlanApplyCursor cursor, LabelPlanItem item, string[] chunk, CancellationToken ct)
+    private async Task<(LabelPlanApplyCursor, JobSignal)> PrepareAsync(
+        JobContext ctx, LabelPlanApplyCursor cursor, LabelPlanItem item, MergeNames names, string[] chunk,
+        HashSet<string> hadTarget, CancellationToken ct)
     {
-        // Gmail's labels, not the stored ones: undo re-adds exactly what the merge took off, also for mail never fetched.
-        var read = (await gmail.GetMessagesLabelsAsync(chunk, ct)).ToDictionary(m => m.Id, m => m.LabelIds, StringComparer.Ordinal);
-
         var now = time.GetUtcNow();
         var next = cursor with { BatchId = cursor.BatchId ?? Guid.CreateVersion7(now), Pending = chunk };
-        await ctx.CheckpointAsync(next, Progress(cursor, item.LabelName), async t =>
+        var signal = await ctx.CheckpointAsync(next, Progress(cursor, names.Source), async t =>
         {
             if (cursor.BatchId is null)
             {
@@ -109,7 +122,7 @@ public sealed partial class LabelPlanApplyJob
                 {
                     Id = next.BatchId!.Value,
                     Kind = ActionKind.LabelMerge,
-                    Description = DescribeMerge(item),
+                    Description = DescribeMerge(names.Source, names.Target),
                     JobId = ctx.JobId,
                     CreatedAt = now,
                 });
@@ -117,14 +130,14 @@ public sealed partial class LabelPlanApplyJob
 
             foreach (var id in chunk)
             {
-                string[] before = [.. (read.GetValueOrDefault(id) ?? []).Append(item.LabelId).Distinct(StringComparer.Ordinal)];
+                string[] before = hadTarget.Contains(id) ? [item.LabelId, item.TargetLabelId!] : [item.LabelId];
                 db.ActionLog.Add(new ActionLogRow
                 {
                     Id = Guid.CreateVersion7(now),
                     BatchId = next.BatchId!.Value,
                     MessageId = id,
-                    LabelsAdded = [item.TargetLabelName ?? item.TargetLabelId!],
-                    LabelsRemoved = [item.LabelName],
+                    LabelsAdded = [names.Target],
+                    LabelsRemoved = [names.Source],
                     LabelIdsBefore = before,
                     LabelIdsAfter = LabelChunks.After(before, [item.TargetLabelId!], [item.LabelId]),
                     CreatedAt = now,
@@ -134,13 +147,14 @@ public sealed partial class LabelPlanApplyJob
             await db.SaveChangesAsync(t);
         }, ct);
         db.ChangeTracker.Clear();
-        return next;
+        return (next, signal);
     }
 
     /// <summary>
     /// Sends the pending chunk, then stores the moved labels, notes the ids Gmail refused one by one and clears the chunk.
     /// When Gmail refuses the whole call (a 4xx: a label was deleted meanwhile), the item fails: a first send's log rows
-    /// are deleted, a re-send's are kept (an earlier send may have reached Gmail) and the chunk is cleared either way.
+    /// are deleted, a re-send's are kept (an earlier send may have reached Gmail, so they count towards the batch and stay
+    /// undoable) and the chunk is cleared either way.
     /// Rate limits and a lost connection fail the job; a first send is reverted, a re-send stays pending.
     /// </summary>
     private async Task<(LabelPlanApplyCursor, JobSignal, string?)> SendAsync(
@@ -167,7 +181,7 @@ public sealed partial class LabelPlanApplyJob
         catch (Exception ex) when (!sent && LabelChunks.NothingChanged(ex) && (!resent || ItemError(ex) is not null))
         {
             LogChunkRefused(logger, ids.Length, ex);
-            var cleared = resent ? cursor with { Pending = null } : await RevertAsync(ctx, cursor, item);
+            var cleared = resent ? await KeepAsync(ctx, cursor, item) : await RevertAsync(ctx, cursor, item);
             if (ItemError(ex) is { } error)
             {
                 return (cleared, JobSignal.Continue, error);
@@ -226,6 +240,21 @@ public sealed partial class LabelPlanApplyJob
         }, CancellationToken.None);
         return cleared;
     }
+
+    /// <summary>Clears a re-sent chunk Gmail refused but keeps its log rows, counted in the batch so History can undo them.</summary>
+    private async Task<LabelPlanApplyCursor> KeepAsync(JobContext ctx, LabelPlanApplyCursor cursor, LabelPlanItem item)
+    {
+        var count = cursor.Pending!.Length;
+        var batchId = cursor.BatchId!.Value;
+        var cleared = cursor with { Pending = null };
+        await ctx.CheckpointAsync(cleared, Progress(cursor, item.LabelName), t =>
+            db.ActionBatches.Where(b => b.Id == batchId).ExecuteUpdateAsync(s => s.SetProperty(b => b.MessageCount, b => b.MessageCount + count), t),
+            CancellationToken.None);
+        return cleared;
+    }
+
+    /// <summary>The source and target label names when the merge runs.</summary>
+    private sealed record MergeNames(string Source, string Target);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail refused a label merge chunk of {Count} messages.")]
     private static partial void LogChunkRefused(ILogger logger, int count, Exception exception);

@@ -227,8 +227,15 @@ public sealed class LabelPlanService(
             return new PlanEditResult(PlanEditOutcome.Conflict, Detail: "Only a draft plan with an accepted item can be applied.");
         }
 
-        var (job, _) = await jobs.EnqueueAsync(
+        var (job, created) = await jobs.EnqueueAsync(
             LabelPlanApplyJob.JobType, LabelPlanApplyJob.Queue, new LabelPlanApplyCursor(row.Id, accepted), ct, row.Id.ToString());
+        if (!created)
+        {
+            // The plan's previous apply job is still stopping (a cancel just returned the plan to draft); binding the plan
+            // to it would leave the plan applying once that job ends.
+            return new PlanEditResult(PlanEditOutcome.Conflict, Detail: "The plan's previous apply is still stopping; try again shortly.");
+        }
+
         row.Status = LabelPlanStatus.Applying;
         row.JobId = job.Id;
         row.UpdatedAt = time.GetUtcNow();

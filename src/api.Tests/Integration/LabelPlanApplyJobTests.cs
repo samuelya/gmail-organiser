@@ -14,7 +14,7 @@ namespace GmailOrganiser.Tests.Integration;
 
 /// <summary>Applies label plans over the harness mailbox (stored messages a00–x04) with synthetic labels.</summary>
 [Collection(PostgresCollection.Name)]
-public sealed class LabelPlanApplyJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed partial class LabelPlanApplyJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
 {
     private const string Plans = "/api/rules/labels/plans";
 
@@ -138,8 +138,10 @@ public sealed class LabelPlanApplyJobTests(ApiFactory factory, PostgresFixture p
         ActionBatchRow batch;
         await using (var db = postgres.CreateDbContext())
         {
-            batch = await db.ActionBatches.AsNoTracking().SingleAsync(Ct);
-            (batch.Kind, batch.Description, batch.MessageCount).ShouldBe((ActionKind.LabelMerge, "Merged label Synthetic Receipt into Synthetic Receipts", 4));
+            batch = await db.ActionBatches.AsNoTracking().SingleAsync(b => b.Kind == ActionKind.LabelMerge, Ct);
+            (batch.Description, batch.MessageCount).ShouldBe(("Merged label Synthetic Receipt into Synthetic Receipts", 4));
+            (await db.ActionBatches.AsNoTracking().SingleAsync(b => b.Kind == ActionKind.LabelPlan, Ct)).Description
+                .ShouldBe("Filter from:list@example.com moved from label Synthetic Receipt to Synthetic Receipts");
             (await db.ActionLog.CountAsync(l => l.BatchId == batch.Id, Ct)).ShouldBe(4);
             (await db.Messages.SingleAsync(m => m.Id == "a00", Ct)).LabelIds.ShouldContain(target.Id);
             var original = await db.Filters.AsNoTracking().SingleAsync(f => f.Id == "filter-merge", Ct);
@@ -202,15 +204,16 @@ public sealed class LabelPlanApplyJobTests(ApiFactory factory, PostgresFixture p
     }
 
     [Fact]
-    public async Task Delete_removes_an_empty_label_and_refuses_one_with_mail_or_filters()
+    public async Task Delete_removes_an_empty_label_and_refuses_one_with_mail_or_a_live_filter()
     {
         var empty = await LabelAsync("Synthetic Empty");
         var full = await LabelAsync("Synthetic Full");
         var filtered = await LabelAsync("Synthetic Filtered");
         Tag("c00", full.Id);
         var plan = await SeedPlanAsync(
-            Item(LabelPlanItemKind.Empty, empty), Item(LabelPlanItemKind.Empty, full),
-            Item(LabelPlanItemKind.Empty, filtered, filters: ["filter-x"]));
+            Item(LabelPlanItemKind.Empty, empty), Item(LabelPlanItemKind.Empty, full), Item(LabelPlanItemKind.Empty, filtered));
+        // Created after the plan was built, so the plan's own filter list does not name it.
+        await SeedFilterAsync("filter-later", filtered.Id);
 
         await ApplyAsync(plan.Id);
         await h.RunNextAsync();
@@ -224,6 +227,12 @@ public sealed class LabelPlanApplyJobTests(ApiFactory factory, PostgresFixture p
         items[empty.Id].Status.ShouldBe(LabelPlanItemStatus.Applied);
         (items[full.Id].Status, items[full.Id].Error).ShouldBe((LabelPlanItemStatus.Failed, LabelPlanApplyJob.NotEmptyError));
         (items[filtered.Id].Status, items[filtered.Id].Error).ShouldBe((LabelPlanItemStatus.Failed, LabelPlanApplyJob.FilteredError));
+        await using var db = postgres.CreateDbContext();
+        var history = await db.ActionBatches.AsNoTracking().ToListAsync(Ct);
+        history.ShouldHaveSingleItem().ShouldSatisfyAllConditions(
+            b => b.Kind.ShouldBe(ActionKind.LabelPlan),
+            b => b.Description.ShouldBe("Deleted empty label Synthetic Empty"),
+            b => b.MessageCount.ShouldBe(0));
     }
 
     [Fact]

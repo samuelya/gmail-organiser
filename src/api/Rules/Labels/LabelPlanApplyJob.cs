@@ -21,8 +21,9 @@ public sealed record LabelPlanApplyCursor(Guid PlanId, Guid[] ItemIds, int Index
 /// plan json records each item <c>applied</c> or <c>failed</c> with its error. A nest renames the label through
 /// <c>labels.patch</c> (the id stays) and then each label under its old name. A merge moves the label's messages to the
 /// target in logged, undoable chunks (see <c>LabelPlanApplyJob.Merge.cs</c>) and retargets its filters; the source label
-/// stays and shows as empty in the next plan. A delete re-checks that the label is empty and unfiltered right before
-/// <c>labels.delete</c>. Every step re-runs safely, so a resume repeats the current item.
+/// stays and shows as empty in the next plan. A delete re-checks that the label is empty and that no active filter uses
+/// it right before <c>labels.delete</c>. Renames, deletes and retargets are listed in History as
+/// <see cref="ActionKind.LabelPlan"/> entries without undo. Every step re-runs safely, so a resume repeats the current item.
 /// </summary>
 public sealed partial class LabelPlanApplyJob(
     AppDbContext db,
@@ -74,8 +75,8 @@ public sealed partial class LabelPlanApplyJob(
                     string? error;
                     (cursor, signal, status, error) = item.Kind switch
                     {
-                        LabelPlanItemKind.Nest => Done(cursor, await NestAsync(item, ct)),
-                        LabelPlanItemKind.Empty => Done(cursor, await DeleteAsync(item, ct)),
+                        LabelPlanItemKind.Nest => Done(cursor, await NestAsync(ctx.JobId, item, ct)),
+                        LabelPlanItemKind.Empty => Done(cursor, await DeleteAsync(ctx.JobId, item, ct)),
                         _ => await MergeAsync(ctx, cursor, item, ct),
                     };
                     if (signal == JobSignal.Continue)
@@ -129,7 +130,7 @@ public sealed partial class LabelPlanApplyJob(
     /// Renames the label to the proposed name unless it already has it, then each label under its old name; a label
     /// already under the new name is skipped, so a resume finishes what a failed run started.
     /// </summary>
-    private async Task<(LabelPlanItemStatus, string?)> NestAsync(LabelPlanItem item, CancellationToken ct)
+    private async Task<(LabelPlanItemStatus, string?)> NestAsync(Guid jobId, LabelPlanItem item, CancellationToken ct)
     {
         if (item.ProposedName is not { } newName)
         {
@@ -157,11 +158,14 @@ public sealed partial class LabelPlanApplyJob(
                 if (!string.Equals(label.Name, newName, StringComparison.Ordinal))
                 {
                     await gmail.RenameLabelAsync(label.Id, newName, ct);
+                    await RecordAsync(jobId, $"Renamed label {label.Name} to {newName}", ct);
                 }
 
                 foreach (var child in children)
                 {
-                    await gmail.RenameLabelAsync(child.Id, newPrefix + child.Name[oldPrefix.Length..], ct);
+                    var childName = newPrefix + child.Name[oldPrefix.Length..];
+                    await gmail.RenameLabelAsync(child.Id, childName, ct);
+                    await RecordAsync(jobId, $"Renamed label {child.Name} to {childName}", ct);
                 }
             }
             finally
@@ -171,22 +175,26 @@ public sealed partial class LabelPlanApplyJob(
         });
     }
 
-    /// <summary>Deletes the label once Gmail says it is empty and no filter of the plan targets it; a label already gone counts as deleted.</summary>
-    private async Task<(LabelPlanItemStatus, string?)> DeleteAsync(LabelPlanItem item, CancellationToken ct)
+    /// <summary>
+    /// Deletes the label once no active filter uses it and Gmail says it is empty, both checked right before the call (the
+    /// plan's own filter list may be stale); a label already gone counts as deleted.
+    /// </summary>
+    private async Task<(LabelPlanItemStatus, string?)> DeleteAsync(Guid jobId, LabelPlanItem item, CancellationToken ct)
     {
-        if (item.AffectedFilterIds.Count > 0)
-        {
-            return (LabelPlanItemStatus.Failed, FilteredError);
-        }
-
         var labels = await catalog.RefreshAsync(ct);
-        if (!labels.Any(l => l.Type == GmailLabelType.User && l.Id == item.LabelId))
+        if (labels.FirstOrDefault(l => l.Type == GmailLabelType.User && l.Id == item.LabelId) is not { } label)
         {
             return (LabelPlanItemStatus.Applied, null);
         }
 
         return await RefusedAsItemAsync(async () =>
         {
+            var active = await db.Filters.AsNoTracking().Where(f => f.DeletedAt == null).ToListAsync(ct);
+            if (active.Select(f => f.ReadAction()).Any(a => a.AddLabelIds.Concat(a.RemoveLabelIds).Contains(item.LabelId, StringComparer.Ordinal)))
+            {
+                throw new ItemRefusedException(FilteredError);
+            }
+
             if (await gmail.GetLabelMessagesTotalAsync(item.LabelId, ct) > 0)
             {
                 throw new ItemRefusedException(NotEmptyError);
@@ -195,6 +203,7 @@ public sealed partial class LabelPlanApplyJob(
             try
             {
                 await gmail.DeleteLabelAsync(item.LabelId, ct);
+                await RecordAsync(jobId, $"Deleted empty label {label.Name}", ct);
             }
             finally
             {
@@ -240,6 +249,31 @@ public sealed partial class LabelPlanApplyJob(
         row.WriteItems([.. row.ReadItems().Select(i => i.Id == itemId ? i with { Status = status, Error = error } : i)]);
         row.UpdatedAt = time.GetUtcNow();
         await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Lists a Gmail change that moves no message (a rename, a delete, a filter retarget) in History as an
+    /// <see cref="ActionKind.LabelPlan"/> entry, which has no undo; once per job, so a resumed item does not list it twice.
+    /// </summary>
+    private async Task RecordAsync(Guid jobId, string description, CancellationToken ct)
+    {
+        if (await db.ActionBatches.AnyAsync(b => b.JobId == jobId && b.Kind == ActionKind.LabelPlan && b.Description == description, ct))
+        {
+            return;
+        }
+
+        db.ActionBatches.Add(new ActionBatchRow
+        {
+            Id = Guid.CreateVersion7(time.GetUtcNow()),
+            Kind = ActionKind.LabelPlan,
+            Description = description,
+            JobId = jobId,
+            CreatedAt = time.GetUtcNow(),
+        });
+
+        // Gmail has changed: the entry is written even if the job is stopping.
+        await db.SaveChangesAsync(CancellationToken.None);
+        db.ChangeTracker.Clear();
     }
 
     /// <summary>Back to draft; discarded instead when the user built a newer draft meanwhile (one draft at most).</summary>

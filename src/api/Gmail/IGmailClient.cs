@@ -250,6 +250,9 @@ public sealed record MessageListQuery(string? Query, IReadOnlyList<string>? Labe
     /// <summary>Gmail's maximum page size for <c>messages.list</c>.</summary>
     public const int MaxPageSize = 500;
 
+    /// <summary>Also lists mail in Spam and Trash, which Gmail leaves out by default.</summary>
+    public bool IncludeSpamTrash { get; init; }
+
     public void EnsureValid()
     {
         if (MaxResults is < 1 or > MaxPageSize)
