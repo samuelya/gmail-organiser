@@ -131,7 +131,7 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
         var shopPrompt = h.Chat.Requests.Single(r => r.Any(m => m.Text.Contains("id: a00")));
         // No embedding model in the harness: the exact-sender fill, deduplicated to one hint.
         shopPrompt.Count(m => m.Text.Contains($"sender: {AnalysisRunHarness.Shop} |")).ShouldBe(1);
-        shopPrompt.ShouldContain(m => m.Text.Contains("topicLabel: Deals | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 1.00"));
+        shopPrompt.ShouldContain(m => m.Text.Contains("topicLabel: Deals | type: - | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 1.00"));
         h.Chat.Requests.Single(r => r.Any(m => m.Text.Contains("id: b00")))
             .ShouldNotContain(m => m.Text.Contains("topicLabel: Deals"));
     }

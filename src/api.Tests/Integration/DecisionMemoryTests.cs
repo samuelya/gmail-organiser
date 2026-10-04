@@ -70,7 +70,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         var queue = new RecordingEmbeddingQueue();
         await using (var db = postgres.CreateDbContext())
         {
-            var recorder = new DecisionRecorder(db, queue, new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
+            var recorder = new DecisionRecorder(db, settings, queue, new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
             await recorder.RecordAsync(Suggestion(message, "Shopping"), message, DecisionOutcome.Approved, Ct);
             await db.SaveChangesAsync(Ct);
             recorder.Committed();
@@ -100,7 +100,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     {
         var message = Message("m1", Shop, "Order 12345 shipped", null);
         await using var db = postgres.CreateDbContext();
-        var recorder = new DecisionRecorder(db, new RecordingEmbeddingQueue { Failure = new InvalidOperationException("synthetic") },
+        var recorder = new DecisionRecorder(db, settings, new RecordingEmbeddingQueue { Failure = new InvalidOperationException("synthetic") },
             new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
         await recorder.RecordAsync(Suggestion(message, "Shopping"), message, DecisionOutcome.Approved, Ct);
 

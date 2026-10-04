@@ -9,7 +9,8 @@ namespace GmailOrganiser.Memory;
 /// category, plus subject template) has a consistent approved pattern, every non-protected member gets that suggestion
 /// without a model call. Protected members always go to the model, so a memory <c>toBeDeleted</c> never lands on
 /// protected mail. A group already filed under another personal label than the memorised one goes to the model too.
-/// Suggestions only; the user still reviews them.
+/// With a document-type parent set, a pattern whose latest approval predates it (or whose type is not directly under
+/// it) goes to the model once; the next approval relearns it. Suggestions only; the user still reviews them.
 /// </summary>
 public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortCircuit
 {
@@ -28,9 +29,10 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
             [.. keys.OfType<string>()], context.Settings.AnalysisMemoryMinApprovals, ct);
         for (var i = 0; i < groups.Count; i++)
         {
-            if (keys[i] is { } key && patterns.TryGetValue(key, out var pattern) && KeepsLabels(groups[i], pattern, context))
+            if (keys[i] is { } key && patterns.TryGetValue(key, out var pattern) && TypeOf(pattern, context) is (true, var type)
+                && KeepsLabels(groups[i], pattern.TopicLabel, type, context))
             {
-                results[i] = Cover(groups[i], pattern, context);
+                results[i] = Cover(groups[i], pattern, type, context);
             }
         }
 
@@ -38,16 +40,46 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
     }
 
     /// <summary>
-    /// Whether every personal label of the group is the memorised topic label (the app's action and delete labels do
-    /// not count). An id without a known name (deleted in Gmail since the fetch, or names not loaded) counts as
-    /// different: the model sees the group instead.
+    /// The document-type label the pattern answers with: none with the parent off; with it on, the pattern is usable only
+    /// when its latest approval was decided with a parent and its label (if any) is exactly one level under this one.
     /// </summary>
-    private static bool KeepsLabels(MessageGroup group, MemoryPattern pattern, ShortCircuitContext context) =>
+    private static (bool Usable, string? Type) TypeOf(MemoryPattern pattern, ShortCircuitContext context)
+    {
+        if (context.DocumentTypeParent is not { } parent)
+        {
+            return (true, null);
+        }
+
+        if (!pattern.DocumentTypeDecided)
+        {
+            return (false, null);
+        }
+
+        if (pattern.DocumentTypeLabel?.Trim() is not { } type)
+        {
+            return (true, null);
+        }
+
+        var prefix = parent.Trim() + "/";
+        return type.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && type.Length > prefix.Length
+            && !type.AsSpan(prefix.Length).Contains('/')
+            ? (true, type)
+            : (false, null);
+    }
+
+    /// <summary>
+    /// Whether every personal label of the group is the memorised topic label or document-type label (the app's action
+    /// and delete labels do not count). An id without a known name (deleted in Gmail since the fetch, or names not
+    /// loaded) counts as different: the model sees the group instead.
+    /// </summary>
+    private static bool KeepsLabels(MessageGroup group, string topicLabel, string? type, ShortCircuitContext context) =>
         group.Members.SelectMany(context.Labels.IdsOf).All(id =>
             context.Labels.Names.TryGetValue(id, out var name)
-            && string.Equals(name.Trim(), pattern.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase));
+            && (Same(name, topicLabel) || (type is not null && Same(name, type))));
 
-    private static ShortCircuitResult? Cover(MessageGroup group, MemoryPattern pattern, ShortCircuitContext context)
+    private static bool Same(string a, string b) => string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static ShortCircuitResult? Cover(MessageGroup group, MemoryPattern pattern, string? type, ShortCircuitContext context)
     {
         var covered = group.Members.Where(m => !MessageProtection.IsProtected(m, context.Allowlisted, context.Settings.Protection)).ToList();
         if (covered.Count == 0)
@@ -61,6 +93,6 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
         var reason = $"Matches {pattern.Approvals} approved decisions for this sender";
         return new ShortCircuitResult([.. covered.Select(m => new SuggestionOutput(
             m.Id, pattern.TopicLabel, isNewLabel, pattern.NeedsAction, pattern.ToBeDeleted, UnsubscribeSuggested: false,
-            confidence, reason))]);
+            confidence, reason, type))]);
     }
 }

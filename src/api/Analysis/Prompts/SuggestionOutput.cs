@@ -27,7 +27,8 @@ public sealed record MemoryHint(
     bool NeedsAction,
     bool ToBeDeleted,
     string Outcome,
-    double Similarity);
+    double Similarity,
+    string? DocumentTypeLabel = null);
 
 public sealed record PromptInput(
     IReadOnlyList<EmailForPrompt> Emails,

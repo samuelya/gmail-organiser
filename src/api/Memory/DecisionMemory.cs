@@ -111,7 +111,8 @@ public sealed partial class DecisionMemory(
             .Take(k)
             .Select(h => new MemoryHint(
                 h.Decision.SenderAddress, h.Decision.SubjectTemplate, h.Decision.TopicLabel, h.Decision.NeedsAction,
-                h.Decision.ToBeDeleted, SnakeCaseEnumConverter<DecisionOutcome>.ToDb(h.Decision.Outcome), h.Similarity))
+                h.Decision.ToBeDeleted, SnakeCaseEnumConverter<DecisionOutcome>.ToDb(h.Decision.Outcome), h.Similarity,
+                h.Decision.DocumentTypeLabel))
             .ToList();
     }
 
@@ -119,6 +120,8 @@ public sealed partial class DecisionMemory(
     /// Per scope: the latest <see cref="MaxPatternApprovals"/> approvals a person verified (of model or edited
     /// suggestions, never derived, memory or sender-pattern ones, so memory cannot reinforce itself), one per message;
     /// at least <paramref name="minApprovals"/> of them, all with the same outcome, and no rejection in the scope since the latest.
+    /// Only approvals recorded with a document-type parent set vote on the document-type label (case-insensitive, null is
+    /// none), so approvals from before the feature never contradict the first one after it.
     /// </summary>
     public async Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
         IReadOnlyCollection<string> scopeKeys, int minApprovals, CancellationToken ct)
@@ -134,7 +137,7 @@ public sealed partial class DecisionMemory(
             .Where(d => d.ScopeKey != null && keys.Contains(d.ScopeKey))
             .Where(d => d.Outcome == DecisionOutcome.Rejected
                 || (d.Source != SuggestionSource.SenderPattern && (d.Source == SuggestionSource.Llm || d.Edited)))
-            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.CreatedAt })
+            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel, d.DocumentTypeDecided, d.CreatedAt })
             .ToListAsync(ct);
         foreach (var scope in rows.GroupBy(r => r.ScopeKey, StringComparer.Ordinal))
         {
@@ -150,18 +153,25 @@ public sealed partial class DecisionMemory(
             }
 
             var latest = approvals[0];
+            var typed = approvals.FirstOrDefault(a => a.DocumentTypeDecided);
             var consistent = approvals.All(a =>
-                a.TopicLabel == latest.TopicLabel && a.NeedsAction == latest.NeedsAction && a.ToBeDeleted == latest.ToBeDeleted);
+                a.TopicLabel == latest.TopicLabel && a.NeedsAction == latest.NeedsAction && a.ToBeDeleted == latest.ToBeDeleted
+                && (!a.DocumentTypeDecided || SameType(a.DocumentTypeLabel, typed!.DocumentTypeLabel)));
             if (consistent && !scope.Any(r => r.Outcome == DecisionOutcome.Rejected && r.CreatedAt > latest.CreatedAt))
             {
-                patterns[scope.Key] = new MemoryPattern(latest.TopicLabel, latest.NeedsAction, latest.ToBeDeleted, approvals.Count, 1.0);
+                patterns[scope.Key] = new MemoryPattern(
+                    latest.TopicLabel, latest.NeedsAction, latest.ToBeDeleted, approvals.Count, 1.0, typed?.DocumentTypeLabel,
+                    latest.DocumentTypeDecided);
             }
         }
 
         return patterns;
     }
 
-    private static (string, bool, bool, DecisionOutcome) Outcome(DecisionRow d) => (d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.Outcome);
+    private static bool SameType(string? a, string? b) => string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static (string, bool, bool, string?, DecisionOutcome) Outcome(DecisionRow d) =>
+        (d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel?.Trim().ToUpperInvariant(), d.Outcome);
 
     private sealed record Embedded(string Model, IReadOnlyList<Vector> Vectors);
 

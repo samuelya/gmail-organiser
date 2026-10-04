@@ -5,7 +5,10 @@ using Pgvector;
 namespace GmailOrganiser.Memory;
 
 /// <summary>A consistent approved outcome for a group scope; <see cref="Approvals"/> distinct messages agree with it.</summary>
-public sealed record MemoryPattern(string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Approvals, double Agreement);
+/// <param name="DocumentTypeLabel">The latest decided approval's document-type label; null is none.</param>
+/// <param name="DocumentTypeDecided">The latest approval was recorded with a document-type parent set.</param>
+public sealed record MemoryPattern(
+    string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Approvals, double Agreement, string? DocumentTypeLabel, bool DocumentTypeDecided);
 
 /// <summary>Message vectors of one embedding model, by message id.</summary>
 public sealed record MessageVectors(string Model, IReadOnlyDictionary<string, Vector> ById);

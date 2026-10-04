@@ -110,6 +110,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
 
         return MemoryHeading + "\n" + string.Join('\n', memory.Select(m => string.Create(CultureInfo.InvariantCulture,
             $"- sender: {OneLine(m.SenderAddress)} | subject: {OneLine(m.SubjectTemplate ?? "-")} | topicLabel: {OneLine(m.TopicLabel)}"
+            + $" | type: {OneLine(m.DocumentTypeLabel ?? "-")}"
             + $" | needsAction: {YesNo(m.NeedsAction)} | toBeDeleted: {YesNo(m.ToBeDeleted)} | outcome: {OneLine(m.Outcome)}"
             + $" | similarity: {m.Similarity:0.00}")));
     }

@@ -177,7 +177,11 @@ public sealed class AnalysisPromptBuilderTests
     public void Memory_and_long_label_trees_are_rendered()
     {
         var labels = Enumerable.Range(0, 502).Select(i => $"Topic/L{i}").ToList();
-        var memory = new[] { new MemoryHint("news@example.com", "weekly digest #", "Topic/News", false, true, "approved", 0.876) };
+        var memory = new[]
+        {
+            new MemoryHint("news@example.com", "weekly digest #", "Topic/News", false, true, "approved", 0.876),
+            new MemoryHint("bills@example.com", null, "Topic/Bills", true, false, "approved", 0.5, "Type/Invoice"),
+        };
 
         var messages = new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(Input([Email(1)], labels, memory));
 
@@ -185,7 +189,9 @@ public sealed class AnalysisPromptBuilderTests
         messages[0].Text.ShouldNotContain("Topic/L500");
         messages[0].Text.ShouldNotContain("news@example.com");
         messages[1].Text.ShouldContain(AnalysisPromptBuilder.MemoryHeading + "\n- sender: news@example.com | subject: weekly digest # | topicLabel: Topic/News"
-            + " | needsAction: no | toBeDeleted: yes | outcome: approved | similarity: 0.88");
+            + " | type: - | needsAction: no | toBeDeleted: yes | outcome: approved | similarity: 0.88\n"
+            + "- sender: bills@example.com | subject: - | topicLabel: Topic/Bills | type: Type/Invoice"
+            + " | needsAction: yes | toBeDeleted: no | outcome: approved | similarity: 0.50");
     }
 
     [Fact]

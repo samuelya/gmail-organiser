@@ -3,21 +3,25 @@ using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Settings;
 
 namespace GmailOrganiser.Review;
 
 /// <summary>
 /// Adds one <c>decisions</c> row per approve or reject to the caller's unit of work; the caller saves it together with
 /// the status change and then calls <see cref="Committed"/>, which wakes the background embedding: the request never
-/// waits on the model. Rows are otherwise only updated with their vector.
+/// waits on the model. Rows are otherwise only updated with their vector. Whether a document-type parent is set is read
+/// once per recorder (one request).
 /// </summary>
 public sealed partial class DecisionRecorder(
-    AppDbContext db, IDecisionEmbeddingQueue embedding, TimeProvider time, ILogger<DecisionRecorder> logger)
+    AppDbContext db, ISettingsStore settings, IDecisionEmbeddingQueue embedding, TimeProvider time, ILogger<DecisionRecorder> logger)
 {
     private bool recorded;
+    private bool? typeDecided;
 
-    public ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
+    public async ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
     {
+        typeDecided ??= (await settings.GetAsync(ct)).DocumentTypeParent is not null;
         var now = time.GetUtcNow();
         var row = new DecisionRow
         {
@@ -29,6 +33,8 @@ public sealed partial class DecisionRecorder(
             // The message's own template: the one GroupKey.For put in its group key, without parsing the key.
             SubjectTemplate = SubjectNormaliser.Template(message.Subject),
             TopicLabel = suggestion.TopicLabel,
+            DocumentTypeLabel = suggestion.DocumentTypeLabel,
+            DocumentTypeDecided = typeDecided.Value,
             NeedsAction = suggestion.NeedsAction,
             ToBeDeleted = suggestion.ToBeDeleted,
             Outcome = outcome,
@@ -38,7 +44,6 @@ public sealed partial class DecisionRecorder(
         };
         db.Decisions.Add(row);
         recorded = true;
-        return ValueTask.CompletedTask;
     }
 
     /// <summary>
