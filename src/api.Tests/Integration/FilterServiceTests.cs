@@ -42,6 +42,8 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
         await postgres.ResetFetchStateAsync();
         await using (var db = postgres.CreateDbContext())
         {
+            await db.ActionLog.ExecuteDeleteAsync(Ct);
+            await db.ActionBatches.ExecuteDeleteAsync(Ct);
             await db.Filters.ExecuteDeleteAsync(Ct);
             await db.FetchState.ExecuteUpdateAsync(s => s.SetProperty(r => r.FiltersSyncedAt, (DateTimeOffset?)null), Ct);
             await db.Suggestions.ExecuteDeleteAsync(Ct);
