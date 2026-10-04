@@ -77,10 +77,34 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
 
     public ConcurrentQueue<string> LabelTotalCalls { get; } = new();
 
-    public Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)
+    /// <summary>Runs before each label total read, for example to hold it so a concurrent caller would overlap.</summary>
+    public Func<string, CancellationToken, Task>? BeforeLabelTotal { get; set; }
+
+    private int labelTotalsInFlight;
+
+    /// <summary>Fails a label total read started while another is in flight, as the Google client's scoped DbContext does.</summary>
+    public async Task<long> GetLabelMessagesTotalAsync(string labelId, CancellationToken ct)
     {
         LabelTotalCalls.Enqueue(labelId);
-        return inner.GetLabelMessagesTotalAsync(labelId, ct);
+        if (Interlocked.Increment(ref labelTotalsInFlight) > 1)
+        {
+            Interlocked.Decrement(ref labelTotalsInFlight);
+            throw new InvalidOperationException("A second operation was started on this context instance before a previous operation completed.");
+        }
+
+        try
+        {
+            if (BeforeLabelTotal is { } before)
+            {
+                await before(labelId, ct);
+            }
+
+            return await inner.GetLabelMessagesTotalAsync(labelId, ct);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref labelTotalsInFlight);
+        }
     }
 
     /// <summary>Runs before each body (or body and attachments) fetch, for example to hold it and measure how many run at once.</summary>

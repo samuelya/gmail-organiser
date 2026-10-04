@@ -84,12 +84,11 @@ public sealed partial class MailboxTotalsReader(
     /// </summary>
     public async Task<MailboxTotals> MeasureAsync(IGmailClient gmail, GmailProfile profile, CancellationToken ct)
     {
-        var labelTotals = await Task.WhenAll(
-            gmail.GetLabelMessagesTotalAsync(MailboxFetchJob.InboxLabelId, ct),
-            gmail.GetLabelMessagesTotalAsync(MailboxFetchJob.SpamLabelId, ct),
-            gmail.GetLabelMessagesTotalAsync(MailboxFetchJob.TrashLabelId, ct));
-        var totals = new MailboxTotals(
-            labelTotals[0], Math.Max(0, profile.MessagesTotal - labelTotals[1] - labelTotals[2]), time.GetUtcNow());
+        // One after another: the Google client uses the scope's DbContext, which allows one operation at a time.
+        var inbox = await gmail.GetLabelMessagesTotalAsync(MailboxFetchJob.InboxLabelId, ct);
+        var spam = await gmail.GetLabelMessagesTotalAsync(MailboxFetchJob.SpamLabelId, ct);
+        var trash = await gmail.GetLabelMessagesTotalAsync(MailboxFetchJob.TrashLabelId, ct);
+        var totals = new MailboxTotals(inbox, Math.Max(0, profile.MessagesTotal - spam - trash), time.GetUtcNow());
         cached = new CachedTotals(profile.EmailAddress, totals);
         return totals;
     }
