@@ -8,4 +8,12 @@ public sealed record ProtectionSettings(bool Attachments = true, bool Starred = 
 {
     /// <summary>Normalised domains (#203) whose senders, subdomains included, are allowlisted.</summary>
     public IReadOnlyList<string> AllowlistedDomains { get; init; } = [];
+
+    // Value equality for the list too, as for the toggles.
+    public bool Equals(ProtectionSettings? other) =>
+        other is not null
+        && (Attachments, Starred, Important, RepliedThreads) == (other.Attachments, other.Starred, other.Important, other.RepliedThreads)
+        && AllowlistedDomains.SequenceEqual(other.AllowlistedDomains, StringComparer.Ordinal);
+
+    public override int GetHashCode() => HashCode.Combine(Attachments, Starred, Important, RepliedThreads, AllowlistedDomains.Count);
 }
