@@ -57,6 +57,7 @@ public sealed partial class ApplyActionsJob(
 
     // Suggestions of the current plan whose topic label Gmail would refuse; reported in every progress update.
     private int invalidLabels;
+    private bool skippedTypesLogged;
 
     public string Type => JobType;
 
@@ -187,6 +188,19 @@ public sealed partial class ApplyActionsJob(
         }
 
         var paths = valid.Select(r => r.Suggestion.TopicLabel).ToList();
+
+        // The approved document-type label is applied even if the parent setting changed since; a stored one Gmail
+        // would refuse, or that is now the action or delete label, is skipped for its message (logged once per run),
+        // which still gets its topic label.
+        var types = valid.Select(r => r.Suggestion.DocumentTypeLabel).OfType<string>()
+            .ToLookup(t => ActionPlanner.AppliesDocumentType(t, settings));
+        paths.AddRange(types[true]);
+        if (!skippedTypesLogged && types[false].Count() is > 0 and var skippedTypes)
+        {
+            skippedTypesLogged = true;
+            LogSkippedDocumentTypes(logger, skippedTypes);
+        }
+
         if (valid.Any(r => r.Suggestion.NeedsAction))
         {
             paths.Add(SettingLabel(settings.ActionLabelName, nameof(AppSettings.ActionLabelName)));
@@ -368,6 +382,10 @@ public sealed partial class ApplyActionsJob(
 
     [GeneratedRegex(@" \(partial: \d+ of \d+\)$")]
     private static partial Regex PartialSuffix();
+
+    [LoggerMessage(Level = LogLevel.Warning,
+        Message = "{Count} approved document-type labels are not valid label paths or are the action or delete label; they are skipped.")]
+    private static partial void LogSkippedDocumentTypes(ILogger logger, int count);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Could not mark the action batch as partial.")]
     private static partial void LogPartialNotRecorded(ILogger logger, Exception exception);
