@@ -63,6 +63,46 @@ public sealed class AllowlistTests
     }
 
     [Theory]
+    [InlineData("x@bücher.example", Allowlist.DomainReason)]
+    [InlineData("x@shop.bücher.example", Allowlist.DomainReason)]
+    [InlineData("x@xn--bcher-kva.example", Allowlist.DomainReason)]
+    [InlineData("x@bucher.example", null)]
+    [InlineData("x@bücher.example.org", null)]
+    [InlineData("x@bü..bücher.example", Allowlist.DomainReason)]
+    [InlineData("x@bü..bucher.example", null)]
+    public void A_unicode_sender_domain_is_compared_with_the_punycode_entry(string address, string? expected)
+    {
+        var allowlist = new Allowlist(new HashSet<string>(), SettingsValidation.NormaliseDomains(["bücher.example"]));
+        allowlist.Reason(address).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("x@😀.bücher.example", Allowlist.DomainReason)]
+    [InlineData("x@😀.xn--bcher-kva.example", Allowlist.DomainReason)]
+    [InlineData("x@😀.bucher.example", null)]
+    public void A_sender_domain_idn_mapping_rejects_is_compared_with_the_entries_sql_forms(string address, string? expected)
+    {
+        // An emoji label is IDNA2008-disallowed, so GetAscii throws; C# must still agree with the clean-up SQL (#298).
+        var allowlist = new Allowlist(new HashSet<string>(), SettingsValidation.NormaliseDomains(["bücher.example"]));
+        allowlist.Reason(address).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void A_domain_idn_mapping_rejects_is_kept_as_it_is()
+    {
+        Allowlist.AsciiDomain("bücher.example").ShouldBe("xn--bcher-kva.example");
+        Allowlist.AsciiDomain("example.com").ShouldBe("example.com");
+        Allowlist.AsciiDomain("bü..example").ShouldBe("bü..example");
+    }
+
+    [Fact]
+    public void Sql_forms_add_the_unicode_form_of_an_idn_entry()
+    {
+        Allowlist.SqlForms(["example.com", "xn--bcher-kva.example"])
+            .ShouldBe(["example.com", "xn--bcher-kva.example", "bücher.example"]);
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("   ")]
     [InlineData("user@example.com")]

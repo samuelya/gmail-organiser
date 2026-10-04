@@ -140,7 +140,8 @@ public sealed class CleanUpQuery(AppDbContext db, LabelCatalog catalog, ISetting
         var (attachments, starred, important, replied) = (rules.Attachments, rules.Starred, rules.Important, rules.RepliedThreads);
         // Allowlist.Reason: addresses are lower-case and entries hold no '@', so on an address with an '@' a suffix
         // match is a match on the part after the last '@'. A From without '@' has no domain and never matches.
-        var domains = rules.AllowlistedDomains.ToArray();
+        // An IDN entry also matches its Unicode form (#288), as Allowlist.CoversDomain punycodes the address domain.
+        var domains = Allowlist.SqlForms(rules.AllowlistedDomains);
         return messages.Select(m => new Flagged
         {
             FromAddress = m.FromAddress,

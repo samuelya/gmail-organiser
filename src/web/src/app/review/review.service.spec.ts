@@ -39,6 +39,7 @@ describe('ReviewService', () => {
         topicLabel: 'T',
         needsAction: true,
         toBeDeleted: false,
+        documentTypeLabel: 'Docs/Invoice',
       })
       .subscribe();
     const req = http.expectOne('/api/review/groups/approve');
@@ -48,6 +49,7 @@ describe('ReviewService', () => {
       topicLabel: 'T',
       needsAction: true,
       toBeDeleted: false,
+      documentTypeLabel: 'Docs/Invoice',
     });
     req.flush({ changed: 1, skipped: [] });
   });
