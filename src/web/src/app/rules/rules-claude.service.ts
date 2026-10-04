@@ -1,16 +1,26 @@
 import { computed, DestroyRef, effect, inject, Injectable, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
-import { catchError, map, of } from 'rxjs';
+import { catchError, EMPTY, expand, map, merge, Observable, of, Subject, switchMap } from 'rxjs';
 import { ExternalReviewDto, ruleTargetKey } from '../core/claude.models';
-import { ClaudeService } from '../core/claude.service';
+import { ClaudeService, ReviewListTargets } from '../core/claude.service';
 import { JobsService } from '../core/jobs.service';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
 
+/** The label plan and filter findings a Rules tab shows; their review items are the ones loaded. */
+export interface RuleTargets {
+  labelPlanId?: string | null;
+  findingIds?: readonly string[];
+}
+
+/** The API's largest page and the most `findingId` values one list request takes. */
+const CHUNK = 100;
+
 /**
  * The Claude reviewer mode and the latest Claude review item per label plan and filter finding, for one Rules tab
- * (provide it on the component). Loads the newest items, then follows `externalReviewChanged`; reloads after a
- * reconnect, since changes are missed while disconnected.
+ * (provide it on the component, which calls `follow`). Loads the items of the tab's own plan or findings, however
+ * many newer items exist for other targets, then follows `externalReviewChanged`; reloads when the targets change
+ * and after a reconnect, since changes are missed while disconnected.
  */
 @Injectable()
 export class RulesClaude {
@@ -29,15 +39,32 @@ export class RulesClaude {
   );
   readonly mode = computed<ClaudeReviewerMode>(() => this.settings() ?? 'off');
   private readonly items = signal<ReadonlyMap<string, ExternalReviewDto>>(new Map());
+  private readonly source = signal<() => RuleTargets>(() => ({}));
+  private readonly targets = computed(() => this.source()(), { equal: sameTargets });
+  /** Each load cancels the one in flight, so items of targets no longer shown stop arriving. */
+  private readonly loads = new Subject<RuleTargets>();
 
   constructor() {
     this.jobs.externalReviewChanges
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((item) => this.patch(item));
+    this.loads
+      .pipe(
+        switchMap((t) => this.fetch(t)),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      // Oldest first, so the newest item per target wins.
+      .subscribe((items) => [...items].reverse().forEach((item) => this.patch(item)));
     effect(() => {
       this.jobs.reconnects();
-      untracked(() => this.load());
+      const targets = this.targets();
+      untracked(() => this.loads.next(targets));
     });
+  }
+
+  /** Loads the review items of the plan and findings `targets` returns, again whenever their ids change. */
+  follow(targets: () => RuleTargets): void {
+    this.source.set(targets);
   }
 
   forPlan(id: string): ExternalReviewDto | null {
@@ -63,16 +90,34 @@ export class RulesClaude {
     this.items.set(next);
   }
 
-  private load(): void {
-    this.claude
-      .list()
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        // Oldest first, so the newest item per target wins.
-        next: (page) => [...page.items].reverse().forEach((item) => this.patch(item)),
-        error: () => undefined,
-      });
+  /** One request for the plan and one per chunk of finding ids, each walking its pages; a failed one loads nothing. */
+  private fetch(targets: RuleTargets): Observable<readonly ExternalReviewDto[]> {
+    const ids = targets.findingIds ?? [];
+    const lists: ReviewListTargets[] = [];
+    if (targets.labelPlanId) lists.push({ labelPlanId: targets.labelPlanId });
+    for (let i = 0; i < ids.length; i += CHUNK) lists.push({ findingIds: ids.slice(i, i + CHUNK) });
+    return merge(...lists.map((t) => this.pages(t)));
   }
+
+  private pages(targets: ReviewListTargets): Observable<readonly ExternalReviewDto[]> {
+    const page = (n: number) => this.claude.list(n, CHUNK, targets).pipe(catchError(() => EMPTY));
+    return page(1).pipe(
+      expand((p) =>
+        p.items.length > 0 && p.page * p.pageSize < p.total ? page(p.page + 1) : EMPTY,
+      ),
+      map((p) => p.items),
+    );
+  }
+}
+
+function sameTargets(a: RuleTargets, b: RuleTargets): boolean {
+  const x = a.findingIds ?? [];
+  const y = b.findingIds ?? [];
+  return (
+    (a.labelPlanId ?? null) === (b.labelPlanId ?? null) &&
+    x.length === y.length &&
+    x.every((id, i) => id === y[i])
+  );
 }
 
 /**

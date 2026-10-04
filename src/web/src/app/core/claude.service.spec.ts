@@ -42,6 +42,15 @@ describe('ClaudeService', () => {
     expect(req.request.method).toBe('GET');
     expect(req.request.params.get('page')).toBe('1');
     expect(req.request.params.get('pageSize')).toBe('100');
+    expect(req.request.params.has('findingId')).toBe(false);
+  });
+
+  it('lists the review items of a plan and findings', () => {
+    service.list(2, 50, { labelPlanId: 'p1', findingIds: ['f1', 'f2'] }).subscribe();
+    const req = backend.expectOne((r) => r.url === '/api/claude/reviews');
+    expect(req.request.params.get('labelPlanId')).toBe('p1');
+    expect(req.request.params.getAll('findingId')).toEqual(['f1', 'f2']);
+    expect(req.request.params.get('page')).toBe('2');
   });
 
   it('posts a connection test', () => {

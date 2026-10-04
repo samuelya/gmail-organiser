@@ -14,6 +14,12 @@ import { PagedDto } from './paging.models';
 /** Why copying the review prompt failed; a failed request is already shown by the error interceptor. */
 export type CopyPromptResult = 'copied' | 'load_failed' | 'copy_failed';
 
+/** Targets that narrow the review item list. */
+export interface ReviewListTargets {
+  labelPlanId?: string;
+  findingIds?: readonly string[];
+}
+
 /** The Claude review endpoints (`/api/claude`), shared by Settings, Review and Rules. */
 @Injectable({ providedIn: 'root' })
 export class ClaudeService {
@@ -45,11 +51,19 @@ export class ClaudeService {
     return this.http.post<CreateExternalReviewsResponse>('/api/claude/reviews', request);
   }
 
-  /** Review items, newest first. */
-  list(page = 1, pageSize = 100): Observable<PagedDto<ExternalReviewDto>> {
-    return this.http.get<PagedDto<ExternalReviewDto>>('/api/claude/reviews', {
-      params: { page, pageSize },
-    });
+  /**
+   * Review items, newest first. `labelPlanId` and `findingIds` (at most 100, any of them) narrow the list to those
+   * targets; both given means items matching both.
+   */
+  list(
+    page = 1,
+    pageSize = 100,
+    targets: ReviewListTargets = {},
+  ): Observable<PagedDto<ExternalReviewDto>> {
+    const params: Record<string, string | number | readonly string[]> = { page, pageSize };
+    if (targets.labelPlanId) params['labelPlanId'] = targets.labelPlanId;
+    if (targets.findingIds?.length) params['findingId'] = targets.findingIds;
+    return this.http.get<PagedDto<ExternalReviewDto>>('/api/claude/reviews', { params });
   }
 
   /** Queued items only. */

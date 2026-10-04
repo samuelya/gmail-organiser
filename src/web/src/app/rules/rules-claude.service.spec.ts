@@ -5,7 +5,7 @@ import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
 import { JobsService } from '../core/jobs.service';
 import { SettingsService } from '../settings/settings.service';
-import { RulesClaude } from './rules-claude.service';
+import { RulesClaude, RuleTargets } from './rules-claude.service';
 import { ruleReview } from './rules-claude.testing';
 
 describe('RulesClaude', () => {
@@ -16,6 +16,7 @@ describe('RulesClaude', () => {
   function setup(
     items: ExternalReviewDto[],
     settings = of({ claudeReviewerMode: 'claude_desktop' }),
+    targets: RuleTargets = { labelPlanId: 'p1', findingIds: ['f1'] },
   ) {
     changes = new Subject();
     reconnects = signal(0);
@@ -29,6 +30,7 @@ describe('RulesClaude', () => {
       ],
     });
     const service = TestBed.inject(RulesClaude);
+    service.follow(() => targets);
     TestBed.tick();
     return service;
   }
@@ -65,11 +67,70 @@ describe('RulesClaude', () => {
   });
 
   it('reloads after a reconnect', () => {
-    setup([]);
+    setup([], undefined, { findingIds: ['f1'] });
     expect(list).toHaveBeenCalledTimes(1);
     reconnects.set(1);
     TestBed.tick();
     expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it('loads by its own plan and findings in chunks of 100, and nothing without targets', () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `f${i}`);
+    setup([], undefined, { labelPlanId: 'p1', findingIds: ids });
+    expect(list.mock.calls.map((c) => c[2])).toEqual([
+      { labelPlanId: 'p1' },
+      { findingIds: ids.slice(0, 100) },
+      { findingIds: ids.slice(100) },
+    ]);
+    TestBed.resetTestingModule();
+    setup([], undefined, {});
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('reloads when the target ids change, not when the same ids come again', () => {
+    changes = new Subject();
+    reconnects = signal(0);
+    list = vi.fn(() => of({ items: [], page: 1, pageSize: 100, total: 0 }));
+    TestBed.configureTestingModule({
+      providers: [
+        RulesClaude,
+        { provide: ClaudeService, useValue: { list } },
+        { provide: SettingsService, useValue: { getSettings: () => of({}) } },
+        { provide: JobsService, useValue: { externalReviewChanges: changes, reconnects } },
+      ],
+    });
+    const service = TestBed.inject(RulesClaude);
+    const plan = signal<string | null>(null);
+    service.follow(() => ({ labelPlanId: plan() }));
+    TestBed.tick();
+    expect(list).not.toHaveBeenCalled();
+    plan.set('p1');
+    TestBed.tick();
+    expect(list).toHaveBeenCalledTimes(1);
+    service.follow(() => ({ labelPlanId: 'p1', findingIds: [] }));
+    TestBed.tick();
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it('walks the pages of a target until the total', () => {
+    const service = setup([], undefined, { findingIds: ['f1', 'f2'] });
+    list.mockReset();
+    list
+      .mockReturnValueOnce(
+        of({ items: [ruleReview({ id: 'a' })], page: 1, pageSize: 100, total: 101 }),
+      )
+      .mockReturnValueOnce(
+        of({
+          items: [ruleReview({ id: 'b', findingId: 'f2' })],
+          page: 2,
+          pageSize: 100,
+          total: 101,
+        }),
+      );
+    reconnects.set(1);
+    TestBed.tick();
+    expect(list.mock.calls.map((c) => c[0])).toEqual([1, 2]);
+    expect(service.forFinding('f2')?.id).toBe('b');
   });
 
   it('keeps a live reviewed item when the reconnect reload returns it still running', () => {
