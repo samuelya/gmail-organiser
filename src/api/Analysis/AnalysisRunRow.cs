@@ -16,6 +16,15 @@ public enum AnalysisScope
     Labelled,
 }
 
+/// <summary>What a run writes: <c>suggestions</c> (analyse) or <c>suggestion_alternatives</c> next to them (compare).</summary>
+public enum AnalysisRunKind
+{
+    Analyse,
+
+    /// <summary>Re-analyses existing suggestions with the current prompt, without the memory short-circuit (#248).</summary>
+    Compare,
+}
+
 public enum AnalysisRunStatus
 {
     Queued,
@@ -30,6 +39,7 @@ public sealed class AnalysisRunRow
 {
     public Guid Id { get; set; }
     public Guid? JobId { get; set; }
+    public AnalysisRunKind Kind { get; set; }
     public AnalysisScope Scope { get; set; }
 
     /// <summary>Set for <see cref="AnalysisScope.Sender"/>.</summary>
@@ -72,6 +82,7 @@ public sealed class AnalysisRunRow
             e.ToTable("analysis_runs");
             e.HasKey(r => r.Id);
             e.Property(r => r.Id).ValueGeneratedNever();
+            e.Property(r => r.Kind).IsRequired().HasDefaultValueSql("'analyse'").HasConversion(new SnakeCaseEnumConverter<AnalysisRunKind>());
             e.Property(r => r.Scope).IsRequired().HasConversion(new SnakeCaseEnumConverter<AnalysisScope>());
             e.Property(r => r.GroupingMode).IsRequired().HasConversion(new SnakeCaseEnumConverter<AnalysisGroupingMode>());
             e.Property(r => r.Status).IsRequired().HasConversion(new SnakeCaseEnumConverter<AnalysisRunStatus>());

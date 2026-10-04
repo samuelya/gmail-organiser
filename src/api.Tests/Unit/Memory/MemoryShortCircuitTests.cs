@@ -116,7 +116,8 @@ public sealed class MemoryShortCircuitTests
             throw new NotSupportedException();
 
         public Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
-            IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent, CancellationToken ct) =>
+            IReadOnlyList<MessageRow> messages, MessageVectors? vectors, int k, string? documentTypeParent,
+            IReadOnlyCollection<string> excludeMessageIds, CancellationToken ct) =>
             throw new NotSupportedException();
     }
 }

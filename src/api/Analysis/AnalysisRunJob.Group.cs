@@ -47,7 +47,10 @@ public sealed partial class AnalysisRunJob
         RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
     {
         var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
-        var covered = await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelIndex, context.Labels, context.Run.DocumentTypeParent), ct);
+        // A compare run shows what the current prompt does, so memory never answers for the model.
+        var covered = context.Run.Kind == AnalysisRunKind.Compare
+            ? new ShortCircuitResult?[batch.Count]
+            : await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelIndex, context.Labels, context.Run.DocumentTypeParent), ct);
         var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
         var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
         for (var i = 0; i < batch.Count; i++)
@@ -106,7 +109,9 @@ public sealed partial class AnalysisRunJob
             : await AskModelAsync(
                 context,
                 emails,
-                await memory.FindSimilarAsync(representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, context.Run.DocumentTypeParent, ct),
+                await memory.FindSimilarAsync(
+                    representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, context.Run.DocumentTypeParent,
+                    context.HintExclusions, ct),
                 attachmentsSection,
                 ct);
         if (outputs.Count == 0)

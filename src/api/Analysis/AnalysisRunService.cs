@@ -18,6 +18,18 @@ public enum ReanalyseResult
     OnlyDecided,
 }
 
+public enum CompareRunResult
+{
+    Ok,
+    RunNotFound,
+
+    /// <summary>The ids or the run name no suggestion.</summary>
+    Empty,
+
+    /// <summary>More than <see cref="SettingsValidation.MaxAnalysisDefaultCount"/> suggestions.</summary>
+    TooMany,
+}
+
 /// <summary>Creates, lists and cancels analysis runs and resets messages for re-analysis. Endpoints validate first.</summary>
 public sealed class AnalysisRunService(
     AppDbContext db,
@@ -38,11 +50,7 @@ public sealed class AnalysisRunService(
         AnalysisScope scope, string? senderAddress, string[]? messageIds, int count, AnalysisGroupingMode? groupingMode,
         CancellationToken ct)
     {
-        var settings = await settingsStore.GetAsync(ct);
-        if (string.IsNullOrWhiteSpace(settings.ChatModel))
-        {
-            throw new LlmNotConfiguredException(ModelKinds.Chat);
-        }
+        var settings = await RequireChatModelAsync(ct);
 
         var now = time.GetUtcNow();
         var sender = scope == AnalysisScope.Sender ? senderAddress?.Trim().ToLowerInvariant() : null;
@@ -65,15 +73,109 @@ public sealed class AnalysisRunService(
             CreatedAt = now,
         };
 
+        await EnqueueAsync(run, new AnalysisRunCursor(run.Id, CandidateIds: [.. candidates.Select(m => m.Id)]), ct);
+        return ToDto(run);
+    }
+
+    /// <summary>
+    /// Starts a compare run (#248) over suggestions of any status: <paramref name="suggestionIds"/>, or every suggestion
+    /// <paramref name="runId"/> wrote (or wrote an alternative for). Freezes each message's suggestion; messages deleted
+    /// in Gmail and unknown ids count as skipped. Queued like any run, so it never overlaps another analysis run.
+    /// </summary>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
+    public async Task<(CompareRunResult Result, AnalysisRunDto? Run)> StartCompareAsync(
+        Guid[]? suggestionIds, Guid? runId, CancellationToken ct)
+    {
+        var settings = await RequireChatModelAsync(ct);
+
+        var max = SettingsValidation.MaxAnalysisDefaultCount;
+        var suggestions = db.Suggestions.AsNoTracking();
+        int? requestedIds = null;
+        if (runId is { } id)
+        {
+            if (!await db.AnalysisRuns.AnyAsync(r => r.Id == id, ct))
+            {
+                return (CompareRunResult.RunNotFound, null);
+            }
+
+            var compared = db.SuggestionAlternatives.Where(a => a.RunId == id).Select(a => a.SuggestionId);
+            suggestions = suggestions.Where(s => s.RunId == id || compared.Contains(s.Id)).OrderBy(s => s.Id).Take(max + 1);
+        }
+        else
+        {
+            var ids = (suggestionIds ?? []).Distinct().ToArray();
+            if (ids.Length > max)
+            {
+                return (CompareRunResult.TooMany, null);
+            }
+
+            suggestions = suggestions.Where(s => ids.Contains(s.Id));
+            requestedIds = ids.Length;
+        }
+
+        // One read: the run's count and its frozen list cannot disagree.
+        var frozen = await suggestions.Select(s => new { s.Id, s.MessageId }).ToListAsync(ct);
+        if (frozen.Count > max)
+        {
+            return (CompareRunResult.TooMany, null);
+        }
+
+        var requested = requestedIds ?? frozen.Count;
+        if (frozen.Count == 0)
+        {
+            return (CompareRunResult.Empty, null);
+        }
+
+        var messageIds = frozen.Select(s => s.MessageId).ToArray();
+        var candidates = await db.Messages.AsNoTracking()
+            .Where(m => messageIds.Contains(m.Id) && !m.DeletedInGmail)
+            .OrderByDescending(m => m.InternalDate)
+            .ThenBy(m => m.Id)
+            .Select(m => m.Id)
+            .ToListAsync(ct);
+        var now = time.GetUtcNow();
+        var run = new AnalysisRunRow
+        {
+            Id = Guid.CreateVersion7(now),
+            Kind = AnalysisRunKind.Compare,
+            Scope = AnalysisScope.Messages,
+            MessageIds = messageIds,
+            RequestedCount = requested,
+            GroupingMode = settings.AnalysisGroupingMode,
+            Status = AnalysisRunStatus.Queued,
+            SkippedMessages = requested - candidates.Count,
+            CreatedAt = now,
+        };
+
+        var cursor = new AnalysisRunCursor(
+            run.Id, CandidateIds: candidates, SuggestionIds: frozen.ToDictionary(s => s.MessageId, s => s.Id, StringComparer.Ordinal));
+        await EnqueueAsync(run, cursor, ct);
+        return (CompareRunResult.Ok, ToDto(run));
+    }
+
+    /// <summary>The settings, once a chat model is selected; shared by the run starters so they cannot drift apart.</summary>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
+    private async Task<AppSettings> RequireChatModelAsync(CancellationToken ct)
+    {
+        var settings = await settingsStore.GetAsync(ct);
+        if (string.IsNullOrWhiteSpace(settings.ChatModel))
+        {
+            throw new LlmNotConfiguredException(ModelKinds.Chat);
+        }
+
+        return settings;
+    }
+
+    /// <summary>Stores the queued run and enqueues its job in one transaction, so a failed enqueue leaves no run behind.</summary>
+    private async Task EnqueueAsync(AnalysisRunRow run, AnalysisRunCursor cursor, CancellationToken ct)
+    {
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         db.AnalysisRuns.Add(run);
         await db.SaveChangesAsync(ct);
-        var cursor = new AnalysisRunCursor(run.Id, CandidateIds: [.. candidates.Select(m => m.Id)]);
         var (job, _) = await jobs.EnqueueAsync(AnalysisRunJob.JobType, AnalysisRunJob.Queue, cursor, ct, dedupKey: run.Id.ToString());
         run.JobId = job.Id;
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return ToDto(run);
     }
 
     public async Task<IReadOnlyList<AnalysisRunDto>> ListAsync(bool? active, int limit, CancellationToken ct)
@@ -210,7 +312,9 @@ public sealed class AnalysisRunService(
         var applied = db.Suggestions.AsNoTracking().Where(s => s.Status == SuggestionStatus.Applied);
         var actionCount = await applied.CountAsync(s => s.NeedsAction, ct);
         var deleteCount = await applied.CountAsync(s => s.ToBeDeleted, ct);
+        // Compare runs re-cover analysed mail without the short-circuit; they would inflate covered and lower saved %.
         var totals = await db.AnalysisRuns.AsNoTracking()
+            .Where(r => r.Kind == AnalysisRunKind.Analyse)
             .GroupBy(_ => 1)
             .Select(g => new { LlmCalls = g.Sum(r => (long)r.LlmCalls), Covered = g.Sum(r => (long)r.MessagesCovered) })
             .FirstOrDefaultAsync(ct);
@@ -237,6 +341,7 @@ public sealed class AnalysisRunService(
     private static AnalysisRunDto ToDto(AnalysisRunRow run) => new(
         run.Id,
         run.JobId,
+        SnakeCaseEnumConverter<AnalysisRunKind>.ToDb(run.Kind),
         SnakeCaseEnumConverter<AnalysisScope>.ToDb(run.Scope),
         run.SenderAddress,
         run.RequestedCount,

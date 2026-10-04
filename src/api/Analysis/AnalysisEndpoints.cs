@@ -24,6 +24,7 @@ public static class AnalysisEndpoints
         group.MapGet("/runs", ListAsync);
         group.MapGet("/runs/{id:guid}", GetAsync);
         group.MapPost("/runs/{id:guid}/cancel", CancelAsync);
+        group.MapPost("/compare-runs", StartCompareAsync).RequireAccountMatch();
         group.MapPost("/re-analyse", ReanalyseAsync).RequireAccountMatch();
         group.MapGet("/summary", async (AnalysisRunService runs, CancellationToken ct) => TypedResults.Ok(await runs.SummaryAsync(ct)));
         return endpoints;
@@ -54,6 +55,37 @@ public static class AnalysisEndpoints
 
         var run = await runs.StartAsync(s, request.SenderAddress, request.MessageIds, count, groupingMode, ct);
         return TypedResults.Accepted($"/api/analysis/runs/{run.Id}", run);
+    }
+
+    /// <summary>
+    /// 202 with the queued compare run; 400 unless exactly one of <c>suggestionIds</c> or <c>runId</c> names 1 to the max
+    /// count suggestions; 409 when no chat model is selected.
+    /// </summary>
+    private static async Task<Results<Accepted<AnalysisRunDto>, ValidationProblem>> StartCompareAsync(
+        CompareRunRequest request, AnalysisRunService runs, CancellationToken ct)
+    {
+        var max = SettingsValidation.MaxAnalysisDefaultCount;
+        if ((request.SuggestionIds is null) == (request.RunId is null))
+        {
+            return Invalid("", "Give either suggestionIds or runId.");
+        }
+
+        if (request.SuggestionIds is { } ids && (ids.Length == 0 || ids.Distinct().Count() > max))
+        {
+            return Invalid("suggestionIds", $"1 to {max} suggestion ids.");
+        }
+
+        var (result, run) = await runs.StartCompareAsync(request.SuggestionIds, request.RunId, ct);
+        return result switch
+        {
+            CompareRunResult.Ok => TypedResults.Accepted($"/api/analysis/runs/{run!.Id}", run),
+            CompareRunResult.RunNotFound => Invalid("runId", "No such run."),
+            CompareRunResult.TooMany => Invalid("runId", $"The run has more than {max} suggestions; select at most {max}."),
+            _ => Invalid(request.RunId is null ? "suggestionIds" : "runId", "No suggestions to compare."),
+        };
+
+        static ValidationProblem Invalid(string field, string message) =>
+            TypedResults.ValidationProblem(new Dictionary<string, string[]> { [field] = [message] });
     }
 
     /// <summary>Newest first; <c>active</c> filters queued/running (true) or finished (false) runs.</summary>
