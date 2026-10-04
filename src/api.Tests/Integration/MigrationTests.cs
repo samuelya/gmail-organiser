@@ -62,7 +62,7 @@ public sealed class MigrationTests(PostgresFixture postgres)
     {
         var connectionString = await CreateEmptyDatabaseAsync();
         await using var db = CreateDbContext(connectionString);
-        await db.GetService<IMigrator>().MigrateAsync("M7_SuggestionReplaceLabels", cancellationToken: Ct);
+        await db.GetService<IMigrator>().MigrateAsync("M6_LabelPlans", cancellationToken: Ct);
         await db.Database.ExecuteSqlRawAsync(
             """
             INSERT INTO messages (id, thread_id, from_address, internal_date, label_ids, has_attachment, size_estimate, fetched_at, updated_at)

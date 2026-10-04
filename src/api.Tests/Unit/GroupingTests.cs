@@ -258,12 +258,15 @@ public sealed class GroupingTests
         DerivationRule.Decide([Out(), Out(type: " ")], 0.10).ShouldBeOfType<Agreed>().DocumentTypeLabel.ShouldBeNull();
     }
 
+    [Fact]
+    public void Rule_is_mixed_when_document_type_labels_differ() =>
+        DerivationRule.Decide([Out(type: "Types/Invoice"), Out(type: "Types/Receipt"), Out()], 0.10).ShouldBe(Mixed.Instance);
+
     [Theory]
-    [InlineData("Types/Invoice", "Types/Receipt")]
     [InlineData("Types/Invoice", null)]
     [InlineData(null, "Types/Invoice")]
-    public void Rule_is_mixed_when_document_type_labels_differ(string? first, string? second) =>
-        DerivationRule.Decide([Out(type: first), Out(type: second)], 0.10).ShouldBe(Mixed.Instance);
+    public void Rule_treats_a_missing_document_type_as_no_opinion_and_derives_none(string? first, string? second) =>
+        DerivationRule.Decide([Out(type: first), Out(type: second)], 0.10).ShouldBeOfType<Agreed>().DocumentTypeLabel.ShouldBeNull();
 
     [Fact]
     public void Rule_agrees_on_the_same_replaced_label_set_in_any_order()
