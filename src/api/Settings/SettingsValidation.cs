@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using GmailOrganiser.Analysis.Attachments;
 using GmailOrganiser.Analysis.Prompts;
+using GmailOrganiser.Gmail;
+using GmailOrganiser.Review;
 
 namespace GmailOrganiser.Settings;
 
@@ -47,8 +49,13 @@ public static class SettingsValidation
     public const int MaxClaudeMaxItemsPerRun = 50;
     public const int MinClaudeMaxTurns = 10;
     public const int MaxClaudeMaxTurns = 300;
+    public const int MaxLabelNameLength = GmailLimits.LabelNameMaxLength;
 
-    public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request)
+    /// <summary>
+    /// Checks <paramref name="request"/>; the label names must differ from each other, so a name sent alone is compared with the
+    /// other name in <paramref name="current"/> (the defaults when omitted).
+    /// </summary>
+    public static Dictionary<string, string[]> Validate(UpdateSettingsRequest request, AppSettings? current = null)
     {
         var errors = new Dictionary<string, string[]>();
         if (request.OllamaBaseUrl is { } url && !IsHttpUrl(url))
@@ -107,6 +114,7 @@ public static class SettingsValidation
             ValidateAttachments(errors, attachments);
         }
 
+        ValidateLabelNames(errors, request, current ?? new AppSettings());
         return errors;
     }
 
@@ -176,6 +184,40 @@ public static class SettingsValidation
                 errors[$"{field}.enabled"] = ["Archive attachments (zip, 7z, rar, tar, gz) are never read and cannot be enabled."];
             }
         }
+    }
+
+    private static void ValidateLabelNames(Dictionary<string, string[]> errors, UpdateSettingsRequest request, AppSettings current)
+    {
+        var actionOk = CheckLabelName(errors, "actionLabelName", request.ActionLabelName);
+        var deleteOk = CheckLabelName(errors, "deleteLabelName", request.DeleteLabelName);
+        if ((request.ActionLabelName is not null || request.DeleteLabelName is not null) && actionOk && deleteOk
+            && string.Equals(request.ActionLabelName?.Trim() ?? current.ActionLabelName, request.DeleteLabelName?.Trim() ?? current.DeleteLabelName,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            errors["deleteLabelName"] = ["Must differ from the action label."];
+        }
+    }
+
+    // Trimmed, non-empty, a valid user label path with no Gmail system label name at any level, at most 225 characters.
+    private static bool CheckLabelName(Dictionary<string, string[]> errors, string field, string? value)
+    {
+        if (value is null)
+        {
+            return true;
+        }
+
+        var name = value.Trim();
+        string? error = name.Length == 0 ? "Required."
+            : name.Length > MaxLabelNameLength ? $"Must be at most {MaxLabelNameLength} characters."
+            : LabelPath.IsReserved(name) ? "Must not be a Gmail system label."
+            : !LabelResolver.IsValid(name) ? "Must be a valid Gmail label: up to five '/'-separated parts of at most 100 characters, none blank or a system label."
+            : null;
+        if (error is not null)
+        {
+            errors[field] = [error];
+        }
+
+        return error is null;
     }
 
     private static void CheckRange(Dictionary<string, string[]> errors, string field, int? value, int min, int max)

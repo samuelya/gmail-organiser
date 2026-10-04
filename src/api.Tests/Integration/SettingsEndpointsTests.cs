@@ -352,6 +352,31 @@ public sealed class SettingsEndpointsTests(ApiFactory factory, PostgresFixture p
         settings.OllamaBaseUrl.ShouldBe("https://llm.example.com/");
     }
 
+    [Fact]
+    public async Task Label_names_are_trimmed_saved_and_kept_by_other_updates()
+    {
+        var response = await PutAsync(factory, "/api/settings",
+            new UpdateSettingsRequest(null, null, null, null, ActionLabelName: "  Synthetic/Todo ", DeleteLabelName: "Synthetic Bin"));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, "chat-model-a", null, null));
+
+        var settings = await GetAsync(factory);
+        settings.ActionLabelName.ShouldBe("Synthetic/Todo");
+        settings.DeleteLabelName.ShouldBe("Synthetic Bin");
+    }
+
+    [Fact]
+    public async Task Label_name_equal_to_the_stored_other_name_gets_400()
+    {
+        await PutAsync(factory, "/api/settings", new UpdateSettingsRequest(null, null, null, null, ActionLabelName: "Synthetic/Todo"));
+
+        var response = await PutAsync(factory, "/api/settings",
+            new UpdateSettingsRequest(null, null, null, null, DeleteLabelName: "synthetic/todo"));
+
+        await ShouldBeValidationProblemAsync(response, "deleteLabelName");
+        (await GetAsync(factory)).DeleteLabelName.ShouldBe("To-Be-Deleted");
+    }
+
     private async Task UpdateInScopeAsync(Func<AppSettings, AppSettings> change)
     {
         await Task.Yield();

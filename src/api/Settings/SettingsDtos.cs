@@ -105,7 +105,9 @@ public sealed record UpdateSettingsRequest(
     int? ClaudeMaxItemsPerRun = null,
     int? ClaudeMaxTurns = null,
     string? ClaudeModel = null,
-    UpdateProtectionSettingsRequest? Protection = null);
+    UpdateProtectionSettingsRequest? Protection = null,
+    string? ActionLabelName = null,
+    string? DeleteLabelName = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>

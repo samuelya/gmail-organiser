@@ -16,7 +16,17 @@ public sealed record AppSettings
 
     /// <summary>The Ollama vision model for <see cref="ImageMode.Vision"/> image reading (#72); <c>null</c> when none is chosen.</summary>
     public string? VisionModel { get; init; }
+
+    /// <summary>
+    /// The label an "action" suggestion applies. Resolved by name at apply time: changing it renames nothing in Gmail and
+    /// re-labels nothing already stored; the next apply uses (and if needed creates) the new label.
+    /// </summary>
     public string ActionLabelName { get; init; } = "Action/ToDo";
+
+    /// <summary>
+    /// The label a "delete" suggestion applies and the Clean-up list reads. Resolved by name at apply and query time: changing
+    /// it renames nothing in Gmail and re-labels nothing already stored; mail under the old label leaves the Clean-up list.
+    /// </summary>
     public string DeleteLabelName { get; init; } = "To-Be-Deleted";
     public string? GoogleClientId { get; init; }
 

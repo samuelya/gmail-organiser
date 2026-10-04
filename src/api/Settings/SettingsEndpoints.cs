@@ -51,7 +51,7 @@ public static class SettingsEndpoints
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem>> UpdateAsync(
         UpdateSettingsRequest request, ISettingsStore store, GoogleClientService google, IOptions<SettingsEnvOptions> env, CancellationToken ct)
     {
-        var errors = SettingsValidation.Validate(request);
+        var errors = SettingsValidation.Validate(request, await store.GetAsync(ct));
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
@@ -89,6 +89,8 @@ public static class SettingsEndpoints
             ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
             ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
             Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
+            ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,
+            DeleteLabelName = request.DeleteLabelName?.Trim() ?? s.DeleteLabelName,
         }, ct);
         return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
     }
