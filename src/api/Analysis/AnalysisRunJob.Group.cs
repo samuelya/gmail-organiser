@@ -12,7 +12,9 @@ namespace GmailOrganiser.Analysis;
 
 /// <summary>
 /// What one group produced: rows to store, members that failed, members to analyse one by one, the attachments of
-/// the prompt's emails converted or skipped, and the tokens and time its model calls spent.
+/// the prompt's emails converted or skipped, and the tokens and time its model calls spent. <see cref="LlmCalls"/>
+/// counts every call, <see cref="TriageCalls"/> the triage model's and <see cref="EscalatedCalls"/> those repeated
+/// with the chat model.
 /// </summary>
 internal sealed record GroupOutcome(
     IReadOnlyList<SuggestionRow> Suggestions,
@@ -22,7 +24,25 @@ internal sealed record GroupOutcome(
     bool Mixed,
     int AttachmentsConverted = 0,
     int AttachmentsSkipped = 0,
-    LlmUsage Usage = default);
+    LlmUsage Usage = default,
+    int TriageCalls = 0,
+    int EscalatedCalls = 0);
+
+/// <summary>
+/// The valid answers about a group's representatives, the ids the triage model answered (the chat model answered the
+/// rest), the filter proposal and what the calls cost.
+/// </summary>
+internal sealed record ModelAnswer(
+    IReadOnlyDictionary<string, SuggestionOutput> Outputs,
+    IReadOnlySet<string> TriageIds,
+    FilterCriteriaOutput? Filter,
+    int Calls,
+    LlmUsage Usage,
+    int TriageCalls = 0,
+    int EscalatedCalls = 0)
+{
+    public static ModelAnswer None => new(new Dictionary<string, SuggestionOutput>(), new HashSet<string>(), null, 0, default);
+}
 
 /// <summary>A representative's body and its attachment list (empty with the master switch off); both live only in the group's analysis.</summary>
 internal sealed record FetchedMessage(GmailMessageBody Body, IReadOnlyList<GmailAttachment> Attachments);
@@ -105,8 +125,8 @@ public sealed partial class AnalysisRunJob
             LogMissingBodies(logger, representatives.Count - emails.Count);
         }
 
-        var (outputs, filter, calls, usage) = emails.Count == 0
-            ? ([], null, 0, default)
+        var answer = emails.Count == 0
+            ? ModelAnswer.None
             : await AskModelAsync(
                 context,
                 emails,
@@ -115,26 +135,35 @@ public sealed partial class AnalysisRunJob
                     context.HintExclusions, ct),
                 attachmentsSection,
                 ct);
-        if (outputs.Count == 0)
+        if (answer.Outputs.Count == 0)
         {
             // Nothing usable: the members stay not analysed rather than costing one call each against a failing model.
-            return new GroupOutcome([], [.. group.Members.Select(m => m.Id)], [], calls, Mixed: false, Usage: usage);
+            return new GroupOutcome(
+                [], [.. group.Members.Select(m => m.Id)], [], answer.Calls, Mixed: false, Usage: answer.Usage,
+                TriageCalls: answer.TriageCalls, EscalatedCalls: answer.EscalatedCalls);
         }
 
-        outputs = WithoutAttachmentText(outputs, converted);
+        var (calls, usage, triageCalls, escalatedCalls) = (answer.Calls, answer.Usage, answer.TriageCalls, answer.EscalatedCalls);
+        var triageModel = context.Settings.TriageModel;
+        // Derived rows record the chat model when it answered for the group, else the triage model.
+        var groupModel = answer.Outputs.Count > answer.TriageIds.Count ? context.Run.Model : triageModel;
+
+        var outputs = WithoutAttachmentText(answer.Outputs, converted);
 
         // Counted for the analysed representatives only, so the totals match the messages that got a suggestion.
         var counted = present.Select((x, i) => outputs.ContainsKey(x.First.Id) ? converted[i] : []).SelectMany(l => l).ToList();
         var (convertedCount, skipped) = (counted.Count(a => a.Converted is not null), counted.Count(a => a.Skipped is not null));
 
-        var filterJson = filter is null ? null : JsonSerializer.Serialize(filter, JsonSerializerOptions.Web);
+        var filterJson = answer.Filter is null ? null : JsonSerializer.Serialize(answer.Filter, JsonSerializerOptions.Web);
         var groupKey = group.Individual ? null : group.Key;
-        var rows = outputs.Values.Select(o => Row(context, members[o.Id], SuggestionSource.Llm, o, groupKey, filterJson)).ToList();
+        var rows = outputs.Values
+            .Select(o => Row(context, members[o.Id], SuggestionSource.Llm, o, groupKey, filterJson, answer.TriageIds.Contains(o.Id) ? triageModel : context.Run.Model))
+            .ToList();
         var failed = representatives.Where(m => !outputs.ContainsKey(m.Id)).Select(m => m.Id).ToList();
         var others = group.Members.Where(m => !group.RepresentativeIds.Contains(m.Id, StringComparer.Ordinal)).ToList();
         if (others.Count == 0)
         {
-            return new GroupOutcome(rows, failed, [], calls, Mixed: false, convertedCount, skipped, usage);
+            return new GroupOutcome(rows, failed, [], calls, Mixed: false, convertedCount, skipped, usage, triageCalls, escalatedCalls);
         }
 
         var decision = DerivationRule.Decide(
@@ -144,7 +173,8 @@ public sealed partial class AnalysisRunJob
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
         {
-            return new GroupOutcome(rows, failed, [.. others.Select(AnalysisGrouper.Single)], calls, Mixed: true, convertedCount, skipped, usage);
+            return new GroupOutcome(
+                rows, failed, [.. others.Select(AnalysisGrouper.Single)], calls, Mixed: true, convertedCount, skipped, usage, triageCalls, escalatedCalls);
         }
 
         // A derived toBeDeleted never lands on protected mail; the grouper makes such members representatives, this
@@ -165,11 +195,11 @@ public sealed partial class AnalysisRunJob
             }
             else
             {
-                rows.Add(Row(context, m, SuggestionSource.Derived, derived, groupKey, filterJson));
+                rows.Add(Row(context, m, SuggestionSource.Derived, derived, groupKey, filterJson, groupModel));
             }
         }
 
-        return new GroupOutcome(rows, failed, individual, calls, Mixed: false, convertedCount, skipped, usage);
+        return new GroupOutcome(rows, failed, individual, calls, Mixed: false, convertedCount, skipped, usage, triageCalls, escalatedCalls);
     }
 
     /// <summary>
@@ -188,8 +218,8 @@ public sealed partial class AnalysisRunJob
     }
 
     /// <summary>The outputs, a reason that quotes an attachment of the prompt replaced by one naming it (#74).</summary>
-    private static Dictionary<string, SuggestionOutput> WithoutAttachmentText(
-        Dictionary<string, SuggestionOutput> outputs, IEnumerable<IReadOnlyList<PromptAttachment>> converted)
+    private static IReadOnlyDictionary<string, SuggestionOutput> WithoutAttachmentText(
+        IReadOnlyDictionary<string, SuggestionOutput> outputs, IEnumerable<IReadOnlyList<PromptAttachment>> converted)
     {
         var texts = converted.SelectMany(l => l).Select(a => a.Converted).OfType<ConvertedAttachment>().ToList();
         return texts.Count == 0
@@ -199,30 +229,91 @@ public sealed partial class AnalysisRunJob
     }
 
     /// <summary>
-    /// The prompt, then the same prompt with <see cref="RetryInstruction"/> when an email has no valid answer. Failed
-    /// ids are the expected ids without a valid answer, never derived from the error count.
+    /// With a triage model (#375): its answer when every email has a valid answer at or above the threshold (errors that
+    /// name no email, such as an unusable filter or an unknown id, do not count). Otherwise the chat model answers the same
+    /// prompt, retrying only for emails neither model answered confidently; the chat answer wins per email, a triage answer
+    /// (confident or not) fills the emails the chat model left without one, and the triage filter stands in for a missing
+    /// chat filter. Without a triage model: the chat model's answer only.
     /// </summary>
-    private async Task<(Dictionary<string, SuggestionOutput> Outputs, FilterCriteriaOutput? Filter, int Calls, LlmUsage Usage)> AskModelAsync(
+    private async Task<ModelAnswer> AskModelAsync(
         RunContext context, IReadOnlyList<EmailForPrompt> emails, IReadOnlyList<MemoryHint> hints, string attachmentsSection, CancellationToken ct)
     {
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
         var messages = context.Builder.Build(new PromptInput(
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName,
             context.Run.DocumentTypeParent));
-
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
+        if (context.Triage is not { } triage)
+        {
+            return await AskChatModelAsync(context, messages, expected, new HashSet<string>(), current, ct);
+        }
+
+        string text;
+        LlmUsage usage;
+        try
+        {
+            (text, usage) = await ChatAsync(context, triage, context.Settings.TriageModel, messages, emails.Count, ct);
+        }
+        catch (AnalysisModelUnavailableException ex)
+        {
+            // Triage is an optimisation: an unreachable triage model hands the group to the chat model, whose own
+            // unavailability still fails the run.
+            LogTriageUnavailable(logger, ex.Message);
+            var escalated = await AskChatModelAsync(context, messages, expected, new HashSet<string>(), current, ct);
+            return escalated with { Calls = escalated.Calls + 1, TriageCalls = 1, EscalatedCalls = 1 };
+        }
+
+        var parsed = SuggestionOutputParser.Parse(text, expected, current, context.Run.DocumentTypeParent);
+        LogDropped(parsed);
+        var threshold = context.Settings.TriageConfidenceThreshold;
+        var triaged = parsed.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
+        var confident = triaged.Values.Where(o => o.Confidence >= threshold).Select(o => o.Id).ToHashSet(StringComparer.Ordinal);
+        if (confident.Count == expected.Count)
+        {
+            return new ModelAnswer(triaged, confident, parsed.Filter, 1, usage, TriageCalls: 1);
+        }
+
+        // Parser errors name ids and fields only, never email content.
+        LogTriageEscalated(
+            logger, expected.Count - triaged.Count, triaged.Count - confident.Count, threshold, string.Join("; ", parsed.Errors));
+        var chat = await AskChatModelAsync(context, messages, expected, confident, current, ct);
+        var outputs = new Dictionary<string, SuggestionOutput>(chat.Outputs, StringComparer.Ordinal);
+        var filled = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (id, output) in triaged)
+        {
+            if (outputs.TryAdd(id, output))
+            {
+                filled.Add(id);
+            }
+        }
+
+        return new ModelAnswer(
+            outputs, filled, chat.Filter ?? parsed.Filter, chat.Calls + 1, usage + chat.Usage, TriageCalls: 1, EscalatedCalls: 1);
+    }
+
+    /// <summary>
+    /// The prompt, then the same prompt with <see cref="RetryInstruction"/> when an email has neither a valid answer nor
+    /// one in <paramref name="answered"/> (the triage model's confident answers). Failed ids are the expected ids without
+    /// a valid answer, never derived from the error count.
+    /// </summary>
+    private async Task<ModelAnswer> AskChatModelAsync(
+        RunContext context, IList<ChatMessage> messages, HashSet<string> expected, IReadOnlySet<string> answered,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> current, CancellationToken ct)
+    {
         var parent = context.Run.DocumentTypeParent;
-        var (firstText, usage) = await ChatAsync(context, messages, emails.Count, ct);
+        var model = context.Run.Model;
+        var (firstText, usage) = await ChatAsync(context, context.Chat, model, messages, expected.Count, ct);
         var first = SuggestionOutputParser.Parse(firstText, expected, current, parent);
         LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
         var filter = first.Filter;
-        if (outputs.Count == expected.Count)
+        if (Unanswered() == 0)
         {
-            return (outputs, filter, 1, usage);
+            return Answer(1);
         }
 
-        var (retryText, retryUsage) = await ChatAsync(context, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], emails.Count, ct);
+        var (retryText, retryUsage) = await ChatAsync(
+            context, context.Chat, model, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], expected.Count, ct);
         usage += retryUsage;
         var retry = SuggestionOutputParser.Parse(retryText, expected, current, parent);
         LogDropped(retry);
@@ -232,13 +323,17 @@ public sealed partial class AnalysisRunJob
         }
 
         filter ??= retry.Filter;
-        if (outputs.Count < expected.Count)
+        if (Unanswered() is > 0 and var unanswered)
         {
             // Parser errors name ids and fields only, never email content.
-            LogInvalidOutput(logger, expected.Count - outputs.Count, string.Join("; ", retry.Errors));
+            LogInvalidOutput(logger, unanswered, string.Join("; ", retry.Errors));
         }
 
-        return (outputs, filter, 2, usage);
+        return Answer(2);
+
+        int Unanswered() => expected.Count(id => !outputs.ContainsKey(id) && !answered.Contains(id));
+
+        ModelAnswer Answer(int calls) => new(outputs, new HashSet<string>(), filter, calls, usage);
     }
 
     private void LogDropped(ParsedSuggestions parsed)
@@ -250,13 +345,13 @@ public sealed partial class AnalysisRunJob
     }
 
     private async Task<(string Text, LlmUsage Usage)> ChatAsync(
-        RunContext context, IList<ChatMessage> messages, int groupSize, CancellationToken ct)
+        RunContext context, IChatClient chat, string? model, IList<ChatMessage> messages, int groupSize, CancellationToken ct)
     {
         try
         {
             var numCtx = context.Settings.LlmNumCtx;
             var (response, usage) = await _meter.GetResponseAsync(
-                context.Chat, messages, AnalysisPromptBuilder.CreateOptions(numCtx), context.Run.Model, numCtx, groupSize, ct);
+                chat, messages, AnalysisPromptBuilder.CreateOptions(numCtx), model, numCtx, groupSize, ct);
             return (response.Text, usage);
         }
         catch (Exception ex) when (ex is HttpRequestException or TimeoutException or OllamaSharp.Models.Exceptions.OllamaException
@@ -279,7 +374,7 @@ public sealed partial class AnalysisRunJob
 
         var groupKey = group.Individual ? null : group.Key;
         return new GroupOutcome(
-            [.. covered.Suggestions.Select(s => Row(context, members[s.Id], SuggestionSource.Memory, s, groupKey, null))],
+            [.. covered.Suggestions.Select(s => Row(context, members[s.Id], SuggestionSource.Memory, s, groupKey, null, context.Run.Model))],
             [],
             [.. group.Members.Where(m => !ids.Contains(m.Id)).Select(AnalysisGrouper.Single)],
             0,
@@ -292,7 +387,8 @@ public sealed partial class AnalysisRunJob
     /// existing ancestor) and is new when there is none, so a derived row agrees with its representatives.
     /// </summary>
     private static SuggestionRow Row(
-        RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson)
+        RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson,
+        string? model)
     {
         var type = output.DocumentTypeLabel is { } suggested ? context.LabelIndex.Respell(suggested) : null;
         var row = new SuggestionRow
@@ -313,7 +409,7 @@ public sealed partial class AnalysisRunJob
             Confidence = double.IsFinite(output.Confidence) ? Math.Clamp(output.Confidence, 0, 1) : 0,
             Reason = output.Reason,
             FilterCriteria = filterJson,
-            Model = context.Run.Model,
+            Model = model,
             PromptVersion = context.Run.PromptVersion,
         };
         row.SetReplaced(context.Labels.Carried(message, output.ReplaceLabels, output.TopicLabel));

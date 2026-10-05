@@ -107,6 +107,8 @@ public static class SettingsEndpoints
         ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
         RulesStaleFilterDays = request.RulesStaleFilterDays ?? s.RulesStaleFilterDays,
         LlmNumCtx = request.LlmNumCtx ?? s.LlmNumCtx,
+        TriageModel = request.TriageModel is null ? s.TriageModel : SettingsValidation.NormaliseModelName(request.TriageModel),
+        TriageConfidenceThreshold = request.TriageConfidenceThreshold ?? s.TriageConfidenceThreshold,
         ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
         Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
         ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,

@@ -73,6 +73,10 @@ public sealed class AnalysisRunRow
 
     /// <summary>Model calls whose prompt filled at least 90 % of <c>num_ctx</c>, so Ollama likely truncated it.</summary>
     public int NearContextLimit { get; set; }
+
+    /// <summary>Calls to the triage model (#375); <see cref="EscalatedCalls"/> of them were repeated with the chat model.</summary>
+    public int TriageCalls { get; set; }
+    public int EscalatedCalls { get; set; }
     public string? Model { get; set; }
     public string? PromptVersion { get; set; }
 
