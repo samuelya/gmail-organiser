@@ -36,11 +36,12 @@ import {
   resyncDisabled,
 } from './fetch.models';
 import { FetchService } from './fetch.service';
+import { TriageCard } from './triage-card.component';
 
 /** Counts refetch at most this often while a fetch job runs. */
 export const STATUS_REFRESH_MS = 5000;
 
-/** `/dashboard`: mailbox fetch progress and controls, and the running jobs. */
+/** `/dashboard`: mailbox fetch progress and controls, triage metrics, and the running jobs. */
 @Component({
   selector: 'app-dashboard-page',
   imports: [
@@ -56,6 +57,7 @@ export const STATUS_REFRESH_MS = 5000;
     MatTooltipModule,
     PageHeader,
     RouterLink,
+    TriageCard,
   ],
   templateUrl: './dashboard-page.component.html',
   styles: `

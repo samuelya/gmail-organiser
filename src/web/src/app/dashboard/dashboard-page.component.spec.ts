@@ -12,6 +12,7 @@ import { FetchStatusDto } from './fetch.models';
 import { FetchService } from './fetch.service';
 import { job, status } from './fetch.testing';
 import { SetupService } from '../setup/setup.service';
+import { TriageService } from './triage.service';
 
 const analysisSummary: AnalysisSummaryDto = {
   notAnalysed: 0,
@@ -67,6 +68,10 @@ describe('DashboardPage', () => {
         { provide: FetchService, useValue: fetch },
         { provide: SetupService, useValue: setup },
         { provide: AnalysisService, useValue: { summary: () => of(analysisSummary) } },
+        {
+          provide: TriageService,
+          useValue: { get: () => of({ current: null, history: [], llmHours: 0 }) },
+        },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
