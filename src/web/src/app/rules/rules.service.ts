@@ -12,6 +12,7 @@ import {
   FilterListDto,
   FilterPreviewDto,
   FilterProposalDto,
+  ProposalSourceFilter,
   FilterRequest,
   FilterReviewDto,
   FilterSyncResultDto,
@@ -43,12 +44,16 @@ export class RulesService {
     return this.http.post<FilterDto>(`/api/rules/filters/${encodeURIComponent(id)}/restore`, null);
   }
 
-  /** Policy proposals first, then pattern proposals by most messages. */
-  proposals(page: number, pageSize = PROPOSALS_PAGE_SIZE): Observable<PagedDto<FilterProposalDto>> {
+  /** Policy proposals first, then pattern proposals by most messages; `source` keeps one kind. */
+  proposals(
+    page: number,
+    source: ProposalSourceFilter = 'all',
+    pageSize = PROPOSALS_PAGE_SIZE,
+  ): Observable<PagedDto<FilterProposalDto>> {
     const params = new HttpParams()
       .set('page', page)
       .set('pageSize', pageSize)
-      .set('source', 'all');
+      .set('source', source);
     return this.http.get<PagedDto<FilterProposalDto>>('/api/rules/filters/proposals', { params });
   }
 

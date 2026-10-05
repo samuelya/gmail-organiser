@@ -12,16 +12,24 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { catchError, map, of } from 'rxjs';
+import { RouterLink } from '@angular/router';
+import { catchError, map, of, Subscription } from 'rxjs';
 import { DEFAULT_FLAG_LABELS } from '../review/review.models';
 import { ReviewService } from '../review/review.service';
 import { SettingsService } from '../settings/settings.service';
 import { openFilterPreview } from './filter-preview-dialog.component';
-import { FilterDto, FilterProposalDto, FilterRequest } from './rules.models';
+import {
+  FilterDto,
+  FilterProposalDto,
+  FilterRequest,
+  PROPOSAL_SOURCES,
+  ProposalSourceFilter,
+} from './rules.models';
 import { RulesService } from './rules.service';
 
 /**
@@ -30,10 +38,31 @@ import { RulesService } from './rules.service';
  */
 @Component({
   selector: 'app-filter-proposals',
-  imports: [DecimalPipe, MatButtonModule, MatIconModule, MatProgressBarModule, MatTooltipModule],
+  imports: [
+    DecimalPipe,
+    MatButtonModule,
+    MatButtonToggleModule,
+    MatIconModule,
+    MatProgressBarModule,
+    MatTooltipModule,
+    RouterLink,
+  ],
   template: `
     <section class="flex flex-col gap-2" aria-labelledby="proposals-heading">
-      <h2 id="proposals-heading" class="m-0 text-base font-medium">Proposed filters</h2>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="proposals-heading" class="m-0 text-base font-medium">Proposed filters</h2>
+        <mat-button-toggle-group
+          [value]="source()"
+          (change)="setSource($event.value)"
+          aria-label="Proposal source"
+          hideSingleSelectionIndicator
+          data-testid="proposals-source"
+        >
+          @for (s of sources; track s.value) {
+            <mat-button-toggle [value]="s.value">{{ s.label }}</mat-button-toggle>
+          }
+        </mat-button-toggle-group>
+      </div>
       @if (loading() && !items().length) {
         <mat-progress-bar mode="indeterminate" aria-label="Loading proposed filters" />
       }
@@ -54,7 +83,14 @@ import { RulesService } from './rules.service';
           <li class="row flex flex-wrap items-center gap-x-4 gap-y-1 py-2" data-testid="proposal">
             <div class="min-w-48 flex-1">
               <div class="break-all">{{ p.senderAddress }}</div>
-              @if (p.displayName) {
+              @if (p.policyId) {
+                <a
+                  class="text-sm"
+                  [routerLink]="['/policies', p.policyId]"
+                  data-testid="proposal-policy"
+                  >{{ p.displayName ?? 'Open the policy' }}</a
+                >
+              } @else if (p.displayName) {
                 <div class="muted text-sm">{{ p.displayName }}</div>
               }
               @if (p.note) {
@@ -66,12 +102,13 @@ import { RulesService } from './rules.service';
             <span class="tag text-sm" data-testid="proposal-origin">{{ origin(p) }}</span>
             @if (p.partial) {
               <span
-                class="tag text-sm"
+                class="tag warn flex items-center gap-1 text-sm"
                 tabindex="0"
                 [matTooltip]="partialHint(p)"
                 [attr.aria-label]="partialHint(p)"
                 data-testid="proposal-partial"
               >
+                <mat-icon class="small" aria-hidden="true">warning</mat-icon>
                 Partial
               </span>
             }
@@ -114,6 +151,16 @@ import { RulesService } from './rules.service';
       border-radius: 4px;
       padding: 0 6px;
     }
+    .warn {
+      color: var(--mat-sys-on-error-container);
+      background: var(--mat-sys-error-container);
+      border-color: transparent;
+    }
+    .small {
+      width: 16px;
+      height: 16px;
+      font-size: 16px;
+    }
     .row + .row {
       border-top: 1px solid var(--mat-sys-outline-variant);
     }
@@ -133,6 +180,8 @@ export class FilterProposals implements OnInit {
   /** The `propose` sender's dialog was opened; the page drops the query param. */
   readonly proposeHandled = output<void>();
 
+  readonly sources = PROPOSAL_SOURCES;
+  readonly source = signal<ProposalSourceFilter>('all');
   readonly items = signal<FilterProposalDto[]>([]);
   readonly total = signal(0);
   readonly loading = signal(false);
@@ -142,6 +191,8 @@ export class FilterProposals implements OnInit {
   readonly nextPage = computed(() => this.pagesLoaded() + 1);
   /** `propose` opens its dialog once, not on every later reload of page 1. */
   private proposeOpened = false;
+  /** The page request in flight; a new one (another source) replaces it. */
+  private request?: Subscription;
 
   private readonly flags = toSignal(
     inject(SettingsService)
@@ -158,11 +209,23 @@ export class FilterProposals implements OnInit {
     this.load(1);
   }
 
+  /** Shows one source from page 1; the other source's rows go at once, so a failed load retries page 1. */
+  setSource(source: ProposalSourceFilter): void {
+    if (source === this.source()) return;
+    this.source.set(source);
+    this.items.set([]);
+    this.total.set(0);
+    this.loaded.set(false);
+    this.pagesLoaded.set(0);
+    this.load(1);
+  }
+
   load(page: number): void {
     this.loading.set(true);
     this.loadFailed.set(false);
-    this.rules
-      .proposals(page)
+    this.request?.unsubscribe();
+    this.request = this.rules
+      .proposals(page, this.source())
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (result) => {

@@ -80,6 +80,10 @@ describe('RulesService', () => {
     expect(
       http.expectOne((r) => r.url === '/api/rules/filters/proposals').request.params.toString(),
     ).toBe('page=2&pageSize=20&source=all');
+    service.proposals(1, 'policy').subscribe();
+    expect(
+      http.expectOne((r) => r.url === '/api/rules/filters/proposals').request.params.toString(),
+    ).toBe('page=1&pageSize=20&source=policy');
   });
 
   it('encodes the id on delete and restore', () => {

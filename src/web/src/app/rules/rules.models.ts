@@ -92,7 +92,7 @@ export interface FilterPreviewDto {
  */
 export interface FilterProposalDto {
   key: string;
-  source?: 'policy' | 'pattern';
+  source?: ProposalSource;
   policyId?: string | null;
   ruleId?: string | null;
   /** A rule condition has no Gmail equivalent, so the filter matches more than the rule. */
@@ -123,6 +123,15 @@ export interface FilterEdit {
 
 export const PROPOSALS_PAGE_SIZE = 20;
 
+/** The `?source=` values of `GET /api/rules/filters/proposals`. */
+export type ProposalSource = 'policy' | 'pattern';
+export type ProposalSourceFilter = 'all' | ProposalSource;
+export const PROPOSAL_SOURCES: readonly { value: ProposalSourceFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'policy', label: 'Policies' },
+  { value: 'pattern', label: 'Patterns' },
+];
+
 /** The `?tab=` values of `/rules`, in tab order. */
 export const RULES_TABS = ['filters', 'findings', 'labels'] as const;
 export type RulesTab = (typeof RULES_TABS)[number];
@@ -138,9 +147,16 @@ export function actionChips(action: FilterActionDto): string[] {
 }
 
 export type FilterFindingKind =
-  'duplicate' | 'overlap' | 'deleted_label' | 'no_recent_matches' | 'mergeable';
+  | 'duplicate'
+  | 'overlap'
+  | 'deleted_label'
+  | 'no_recent_matches'
+  | 'mergeable'
+  | 'overlaps_policy'
+  | 'policy_conflict';
 /** `none` is report only: there is no safe fix, so there is nothing to apply. */
-export type FilterFixKind = 'none' | 'delete' | 'merge' | 'merge_actions' | 'drop_label';
+export type FilterFixKind =
+  'none' | 'delete' | 'merge' | 'merge_actions' | 'drop_label' | 'relabel';
 export type FilterFindingStatus = 'open' | 'applied' | 'dismissed' | 'superseded';
 
 /** `FilterFixDto`: apply creates `create` (if any) first, then deletes `deleteFilterIds`. */
@@ -164,6 +180,8 @@ export interface FilterFindingDto {
   error: string | null;
   /** The review that found it; another review's id marks a half-applied finding carried over. */
   reviewId: string;
+  /** The sender policy an `overlaps_policy` or `policy_conflict` finding refers to. */
+  policyId?: string | null;
 }
 
 /** `FilterReviewDto`: one run of the filter checks, with the optional local-model summary. */
@@ -186,6 +204,8 @@ export const FINDING_KINDS: readonly { kind: FilterFindingKind; label: string }[
   { kind: 'deleted_label', label: 'Deleted labels' },
   { kind: 'no_recent_matches', label: 'No recent matches' },
   { kind: 'mergeable', label: 'Mergeable' },
+  { kind: 'overlaps_policy', label: 'Covered by a policy filter' },
+  { kind: 'policy_conflict', label: 'Conflicts with a policy' },
 ];
 
 export interface FindingGroup {
@@ -236,6 +256,7 @@ const FIX_TITLES: Record<Exclude<FilterFixKind, 'none'>, string> = {
   merge: 'Merge into one filter',
   merge_actions: 'Combine the actions into one filter',
   drop_label: 'Re-create without the deleted label',
+  relabel: "Replace with the policy's filter",
 };
 
 /** The fix of a finding for display; null for `none` (report only). */
