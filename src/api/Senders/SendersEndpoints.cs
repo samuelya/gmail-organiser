@@ -13,6 +13,7 @@ public static class SendersEndpoints
     {
         var group = endpoints.MapGroup("/api/senders").WithTags("Senders");
         group.MapGet("/", ListAsync);
+        group.MapGet("/noisy", ListNoisyAsync);
         group.MapPut("/{address}/allowlist", SetAllowlistAsync);
         group.MapPost("/canonical/backfill", StartCanonicalBackfillAsync);
         group.MapPost("/stats/rebuild", StartStatsRebuildAsync);
@@ -36,6 +37,25 @@ public static class SendersEndpoints
         return query is null
             ? TypedResults.ValidationProblem(errors)
             : TypedResults.Ok(await (query with { Allowlisted = allowlisted }).ExecuteAsync(db, await DomainsAsync(settings, ct), ct));
+    }
+
+    /// <summary>Noisy senders by canonical address, highest volume first; defaults to <c>minMessages=10&amp;minUnreadRatio=0.9</c>.</summary>
+    private static async Task<Results<Ok<PagedDto<NoisySenderDto>>, ValidationProblem>> ListNoisyAsync(
+        AppDbContext db,
+        ISettingsStore settings,
+        TimeProvider time,
+        CancellationToken ct,
+        int? minMessages = null,
+        double? minUnreadRatio = null,
+        int? dormantDays = null,
+        string? search = null,
+        int? page = null,
+        int? pageSize = null)
+    {
+        var query = NoisySenderQuery.Parse(minMessages, minUnreadRatio, dormantDays, search, page, pageSize, out var errors);
+        return query is null
+            ? TypedResults.ValidationProblem(errors)
+            : TypedResults.Ok(await query.ExecuteAsync(db, await DomainsAsync(settings, ct), time, ct));
     }
 
     /// <summary>
