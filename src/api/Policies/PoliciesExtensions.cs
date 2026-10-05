@@ -14,12 +14,13 @@ public sealed class PolicyOptions
 
 public static class PoliciesExtensions
 {
-    /// <summary>Registers the transactional guard and the policy matcher.</summary>
+    /// <summary>Registers the transactional guard, the policy matcher and the sender profile builder.</summary>
     public static IServiceCollection AddPolicies(this IServiceCollection services)
     {
         services.AddOptions<PolicyOptions>().BindConfiguration(PolicyOptions.SectionName);
         services.AddSingleton<TransactionalGuard>();
         services.AddSingleton<PolicyMatcher>();
+        services.AddScoped<SenderProfileBuilder>();
         return services;
     }
 }

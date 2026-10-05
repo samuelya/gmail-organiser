@@ -1,7 +1,10 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 
@@ -9,11 +12,16 @@ namespace GmailOrganiser.Senders;
 
 public static class SendersEndpoints
 {
+    /// <summary>Bounds the <c>listId</c> query value; real List-Ids are far shorter.</summary>
+    public const int MaxListIdLength = 500;
+
     public static IEndpointRouteBuilder MapSendersEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/senders").WithTags("Senders");
         group.MapGet("/", ListAsync);
         group.MapGet("/noisy", ListNoisyAsync);
+        group.MapGet("/{address}/profile", GetProfileAsync);
+        group.MapGet("/profile", GetListProfileAsync);
         group.MapPut("/{address}/allowlist", SetAllowlistAsync);
         group.MapPost("/canonical/backfill", StartCanonicalBackfillAsync);
         group.MapPost("/stats/rebuild", StartStatsRebuildAsync);
@@ -87,6 +95,56 @@ public static class SendersEndpoints
             ? TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Sender not found")
             : TypedResults.Ok(await SenderQuery.ToDtoAsync(sender, await DomainsAsync(settings, ct), db, ct));
     }
+
+    /// <summary>The profile of a sender known by its raw or canonical address; 404 when unknown or without live mail.</summary>
+    private static async Task<Results<Ok<SenderProfileDto>, ValidationProblem, ProblemHttpResult>> GetProfileAsync(
+        string address, SenderProfileBuilder profiles, CancellationToken ct, bool includeBodies = false)
+    {
+        var normalised = SenderAllowlist.Normalise(address, out var error);
+        if (error is not null)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["address"] = [error] });
+        }
+
+        var canonical = await profiles.ResolveSenderAsync(normalised!, ct);
+        return canonical is null
+            ? SenderNotFound()
+            : await ProfileAsync(profiles, PolicyScope.Sender, canonical, includeBodies, ct);
+    }
+
+    /// <summary>The profile of a mailing list by its <c>List-Id</c>; 404 when no live message carries it.</summary>
+    private static async Task<Results<Ok<SenderProfileDto>, ValidationProblem, ProblemHttpResult>> GetListProfileAsync(
+        SenderProfileBuilder profiles, CancellationToken ct, string? listId = null, bool includeBodies = false)
+    {
+        var key = GroupKey.NormaliseListId(listId);
+        if (key is null || key.Length > MaxListIdLength)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["listId"] = [$"Required: a List-Id of at most {MaxListIdLength} characters."],
+            });
+        }
+
+        return await ProfileAsync(profiles, PolicyScope.List, key, includeBodies, ct);
+    }
+
+    private static async Task<Results<Ok<SenderProfileDto>, ValidationProblem, ProblemHttpResult>> ProfileAsync(
+        SenderProfileBuilder profiles, PolicyScope scope, string key, bool includeBodies, CancellationToken ct)
+    {
+        try
+        {
+            return await profiles.BuildAsync(scope, key, includeBodies, ct) is { } profile
+                ? TypedResults.Ok(SenderProfileDto.From(profile))
+                : SenderNotFound();
+        }
+        catch (GmailNotConnectedException ex)
+        {
+            return GmailProblems.NotConnected(ex);
+        }
+    }
+
+    private static ProblemHttpResult SenderNotFound() =>
+        TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Sender not found");
 
     /// <summary>
     /// Queues a full sender stats rebuild, or returns the queued one not yet started (never 409); a running or paused
