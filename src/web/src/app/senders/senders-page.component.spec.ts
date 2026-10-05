@@ -136,22 +136,6 @@ describe('SendersPage', () => {
     expect(row.textContent).toMatch(/4\/10/);
   });
 
-  it('shows an Unsubscribed chip only on a row with unsubscribedAt', async () => {
-    const { el } = await render(
-      '/senders',
-      paged([
-        sender(),
-        sender({ address: 'shop@example.com', unsubscribedAt: '2026-03-04T10:00:00Z' }),
-      ]),
-    );
-    const chips = el.querySelectorAll('[data-testid="unsubscribed-chip"]');
-    expect(chips).toHaveLength(1);
-    expect(chips[0].textContent).toContain('Unsubscribed Mar 4, 2026');
-    expect(chips[0].closest('[data-testid="sender-row"]')!.textContent).toContain(
-      'shop@example.com',
-    );
-  });
-
   it('each row links to Analyse with the sender and the default count from settings', async () => {
     const { q } = await render('/senders', paged([sender()]));
     const link = q('analyse-sender') as HTMLAnchorElement;
@@ -465,13 +449,6 @@ describe('SendersPage', () => {
     );
   });
 
-  it('empty states: no senders yet links to the Dashboard; no search matches', async () => {
-    const { harness, q } = await render('/senders', paged([]));
-    expect(q('no-senders')!.querySelector('a')!.getAttribute('href')).toBe('/dashboard');
-    await harness.navigateByUrl('/senders?search=nothing');
-    expect(q('no-senders')).toBeNull();
-    expect(q('no-matches')!.textContent).toContain('nothing');
-  });
 });
 
 describe('SendersPage API errors', () => {

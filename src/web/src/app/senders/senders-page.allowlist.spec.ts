@@ -165,4 +165,24 @@ describe('SendersPage allowlist toggle', () => {
       protection: { allowlistedDomains: ['example.org'] },
     });
   });
+
+  it('offers no domain allowlist on a relay row unless a listed domain already covers it', async () => {
+    const relay = {
+      address: 'bounce-1@relay.example.net',
+      domain: 'relay.example.net',
+      canonicalAddress: 'news@example.com',
+      isRelay: true,
+    };
+    const { q } = await render(sender(relay));
+    expect(q('allowlist-domain')).toBeNull();
+    expect(q('allowlist-sender')).not.toBeNull();
+
+    TestBed.resetTestingModule();
+    const listed = await render(sender({ ...relay, allowlistedByDomain: true }), [
+      'example.net',
+    ]);
+    expect(listed.q('allowlist-domain')!.getAttribute('aria-label')).toBe(
+      'Remove example.net from allowlist',
+    );
+  });
 });

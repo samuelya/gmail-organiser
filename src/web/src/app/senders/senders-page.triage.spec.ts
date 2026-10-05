@@ -109,9 +109,29 @@ describe('SendersPage Stage-0 columns and kind filter', () => {
     expect(human.textContent).toContain('2025');
   });
 
-  it('links each row to the noisy senders filtered by its canonical domain', async () => {
-    const { q } = await render([sender({ canonicalDomain: 'example.org' })]);
-    expect(q('noisy-senders')!.getAttribute('href')).toBe('/senders/noisy?search=example.org');
+  it('shows an Unsubscribed chip only on a row with unsubscribedAt', async () => {
+    const { el } = await render([
+      sender(),
+      sender({
+        address: 'shop@example.com',
+        canonicalAddress: 'shop@example.com',
+        unsubscribedAt: '2026-03-04T10:00:00Z',
+      }),
+    ]);
+    const chips = el.querySelectorAll('[data-testid="unsubscribed-chip"]');
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent).toContain('Unsubscribed Mar 4, 2026');
+    expect(chips[0].closest('[data-testid="sender-row"]')!.textContent).toContain(
+      'shop@example.com',
+    );
+  });
+
+  it('empty states: no senders yet links to the Dashboard; no search matches', async () => {
+    const { harness, q } = await render([]);
+    expect(q('no-senders')!.querySelector('a')!.getAttribute('href')).toBe('/dashboard');
+    await harness.navigateByUrl('/senders?search=nothing');
+    expect(q('no-senders')).toBeNull();
+    expect(q('no-matches')!.textContent).toContain('nothing');
   });
 
   it('reads the kinds and unread sort from the URL and sends them', async () => {

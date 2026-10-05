@@ -304,39 +304,33 @@
                     row.sender.allowlisted ? 'shield' : 'add_moderator'
                   }}</mat-icon>
                 </button>
-                <a
-                  mat-icon-button
-                  routerLink="/senders/noisy"
-                  [queryParams]="{ search: row.sender.canonicalDomain }"
-                  matTooltip="Noisy senders at this domain"
-                  [attr.aria-label]="'Noisy senders at ' + row.sender.canonicalDomain"
-                  data-testid="noisy-senders"
-                >
-                  <mat-icon aria-hidden="true">campaign</mat-icon>
-                </a>
                 @let listed = listedDomain(row.sender);
-                <button
-                  mat-icon-button
-                  type="button"
-                  (click)="toggleDomainAllowlist(row.sender)"
-                  [disabled]="domainSaving() || allowlistedDomains() === null"
-                  [attr.aria-pressed]="!!listed"
-                  [matTooltip]="
-                    listed
-                      ? 'Remove ' + listed + ' from allowlist'
-                      : 'Allowlist domain ' + row.sender.domain
-                  "
-                  [attr.aria-label]="
-                    listed
-                      ? 'Remove ' + listed + ' from allowlist'
-                      : 'Allowlist domain ' + row.sender.domain
-                  "
-                  data-testid="allowlist-domain"
-                >
-                  <mat-icon aria-hidden="true">{{
-                    listed ? 'domain_disabled' : 'domain_add'
-                  }}</mat-icon>
-                </button>
+                <!-- A relay row's domain is the relay service; the allowlist matches the raw sender domain, so only
+                     offer removing a domain that already covers it. -->
+                @if (!row.sender.isRelay || listed) {
+                  <button
+                    mat-icon-button
+                    type="button"
+                    (click)="toggleDomainAllowlist(row.sender)"
+                    [disabled]="domainSaving() || allowlistedDomains() === null"
+                    [attr.aria-pressed]="!!listed"
+                    [matTooltip]="
+                      listed
+                        ? 'Remove ' + listed + ' from allowlist'
+                        : 'Allowlist domain ' + row.sender.domain
+                    "
+                    [attr.aria-label]="
+                      listed
+                        ? 'Remove ' + listed + ' from allowlist'
+                        : 'Allowlist domain ' + row.sender.domain
+                    "
+                    data-testid="allowlist-domain"
+                  >
+                    <mat-icon aria-hidden="true">{{
+                      listed ? 'domain_disabled' : 'domain_add'
+                    }}</mat-icon>
+                  </button>
+                }
                 @if (rowJobs().get(row.sender.address); as job) {
                   <app-sender-progress
                     [job]="job"
