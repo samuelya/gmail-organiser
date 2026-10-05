@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe, NgTemplateOutlet } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -6,7 +6,6 @@ import {
   DestroyRef,
   inject,
   input,
-  model,
   output,
   signal,
 } from '@angular/core';
@@ -48,7 +47,6 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
     DatePipe,
     DecimalPipe,
     MatButtonModule,
-    NgTemplateOutlet,
     MatChipsModule,
     MatIconModule,
     MatProgressBarModule,
@@ -79,9 +77,16 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
               }
             </mat-chip-set>
             @if (v.run.isStalled) {
-              <ng-container
-                *ngTemplateOutlet="resumeButton; context: { $implicit: v.run }"
-              ></ng-container>
+              <button
+                mat-button
+                type="button"
+                (click)="resumeRun.emit(v.run)"
+                [disabled]="resuming().has(v.run.id)"
+                [attr.aria-label]="'Resume run ' + target(v.run)"
+                data-testid="resume-run"
+              >
+                {{ resuming().has(v.run.id) ? 'Resuming…' : 'Resume' }}
+              </button>
             } @else {
               <button
                 mat-button
@@ -118,7 +123,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
         <mat-chip-listbox aria-label="Filter recent runs by status">
           <mat-chip-option
             [selected]="failedOnly()"
-            (selectionChange)="failedOnly.set($event.selected)"
+            (selectionChange)="failedOnlyChange.emit($event.selected)"
             data-testid="filter-failed"
           >
             Failed
@@ -144,9 +149,16 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
           <div class="flex flex-wrap items-center gap-2">
             <span class="min-w-0 flex-1" data-testid="run-savings">{{ savings(run) }}</span>
             @if (resumable(run)) {
-              <ng-container
-                *ngTemplateOutlet="resumeButton; context: { $implicit: run }"
-              ></ng-container>
+              <button
+                mat-button
+                type="button"
+                (click)="resumeRun.emit(run)"
+                [disabled]="resuming().has(run.id)"
+                [attr.aria-label]="'Resume run ' + target(run)"
+                data-testid="resume-run"
+              >
+                {{ resuming().has(run.id) ? 'Resuming…' : 'Resume' }}
+              </button>
             }
             @if (run.policiesProposed > 0) {
               <a
@@ -249,19 +261,6 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
         </p>
       }
     </section>
-
-    <ng-template #resumeButton let-run>
-      <button
-        mat-button
-        type="button"
-        (click)="resumeRun.emit(run)"
-        [disabled]="resuming().has(run.id)"
-        [attr.aria-label]="'Resume run ' + target(run)"
-        data-testid="resume-run"
-      >
-        {{ resuming().has(run.id) ? 'Resuming…' : 'Resume' }}
-      </button>
-    </ng-template>
   `,
   styles: `
     .card-title {
@@ -313,7 +312,8 @@ export class RunList {
   /** "Resume" on a failed or stalled run. */
   readonly resumeRun = output<AnalysisRunDto>();
   /** The "Failed" filter chip: the page lists only failed finished runs. */
-  readonly failedOnly = model(false);
+  readonly failedOnly = input(false);
+  readonly failedOnlyChange = output<boolean>();
   /** Run ids whose error line is expanded. */
   readonly expanded = signal<ReadonlySet<string>>(new Set());
   /** An analysis run is queued or running: no re-analysis can start. */

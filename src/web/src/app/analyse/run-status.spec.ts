@@ -121,11 +121,14 @@ describe('RunList run status', () => {
     expect(q('run-counters')!.textContent).toContain('4 triage calls · 1 escalated');
   });
 
-  it('the Failed chip toggles the failed-only filter', async () => {
+  it('the Failed chip asks for the failed-only filter; the empty list says so', async () => {
     const { fixture, q } = await render([], []);
+    const changes: boolean[] = [];
+    fixture.componentInstance.failedOnlyChange.subscribe((f) => changes.push(f));
     q('filter-failed')!.querySelector<HTMLElement>('button')!.click();
+    expect(changes).toEqual([true]);
+    fixture.componentRef.setInput('failedOnly', true);
     await fixture.whenStable();
-    expect(fixture.componentInstance.failedOnly()).toBe(true);
     expect(q('no-finished-runs')!.textContent).toContain('No failed runs.');
   });
 });
