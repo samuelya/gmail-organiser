@@ -59,6 +59,11 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, Time
         var kept = new HashSet<Guid>();
         var now = time.GetUtcNow();
         var rules = new List<SenderPolicyRuleRow>();
+        if (request.Rules is null)
+        {
+            errors["rules"] = ["Required: an array (may be empty)."];
+        }
+
         var requested = request.Rules ?? [];
         for (var i = 0; i < requested.Length; i++)
         {

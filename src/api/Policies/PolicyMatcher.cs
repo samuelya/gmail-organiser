@@ -36,11 +36,7 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
     /// <param name="canonicalAddress">The message's relay-decoded sender, when known; rules test it and the raw address.</param>
     public PolicyMatch? Match(MessageRow m, SenderPolicyRow policy, string? canonicalAddress = null)
     {
-        var rule = policy.Rules
-            .Where(r => r.Status == PolicyStatus.Approved)
-            .OrderBy(r => r.Position)
-            .FirstOrDefault(r => Holds(r.Match, m, canonicalAddress));
-
+        var rule = FirstRule(m, policy, canonicalAddress);
         if ((rule is null || rule.Action == PolicyAction.Delete) && guard.IsTransactional(m))
         {
             return policy.IsMixed
@@ -59,6 +55,13 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
 
         return policy.IsMixed ? null : Default(policy);
     }
+
+    /// <summary>The first approved rule, in saved order, whose every set match field holds; before the guard.</summary>
+    internal static SenderPolicyRuleRow? FirstRule(MessageRow m, SenderPolicyRow policy, string? canonicalAddress) =>
+        policy.Rules
+            .Where(r => r.Status == PolicyStatus.Approved)
+            .OrderBy(r => r.Position)
+            .FirstOrDefault(r => Holds(r.Match, m, canonicalAddress));
 
     /// <summary>
     /// Sorts rules stably by the cost of their dearest set field: header presence, then address or subdomain, then

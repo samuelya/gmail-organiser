@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace GmailOrganiser.Policies;
 
 /// <summary>The policy review list and detail (DESIGN §6.3): read-only, no Gmail mutation and no LLM.</summary>
-public sealed class PolicyQuery(AppDbContext db, PolicyMatcher matcher, TransactionalGuard guard, SenderProfileBuilder profiles)
+public sealed class PolicyQuery(AppDbContext db, PolicyMatcher matcher, SenderProfileBuilder profiles)
 {
     public const int DefaultPageSize = 50;
     public const int MaxPageSize = 200;
@@ -133,21 +133,25 @@ public sealed class PolicyQuery(AppDbContext db, PolicyMatcher matcher, Transact
         foreach (var m in messages)
         {
             var match = matcher.Match(m, copy, m.CanonicalAddress);
-            if (match is null)
+            if (match is null || match.Guarded)
             {
-                // A mixed sender: no rule matched, or the guard stopped a delete; both go to review.
-                if (policy.IsMixed && guard.IsTransactional(m))
+                // Guarded only when the guard stopped a delete: the matching rule, or a non-mixed default, deletes.
+                // Otherwise a mixed sender's message matched no rule (review) and a non-mixed one takes the default.
+                var deletes = PolicyMatcher.FirstRule(m, copy, m.CanonicalAddress) is { } first
+                    ? first.Action == PolicyAction.Delete
+                    : !copy.IsMixed && copy.Action == PolicyAction.Delete;
+                if (deletes)
                 {
                     counts.Guarded++;
                 }
-                else
+                else if (match is null)
                 {
                     counts.Unmatched++;
                 }
-            }
-            else if (match.Guarded)
-            {
-                counts.Guarded++;
+                else
+                {
+                    counts.Default++;
+                }
             }
             else if (match.Rule is { } rule)
             {

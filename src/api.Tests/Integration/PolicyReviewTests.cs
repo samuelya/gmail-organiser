@@ -143,6 +143,21 @@ public sealed class PolicyReviewTests(ApiFactory factory, PostgresFixture postgr
     }
 
     [Fact]
+    public async Task Detail_counts_a_transactional_message_no_rule_matches_as_unmatched_not_guarded()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Messages.Where(m => m.Id == "news0").ExecuteUpdateAsync(u => u.SetProperty(m => m.HasAttachment, true), Ct);
+        }
+
+        var detail = await DetailAsync(ShopPolicy);
+
+        // Only the attachment deal had a delete to block; the attachment news matched no rule, so it goes to review.
+        detail.GuardedCount.ShouldBe(1);
+        detail.UnmatchedCount.ShouldBe(3);
+    }
+
+    [Fact]
     public async Task Edit_reorders_replaces_rules_and_returns_the_new_preview()
     {
         var request = new EditPolicyRequest(null, null, null, null, "keep", true,
@@ -173,6 +188,19 @@ public sealed class PolicyReviewTests(ApiFactory factory, PostgresFixture postgr
     }
 
     [Fact]
+    public async Task Edit_with_an_empty_rules_array_clears_the_rules()
+    {
+        var response = await client.PutAsJsonAsync($"/api/policies/{ShopPolicy}",
+            new EditPolicyRequest(null, null, null, null, "keep", true, []), Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var edited = (await response.Content.ReadFromJsonAsync<EditPolicyResponse>(Ct)).ShouldNotBeNull();
+        edited.Policy.Rules.ShouldBeEmpty();
+        edited.Policy.UnmatchedCount.ShouldBe(9);
+        edited.Policy.GuardedCount.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task Edit_with_invalid_fields_is_a_400_and_saves_nothing()
     {
         var request = new EditPolicyRequest(null, null, "not_a_type", 0, "delete", true,
@@ -193,6 +221,12 @@ public sealed class PolicyReviewTests(ApiFactory factory, PostgresFixture postgr
         second.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await second.Content.ReadFromJsonAsync<ValidationProblemDetails>(Ct))!.Errors.Keys
             .ShouldBe(["action", "rules[0].match"], ignoreOrder: true);
+
+        // A missing rules field is an error, not "delete every rule"; an explicit [] still clears them.
+        var missing = await client.PutAsync($"/api/policies/{ShopPolicy}",
+            JsonContent.Create(new { action = "keep", isMixed = true }), Ct);
+        missing.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await missing.Content.ReadFromJsonAsync<ValidationProblemDetails>(Ct))!.Errors.Keys.ShouldBe(["rules"]);
 
         await using var db = postgres.CreateDbContext();
         var stored = await db.SenderPolicies.Include(p => p.Rules).SingleAsync(p => p.Id == ShopPolicy, Ct);
