@@ -3,6 +3,7 @@ using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -57,29 +58,39 @@ public sealed partial class AnalysisRunService(
         var settings = await RequireChatModelAsync(ct);
 
         var now = time.GetUtcNow();
-        var sender = scope == AnalysisScope.Sender ? senderAddress?.Trim().ToLowerInvariant() : null;
+        var sender = scope is AnalysisScope.Sender or AnalysisScope.TopSenders ? senderAddress?.Trim().ToLowerInvariant() : null;
         var ids = scope == AnalysisScope.Messages ? messageIds?.Distinct(StringComparer.Ordinal).ToArray() : null;
+        if (scope == AnalysisScope.TopSenders)
+        {
+            // The senders are frozen like a message run's candidates; the job walks them by index.
+            var senders = await PolicyCandidates.QueryAsync(db, sender, count, settings.AnalysisMinGroupSize, ct);
+            var policyRun = NewRun(scope, sender, null, count, groupingMode ?? settings.AnalysisGroupingMode, now);
+            await EnqueueAsync(policyRun, new AnalysisRunCursor(policyRun.Id, Senders: senders), ct);
+            return ToDto(policyRun);
+        }
 
         // A resume works over exactly these ids, whatever is fetched meanwhile.
         // Without Gmail, app labels count as personal here; the run's eligibility check skips such candidates.
         var appLabelIds = scope == AnalysisScope.Labelled ? (await PersonalLabels.LoadAsync(labelCatalog, settings, ct)).AppLabelIds : [];
         var candidates = await AnalysisCandidates.QueryAsync(db, scope, sender, ids, count, appLabelIds, ct);
-        var run = new AnalysisRunRow
+        var run = NewRun(scope, sender, ids, count, groupingMode ?? settings.AnalysisGroupingMode, now);
+        run.SkippedMessages = AnalysisCandidates.Skipped(scope, count, candidates.Count);
+        await EnqueueAsync(run, new AnalysisRunCursor(run.Id, CandidateIds: [.. candidates.Select(m => m.Id)]), ct);
+        return ToDto(run);
+    }
+
+    private static AnalysisRunRow NewRun(
+        AnalysisScope scope, string? sender, string[]? ids, int count, AnalysisGroupingMode groupingMode, DateTimeOffset now) => new()
         {
             Id = Guid.CreateVersion7(now),
             Scope = scope,
             SenderAddress = sender,
             MessageIds = ids,
             RequestedCount = count,
-            GroupingMode = groupingMode ?? settings.AnalysisGroupingMode,
+            GroupingMode = groupingMode,
             Status = AnalysisRunStatus.Queued,
-            SkippedMessages = AnalysisCandidates.Skipped(scope, count, candidates.Count),
             CreatedAt = now,
         };
-
-        await EnqueueAsync(run, new AnalysisRunCursor(run.Id, CandidateIds: [.. candidates.Select(m => m.Id)]), ct);
-        return ToDto(run);
-    }
 
     /// <summary>
     /// Starts a compare run (#248) over suggestions of any status: <paramref name="suggestionIds"/>, or every suggestion
@@ -375,5 +386,6 @@ public sealed partial class AnalysisRunService(
         run.NearContextLimit,
         run.TriageCalls,
         run.EscalatedCalls,
-        stalled);
+        stalled,
+        run.PoliciesProposed);
 }

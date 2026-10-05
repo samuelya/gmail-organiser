@@ -6,6 +6,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Settings;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Analysis;
@@ -344,21 +345,25 @@ public sealed partial class AnalysisRunJob
         }
     }
 
+    private Task<(string Text, LlmUsage Usage)> ChatAsync(
+        RunContext context, IChatClient chat, string? model, IList<ChatMessage> messages, int groupSize, CancellationToken ct) =>
+        ChatAsync(context.Settings, chat, model, messages, AnalysisPromptBuilder.CreateOptions(context.Settings.LlmNumCtx), groupSize, ct);
+
+    /// <summary>One metered chat call; an unreachable or timed-out model becomes <see cref="AnalysisModelUnavailableException"/>.</summary>
     private async Task<(string Text, LlmUsage Usage)> ChatAsync(
-        RunContext context, IChatClient chat, string? model, IList<ChatMessage> messages, int groupSize, CancellationToken ct)
+        AppSettings settings, IChatClient chat, string? model, IList<ChatMessage> messages, ChatOptions options, int groupSize,
+        CancellationToken ct)
     {
         try
         {
-            var numCtx = context.Settings.LlmNumCtx;
-            var (response, usage) = await _meter.GetResponseAsync(
-                chat, messages, AnalysisPromptBuilder.CreateOptions(numCtx), model, numCtx, groupSize, ct);
+            var (response, usage) = await _meter.GetResponseAsync(chat, messages, options, model, settings.LlmNumCtx, groupSize, ct);
             return (response.Text, usage);
         }
         catch (Exception ex) when (ex is HttpRequestException or TimeoutException or OllamaSharp.Models.Exceptions.OllamaException
             || (ex is TaskCanceledException && !ct.IsCancellationRequested))
         {
             throw new AnalysisModelUnavailableException(
-                OllamaErrors.Describe(ex, OllamaHttp.Parse(context.Settings.OllamaBaseUrl), llmOptions.Value.ModelTimeout), ex);
+                OllamaErrors.Describe(ex, OllamaHttp.Parse(settings.OllamaBaseUrl), llmOptions.Value.ModelTimeout), ex);
         }
     }
 

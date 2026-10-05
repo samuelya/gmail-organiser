@@ -14,6 +14,9 @@ public enum AnalysisScope
 
     /// <summary>Not-analysed mail that already carries at least one user label (the labelled phase).</summary>
     Labelled,
+
+    /// <summary>Senders by volume, one sender-policy proposal each (#357); the count means senders.</summary>
+    TopSenders,
 }
 
 /// <summary>What a run writes: <c>suggestions</c> (analyse) or <c>suggestion_alternatives</c> next to them (compare).</summary>
@@ -42,13 +45,13 @@ public sealed class AnalysisRunRow
     public AnalysisRunKind Kind { get; set; }
     public AnalysisScope Scope { get; set; }
 
-    /// <summary>Set for <see cref="AnalysisScope.Sender"/>.</summary>
+    /// <summary>Set for <see cref="AnalysisScope.Sender"/>; the canonical address for a single-sender <see cref="AnalysisScope.TopSenders"/> run.</summary>
     public string? SenderAddress { get; set; }
 
     /// <summary>Set for <see cref="AnalysisScope.Messages"/>.</summary>
     public string[]? MessageIds { get; set; }
 
-    /// <summary>Emails to cover (LLM, derived and memory suggestions all count).</summary>
+    /// <summary>Emails to cover (LLM, derived and memory suggestions all count); senders for <see cref="AnalysisScope.TopSenders"/>.</summary>
     public int RequestedCount { get; set; }
     public AnalysisGroupingMode GroupingMode { get; set; }
     public AnalysisRunStatus Status { get; set; }
@@ -77,6 +80,9 @@ public sealed class AnalysisRunRow
     /// <summary>Calls to the triage model (#375); <see cref="EscalatedCalls"/> of them were repeated with the chat model.</summary>
     public int TriageCalls { get; set; }
     public int EscalatedCalls { get; set; }
+
+    /// <summary>Sender policies a <see cref="AnalysisScope.TopSenders"/> run proposed (#357).</summary>
+    public int PoliciesProposed { get; set; }
     public string? Model { get; set; }
     public string? PromptVersion { get; set; }
 

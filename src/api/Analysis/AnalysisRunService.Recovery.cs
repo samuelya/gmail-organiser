@@ -3,6 +3,7 @@ using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -194,6 +195,18 @@ public sealed partial class AnalysisRunService
             string[] kept = [.. candidates.Where(c => suggestions.ContainsKey(c) || covered.Contains(c))];
             run.SkippedMessages = Math.Max(0, run.RequestedCount - kept.Length);
             return new AnalysisRunCursor(run.Id, CandidateIds: kept, SuggestionIds: suggestions, CoveredIds: covered);
+        }
+
+        if (run.Scope == AnalysisScope.TopSenders)
+        {
+            // Senders with a proposed policy are no candidates any more; the run owes the rest of its count. The walk
+            // restarts, so the skipped senders and the groups of failed ones are counted again; calls and tokens were spent.
+            run.SkippedMessages = 0;
+            run.Groups = run.PoliciesProposed;
+            var owedSenders = run.RequestedCount - run.PoliciesProposed;
+            return new AnalysisRunCursor(run.Id, Senders: owedSenders < 1
+                ? []
+                : await PolicyCandidates.QueryAsync(db, run.SenderAddress, owedSenders, settings.AnalysisMinGroupSize, ct));
         }
 
         var stored = await (
