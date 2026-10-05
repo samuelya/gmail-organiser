@@ -94,6 +94,7 @@ public static class SettingsEndpoints
         AnalysisMemoryMinApprovals = request.AnalysisMemoryMinApprovals ?? s.AnalysisMemoryMinApprovals,
         BulkApproveThreshold = request.BulkApproveThreshold ?? s.BulkApproveThreshold,
         AutoArchiveOnActionDone = request.AutoArchiveOnActionDone ?? s.AutoArchiveOnActionDone,
+        PolicyAutoApplyFetched = request.PolicyAutoApplyFetched ?? s.PolicyAutoApplyFetched,
         AnalysisPromptTemplate = request.AnalysisPromptTemplate is null
             ? s.AnalysisPromptTemplate
             : SettingsValidation.NormalisePromptTemplate(request.AnalysisPromptTemplate),

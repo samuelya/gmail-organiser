@@ -35,7 +35,13 @@ public sealed record MemoryHint(
     string? DocumentTypeLabel = null,
     bool DocumentTypeDecided = false);
 
+/// <summary>An approved sender policy of an email in the prompt (#360): what the person decided for its sender, list or domain.</summary>
+/// <param name="Scope">sender, list or domain.</param>
+/// <param name="TopicLabel">Null for a mixed policy, whose rules decide per message.</param>
+public sealed record SenderPolicyHint(string Scope, string ScopeKey, bool IsMixed, string? TopicLabel, MailType? MailType, string Action);
+
 /// <param name="DocumentTypeParent">The document-type parent label; null or blank tells the model the feature is off.</param>
+/// <param name="Policies">Approved policies of the emails' senders, lists or domains, rendered with the memory.</param>
 public sealed record PromptInput(
     IReadOnlyList<EmailForPrompt> Emails,
     IReadOnlyList<string> LabelTree,
@@ -43,7 +49,8 @@ public sealed record PromptInput(
     string? AttachmentsSection,
     string ActionLabel,
     string DeleteLabel,
-    string? DocumentTypeParent = null);
+    string? DocumentTypeParent = null,
+    IReadOnlyList<SenderPolicyHint>? Policies = null);
 
 /// <summary>A validated suggestion for one email; <see cref="Confidence"/> is always within [0, 1].</summary>
 /// <param name="DocumentTypeLabel">The second label under the document-type parent; null when none or the feature is off.</param>

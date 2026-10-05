@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using GmailOrganiser.Data;
 using GmailOrganiser.Llm;
 using Microsoft.Extensions.AI;
 
@@ -15,6 +16,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     public const string BodyStart = "<email_body>";
     public const string BodyEnd = "</email_body>";
     public const string MemoryHeading = "Similar past decisions by the person:";
+    public const string PolicyHeading = "Standing policies the person approved for these senders:";
     public const int MaxDocumentTypes = DocumentTypePath.MaxChildren;
     public const string DocumentTypesOff = "Document-type labels are switched off: always set `documentTypeLabel` to null.";
 
@@ -78,7 +80,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         {
             ["labelTree"] = RenderLabelTree(input.LabelTree),
             ["documentTypes"] = RenderDocumentTypes(input.DocumentTypeParent, input.LabelTree),
-            ["memory"] = RenderMemory(input.Memory),
+            ["memory"] = RenderMemory(input.Memory) + RenderPolicies(input.Policies ?? []),
             ["attachments"] = DefuseBodyTags(input.AttachmentsSection ?? string.Empty),
             ["emails"] = RenderEmails(input.Emails),
             ["actionLabel"] = OneLine(input.ActionLabel),
@@ -144,6 +146,15 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             + $" | needsAction: {YesNo(m.NeedsAction)} | toBeDeleted: {YesNo(m.ToBeDeleted)} | outcome: {OneLine(m.Outcome)}"
             + $" | similarity: {m.Similarity:0.00}")));
     }
+
+    /// <summary>
+    /// One hint line per approved policy of the emails' senders (#360), after the memory: covered mail never reaches the
+    /// model, so these are mixed senders' unmatched mail or a policy approved since the run started.
+    /// </summary>
+    private static string RenderPolicies(IReadOnlyList<SenderPolicyHint> policies) =>
+        policies.Count == 0 ? "" : "\n" + PolicyHeading + "\n" + string.Join('\n', policies.Select(p =>
+            $"- {OneLine(p.Scope)}: {OneLine(p.ScopeKey)} | topicLabel: {(p.IsMixed ? "(mixed: decide per email)" : OneLine(p.TopicLabel ?? "-"))}"
+            + $" | mailType: {(p.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : "-")} | action: {OneLine(p.Action)}"));
 
     private static string RenderEmails(IReadOnlyList<EmailForPrompt> emails)
     {

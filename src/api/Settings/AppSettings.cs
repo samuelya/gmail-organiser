@@ -69,6 +69,12 @@ public sealed record AppSettings
     /// </summary>
     public bool AutoArchiveOnActionDone { get; init; }
 
+    /// <summary>
+    /// Newly fetched mail of an approved sender policy gets the policy's approved suggestion and is applied without the
+    /// LLM (#360). Off: it waits for the policy's next apply.
+    /// </summary>
+    public bool PolicyAutoApplyFetched { get; init; } = true;
+
     /// <summary>User override of the analysis prompt; <c>null</c> means the built-in template.</summary>
     public string? AnalysisPromptTemplate { get; init; }
 

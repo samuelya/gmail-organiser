@@ -134,6 +134,7 @@ public sealed partial class AnalysisRunJob
                 await memory.FindSimilarAsync(
                     representatives, ready.Vectors, DecisionMemory.DefaultSimilarCount, context.Run.DocumentTypeParent,
                     context.HintExclusions, ct),
+                context.Policies.HintsFor(present.Select(x => x.First)),
                 attachmentsSection,
                 ct);
         if (answer.Outputs.Count == 0)
@@ -237,12 +238,13 @@ public sealed partial class AnalysisRunJob
     /// chat filter. Without a triage model: the chat model's answer only.
     /// </summary>
     private async Task<ModelAnswer> AskModelAsync(
-        RunContext context, IReadOnlyList<EmailForPrompt> emails, IReadOnlyList<MemoryHint> hints, string attachmentsSection, CancellationToken ct)
+        RunContext context, IReadOnlyList<EmailForPrompt> emails, IReadOnlyList<MemoryHint> hints, IReadOnlyList<SenderPolicyHint> policies,
+        string attachmentsSection, CancellationToken ct)
     {
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
         var messages = context.Builder.Build(new PromptInput(
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName,
-            context.Run.DocumentTypeParent));
+            context.Run.DocumentTypeParent, policies));
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
         if (context.Triage is not { } triage)
         {
