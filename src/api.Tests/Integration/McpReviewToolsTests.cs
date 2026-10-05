@@ -91,7 +91,9 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         local.GetProperty("source").GetString().ShouldBe("llm");
         local.GetProperty("confidence").GetDouble().ShouldBe(0.9);
         local.GetProperty("reason").GetString().ShouldBe("Synthetic reason");
-        local.GetProperty("isNewLabel").GetBoolean().ShouldBeFalse();
+        // Computed from the label tree (#365): the harness tree has no "Shopping".
+        local.GetProperty("isNewLabel").GetBoolean().ShouldBeTrue();
+        local.GetProperty("mailType").GetString().ShouldBe("marketing");
 
         items[1].GetProperty("targetType").GetString().ShouldBe("suggestion");
         items[1].GetProperty("memberCount").GetInt32().ShouldBe(1);

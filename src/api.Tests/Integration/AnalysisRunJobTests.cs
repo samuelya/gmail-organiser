@@ -409,7 +409,7 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         {
             id,
             topicLabel = label(id, i),
-            isNewLabel = false,
+            mailType = id[0] switch { 'a' => "marketing", 'b' => "newsletter", 'c' => "action_bill", _ => "notification" },
             needsAction = false,
             toBeDeleted = false,
             unsubscribeSuggested = false,

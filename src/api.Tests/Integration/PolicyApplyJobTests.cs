@@ -86,7 +86,8 @@ public sealed class PolicyApplyJobTests(ApiFactory factory, PostgresFixture post
                 (s.Source, s.Status, s.PolicyId, s.TopicLabel).ShouldBe((SuggestionSource.Policy, SuggestionStatus.Applied, policy, Topic));
             }
 
-            (suggestions["a00"].ToBeDeleted, suggestions["a00"].Reason).ShouldBe((true, "Policy: Deals"));
+            (suggestions["a00"].ToBeDeleted, suggestions["a00"].Reason, suggestions["a00"].MailType).ShouldBe((true, "Policy: Deals", MailType.Marketing));
+            suggestions["a01"].MailType.ShouldBe(MailType.Notification);
             suggestions["a09"].ToBeDeleted.ShouldBeFalse();
             suggestions["a09"].Reason.ShouldStartWith("Policy: Deals; archived, not deleted (protected:");
             suggestions["a01"].KeepInInbox.ShouldBeTrue();
@@ -94,8 +95,9 @@ public sealed class PolicyApplyJobTests(ApiFactory factory, PostgresFixture post
             suggestions.Keys.Order().ShouldBe(["a00", "a01", "a02", "a09"]);
             (await db.Messages.CountAsync(m => m.FromAddress == AnalysisRunHarness.Shop && m.AnalysisStatus == AnalysisStatus.NotAnalysed, Ct))
                 .ShouldBe(6);
-            (await db.Decisions.Where(d => d.Source == SuggestionSource.Policy).Select(d => d.MessageId).OrderBy(m => m).ToListAsync(Ct))
-                .ShouldBe(["a00", "a01", "a09"]);
+            (await db.Decisions.Where(d => d.Source == SuggestionSource.Policy).OrderBy(d => d.MessageId).Select(d => new { d.MessageId, d.MailType })
+                    .ToListAsync(Ct)).Select(d => (d.MessageId, d.MailType))
+                .ShouldBe([("a00", MailType.Marketing), ("a01", MailType.Notification), ("a09", MailType.Marketing)]);
             (await db.SenderPolicies.SingleAsync(p => p.Id == policy, Ct)).AppliedAt.ShouldNotBeNull();
         }
 
@@ -271,6 +273,7 @@ public sealed class PolicyApplyJobTests(ApiFactory factory, PostgresFixture post
             ScopeKey = sender,
             IsMixed = isMixed,
             TopicLabel = sender == AnalysisRunHarness.Shop ? Topic : News,
+            MailType = MailType.Newsletter,
             Action = action,
             Confidence = 0.8,
             Reason = "Synthetic policy",
@@ -284,6 +287,7 @@ public sealed class PolicyApplyJobTests(ApiFactory factory, PostgresFixture post
                 Name = r.Name,
                 Match = new RuleMatch { SubjectContains = r.Contains },
                 TopicLabel = Topic,
+                MailType = r.Action == PolicyAction.Delete ? MailType.Marketing : MailType.Notification,
                 Action = r.Action,
                 Status = PolicyStatus.Proposed,
                 Source = PolicyRuleSource.Llm,

@@ -75,7 +75,7 @@ public sealed class PolicyCoverageTests(ApiFactory factory, PostgresFixture post
             var suggestions = await db.Suggestions.AsNoTracking().OrderBy(s => s.MessageId).ToListAsync(Ct);
             suggestions.Select(s => s.MessageId).ShouldBe(["n1", "n2"]);
             suggestions.ShouldAllBe(s => s.Source == SuggestionSource.Policy && s.Status == SuggestionStatus.Approved
-                && s.PolicyId == policy && s.TopicLabel == News && !s.KeepInInbox);
+                && s.PolicyId == policy && s.TopicLabel == News && !s.KeepInInbox && s.MailType == MailType.Newsletter);
             var apply = await db.Jobs.AsNoTracking().SingleAsync(j => j.Type == ApplyActionsJob.JobType, Ct);
             apply.Status.ShouldBe(JobStatus.Queued);
             // The fetch wrote nothing to Gmail.
@@ -181,6 +181,7 @@ public sealed class PolicyCoverageTests(ApiFactory factory, PostgresFixture post
             ScopeKey = sender,
             IsMixed = isMixed,
             TopicLabel = isMixed ? null : News,
+            MailType = isMixed ? null : MailType.Newsletter,
             Action = action,
             Confidence = 0.8,
             Reason = "Synthetic policy",
