@@ -397,26 +397,28 @@ test('retention archives and marks old threads in or out of the inbox, paging ov
     { messages: [{ labels: ['Example/Receipts'], ageDays: 400 }, { labels: [TBD], ageDays: 390 }] }, // t565 marked reply
     { labels: ['Example/Receipts'], ageDays: 400, lastAgeDays: 2 }, // t566 recent reply
     { labels: ['Example/Other'], ageDays: 400 }, // t567 other label
+    { labels: ['Example/Receipts', 'Action/ToDo'], ageDays: 400 }, // t568 open to-do
+    { messages: [{ labels: ['Example/Receipts'], ageDays: 400 }, { labels: ['example/keep'], ageDays: 390 }] }, // t569 kept
   ];
-  const gmail = new FakeGmailApp(threads, ['Example/Receipts', TBD]);
+  const gmail = new FakeGmailApp(threads, ['Action/ToDo', 'Example/Keep', 'Example/Receipts', TBD]);
   const { applyRetentionRules_, buildRetentionQuery_ } = load(gmail);
   const logs = [];
   assert.equal(buildRetentionQuery_({ label: 'Example/Old Receipts', days: 365 }, TBD),
     'label:Example/Old-Receipts older_than:365d -label:To-Be-Deleted -is:starred -is:important');
 
-  const result = applyRetentionRules_(config({ retentionRules: [{ label: 'Example/Receipts', days: 365 }], pageSize: 500 }),
-    fixedClock, gmail, (m) => logs.push(m), NOW);
+  const cfg = config({ retentionRules: [{ label: 'Example/Receipts', days: 365 }], pageSize: 500, keepInInboxLabels: ['Example/Keep'] });
+  const result = applyRetentionRules_(cfg, fixedClock, gmail, (m) => logs.push(m), NOW);
 
   assert.equal(result.marked, 560);
   assert.equal(result.stopped, false);
   const ids = (from, to) => Array.from({ length: to - from }, (_, i) => `t${from + i}`);
   assert.deepEqual(gmail.idsWithLabel(TBD), [...ids(0, 560), 't563', 't565']);
-  assert.deepEqual(gmail.inboxIds(), ids(560, 568));
+  assert.deepEqual(gmail.inboxIds(), ids(560, 570));
   assert.deepEqual(gmail.ops, ['archive 100', 'label 100', 'archive 100', 'label 100', 'archive 100', 'label 100',
     'archive 100', 'label 100', 'archive 100', 'label 100', 'archive 60', 'label 60']);
   assert.ok(gmail.queries.every((q) => !q.query.includes('in:inbox')));
   assert.ok(logs.some((m) => m.includes('Marked for deletion 560 thread(s)') && m.includes('1 left: recent reply') &&
-    m.includes('2 left: starred, important or already marked')), logs.join('\n'));
+    m.includes('4 left: starred, important, already marked, or action or keep label')), logs.join('\n'));
 });
 
 test('retention dry run only logs', () => {

@@ -137,7 +137,8 @@ function archiveActionDone_(config, now, gmail, log, startedAt, seen = new Set()
 
 /**
  * Per `{ label, days }` retention rule, archives threads whose last message is older than `days` and adds
- * `toBeDeletedLabel`, skipping starred or important threads and threads already carrying it. Archiving
+ * `toBeDeletedLabel`, skipping starred or important threads, threads already carrying it and threads with
+ * the action label or a keep-in-inbox label on any message (those always win over retention). Archiving
  * comes first: a run that stops between the two calls leaves an archived, unmarked thread that the
  * query (not limited to the inbox) still matches, so the next run marks it.
  * @return {{ marked: number, stopped: boolean }} marked = threads new to `seen` (in a dry run: would be marked)
@@ -157,14 +158,14 @@ function applyRetentionRules_(config, now, gmail, log, startedAt, seen = new Set
   }
   const run = {
     config, now, gmail, log, deadline: deadline_(config, startedAt), seen,
-    guard: guardLabels_([name]),
+    guard: guardLabels_([name, config.actionLabel, ...(config.keepInInboxLabels || [])]),
     protect: (thread) => thread.hasStarredMessages() || thread.isImportant(),
     act: (threads) => {
       gmail.moveThreadsToArchive(threads);
       target.addToThreads(threads);
     },
     verbs: ['Marked for deletion', 'Would mark for deletion'],
-    guardNote: 'starred, important or already marked',
+    guardNote: 'starred, important, already marked, or action or keep label',
   };
   let marked = 0;
   for (const rule of rules) {
