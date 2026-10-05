@@ -11,15 +11,14 @@ namespace GmailOrganiser.Rules;
 
 /// <summary>
 /// Filters to propose from approved sender policies (#373, DESIGN §6.5): for each policy no active filter covers, one
-/// per approved rule plus one for a non-mixed policy's default. Proposals that differ only in their senders are merged
-/// into <c>from:(a OR b)</c> within <see cref="FilterCriteriaLimits"/>. A delete outcome is the delete label and skip
-/// inbox, never Trash, and excludes mail the transactional guard would spare.
+/// for a non-mixed policy's default, or one per approved rule of a mixed policy. Gmail applies every matching filter
+/// where <see cref="PolicyMatcher"/> applies the first rule, so a rule's filter excludes the criteria of the rules
+/// before it. Proposals that differ only in their senders are merged into <c>from:(a OR b)</c> within
+/// <see cref="FilterCriteriaLimits"/>. A delete outcome is the delete label and skip inbox, never Trash, and excludes
+/// mail the transactional guard would spare.
 /// </summary>
 public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettingsStore settingsStore, IOptions<PolicyOptions> options)
 {
-    /// <summary>Transactional keywords a delete filter excludes; Gmail search has no whole-word list of any length.</summary>
-    public const int MaxNegatedKeywords = 8;
-
     private const string PartialNote = "Gmail filters can't test {0}; this filter matches without that condition";
 
     /// <summary>Every policy proposal, most messages first.</summary>
@@ -64,12 +63,26 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
             var allowlisted = scope.Addresses.Concat(scope.From).Select(allowlist.Reason).OfType<string>().FirstOrDefault();
             if (!policy.IsMixed)
             {
-                units.Add(Build(policy, null, scope, new RuleMatch(), allowlisted, negation, settings));
+                // Rules left on a single-label policy are ignored (PolicyMatcher.FirstRule).
+                if (Build(policy, null, scope, Criteria(new RuleMatch()), [], allowlisted, negation, settings) is { } single)
+                {
+                    units.Add(single);
+                }
+
+                continue;
             }
 
+            // A mixed policy's unmatched mail goes to review, so its default gets no filter.
+            var earlier = new List<Terms>();
             foreach (var rule in policy.Rules.Where(r => r.Status == PolicyStatus.Approved).OrderBy(r => r.Position))
             {
-                units.Add(Build(policy, rule, scope, rule.Match, allowlisted, negation, settings));
+                var terms = Criteria(rule.Match);
+                if (Build(policy, rule, scope, terms, earlier, allowlisted, negation, settings) is { } unit)
+                {
+                    units.Add(unit);
+                }
+
+                earlier.Add(terms);
             }
         }
 
@@ -110,27 +123,15 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         return new Scope(terms, addresses.Count > 0 ? addresses : terms, null, raw.Sum(s => s.TotalCount));
     }
 
-    private static Unit Build(
-        SenderPolicyRow policy, SenderPolicyRuleRow? rule, Scope scope, RuleMatch match, string? allowlisted, string? negation, AppSettings settings)
+    /// <summary>The criteria of a rule's own match fields, apart from the scope.</summary>
+    private static Terms Criteria(RuleMatch match)
     {
-        var from = scope.From;
         var query = new List<string>();
         var notes = new List<string>();
         var dropped = new List<string>();
-        if (scope.ListId is { } list)
-        {
-            query.Add("list:" + list);
-        }
-
-        if (Set(match.FromAddress) is { } address)
-        {
-            from = [address.ToLowerInvariant()];
-        }
-        else if (Set(match.FromSubdomain)?.TrimStart('.', '@') is { } subdomain)
-        {
-            from = ["@" + subdomain.ToLowerInvariant()];
-        }
-
+        var wider = false;
+        var from = Set(match.FromAddress)?.ToLowerInvariant()
+            ?? (Set(match.FromSubdomain)?.TrimStart('.', '@') is { } subdomain ? "@" + subdomain.ToLowerInvariant() : null);
         if (match.Category is { } category)
         {
             query.Add("category:" + category.ToString().ToLowerInvariant());
@@ -148,6 +149,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
                 query.Add($"subject:\"{literal}\"");
                 if (literal != template.Trim())
                 {
+                    wider = true;
                     notes.Add($"Subject matched by the template's literal part \"{literal}\"");
                 }
             }
@@ -173,13 +175,60 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
             notes.Add(string.Format(System.Globalization.CultureInfo.InvariantCulture, PartialNote, string.Join(", ", dropped)));
         }
 
+        return new Terms(from, query, notes, wider || dropped.Count > 0);
+    }
+
+    /// <summary>
+    /// The unit for a policy's default (no <paramref name="rule"/>) or one rule, or null when the rules before it can't
+    /// be excluded within the length cap: a rule with no criteria Gmail can test would exclude the whole scope.
+    /// </summary>
+    private static Unit? Build(
+        SenderPolicyRow policy,
+        SenderPolicyRuleRow? rule,
+        Scope scope,
+        Terms terms,
+        List<Terms> earlier,
+        string? allowlisted,
+        string negation,
+        AppSettings settings)
+    {
+        List<string> from = terms.From is { } own ? [own] : scope.From;
+        var query = new List<string>();
+        List<string> notes = [.. terms.Notes];
+        if (scope.ListId is { } list)
+        {
+            query.Add("list:" + list);
+        }
+
+        query.AddRange(terms.Query);
+        foreach (var before in earlier)
+        {
+            // A wider earlier filter excludes more than its rule matches: this filter then misses some mail, never adds any.
+            if (Exclusion(before) is not { } exclusion)
+            {
+                return null;
+            }
+
+            query.Add(exclusion);
+        }
+
+        if (earlier.Count > 0)
+        {
+            notes.Add("Excludes the mail of the policy's earlier rules");
+        }
+
+        if (!FitsAlone(from, query))
+        {
+            return null;
+        }
+
         var outcome = rule is null
             ? (Topic: policy.TopicLabel ?? "", Type: policy.DocumentTypeLabel, policy.MailType, policy.Action)
             : (Topic: rule.TopicLabel, Type: rule.DocumentTypeLabel, rule.MailType, rule.Action);
         var delete = outcome.Action == PolicyAction.Delete;
-        if (delete && dropped.Count > 0)
+        if (delete && terms.Wider)
         {
-            // A dropped condition widens the filter beyond what the rule deletes.
+            // A dropped condition or a template's literal part widens the filter beyond what the rule deletes.
             delete = false;
             notes.Add("Archives instead of marking for deletion because the filter is wider than the rule");
         }
@@ -188,8 +237,13 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
             delete = false;
             notes.Add($"Archives instead of marking for deletion ({allowlisted})");
         }
+        else if (delete && !FitsAlone(from, [.. query, negation]))
+        {
+            delete = false;
+            notes.Add("Archives instead of marking for deletion because excluding every transactional keyword would make the filter too long");
+        }
 
-        if (delete && negation is not null)
+        if (delete)
         {
             query.Add(negation);
         }
@@ -215,8 +269,25 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         var skipInbox = !needsAction && (outcome.Action != PolicyAction.Keep || delete);
         var action = new FilterActionRequest([.. labels.Where(l => l.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)], skipInbox, false);
         var pattern = new SenderPatternDto(outcome.Topic, needsAction, delete, 0, 1, 0, outcome.Type);
-        return new Unit(policy, rule, from, string.Join(' ', query), action, pattern, dropped.Count > 0, notes, scope.MessageCount);
+        return new Unit(policy, rule, from, string.Join(' ', query), action, pattern, terms.Wider, notes, scope.MessageCount);
     }
+
+    /// <summary><c>-term</c> or <c>-(a b)</c> for an earlier rule's criteria, or null when it has none Gmail can test.</summary>
+    private static string? Exclusion(Terms terms)
+    {
+        List<string> parts = [.. terms.From is { } from ? ["from:" + from] : Array.Empty<string>(), .. terms.Query];
+        return parts.Count switch
+        {
+            0 => null,
+            1 => "-" + parts[0],
+            _ => $"-({string.Join(' ', parts)})",
+        };
+    }
+
+    /// <summary>Whether a unit fits the length cap with its longest <c>from</c> term, the least a merged chunk holds.</summary>
+    private static bool FitsAlone(List<string> from, List<string> query) =>
+        FilterCriteriaMapping.ToQuery(new(From: from.MaxBy(t => t.Length), Query: string.Join(' ', query))).Length
+            <= FilterCriteriaLimits.MaxQueryChars;
 
     /// <summary>
     /// Units with the same query and action become one <c>from:(a OR b)</c> per run of terms that fits
@@ -299,14 +370,15 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
             notes.Count > 0 ? string.Join("; ", notes) + "." : null);
     }
 
-    /// <summary><c>-has:attachment -subject:(a OR "b c")</c> from the first keywords, or null without any.</summary>
-    private static string? Negation(IEnumerable<string> keywords)
-    {
-        List<string> words = [.. keywords.Select(Phrase).OfType<string>().Where(k => k.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxNegatedKeywords)
-            .Select(k => k.Contains(' ', StringComparison.Ordinal) ? $"\"{k}\"" : k)];
-        return words.Count == 0 ? "-has:attachment" : $"-has:attachment -subject:({string.Join(" OR ", words)})";
-    }
+    /// <summary>
+    /// <c>-has:attachment -a -"b c"</c> over every keyword. A bare term searches the whole message, so it excludes at least
+    /// what <see cref="TransactionalGuard"/> spares by subject or snippet.
+    /// </summary>
+    private static string Negation(IEnumerable<string> keywords) =>
+        string.Join(' ', keywords.Select(Phrase).OfType<string>().Where(k => k.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(k => k.Contains(' ', StringComparison.Ordinal) ? $"-\"{k}\"" : "-" + k)
+            .Prepend("-has:attachment"));
 
     /// <summary>The longest run of a <c>SubjectNormaliser</c> template between its <c>#</c> placeholders.</summary>
     private static string Literal(string template) =>
@@ -324,6 +396,10 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
 
     [GeneratedRegex(@"(?<![\w-])list:(\S+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ListTerm();
+
+    /// <param name="From">A rule's own <c>from</c> term, replacing the scope's.</param>
+    /// <param name="Wider">Whether the filter matches more than the rule: a dropped condition or a template's literal part.</param>
+    private sealed record Terms(string? From, List<string> Query, List<string> Notes, bool Wider);
 
     private sealed record RawSender(string Address, string CanonicalAddress, string CanonicalDomain, int TotalCount);
 
