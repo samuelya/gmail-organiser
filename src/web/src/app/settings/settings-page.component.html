@@ -106,6 +106,14 @@
     </mat-card-content>
   </mat-card>
 
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-taxonomy">
+    <mat-card-content data-testid="section-taxonomy">
+      <h2 id="settings-taxonomy" class="section-title">Taxonomy</h2>
+      <p class="section-hint">Which labels the analysis may use and create.</p>
+      <app-taxonomy-settings />
+    </mat-card-content>
+  </mat-card>
+
   @if (attachments()?.attachments; as attachmentSettings) {
     <mat-card appearance="outlined" role="region" aria-labelledby="settings-attachments">
       <mat-card-content data-testid="section-attachments">
@@ -139,7 +147,17 @@
       <p class="section-hint">
         Time-based archiving by the script that runs in your Google account.
       </p>
-      <app-apps-script-settings />
+      <app-apps-script-settings #appsScriptSection />
+    </mat-card-content>
+  </mat-card>
+
+  <mat-card appearance="outlined" role="region" aria-labelledby="settings-retention">
+    <mat-card-content data-testid="section-retention">
+      <h2 id="settings-retention" class="section-title">Retention</h2>
+      <p class="section-hint">
+        How long each type of mail is kept before it is marked for deletion.
+      </p>
+      <app-retention-settings (appsScriptSaved)="appsScriptSection.loadConfig()" />
     </mat-card-content>
   </mat-card>
 

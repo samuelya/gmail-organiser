@@ -10,6 +10,7 @@ import type {
   LabelSettingsUpdate,
   ProtectionUpdate,
 } from '../settings/settings.models';
+import type { RetentionUpdate, TaxonomyUpdate } from '../settings/triage-settings.models';
 
 /** `GoogleClientDto`: the secret itself is never returned. */
 export interface GoogleClientSettings {
@@ -48,6 +49,8 @@ export interface UpdateSettingsRequest
     ClaudeSettingsUpdate,
     ProtectionUpdate,
     Partial<AppsScriptUpdate>,
+    Partial<RetentionUpdate>,
+    TaxonomyUpdate,
     LabelSettingsUpdate {
   ollamaBaseUrl?: string;
   chatModel?: string;
