@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261005072202_M8_SenderStats")]
+    [Migration("20261005075033_M8_SenderStats")]
     partial class M8_SenderStats
     {
         /// <inheritdoc />
@@ -58,6 +58,10 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("Error")
                         .HasColumnType("text")
                         .HasColumnName("error");
+
+                    b.Property<int>("EscalatedCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("escalated_calls");
 
                     b.Property<int>("FailedMessages")
                         .HasColumnType("integer")
@@ -160,6 +164,10 @@ namespace GmailOrganiser.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("status");
+
+                    b.Property<int>("TriageCalls")
+                        .HasColumnType("integer")
+                        .HasColumnName("triage_calls");
 
                     b.HasKey("Id")
                         .HasName("pk_analysis_runs");
