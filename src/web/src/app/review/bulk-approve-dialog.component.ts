@@ -6,7 +6,13 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MAT_DIALOG_DATA, MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatSliderModule } from '@angular/material/slider';
 import { map, Observable } from 'rxjs';
-import { BulkApproveRequest, BulkApproveResponse, percent } from './review.models';
+import { ANALYSIS_LIMITS } from '../settings/settings.models';
+import {
+  BulkApproveRequest,
+  BulkApproveResponse,
+  percent,
+  ReviewSenderDetailDto,
+} from './review.models';
 import { ReviewService } from './review.service';
 
 export interface BulkApproveDialogData {
@@ -17,6 +23,36 @@ export interface BulkApproveDialogData {
   step: number;
   /** The selected sender, offered as "this sender only". */
   senderAddress: string | null;
+  /** Listed suggestions bulk approve skips while the taxonomy is locked (`newLabelPending`). */
+  newLabelPending: number;
+}
+
+/**
+ * The dialog's data: the threshold from settings, and the excluded new-label suggestions counted from the
+ * selected sender's listed groups, since the bulk approve response has no such count.
+ */
+export function bulkApproveData(
+  settings: { bulkApproveThreshold: number } | null,
+  senderAddress: string | null,
+  detail: ReviewSenderDetailDto | null,
+): BulkApproveDialogData {
+  const limits = ANALYSIS_LIMITS.bulkApproveThreshold;
+  const members = detail?.groups.flatMap((g) => g.members) ?? [];
+  return {
+    threshold: settings?.bulkApproveThreshold ?? limits.max,
+    min: limits.min,
+    max: limits.max,
+    step: limits.step,
+    senderAddress,
+    newLabelPending: members.filter((m) => m.newLabelPending).length,
+  };
+}
+
+/** "n suggestions with new labels are excluded while the taxonomy is locked"; null for none. */
+export function newLabelExclusionText(count: number): string | null {
+  if (count <= 0) return null;
+  const subject = count === 1 ? 'suggestion with a new label is' : 'suggestions with new labels are';
+  return `${count} ${subject} excluded while the taxonomy is locked.`;
 }
 
 /** "Bulk approve…": threshold, derived/memory and sender scope; shows what the API approved and skipped. */
@@ -65,6 +101,11 @@ export interface BulkApproveDialogData {
           }
         </form>
       }
+      @if (exclusion; as text) {
+        <p class="m-0 mt-3" data-testid="bulk-new-label-excluded">
+          {{ text }} Approve them individually.
+        </p>
+      }
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       @if (result()) {
@@ -100,6 +141,7 @@ export class BulkApproveDialog {
   readonly sending = signal(false);
   readonly result = signal<BulkApproveResponse | null>(null);
   readonly thresholdValue = signal(this.data.threshold);
+  readonly exclusion = newLabelExclusionText(this.data.newLabelPending);
 
   constructor() {
     this.form.controls.threshold.valueChanges

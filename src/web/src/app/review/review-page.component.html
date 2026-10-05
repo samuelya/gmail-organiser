@@ -42,6 +42,8 @@
         [failed]="sendersFailed()"
         [reanalysed]="reanalysed()"
         [alternatives]="alternatives()"
+        [mailTypes]="mailTypes.selected()"
+        (mailTypesChange)="mailTypes.set($event)"
         (statusChange)="onStatus($event)"
         (reanalysedChange)="onReanalysed($event)"
         (searchChange)="onSearch($event)"
@@ -119,7 +121,7 @@
         </mat-card-content>
       </mat-card>
 
-      @for (g of d.groups; track g.groupKey ?? g.members[0]?.id) {
+      @for (g of mailTypes.shown(d.groups); track g.groupKey ?? g.members[0]?.id) {
         <app-group-card
           [group]="g"
           [senderAddress]="d.sender.address"
@@ -146,7 +148,8 @@
         />
       } @empty {
         <p class="muted m-0" data-testid="detail-empty">
-          No {{ status() }} {{ reanalysed() ? 're-analysed ' : '' }}suggestions for this sender.
+          No {{ status() }} {{ reanalysed() ? 're-analysed ' : '' }}suggestions
+          {{ mailTypes.selected().length ? 'of the selected mail types ' : '' }}for this sender.
         </p>
       }
       @if (d.totalGroups > d.pageSize) {

@@ -25,7 +25,6 @@ import { openConfirm } from '../core/confirm-dialog';
 import { JobsService } from '../core/jobs.service';
 import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
-import { ANALYSIS_LIMITS } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
 import {
   AlternativeDecision,
@@ -37,9 +36,10 @@ import {
 } from './alternative.models';
 import { ApplyTracker } from './apply-tracker';
 import { CardReanalyse } from './card-reanalyse';
-import { openBulkApprove } from './bulk-approve-dialog.component';
+import { bulkApproveData, openBulkApprove } from './bulk-approve-dialog.component';
 import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
+import { MailTypeFilter } from './mail-type-filter';
 import {
   applyRestRequest,
   canApplyRest,
@@ -84,7 +84,7 @@ import { SenderList } from './sender-list.component';
     SelectionActions,
     SenderList,
   ],
-  providers: [ApplyTracker, CardReanalyse],
+  providers: [ApplyTracker, CardReanalyse, MailTypeFilter],
   templateUrl: './review-page.component.html',
   styles: `
     .muted {
@@ -164,6 +164,8 @@ export class ReviewPage {
   readonly apply = inject(ApplyTracker);
   /** Per-member and per-card "Re-analyse": the run's ids, until it ends. */
   readonly reanalyse = inject(CardReanalyse);
+  /** The mail-type filter in the query string. */
+  readonly mailTypes = inject(MailTypeFilter);
 
   readonly approvedCount = computed(() => this.detail()?.sender.approved ?? 0);
   readonly restPattern = computed(() => {
@@ -379,14 +381,8 @@ export class ReviewPage {
   }
 
   bulkApprove(): void {
-    const limits = ANALYSIS_LIMITS.bulkApproveThreshold;
-    openBulkApprove(this.dialog, {
-      threshold: this.settings()?.bulkApproveThreshold ?? limits.max,
-      min: limits.min,
-      max: limits.max,
-      step: limits.step,
-      senderAddress: this.selected(),
-    })
+    const data = bulkApproveData(this.settings(), this.selected(), this.detail());
+    openBulkApprove(this.dialog, data)
       .pipe(
         filter((changed) => changed),
         takeUntilDestroyed(this.destroyRef),

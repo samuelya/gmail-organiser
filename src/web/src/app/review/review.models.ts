@@ -76,6 +76,10 @@ export interface SuggestionDto {
   documentTypeIsNew: boolean;
   /** The re-analysis result waiting next to it; null when none. */
   alternative?: SuggestionAlternativeDto | null;
+  /** The snake_case `MailType`; null when none. */
+  mailType?: string | null;
+  /** The taxonomy is locked and its label is not in Gmail yet: bulk approve skips it. */
+  newLabelPending?: boolean;
 }
 
 /** `groupKey` is null for a message analysed on its own. */
@@ -109,6 +113,8 @@ export interface ReviewGroupDto {
   documentTypeIsNew: boolean;
   /** The listed members' re-analysis result (`mixed` when they disagree); null when none has one. */
   alternative?: SuggestionAlternativeDto | null;
+  /** A listed member is `newLabelPending`. */
+  newLabelPending?: boolean;
 }
 
 export interface ReviewSenderDetailDto {
@@ -139,6 +145,8 @@ export interface GroupOutcome extends ReviewOutcome {
 export interface EditSuggestionRequest extends ReviewOutcome {
   replaceLabels?: string[];
   documentTypeLabel?: string;
+  /** Left out keeps the mail type; `""` clears it. */
+  mailType?: string;
 }
 
 export interface GroupDecisionResponse {
@@ -402,6 +410,7 @@ export function editRequest(
   outcome: ReviewOutcome,
   replaceLabels?: readonly string[],
   documentTypeLabel?: string,
+  mailType?: string,
 ): EditSuggestionRequest {
   const request: EditSuggestionRequest = {
     topicLabel: outcome.topicLabel.trim(),
@@ -409,6 +418,7 @@ export function editRequest(
     toBeDeleted: outcome.toBeDeleted && !member.protected,
   };
   if (documentTypeLabel !== undefined) request.documentTypeLabel = documentTypeLabel;
+  if (mailType !== undefined) request.mailType = mailType;
   if (replaceLabels) {
     const carried = new Set(member.currentLabels.map((l) => l.toLowerCase()));
     request.replaceLabels = replaceLabels.filter((l) => carried.has(l.toLowerCase()));

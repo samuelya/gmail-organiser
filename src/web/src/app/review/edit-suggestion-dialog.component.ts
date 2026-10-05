@@ -28,6 +28,7 @@ import {
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { catchError, concatMap, from, map, Observable, of } from 'rxjs';
@@ -41,6 +42,7 @@ import {
   LabelsService,
 } from './labels.service';
 import { LabelTreePicker } from './label-tree-picker.component';
+import { commonMailType, MAIL_TYPES, mailTypeLabel } from './mail-type-chip.component';
 import {
   currentLabelsOf,
   decidedReplaceLabels,
@@ -94,6 +96,7 @@ export const EDIT_PROGRESS_THRESHOLD = 20;
     MatFormFieldModule,
     MatInputModule,
     MatProgressBarModule,
+    MatSelectModule,
     MatSlideToggleModule,
     MatTooltipModule,
     ReactiveFormsModule,
@@ -119,6 +122,10 @@ export class EditSuggestionDialog {
   readonly flagLabels = signal(DEFAULT_FLAG_LABELS);
   /** The document-type parent from settings; null hides the field and nothing is sent. */
   readonly documentTypeParent = signal<string | null>(null);
+  readonly mailTypeOptions = MAIL_TYPES;
+  readonly mailTypeLabel = mailTypeLabel;
+  /** The members' shared mail type (`""` for none); `mixed` when they differ. */
+  readonly startMailType = startMailType(this.data.members);
 
   readonly form = new FormGroup({
     topicLabel: new FormControl(this.data.current.topicLabel, {
@@ -134,6 +141,8 @@ export class EditSuggestionDialog {
       nonNullable: true,
       validators: [(c) => this.documentTypeValidator(String(c.value ?? ''))],
     }),
+    /** Null while the members' types differ and none is picked. */
+    mailType: new FormControl<string | null>(this.startMailType.value),
     /** One per `data.currentLabels`, checked = every member carrying it replaces it. */
     replace: new FormArray(
       this.data.currentLabels.map(
@@ -244,9 +253,11 @@ export class EditSuggestionDialog {
     const outcome = { topicLabel, needsAction, toBeDeleted };
     const decisions = this.replaceDecisions();
     const documentType = this.documentTypeChange();
+    const mailType = this.mailTypeChange();
     const failures: EditFailure[] = [];
     let labelError: string | null = null;
     let typeError: string | null = null;
+    let mailTypeError: string | null = null;
     this.setSaving(true);
     this.error.set(null);
     this.failures.set([]);
@@ -254,7 +265,10 @@ export class EditSuggestionDialog {
       .pipe(
         concatMap((m) =>
           this.review
-            .edit(m.id, editRequest(m, outcome, decidedReplaceLabels(m, decisions), documentType))
+            .edit(
+              m.id,
+              editRequest(m, outcome, decidedReplaceLabels(m, decisions), documentType, mailType),
+            )
             .pipe(
               map(() => ({ member: m, err: null as unknown })),
               catchError((err: unknown) => of({ member: m, err })),
@@ -274,18 +288,22 @@ export class EditSuggestionDialog {
           const documentTypeError = fields['documentTypeLabel']?.[0];
           labelError ??= fieldError ?? null;
           typeError ??= documentTypeError ?? null;
+          mailTypeError ??= fields['mailType']?.[0] ?? null;
           failures.push({
             id: member.id,
             name: member.subject || '(no subject)',
             message:
               fieldError ??
               documentTypeError ??
+              fields['mailType']?.[0] ??
               fields['replaceLabels']?.[0] ??
               (err instanceof HttpErrorResponse ? errorMessage(err) : 'Saving failed.'),
           });
         },
         complete: () =>
-          failures.length ? this.failed(failures, labelError, typeError) : this.ref.close(true),
+          failures.length
+            ? this.failed(failures, labelError, typeError, mailTypeError)
+            : this.ref.close(true),
       });
   }
 
@@ -318,6 +336,7 @@ export class EditSuggestionDialog {
     failures: EditFailure[],
     labelError: string | null,
     typeError: string | null,
+    mailTypeError: string | null,
   ): void {
     this.setSaving(false);
     if (labelError) {
@@ -328,8 +347,12 @@ export class EditSuggestionDialog {
       this.form.controls.documentType.setErrors({ server: typeError });
       this.form.controls.documentType.markAsTouched();
     }
-    // A single edit rejected for its label or document type only needs the inline field error.
-    if (this.total === 1 && (labelError || typeError)) return;
+    if (mailTypeError) {
+      this.form.controls.mailType.setErrors({ server: mailTypeError });
+      this.form.controls.mailType.markAsTouched();
+    }
+    // A single edit rejected for its label, document type or mail type only needs the inline field error.
+    if (this.total === 1 && (labelError || typeError || mailTypeError)) return;
     this.failures.set(this.total > 1 ? failures : []);
     const saved = this.done() ? ` ${this.done()} of ${this.total} were saved.` : '';
     this.error.set(
@@ -370,6 +393,14 @@ export class EditSuggestionDialog {
     return label === null || label === (this.data.documentTypeLabel ?? '') ? undefined : label;
   }
 
+  /** The mail type to send: only when the user picked one other than the start (`""` for none). */
+  private mailTypeChange(): string | undefined {
+    const value = this.form.controls.mailType.value;
+    const start = this.startMailType;
+    if (value === null || (!start.mixed && value === start.value)) return undefined;
+    return value;
+  }
+
   private loadLabels(source: Observable<LabelDto[]>): void {
     this.labelsFailed.set(false);
     source.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
@@ -378,6 +409,16 @@ export class EditSuggestionDialog {
       error: () => this.labelsFailed.set(true),
     });
   }
+}
+
+/** The members' shared mail type (`""` when none has one); null and `mixed` when they differ. */
+export function startMailType(members: readonly SuggestionDto[]): {
+  value: string | null;
+  mixed: boolean;
+} {
+  const common = commonMailType(members);
+  const mixed = common === null && members.some((m) => !!m.mailType);
+  return { value: mixed ? null : (common ?? ''), mixed };
 }
 
 /** The `errors` of an RFC 9457 validation problem. */

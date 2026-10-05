@@ -12,6 +12,7 @@ import { AlternativeTarget } from './alternative.models';
 import { CARD_TOO_LARGE_TOOLTIP } from './card-reanalyse';
 import { ClaudeVerdict } from './claude-verdict.component';
 import { LabelChangeChip } from './label-change-chip.component';
+import { commonMailType, MailTypeChip } from './mail-type-chip.component';
 import { MemberRow } from './member-row.component';
 import {
   claudeCardTarget,
@@ -37,6 +38,7 @@ export const MEMBERS_STEP = 20;
     MatCardModule,
     MatIconModule,
     MatProgressSpinnerModule,
+    MailTypeChip,
     MatTooltipModule,
     MemberRow,
   ],
@@ -52,12 +54,18 @@ export const MEMBERS_STEP = 20;
         </div>
         <div class="muted text-sm" data-testid="group-origin">{{ origin() }}</div>
         <div class="flex flex-wrap items-center gap-2 text-sm">
+          <app-mail-type-chip [type]="mailType()" />
           <span class="chip" data-testid="group-label"
             >{{ g.topicLabel }}
             @if (newLabel()) {
               <span class="new" data-testid="group-new-label">new</span>
             }
           </span>
+          @if (g.newLabelPending) {
+            <span class="new-pending" data-testid="group-new-label-pending"
+              >new label — approve individually</span
+            >
+          }
           @if (g.documentTypeLabel) {
             <span class="chip" data-testid="document-type"
               >{{ g.documentTypeLabel }}
@@ -244,6 +252,12 @@ export const MEMBERS_STEP = 20;
     .warn {
       color: var(--mat-sys-error);
     }
+    .new-pending {
+      border: 1px solid var(--mat-sys-tertiary);
+      color: var(--mat-sys-tertiary);
+      border-radius: 0.5rem;
+      padding: 0 0.375rem;
+    }
     .claude-hint {
       color: var(--mat-sys-tertiary);
       font-weight: 600;
@@ -297,6 +311,8 @@ export class GroupCard {
   readonly origin = computed(() => groupOrigin(this.group()));
   readonly confidence = computed(() => confidenceRange(this.group()));
   readonly newLabel = computed(() => isNewGroupLabel(this.group()));
+  /** The listed members' mail type when they share one. */
+  readonly mailType = computed(() => commonMailType(this.group().members));
   /** Applied members can no longer change. */
   readonly actionable = computed(() => this.group().members.some((m) => m.status !== 'applied'));
   readonly pending = computed(() => this.group().members.some((m) => m.status === 'pending'));
