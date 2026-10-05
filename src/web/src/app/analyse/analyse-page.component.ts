@@ -241,7 +241,14 @@ export class AnalysePage {
         switchMap((search) =>
           search && this.isSender()
             ? this.senders
-                .list({ search, page: 1, pageSize: SENDER_OPTIONS, sort: 'total', dir: 'desc' })
+                .list({
+                  search,
+                  page: 1,
+                  pageSize: SENDER_OPTIONS,
+                  sort: 'total',
+                  dir: 'desc',
+                  kinds: [],
+                })
                 .pipe(
                   map((page) => page.items.map((s) => s.address)),
                   catchError(() => of([])),
