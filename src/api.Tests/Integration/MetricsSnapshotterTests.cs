@@ -87,6 +87,34 @@ public sealed class MetricsSnapshotterTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Policy_coverage_uses_the_winning_policy_sender_then_list_then_domain()
+    {
+        var clock = new FakeTimeProvider(Start);
+        await using var db = postgres.CreateDbContext();
+        var before = await new MetricsSnapshotter(db, clock).TakeAsync(Ct);
+
+        var tag = Guid.NewGuid().ToString("N");
+        db.Messages.AddRange(
+            Message(tag, 1, PolicySender, inbox: true, unread: false),
+            Message(tag, 2, $"other@{PolicyDomain}", inbox: true, unread: false),
+            Message(tag, 3, $"digest@{PolicyDomain}", inbox: true, unread: false, listId: FilterList));
+        // The mixed sender policy wins over the non-mixed domain policy for message 1; message 2 falls through to the
+        // domain policy; the mixed list policy wins for message 3.
+        db.SenderPolicies.AddRange(
+            Policy(PolicyScope.Sender, PolicySender, isMixed: true),
+            Policy(PolicyScope.List, FilterList, isMixed: true),
+            Policy(PolicyScope.Domain, PolicyDomain, isMixed: false));
+        await db.SaveChangesAsync(Ct);
+
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var after = await new MetricsSnapshotter(db, clock).TakeAsync(Ct);
+
+        (after.CoveredByPolicy - before.CoveredByPolicy).ShouldBe(1);
+
+        await db.Messages.Where(m => m.Id.StartsWith(tag)).ExecuteDeleteAsync(Ct);
+    }
+
+    [Fact]
     public async Task Scheduled_snapshots_wait_15_minutes_and_then_follow_completed_jobs_or_the_hour()
     {
         var clock = new FakeTimeProvider(Start);

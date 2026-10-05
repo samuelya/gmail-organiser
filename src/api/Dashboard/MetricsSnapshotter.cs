@@ -102,15 +102,21 @@ public sealed class MetricsSnapshotter(AppDbContext db, TimeProvider time)
         db.MetricSnapshots.AsNoTracking().OrderByDescending(r => r.TakenAt).FirstOrDefaultAsync(ct);
 
     /// <summary>
-    /// Messages whose canonical sender, List-Id or canonical domain has an approved non-mixed policy, or that a policy
-    /// already decided (a <see cref="SuggestionSource.Policy"/> suggestion).
+    /// Messages whose winning approved policy is non-mixed, or that a policy already decided (a
+    /// <see cref="SuggestionSource.Policy"/> suggestion). The winner follows <see cref="PolicyLookup.For"/>: sender, then
+    /// List-Id, then domain, so a mixed sender policy shadows a non-mixed domain policy.
     /// </summary>
-    private IQueryable<MessageRow> CoveredByPolicy(IQueryable<MessageRow> live) =>
-        live.Where(m => db.SenderPolicies.Any(p => p.Status == PolicyStatus.Approved && !p.IsMixed
-                && ((p.Scope == PolicyScope.Sender && p.ScopeKey == m.CanonicalAddress)
-                    || (p.Scope == PolicyScope.List && m.ListId != null && p.ScopeKey == m.ListId.Trim().ToLower())
-                    || (p.Scope == PolicyScope.Domain && p.ScopeKey == m.CanonicalDomain)))
+    private IQueryable<MessageRow> CoveredByPolicy(IQueryable<MessageRow> live)
+    {
+        var approved = db.SenderPolicies.Where(p => p.Status == PolicyStatus.Approved);
+        return live.Where(m =>
+            approved.Any(p => p.Scope == PolicyScope.Sender && p.ScopeKey == m.CanonicalAddress && !p.IsMixed)
+            || (!approved.Any(p => p.Scope == PolicyScope.Sender && p.ScopeKey == m.CanonicalAddress)
+                && (approved.Any(p => p.Scope == PolicyScope.List && m.ListId != null && p.ScopeKey == m.ListId.Trim().ToLower() && !p.IsMixed)
+                    || (!approved.Any(p => p.Scope == PolicyScope.List && m.ListId != null && p.ScopeKey == m.ListId.Trim().ToLower())
+                        && approved.Any(p => p.Scope == PolicyScope.Domain && p.ScopeKey == m.CanonicalDomain && !p.IsMixed))))
             || db.Suggestions.Any(s => s.MessageId == m.Id && s.Source == SuggestionSource.Policy));
+    }
 
     /// <summary>
     /// Messages whose raw address an active filter's <c>from</c> matches (an exact address, or an <c>@domain</c> with its
