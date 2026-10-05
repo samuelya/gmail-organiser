@@ -70,6 +70,7 @@ describe('AnalysePage', () => {
     listRuns: ReturnType<typeof vi.fn>;
     cancel: ReturnType<typeof vi.fn>;
     startCompareRun: ReturnType<typeof vi.fn>;
+    resume: ReturnType<typeof vi.fn>;
   };
   let active: AnalysisRunDto[];
   let finished: AnalysisRunDto[];
@@ -87,6 +88,7 @@ describe('AnalysePage', () => {
       listRuns: vi.fn((isActive: boolean) => of(isActive ? active : finished)),
       cancel: vi.fn(() => of(run({ status: 'cancelled' }))),
       startCompareRun: vi.fn(() => of(run({ id: 'run-cmp', kind: 'compare', status: 'queued' }))),
+      resume: vi.fn(() => of(job('queued', { id: 'job-2' }))),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -378,5 +380,35 @@ describe('AnalysePage', () => {
     await harness.fixture.whenStable();
     expect(document.querySelector('mat-dialog-container')).toBeNull();
     expect(api.startCompareRun).not.toHaveBeenCalled();
+  });
+
+  it('Resume posts the run and reloads the lists; a 409 still reloads them', async () => {
+    const { harness, component, q } = await render();
+    finished.push(run({ status: 'failed', error: 'The job ended without finishing the run.' }));
+    component.loadRuns();
+    await harness.fixture.whenStable();
+    api.listRuns.mockClear();
+
+    q('resume-run')!.click();
+    await harness.fixture.whenStable();
+    expect(api.resume).toHaveBeenCalledWith('run-1');
+    expect(api.listRuns).toHaveBeenCalled();
+    expect(component.resuming().size).toBe(0);
+
+    api.listRuns.mockClear();
+    api.resume.mockReturnValueOnce(
+      throwError(() => new HttpErrorResponse({ status: 409, statusText: 'Conflict' })),
+    );
+    q('resume-run')!.click();
+    await harness.fixture.whenStable();
+    expect(api.listRuns).toHaveBeenCalled();
+    expect(component.resuming().size).toBe(0);
+  });
+
+  it('the Failed chip asks the API for failed runs only', async () => {
+    const { harness, q } = await render();
+    q('filter-failed')!.querySelector<HTMLElement>('button')!.click();
+    await harness.fixture.whenStable();
+    expect(api.listRuns).toHaveBeenLastCalledWith(false, expect.any(Number), 'failed');
   });
 });

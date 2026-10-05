@@ -1,8 +1,10 @@
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
+import { JobDto } from '../core/jobs.models';
 import {
   AnalysisRunDto,
+  AnalysisRunStatus,
   AnalysisSelection,
   AnalysisSummaryDto,
   CompareRunRequest,
@@ -32,9 +34,14 @@ export class AnalysisService {
     return this.http.post<AnalysisRunDto>('/api/analysis/compare-runs', request);
   }
 
-  /** Newest first: active (queued or running) or finished runs. */
-  listRuns(active: boolean, limit: number): Observable<AnalysisRunDto[]> {
-    const params = new HttpParams().set('active', active).set('limit', limit);
+  /** Newest first: active (queued or running) or finished runs, of one status when given. */
+  listRuns(
+    active: boolean,
+    limit: number,
+    status?: AnalysisRunStatus,
+  ): Observable<AnalysisRunDto[]> {
+    let params = new HttpParams().set('active', active).set('limit', limit);
+    if (status) params = params.set('status', status);
     return this.http.get<AnalysisRunDto[]>('/api/analysis/runs', { params });
   }
 
@@ -44,6 +51,14 @@ export class AnalysisService {
       `/api/analysis/runs/${encodeURIComponent(id)}/cancel`,
       null,
     );
+  }
+
+  /**
+   * `202` with the job that continues a failed or stalled run from its cursor and retries its failed messages;
+   * `409` when the run is not failed or stalled, or no chat model is selected.
+   */
+  resume(id: string): Observable<JobDto> {
+    return this.http.post<JobDto>(`/api/analysis/runs/${encodeURIComponent(id)}/resume`, null);
   }
 
   summary(): Observable<AnalysisSummaryDto> {

@@ -25,6 +25,7 @@ import {
   debounceTime,
   distinctUntilChanged,
   filter,
+  finalize,
   forkJoin,
   map,
   merge,
@@ -212,6 +213,10 @@ export class AnalysePage {
   /** The last start answered 409: no chat model is selected. */
   readonly noChatModel = signal(false);
   readonly cancelling = signal<ReadonlySet<string>>(new Set());
+  /** Run ids whose resume request is in flight. */
+  readonly resuming = signal<ReadonlySet<string>>(new Set());
+  /** "Failed" filter chip on the finished runs: the API lists only failed runs. */
+  readonly failedOnly = signal(false);
   private readonly hubRunActive = injectAnalysisRunActive();
   /** A run is queued or running (by the hub or the last list): no re-analysis can start. */
   readonly runActive = computed(() => this.hubRunActive() || this.active().length > 0);
@@ -304,7 +309,11 @@ export class AnalysePage {
         switchMap(() =>
           forkJoin({
             active: this.analysis.listRuns(true, ACTIVE_RUNS_LIMIT),
-            finished: this.analysis.listRuns(false, FINISHED_RUNS_SHOWN),
+            finished: this.analysis.listRuns(
+              false,
+              FINISHED_RUNS_SHOWN,
+              this.failedOnly() ? 'failed' : undefined,
+            ),
           }).pipe(catchError(() => of(null))),
         ),
         takeUntilDestroyed(this.destroyRef),
@@ -323,6 +332,7 @@ export class AnalysePage {
       });
     effect(() => {
       this.runsKey();
+      this.failedOnly();
       untracked(() => this.loadRuns());
     });
   }
@@ -389,6 +399,22 @@ export class AnalysePage {
           this.loadRuns();
         },
       });
+  }
+
+  /**
+   * Continues a failed or stalled run; its new job reports progress through the jobs hub. The error interceptor shows
+   * a 409 (not resumable, no chat model) as a snackbar.
+   */
+  resume(run: AnalysisRunDto): void {
+    if (this.resuming().has(run.id)) return;
+    this.resuming.update((r) => new Set(r).add(run.id));
+    this.analysis
+      .resume(run.id)
+      .pipe(
+        finalize(() => this.resuming.update((r) => new Set([...r].filter((id) => id !== run.id)))),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({ next: () => this.loadRuns(), error: () => this.loadRuns() });
   }
 
   /**
