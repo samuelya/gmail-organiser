@@ -45,9 +45,11 @@ import {
   currentLabelsOf,
   decidedReplaceLabels,
   DEFAULT_FLAG_LABELS,
+  documentTypeLevels,
   documentTypeOptions,
   editableMembers,
   editRequest,
+  normaliseDocumentType,
   ReviewEditDialog,
   ReviewGroupDto,
   replaceState,
@@ -127,7 +129,7 @@ export class EditSuggestionDialog {
     toBeDeleted: new FormControl(this.data.current.toBeDeleted && !this.allProtected(), {
       nonNullable: true,
     }),
-    /** The segment under `documentTypeParent`; blank is none. */
+    /** The path under `documentTypeParent`; blank is none. */
     documentType: new FormControl('', {
       nonNullable: true,
       validators: [(c) => this.documentTypeValidator(String(c.value ?? ''))],
@@ -165,12 +167,12 @@ export class EditSuggestionDialog {
     const parent = this.documentTypeParent();
     const labels = this.labels();
     if (!parent || !labels) return [];
-    const text = this.documentType().trim().toLowerCase();
+    const text = normaliseDocumentType(this.documentType()).toLowerCase();
     return documentTypeOptions(labels, parent).filter((t) => t.toLowerCase().includes(text));
   });
   readonly documentTypeHint = computed(() => {
     const parent = this.documentTypeParent();
-    const text = this.documentType().trim();
+    const text = normaliseDocumentType(this.documentType());
     if (!parent || !text) return 'None: no document-type label.';
     const labels = this.labels();
     const exists = labels
@@ -349,12 +351,13 @@ export class EditSuggestionDialog {
     control.updateValueAndValidity();
   }
 
-  /** The topic field's path rules for `<parent>/<text>`, and one level only. */
+  /** The topic field's path rules for `<parent>/<text>`, within `documentTypeMaxDepth` levels. */
   private documentTypeValidator(text: string): ValidationErrors | null {
     const parent = this.documentTypeParent();
     if (!parent || !text.trim()) return null;
     const label = toDocumentTypeLabel(parent, text);
-    const error = label === null ? `One level under ${parent}: no '/'.` : labelPathError(label);
+    const error =
+      label === null ? `${documentTypeLevels(parent)} under ${parent}.` : labelPathError(label);
     return error ? { labelPath: error } : null;
   }
 

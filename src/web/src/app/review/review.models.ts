@@ -249,21 +249,65 @@ export function outcomeOf(group: ReviewGroupDto): GroupOutcome {
   };
 }
 
-/** The labels directly under the document-type `parent`, by name (ordinal), as the edit dialog offers them. */
-export function documentTypeOptions(labels: readonly LabelDto[], parent: string): string[] {
-  const prefix = `${parent}/`.toLowerCase();
-  const names = labels
-    .filter((l) => l.type === 'user' && l.name.toLowerCase().startsWith(prefix))
-    .map((l) => l.name.slice(prefix.length))
-    .filter((n) => n.trim() && !n.includes('/'));
-  return [...new Set(names)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+/** Mirrors the API's `DocumentTypePath.MaxDepth`: a document type is 1 to 3 levels under the parent. */
+export const MAX_DOCUMENT_TYPE_DEPTH = 3;
+/** Gmail's label nesting limit, as `labelPathError` checks it. */
+const LABEL_MAX_SEGMENTS = 5;
+
+/**
+ * Mirrors the API's `DocumentTypePath.MaxDepthUnder`: `MAX_DOCUMENT_TYPE_DEPTH`, fewer when the
+ * parent's own levels leave less room within Gmail's five, never below 1.
+ */
+export function documentTypeMaxDepth(parent: string): number {
+  const room = LABEL_MAX_SEGMENTS - parent.trim().split('/').length;
+  return Math.min(Math.max(room, 1), MAX_DOCUMENT_TYPE_DEPTH);
 }
 
-/** The document-type label for `text` under `parent`: `""` for none, `null` when `text` has a `/`. */
+/** `documentTypeMaxDepth` in words, "1 level" or "1 to n levels", as the API words it. */
+export function documentTypeLevels(parent: string): string {
+  const depth = documentTypeMaxDepth(parent);
+  return depth === 1 ? '1 level' : `1 to ${depth} levels`;
+}
+
+/** The typed document type with each segment trimmed (`Invoice / Paid` is `Invoice/Paid`). */
+export function normaliseDocumentType(text: string): string {
+  return text.trim()
+    ? text
+        .split('/')
+        .map((s) => s.trim())
+        .join('/')
+    : '';
+}
+
+/**
+ * The user labels 1 to `documentTypeMaxDepth(parent)` levels under the document-type `parent`, as the
+ * path below it (`Utilities`, `Utilities/Electricity`), deduplicated case-insensitively and
+ * ordinal-sorted so a type comes before its children.
+ */
+export function documentTypeOptions(labels: readonly LabelDto[], parent: string): string[] {
+  const prefix = `${parent}/`.toLowerCase();
+  const depth = documentTypeMaxDepth(parent);
+  const byKey = new Map<string, string>();
+  for (const l of labels) {
+    if (l.type !== 'user' || !l.name.toLowerCase().startsWith(prefix)) continue;
+    const path = l.name.slice(prefix.length);
+    const segments = path.split('/');
+    if (segments.length > depth || segments.some((s) => !s.trim())) continue;
+    if (!byKey.has(path.toLowerCase())) byKey.set(path.toLowerCase(), path);
+  }
+  return [...byKey.values()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/**
+ * The document-type label for `text` under `parent`: `""` for none, `<parent>/<path>` for 1 to
+ * `documentTypeMaxDepth(parent)` trimmed segments, `null` when deeper or a segment is empty.
+ */
 export function toDocumentTypeLabel(parent: string, text: string): string | null {
-  const segment = text.trim();
-  if (!segment) return '';
-  return segment.includes('/') ? null : `${parent}/${segment}`;
+  const path = normaliseDocumentType(text);
+  if (!path) return '';
+  const segments = path.split('/');
+  if (segments.length > documentTypeMaxDepth(parent) || segments.some((s) => !s)) return null;
+  return `${parent}/${path}`;
 }
 
 /**
