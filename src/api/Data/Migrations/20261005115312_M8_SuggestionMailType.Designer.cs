@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261005113338_M8_SuggestionMailType")]
+    [Migration("20261005115312_M8_SuggestionMailType")]
     partial class M8_SuggestionMailType
     {
         /// <inheritdoc />
@@ -216,6 +216,10 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_new_label");
 
+                    b.Property<string>("MailType")
+                        .HasColumnType("text")
+                        .HasColumnName("mail_type");
+
                     b.Property<string>("MessageId")
                         .IsRequired()
                         .HasColumnType("text")
@@ -232,6 +236,10 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("PromptVersion")
                         .HasColumnType("text")
                         .HasColumnName("prompt_version");
+
+                    b.Property<string>("ProposedNewLabel")
+                        .HasColumnType("text")
+                        .HasColumnName("proposed_new_label");
 
                     b.Property<string>("Reason")
                         .IsRequired()

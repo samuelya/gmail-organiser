@@ -98,7 +98,8 @@ public sealed record SuggestionAlternativeDto(
     string? Model,
     DateTimeOffset CreatedAt,
     bool Mixed = false,
-    int Count = 1);
+    int Count = 1,
+    string? MailType = null);
 
 /// <summary>Suggestions by id and every suggestion of the named groups (any status); at least one of the two.</summary>
 public sealed record AlternativeDecisionRequest(Guid[]? SuggestionIds, GroupRef[]? Groups);

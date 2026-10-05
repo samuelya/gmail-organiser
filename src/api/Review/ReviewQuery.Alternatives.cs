@@ -66,7 +66,8 @@ public sealed partial class ReviewQuery
             a.Reason,
             a.PromptVersion,
             a.Model,
-            a.CreatedAt);
+            a.CreatedAt,
+            MailType: a.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null);
     }
 
     /// <summary>
@@ -83,7 +84,7 @@ public sealed partial class ReviewQuery
         }
 
         var outcomes = alternatives
-            .GroupBy(a => (a.TopicLabel, a.NeedsAction, a.ToBeDeleted, a.DocumentTypeLabel))
+            .GroupBy(a => (a.TopicLabel, a.NeedsAction, a.ToBeDeleted, a.DocumentTypeLabel, a.MailType))
             .OrderByDescending(g => g.Count())
             .ToList();
         var shown = outcomes[0].First();

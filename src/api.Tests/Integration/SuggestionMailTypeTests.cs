@@ -97,6 +97,28 @@ public sealed class SuggestionMailTypeTests(ApiFactory factory, PostgresFixture 
         (await db.Decisions.AsNoTracking().SingleAsync(d => d.MessageId == "c01", Ct)).MailType.ShouldBe(MailType.ActionBill);
     }
 
+    [Fact]
+    public async Task Accepting_a_compare_run_alternative_takes_its_mail_type_and_proposed_label()
+    {
+        var first = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+        h.Chat.Respond = (ids, _, _, _) => Task.FromResult(SetMailType(WithProposedForBilling(AnalysisRunHarness.Agree(ids)), (_, _) => "receipt"));
+        (await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, first.Id))).IsSuccessStatusCode.ShouldBeTrue();
+        await h.RunNextAsync();
+
+        var id = await IdAsync("c00");
+        var detail = (await (await h.GetAsync($"/api/review/senders/{AnalysisRunHarness.Billing}"))
+            .Content.ReadFromJsonAsync<ReviewSenderDetailDto>(Ct)).ShouldNotBeNull();
+        detail.Groups.SelectMany(g => g.Members).Single(m => m.Id == id).Alternative.ShouldNotBeNull().MailType.ShouldBe("receipt");
+
+        var accepted = await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([id], null));
+        accepted.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        await using var db = postgres.CreateDbContext();
+        var row = await db.Suggestions.AsNoTracking().SingleAsync(s => s.Id == id, Ct);
+        (row.MailType, row.TopicLabel, row.ProposedNewLabel).ShouldBe((MailType.Receipt, Proposed, Proposed));
+    }
+
     private async Task RunAsync()
     {
         await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));

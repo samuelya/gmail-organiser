@@ -24,6 +24,18 @@ namespace GmailOrganiser.Data.Migrations
 
             migrationBuilder.AddColumn<string>(
                 name: "mail_type",
+                table: "suggestion_alternatives",
+                type: "text",
+                nullable: true);
+
+            migrationBuilder.AddColumn<string>(
+                name: "proposed_new_label",
+                table: "suggestion_alternatives",
+                type: "text",
+                nullable: true);
+
+            migrationBuilder.AddColumn<string>(
+                name: "mail_type",
                 table: "decisions",
                 type: "text",
                 nullable: true);
@@ -39,6 +51,14 @@ namespace GmailOrganiser.Data.Migrations
             migrationBuilder.DropColumn(
                 name: "proposed_new_label",
                 table: "suggestions");
+
+            migrationBuilder.DropColumn(
+                name: "mail_type",
+                table: "suggestion_alternatives");
+
+            migrationBuilder.DropColumn(
+                name: "proposed_new_label",
+                table: "suggestion_alternatives");
 
             migrationBuilder.DropColumn(
                 name: "mail_type",

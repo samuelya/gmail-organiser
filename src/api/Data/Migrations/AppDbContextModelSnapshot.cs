@@ -213,6 +213,10 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_new_label");
 
+                    b.Property<string>("MailType")
+                        .HasColumnType("text")
+                        .HasColumnName("mail_type");
+
                     b.Property<string>("MessageId")
                         .IsRequired()
                         .HasColumnType("text")
@@ -229,6 +233,10 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("PromptVersion")
                         .HasColumnType("text")
                         .HasColumnName("prompt_version");
+
+                    b.Property<string>("ProposedNewLabel")
+                        .HasColumnType("text")
+                        .HasColumnName("proposed_new_label");
 
                     b.Property<string>("Reason")
                         .IsRequired()
