@@ -4,7 +4,8 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
 import { provideRouter, Router } from '@angular/router';
-import { of, Subject } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
+import { of, Subject, throwError } from 'rxjs';
 import { PoliciesService } from '../policies/policies.service';
 import { AnalysisService } from '../analyse/analysis.service';
 import { ExternalReviewDto } from '../core/claude.models';
@@ -243,10 +244,10 @@ describe('ReviewPage', () => {
 
   it('lists senders, selects the first and renders its groups', async () => {
     const { api, q, all } = await render();
-    expect(api.listSenders).toHaveBeenCalledWith('pending', '', 1, 25, false);
+    expect(api.listSenders).toHaveBeenCalledWith('pending', '', 1, 25, false, []);
     expect(all('sender-item')).toHaveLength(2);
     expect(all('sender-count')[0].textContent).toContain('3');
-    expect(api.sender).toHaveBeenCalledWith('news@example.com', 'pending', 1, 20, false);
+    expect(api.sender).toHaveBeenCalledWith('news@example.com', 'pending', 1, 20, false, []);
     expect(q('detail-title')!.textContent).toContain('Example News');
     expect(q('group-title')!.textContent).toContain('Weekly digest');
     expect(q('group-origin')!.textContent).toContain('1 analysed by the model · 2 derived');
@@ -262,11 +263,11 @@ describe('ReviewPage', () => {
     const { api, all, el, settle } = await render();
     all('sender-item')[1].click();
     await settle();
-    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, false);
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, false, []);
     el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')[1].click();
     await settle();
-    expect(api.listSenders).toHaveBeenLastCalledWith('approved', '', 1, 25, false);
-    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'approved', 1, 20, false);
+    expect(api.listSenders).toHaveBeenLastCalledWith('approved', '', 1, 25, false, []);
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'approved', 1, 20, false, []);
   });
 
   it('approves and rejects a member, then re-fetches', async () => {
@@ -612,18 +613,63 @@ describe('ReviewPage', () => {
     expect(q('reanalyse-selection')!.textContent).toContain('(0)');
   });
 
-  it('unticks members the mail-type filter hides', async () => {
-    const { fixture, q, expand, tick, settle } = await render(noPattern, 'off', [
+  it('a mail-type change reloads senders from page 1 with the filter and clears the ticks', async () => {
+    const { fixture, api, q, expand, tick, settle } = await render(noPattern, 'off', [
       group({ members: [member('a', { mailType: 'newsletter' })] }),
-      group({ groupKey: 'key-2', members: [member('c', { mailType: 'receipt' })] }),
     ]);
+    const page = fixture.componentInstance;
+    page.onSenderPage(2);
+    await settle();
+    expect(api.listSenders).toHaveBeenLastCalledWith('pending', '', 2, 25, false, []);
     await expand();
     await tick(0);
     expect(q('reanalyse-selection')!.textContent).toContain('(1)');
-    fixture.componentInstance.mailTypes.set(['receipt']);
+    page.onMailTypes(['receipt', 'newsletter']);
     await settle();
     await settle();
-    expect(fixture.componentInstance.selection().size).toBe(0);
+    expect(TestBed.inject(Router).url).toContain('mailType=receipt,newsletter');
+    expect(api.listSenders).toHaveBeenLastCalledWith('pending', '', 1, 25, false, [
+      'receipt',
+      'newsletter',
+    ]);
+    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, false, [
+      'receipt',
+      'newsletter',
+    ]);
+    expect(page.selection().size).toBe(0);
+    expect(q('mail-type-page-note')).toBeNull();
+  });
+
+  it('lists a matching group whole, each member with its own mail-type chip', async () => {
+    const { fixture, el, all, expand, settle } = await render(noPattern, 'off', [
+      group({
+        members: [member('a', { mailType: 'receipt' }), member('b', { mailType: 'newsletter' })],
+      }),
+    ]);
+    fixture.componentInstance.onMailTypes(['receipt']);
+    await settle();
+    await settle();
+    await expand();
+    expect(all('member-row')).toHaveLength(2);
+    const chips = [
+      ...el.querySelectorAll('[data-testid="member-row"] [data-testid="mail-type-chip"]'),
+    ];
+    expect(chips.map((c) => c.textContent!.trim())).toHaveLength(2);
+    expect(chips[0].textContent).not.toBe(chips[1].textContent);
+  });
+
+  it('shows the empty state when the selected sender has nothing of the selected types', async () => {
+    const { fixture, api, q, settle } = await render();
+    api.sender.mockImplementation(() =>
+      throwError(() => new HttpErrorResponse({ status: 404, statusText: 'Not Found' })),
+    );
+    fixture.componentInstance.onMailTypes(['receipt']);
+    await settle();
+    await settle();
+    expect(q('detail-empty')!.textContent).toContain(
+      'No pending suggestions of the selected mail types for this sender.',
+    );
+    expect(q('detail-none')).toBeNull();
   });
 
   it('both selection buttons are disabled while a re-analyse is starting', async () => {
@@ -689,8 +735,8 @@ describe('ReviewPage', () => {
     expect(q('filter-reanalysed')!.textContent).toContain('Re-analysed (4)');
     el.querySelector<HTMLButtonElement>('[data-testid="filter-reanalysed"] button')!.click();
     await settle();
-    expect(api.listSenders).toHaveBeenLastCalledWith('pending', '', 1, 25, true);
-    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, true);
+    expect(api.listSenders).toHaveBeenLastCalledWith('pending', '', 1, 25, true, []);
+    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, true, []);
   });
 
   it('hides the Re-analysed filter while nothing waits', async () => {
@@ -743,8 +789,8 @@ describe('ReviewPage', () => {
     expect([...tabs].map((t) => t.textContent?.trim())).toContain('Applied');
     tabs[3].click();
     await settle();
-    expect(api.listSenders).toHaveBeenLastCalledWith('applied', '', 1, 25, false);
-    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'applied', 1, 20, false);
+    expect(api.listSenders).toHaveBeenLastCalledWith('applied', '', 1, 25, false, []);
+    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'applied', 1, 20, false, []);
     await expand();
     for (const id of ['group-approve', 'group-reject', 'group-edit']) expect(q(id)).toBeNull();
     for (const id of ['member-approve', 'member-reject', 'member-edit'])
@@ -769,7 +815,7 @@ describe('ReviewPage', () => {
     );
     el.querySelector<HTMLButtonElement>('[data-testid="filter-reanalysed"] button')!.click();
     await settle();
-    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, true);
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, true, []);
     api.listSenders.mockImplementation(() => of({ items: [], page: 1, pageSize: 25, total: 0 }));
     el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')[1].click();
     await settle();
@@ -799,6 +845,6 @@ describe('ReviewPage', () => {
     });
     await settle();
     expect(api.sender).toHaveBeenCalledTimes(1);
-    expect(api.sender).toHaveBeenCalledWith('shop@example.com', 'pending', 1, 20, true);
+    expect(api.sender).toHaveBeenCalledWith('shop@example.com', 'pending', 1, 20, true, []);
   });
 });

@@ -81,7 +81,6 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
             <mat-option [value]="t">{{ mailTypeLabel(t) }}</mat-option>
           }
         </mat-select>
-        <mat-hint>Narrows the selected sender's groups.</mat-hint>
       </mat-form-field>
       @if (loading()) {
         <mat-progress-bar mode="indeterminate" aria-label="Loading senders" />
@@ -90,7 +89,9 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
         <p class="muted m-0" data-testid="senders-failed">The senders could not be loaded.</p>
       } @else if (result()?.items?.length === 0) {
         <p class="muted m-0" data-testid="senders-empty">
-          No senders with {{ status() }} suggestions.
+          No senders with {{ status() }} suggestions{{
+            mailTypes().length ? ' of the selected mail types' : ''
+          }}.
         </p>
       }
       <mat-action-list aria-label="Senders" data-testid="sender-list">
