@@ -6,7 +6,6 @@ using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
-using Google;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -31,15 +30,14 @@ public sealed record SenderArchiveCursor(
 
 /// <summary>
 /// Archives the senders' inbox mail (#349, DESIGN §6.3): removes <c>INBOX</c> from every live message of the canonical
-/// senders that is not delete-labelled and not protected, in id order. As <see cref="CleanUp.CleanUpActionsJob"/>, each
-/// chunk is two transactions around the Gmail call: the first locks and re-checks the messages, writes the undo log and
-/// checkpoints the chunk as pending; the second stores the labels, advances <see cref="SenderArchiveCursor.LastId"/> and
-/// clears it. A pending chunk is resent on resume (removing <c>INBOX</c> again is a no-op); <see cref="UndoActionsJob"/>
+/// senders that is not delete-labelled and not protected, in id order. Each chunk goes through <see cref="ChunkSender"/>,
+/// as in <see cref="CleanUp.CleanUpActionsJob"/>; the second transaction also advances
+/// <see cref="SenderArchiveCursor.LastId"/>. A pending chunk is resent on resume (removing <c>INBOX</c> again is a no-op); <see cref="UndoActionsJob"/>
 /// reverts the batch from its log. Each chunk's threads are checked for a reply first, as apply does. A sender that turns
 /// human, replied-to or allowlisted midway ends the job as completed, the reason in its message, so History can undo
 /// what was archived.
 /// </summary>
-public sealed partial class SenderArchiveJob(
+public sealed class SenderArchiveJob(
     AppDbContext db,
     IGmailClient gmail,
     ISettingsStore settingsStore,
@@ -59,6 +57,8 @@ public sealed partial class SenderArchiveJob(
     private int skippedProtected;
 
     public string Type => JobType;
+
+    private ChunkSender Chunks => field ??= new(db, gmail, time, logger, "sender archive");
 
     public static string Describe(int messages, int senders) =>
         $"Archive {messages} message{(messages == 1 ? "" : "s")} from {senders} sender{(senders == 1 ? "" : "s")}";
@@ -191,20 +191,16 @@ public sealed partial class SenderArchiveJob(
     }
 
     /// <summary>
-    /// Locks the chunk's messages, re-checks each (state can change between the click and the send), writes the undo
-    /// log and checkpoints the chunk as pending, in one transaction. Null when anything changed since planning: nothing
-    /// was written, the caller replans.
+    /// Locks the chunk's messages, re-checks the senders and each message (state can change between the click and the
+    /// send), writes the undo log and checkpoints the chunk as pending, in one transaction. Null when anything changed
+    /// since planning: nothing was written, the caller replans.
     /// </summary>
     private async Task<SenderArchiveCursor?> PrepareAsync(JobContext ctx, SenderArchiveCursor cursor, string[] ids, int total, CancellationToken ct)
     {
         var next = cursor with { Pending = ids };
-        try
-        {
-            await ctx.CheckpointAsync(next, Progress(cursor, total), async t =>
+        var prepared = await Chunks.PrepareAsync(
+            ctx, next, Progress(cursor, total), cursor.BatchId, ids, [], Remove, null, async (messages, t) =>
             {
-                var messages = await db.Messages
-                    .FromSql($"SELECT * FROM messages WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
-                    .ToListAsync(t);
                 var settings = await settingsStore.GetAsync(t);
 
                 // A reply or a stats rebuild since the start can make a sender human: no further chunk is archived.
@@ -215,38 +211,9 @@ public sealed partial class SenderArchiveJob(
                 }
 
                 var allowlist = await AllowlistLoader.LoadAsync(db, settings, [.. messages.Select(m => m.FromAddress).Distinct()], t);
-                if (messages.Count != ids.Length || messages.Any(m => !Fits(m, settings, allowlist)))
-                {
-                    throw new PlanChangedException();
-                }
-
-                var now = time.GetUtcNow();
-                foreach (var message in messages)
-                {
-                    db.ActionLog.Add(new ActionLogRow
-                    {
-                        Id = Guid.CreateVersion7(now),
-                        BatchId = cursor.BatchId,
-                        MessageId = message.Id,
-                        LabelsAdded = [],
-                        LabelsRemoved = Remove,
-                        LabelIdsBefore = message.LabelIds,
-                        LabelIdsAfter = LabelChunks.After(message.LabelIds, [], Remove),
-                        CreatedAt = now,
-                    });
-                }
-
-                await db.SaveChangesAsync(t);
+                return messages.All(m => Fits(m, settings, allowlist));
             }, ct);
-        }
-        catch (PlanChangedException)
-        {
-            db.ChangeTracker.Clear();
-            return null;
-        }
-
-        db.ChangeTracker.Clear();
-        return next;
+        return prepared ? next : null;
 
         bool Fits(MessageRow m, AppSettings settings, Allowlist allowlist) =>
             !m.DeletedInGmail
@@ -257,38 +224,15 @@ public sealed partial class SenderArchiveJob(
     }
 
     /// <summary>
-    /// Sends the pending chunk, then stores its result and clears it. Ids Gmail answers 404 for are marked deleted,
-    /// ids it refuses one by one are skipped; neither keeps a log row. A failure leaves the chunk pending unless this
-    /// run sent it for the first time and Gmail certainly changed nothing: then the chunk is reverted.
+    /// Sends the pending chunk (<see cref="ChunkSender.SendAsync"/>), then stores its result, advances
+    /// <see cref="SenderArchiveCursor.LastId"/> and clears it.
     /// </summary>
     private async Task<(SenderArchiveCursor Cursor, JobSignal Signal, int Total)> SendAsync(
         JobContext ctx, SenderArchiveCursor cursor, bool resent, int total, CancellationToken ct)
     {
         var ids = cursor.Pending!;
-        var refused = new Dictionary<string, string>(StringComparer.Ordinal);
-        var sent = false;
-        try
-        {
-            try
-            {
-                await gmail.BatchModifyAsync(ids, [], Remove, ct);
-            }
-            catch (GoogleApiException ex) when (LabelChunks.IsBadIdOrLabel(ex))
-            {
-                await LabelChunks.IsolateAsync(gmail, ids, [], Remove, ex, refused, () => sent = true, ct);
-                LabelChunks.ThrowIfCallRefused(ids, refused, ex);
-            }
-        }
-        catch (Exception ex) when (!resent && !sent && LabelChunks.NothingChanged(ex))
-        {
-            LogChunkReverted(logger, ids.Length, ex);
-            await RevertAsync(ctx, cursor, total);
-            throw;
-        }
-
-        string[] gone = [.. refused.Where(r => r.Value == LabelChunks.NotFoundReason).Select(r => r.Key)];
-        string[] rejected = [.. refused.Where(r => r.Value != LabelChunks.NotFoundReason).Select(r => r.Key)];
-        string[] changed = [.. ids.Where(id => !refused.ContainsKey(id))];
+        var result = await Chunks.SendAsync(ctx, cursor.BatchId, ids, [], Remove, resent, cursor with { Pending = null }, Progress(cursor, total), ct);
+        var (changed, gone, rejected) = result;
         var last = ids.Max(StringComparer.Ordinal);
         var done = cursor with
         {
@@ -297,80 +241,29 @@ public sealed partial class SenderArchiveJob(
             ChunksDone = cursor.ChunksDone + 1,
             MessagesDone = cursor.MessagesDone + changed.Length,
             Gone = cursor.Gone + gone.Length,
-            Skipped = rejected.Length == 0 ? cursor.Skipped : [.. cursor.Skipped ?? [], .. rejected],
+            Skipped = ChunkSender.Skipped(cursor.Skipped, result),
         };
         total -= rejected.Length;
-        var signal = await ctx.CheckpointAsync(done, Progress(done, total), async t =>
-        {
-            var now = time.GetUtcNow();
-            string[] unlogged = [.. refused.Keys];
-            await db.ActionLog.Where(l => l.BatchId == cursor.BatchId && unlogged.Contains(l.MessageId)).ExecuteDeleteAsync(t);
-            await db.Messages.Where(m => gone.Contains(m.Id))
-                .ExecuteUpdateAsync(s => s.SetProperty(m => m.DeletedInGmail, true).SetProperty(m => m.UpdatedAt, now), t);
-
-            var messages = await db.Messages.Where(m => changed.Contains(m.Id)).ToListAsync(t);
-            foreach (var message in messages)
+        var signal = await Chunks.StoreAsync(
+            ctx, done, Progress(done, total), cursor.BatchId, [], Remove, result, null,
+            async t =>
             {
-                message.LabelIds = LabelChunks.After(message.LabelIds, [], Remove);
-                message.UpdatedAt = now;
-            }
-
-            await db.SaveChangesAsync(t);
-            if (gone.Length > 0)
-            {
-                await senders.UpdateAsync(await db.Messages.Where(m => gone.Contains(m.Id)).Select(m => m.FromAddress).ToListAsync(t), t);
-            }
-
-            await db.ActionBatches.Where(b => b.Id == cursor.BatchId)
-                .ExecuteUpdateAsync(s => s.SetProperty(b => b.MessageCount, b => b.MessageCount + changed.Length), t);
-        }, ct);
-        db.ChangeTracker.Clear();
+                if (gone.Length > 0)
+                {
+                    await senders.UpdateAsync(await db.Messages.Where(m => gone.Contains(m.Id)).Select(m => m.FromAddress).ToListAsync(t), t);
+                }
+            },
+            ct);
         return (done, signal, total);
-    }
-
-    /// <summary>Undoes <see cref="PrepareAsync"/> for a chunk Gmail never saw: its log rows are deleted.</summary>
-    private async Task RevertAsync(JobContext ctx, SenderArchiveCursor cursor, int total)
-    {
-        db.ChangeTracker.Clear();
-        var ids = cursor.Pending!;
-        await ctx.CheckpointAsync(
-            cursor with { Pending = null },
-            Progress(cursor, total),
-            t => db.ActionLog.Where(l => l.BatchId == cursor.BatchId && ids.Contains(l.MessageId)).ExecuteDeleteAsync(t),
-            CancellationToken.None);
-        db.ChangeTracker.Clear();
     }
 
     private static int Done(SenderArchiveCursor cursor) => cursor.MessagesDone + cursor.Gone;
 
     /// <summary>Messages archived of the total, every skip with its reason (protected first), and why it stopped early.</summary>
-    private JobProgress Progress(SenderArchiveCursor cursor, int total, string? stopped = null)
-    {
-        var reasons = new List<string>();
-        if (skippedProtected > 0)
-        {
-            reasons.Add($"{skippedProtected} {ProtectedReason}");
-        }
-
-        if (cursor.Gone > 0)
-        {
-            reasons.Add($"{cursor.Gone} {LabelChunks.NotFoundReason}");
-        }
-
-        if (cursor.Skipped is { Length: > 0 } skipped)
-        {
-            reasons.Add($"{skipped.Length} {LabelChunks.RefusedReason}");
-        }
-
-        return new(Done(cursor), total,
-            $"Archived {cursor.MessagesDone} of {total} messages{(reasons.Count > 0 ? $"; skipped {string.Join(", ", reasons)}" : "")}"
+    private JobProgress Progress(SenderArchiveCursor cursor, int total, string? stopped = null) =>
+        new(Done(cursor), total,
+            ChunkSender.Message("Archived", cursor.MessagesDone, total, skippedProtected, ProtectedReason, cursor.Gone, cursor.Skipped)
             + (stopped is null ? "" : $"; {stopped}"));
-    }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail refused a sender archive chunk of {Count} messages before changing any; the chunk was reverted.")]
-    private static partial void LogChunkReverted(ILogger logger, int count, Exception exception);
-
-    private sealed class PlanChangedException : Exception;
 
     private sealed class SenderRefusedException(string message) : Exception(message);
 }

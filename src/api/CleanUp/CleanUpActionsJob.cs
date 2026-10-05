@@ -7,7 +7,6 @@ using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
-using Google;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -41,13 +40,11 @@ public sealed record CleanUpChunk(string[] MessageIds, string[] Add, string[] Re
 
 /// <summary>
 /// Moves the selected delete-labelled messages to Trash (adds <c>TRASH</c>, removes <c>INBOX</c>; the delete label
-/// stays) or removes the delete label from them (DESIGN §3.3, §3.6). Like <see cref="UndoActionsJob"/>, each chunk is
-/// two transactions around the Gmail call: the first locks the messages, re-checks them (still labelled, not in Trash,
-/// unprotected unless the batch includes protected mail), writes the undo log and checkpoints the chunk as pending;
-/// the second stores the labels, <c>deleted_in_gmail</c> and sender stats and clears it. A pending chunk is resent on
-/// resume, which Gmail treats as a no-op for what it already applied.
+/// stays) or removes the delete label from them (DESIGN §3.3, §3.6). Each chunk goes through <see cref="ChunkSender"/>:
+/// the first transaction re-checks the messages (still labelled, not in Trash, unprotected unless the batch includes
+/// protected mail) before the undo log; the second also stores <c>deleted_in_gmail</c> and sender stats.
 /// </summary>
-public sealed partial class CleanUpActionsJob(
+public sealed class CleanUpActionsJob(
     AppDbContext db,
     IGmailClient gmail,
     LabelCatalog catalog,
@@ -65,6 +62,8 @@ public sealed partial class CleanUpActionsJob(
     private int skippedProtected;
 
     public string Type => JobType;
+
+    private ChunkSender Chunks => field ??= new(db, gmail, time, logger, "clean-up");
 
     public static string Describe(ActionKind kind, int count, string? senderAddress) =>
         $"{(kind == ActionKind.Trash ? "Delete" : "Removed from clean-up")}: {count} message{(count == 1 ? "" : "s")}"
@@ -181,149 +180,62 @@ public sealed partial class CleanUpActionsJob(
         CancellationToken ct)
     {
         var next = cursor with { Pending = chunk };
-        try
-        {
-            await ctx.CheckpointAsync(next, Progress(cursor, total), async t =>
+        var prepared = await Chunks.PrepareAsync(
+            ctx, next, Progress(cursor, total), cursor.BatchId, chunk.MessageIds, chunk.Add, chunk.Remove, names, async (messages, t) =>
             {
-                var ids = chunk.MessageIds;
-                var messages = await db.Messages
-                    .FromSql($"SELECT * FROM messages WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
-                    .ToListAsync(t);
                 // Both halves as stored now: an address or a domain allowlisted since the job started is honoured.
                 var allowlist = await AllowlistLoader.LoadAsync(
                     db, await settingsStore.GetAsync(t), [.. messages.Select(m => m.FromAddress).Distinct()], t);
-                if (messages.Count != ids.Length || messages.Any(m => !Fits(m)))
-                {
-                    throw new PlanChangedException();
-                }
-
-                var now = time.GetUtcNow();
-                foreach (var message in messages)
-                {
-                    db.ActionLog.Add(new ActionLogRow
-                    {
-                        Id = Guid.CreateVersion7(now),
-                        BatchId = cursor.BatchId,
-                        MessageId = message.Id,
-                        LabelsAdded = [.. chunk.Add.Select(id => names.GetValueOrDefault(id, id))],
-                        LabelsRemoved = [.. chunk.Remove.Select(id => names.GetValueOrDefault(id, id))],
-                        LabelIdsBefore = message.LabelIds,
-                        LabelIdsAfter = LabelChunks.After(message.LabelIds, chunk.Add, chunk.Remove),
-                        CreatedAt = now,
-                    });
-                }
-
-                await db.SaveChangesAsync(t);
-
-                bool Fits(MessageRow m)
-                {
-                    var (add, remove) = Change(cursor.Kind, cursor.DeleteLabelId, m);
-                    return !m.DeletedInGmail
-                        && m.LabelIds.Contains(cursor.DeleteLabelId, StringComparer.Ordinal)
-                        && !m.LabelIds.Contains(CleanUpQuery.TrashLabel, StringComparer.Ordinal)
-                        && Covers(cursor.Kind, cursor.IncludeProtected, m, allowlist, settings.Protection)
-                        && LabelChunks.Sorted(add).SequenceEqual(chunk.Add)
-                        && LabelChunks.Sorted(remove).SequenceEqual(chunk.Remove);
-                }
+                return messages.All(m => Fits(m, allowlist));
             }, ct);
-        }
-        catch (PlanChangedException)
-        {
-            db.ChangeTracker.Clear();
-            return null;
-        }
+        return prepared ? next : null;
 
-        db.ChangeTracker.Clear();
-        return next;
+        bool Fits(MessageRow m, Allowlist allowlist)
+        {
+            var (add, remove) = Change(cursor.Kind, cursor.DeleteLabelId, m);
+            return !m.DeletedInGmail
+                && m.LabelIds.Contains(cursor.DeleteLabelId, StringComparer.Ordinal)
+                && !m.LabelIds.Contains(CleanUpQuery.TrashLabel, StringComparer.Ordinal)
+                && Covers(cursor.Kind, cursor.IncludeProtected, m, allowlist, settings.Protection)
+                && LabelChunks.Sorted(add).SequenceEqual(chunk.Add)
+                && LabelChunks.Sorted(remove).SequenceEqual(chunk.Remove);
+        }
     }
 
     /// <summary>
-    /// Sends the pending chunk, then stores its result and clears it. Ids Gmail answers 404 for are marked deleted,
-    /// ids it refuses one by one are skipped; neither keeps a log row. A failure leaves the chunk pending unless this
-    /// run sent it for the first time and Gmail certainly changed nothing: then the chunk is reverted.
+    /// Sends the pending chunk (<see cref="ChunkSender.SendAsync"/>), then stores its result, the Trash state and
+    /// sender stats, and clears it.
     /// </summary>
     private async Task<(CleanUpCursor Cursor, JobSignal Signal, int Total)> SendAsync(
         JobContext ctx, CleanUpCursor cursor, bool resent, int total, CancellationToken ct)
     {
         var chunk = cursor.Pending!;
-        var refused = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (chunk.MessageIds.Length > 0 && chunk.Add.Length + chunk.Remove.Length > 0)
-        {
-            var sent = false;
-            try
-            {
-                try
-                {
-                    await gmail.BatchModifyAsync(chunk.MessageIds, chunk.Add, chunk.Remove, ct);
-                }
-                catch (GoogleApiException ex) when (LabelChunks.IsBadIdOrLabel(ex))
-                {
-                    await LabelChunks.IsolateAsync(gmail, chunk.MessageIds, chunk.Add, chunk.Remove, ex, refused, () => sent = true, ct);
-                    LabelChunks.ThrowIfCallRefused(chunk.MessageIds, refused, ex);
-                }
-            }
-            catch (Exception ex) when (!resent && !sent && LabelChunks.NothingChanged(ex))
-            {
-                LogChunkReverted(logger, chunk.MessageIds.Length, ex);
-                await RevertAsync(ctx, cursor, total);
-                throw;
-            }
-        }
-
-        string[] gone = [.. refused.Where(r => r.Value == LabelChunks.NotFoundReason).Select(r => r.Key)];
-        string[] rejected = [.. refused.Where(r => r.Value != LabelChunks.NotFoundReason).Select(r => r.Key)];
-        string[] changed = [.. chunk.MessageIds.Where(id => !refused.ContainsKey(id))];
+        var result = await Chunks.SendAsync(
+            ctx, cursor.BatchId, chunk.MessageIds, chunk.Add, chunk.Remove, resent, cursor with { Pending = null }, Progress(cursor, total), ct);
+        var (changed, gone, rejected) = result;
         var done = cursor with
         {
             Pending = null,
             ChunksDone = cursor.ChunksDone + 1,
             MessagesDone = cursor.MessagesDone + changed.Length,
             Gone = cursor.Gone + gone.Length,
-            Skipped = rejected.Length == 0 ? cursor.Skipped : [.. cursor.Skipped ?? [], .. rejected],
+            Skipped = ChunkSender.Skipped(cursor.Skipped, result),
         };
         total -= rejected.Length;
-        var signal = await ctx.CheckpointAsync(done, Progress(done, total), async t =>
-        {
-            var now = time.GetUtcNow();
-            string[] unlogged = [.. refused.Keys];
-            await db.ActionLog.Where(l => l.BatchId == cursor.BatchId && unlogged.Contains(l.MessageId)).ExecuteDeleteAsync(t);
-            await db.Messages.Where(m => gone.Contains(m.Id))
-                .ExecuteUpdateAsync(s => s.SetProperty(m => m.DeletedInGmail, true).SetProperty(m => m.UpdatedAt, now), t);
-
-            var messages = await db.Messages.Where(m => changed.Contains(m.Id)).ToListAsync(t);
-            foreach (var message in messages)
+        var signal = await Chunks.StoreAsync(
+            ctx, done, Progress(done, total), cursor.BatchId, chunk.Add, chunk.Remove, result,
+            m => m.DeletedInGmail = m.LabelIds.Contains(CleanUpQuery.TrashLabel, StringComparer.Ordinal),
+            async t =>
             {
-                message.LabelIds = LabelChunks.After(message.LabelIds, chunk.Add, chunk.Remove);
-                message.DeletedInGmail = message.LabelIds.Contains(CleanUpQuery.TrashLabel, StringComparer.Ordinal);
-                message.UpdatedAt = now;
-            }
-
-            await db.SaveChangesAsync(t);
-            if (cursor.Kind == ActionKind.Trash || gone.Length > 0)
-            {
-                var addresses = await db.Messages.Where(m => changed.Contains(m.Id) || gone.Contains(m.Id))
-                    .Select(m => m.FromAddress).ToListAsync(t);
-                await senders.UpdateAsync(addresses, t);
-            }
-
-            await db.ActionBatches.Where(b => b.Id == cursor.BatchId)
-                .ExecuteUpdateAsync(s => s.SetProperty(b => b.MessageCount, b => b.MessageCount + changed.Length), t);
-        }, ct);
-        db.ChangeTracker.Clear();
+                if (cursor.Kind == ActionKind.Trash || gone.Length > 0)
+                {
+                    var addresses = await db.Messages.Where(m => changed.Contains(m.Id) || gone.Contains(m.Id))
+                        .Select(m => m.FromAddress).ToListAsync(t);
+                    await senders.UpdateAsync(addresses, t);
+                }
+            },
+            ct);
         return (done, signal, total);
-    }
-
-    /// <summary>Undoes <see cref="PrepareAsync"/> for a chunk Gmail never saw: its log rows are deleted.</summary>
-    private async Task RevertAsync(JobContext ctx, CleanUpCursor cursor, int total)
-    {
-        db.ChangeTracker.Clear();
-        var ids = cursor.Pending!.MessageIds;
-        await ctx.CheckpointAsync(
-            cursor with { Pending = null },
-            Progress(cursor, total),
-            t => db.ActionLog.Where(l => l.BatchId == cursor.BatchId && ids.Contains(l.MessageId)).ExecuteDeleteAsync(t),
-            CancellationToken.None);
-        db.ChangeTracker.Clear();
     }
 
     private static List<CleanUpChunk> Without(List<CleanUpChunk> plan, CleanUpChunk? pending)
@@ -341,31 +253,8 @@ public sealed partial class CleanUpActionsJob(
     private static int Done(CleanUpCursor cursor) => cursor.MessagesDone + cursor.Gone;
 
     /// <summary>Messages changed of the total, and every skip with its reason (protected first).</summary>
-    private JobProgress Progress(CleanUpCursor cursor, int total)
-    {
-        var verb = cursor.Kind == ActionKind.Trash ? "Moved to Trash" : "Removed from clean-up";
-        var reasons = new List<string>();
-        if (skippedProtected > 0)
-        {
-            reasons.Add($"{skippedProtected} {ProtectedReason}");
-        }
-
-        if (cursor.Gone > 0)
-        {
-            reasons.Add($"{cursor.Gone} {LabelChunks.NotFoundReason}");
-        }
-
-        if (cursor.Skipped is { Length: > 0 } skipped)
-        {
-            reasons.Add($"{skipped.Length} {LabelChunks.RefusedReason}");
-        }
-
-        return new(Done(cursor), total,
-            $"{verb} {cursor.MessagesDone} of {total} messages{(reasons.Count > 0 ? $"; skipped {string.Join(", ", reasons)}" : "")}");
-    }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail refused a clean-up chunk of {Count} messages before changing any; the chunk was reverted.")]
-    private static partial void LogChunkReverted(ILogger logger, int count, Exception exception);
-
-    private sealed class PlanChangedException : Exception;
+    private JobProgress Progress(CleanUpCursor cursor, int total) =>
+        new(Done(cursor), total, ChunkSender.Message(
+            cursor.Kind == ActionKind.Trash ? "Moved to Trash" : "Removed from clean-up",
+            cursor.MessagesDone, total, skippedProtected, ProtectedReason, cursor.Gone, cursor.Skipped));
 }
