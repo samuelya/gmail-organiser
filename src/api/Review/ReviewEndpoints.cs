@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Common;
+using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Memory;
@@ -43,11 +44,12 @@ public static class ReviewEndpoints
 
     /// <summary>
     /// Senders with suggestions in <c>status</c> (default pending), most of them first; <c>search</c> as on the senders
-    /// page; <c>hasAlternative=true</c> counts only suggestions with a compare-run alternative.
+    /// page; <c>hasAlternative=true</c> counts only suggestions with a compare-run alternative; <c>mailType=a,b</c> only
+    /// suggestions of those mail types.
     /// </summary>
     private static async Task<Results<Ok<PagedDto<ReviewSenderDto>>, ValidationProblem>> ListSendersAsync(
         ReviewQuery query, CancellationToken ct, string? search = null, int? page = null, int? pageSize = null, string? status = null,
-        bool hasAlternative = false)
+        bool hasAlternative = false, string? mailType = null)
     {
         var paging = SenderQuery.Parse(search, page, pageSize, null, null, out var errors);
         var parsed = ReviewQuery.ParseStatus(status);
@@ -56,18 +58,20 @@ public static class ReviewEndpoints
             errors["status"] = ["Must be pending, approved, rejected or applied."];
         }
 
-        return paging is null || parsed is not { } s
+        var types = ParseMailTypes(mailType, errors);
+        return paging is null || parsed is not { } s || types is null
             ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await query.ListAsync(s, paging.Search, paging.Page, paging.PageSize, ct, hasAlternative));
+            : TypedResults.Ok(await query.ListAsync(s, paging.Search, paging.Page, paging.PageSize, ct, hasAlternative, types));
     }
 
     /// <summary>
     /// One page of the sender's groups in <c>status</c>, largest first (<c>hasAlternative=true</c>: only suggestions with
-    /// a compare-run alternative); 404 when the sender has no such suggestions.
+    /// a compare-run alternative; <c>mailType=a,b</c>: only groups with a member of those mail types, listed whole); 404
+    /// when the sender has no such suggestions.
     /// </summary>
     private static async Task<Results<Ok<ReviewSenderDetailDto>, NotFound, ValidationProblem>> GetSenderAsync(
         string address, ReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null,
-        bool hasAlternative = false)
+        bool hasAlternative = false, string? mailType = null)
     {
         var errors = new Dictionary<string, string[]>();
         if (page is < 1 or > SenderQuery.MaxPage)
@@ -86,15 +90,27 @@ public static class ReviewEndpoints
             errors["status"] = ["Must be pending, approved, rejected or applied."];
         }
 
+        var types = ParseMailTypes(mailType, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
         return Normalise(address) is { } a
-            && await query.DetailAsync(a, parsed!.Value, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct, hasAlternative) is { } detail
+            && await query.DetailAsync(a, parsed!.Value, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct, hasAlternative, types) is { } detail
             ? TypedResults.Ok(detail)
             : TypedResults.NotFound();
+    }
+
+    private static IReadOnlyList<MailType>? ParseMailTypes(string? mailType, Dictionary<string, string[]> errors)
+    {
+        var types = ReviewQuery.ParseMailTypes(mailType);
+        if (types is null)
+        {
+            errors["mailType"] = [$"Comma-separated, each one of: {SnakeCaseEnumConverter<MailType>.NamesList}."];
+        }
+
+        return types;
     }
 
     private static async Task<Results<Ok<SenderPatternDto>, ValidationProblem>> GetPatternAsync(

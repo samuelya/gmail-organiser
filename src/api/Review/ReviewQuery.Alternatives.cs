@@ -9,28 +9,33 @@ namespace GmailOrganiser.Review;
 /// <summary>Compare-run alternatives on the review DTOs (#249): old vs new, shown until accepted or discarded.</summary>
 public sealed partial class ReviewQuery
 {
-    private IQueryable<SuggestionRow> Suggestions(bool hasAlternative)
+    private IQueryable<SuggestionRow> Suggestions(bool hasAlternative, IReadOnlyList<MailType>? mailTypes)
     {
-        var suggestions = db.Suggestions.AsNoTracking();
+        var suggestions = OfTypes(db.Suggestions.AsNoTracking(), mailTypes);
         return hasAlternative ? suggestions.Where(s => db.SuggestionAlternatives.Any(a => a.SuggestionId == s.Id)) : suggestions;
     }
 
     /// <summary>
-    /// The sender's suggestions in <paramref name="status"/>; with <paramref name="hasAlternative"/> only the groups (all
-    /// their members in that status) where at least one member has an alternative.
+    /// The sender's suggestions in <paramref name="status"/>; with <paramref name="hasAlternative"/> or
+    /// <paramref name="mailTypes"/> only the groups where at least one member matches, listed whole (every member), so a
+    /// group card and its approve/reject/edit act on the same members.
     /// </summary>
-    private IQueryable<SuggestionRow> InStatus(string address, SuggestionStatus status, bool hasAlternative)
+    private IQueryable<SuggestionRow> InStatus(string address, SuggestionStatus status, bool hasAlternative, IReadOnlyList<MailType>? mailTypes)
     {
         var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && s.Status == status);
-        if (!hasAlternative)
+        if (!hasAlternative && mailTypes is not { Count: > 0 })
         {
             return inStatus;
         }
 
-        var keys = Suggestions(true).Where(s => s.SenderAddress == address && s.Status == status)
+        var keys = Suggestions(hasAlternative, mailTypes).Where(s => s.SenderAddress == address && s.Status == status)
             .Select(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId);
         return inStatus.Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId));
     }
+
+    /// <summary>Only suggestions of one of <paramref name="mailTypes"/>; none or an empty list is no filter.</summary>
+    private static IQueryable<SuggestionRow> OfTypes(IQueryable<SuggestionRow> suggestions, IReadOnlyList<MailType>? mailTypes) =>
+        mailTypes is { Count: > 0 } types ? suggestions.Where(s => s.MailType != null && types.Contains(s.MailType.Value)) : suggestions;
 
     /// <summary>Per group key, how many of its members in <paramref name="inStatus"/> have an alternative (what group accept takes).</summary>
     private async Task<Dictionary<string, int>> AlternativeCountsAsync(IQueryable<SuggestionRow> inStatus, List<string> keys, CancellationToken ct) =>

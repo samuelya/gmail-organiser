@@ -144,7 +144,9 @@ public sealed record BulkApproveRequest(double? Threshold, bool IncludeDerived =
 
 /// <param name="SkippedProtected">To-be-deleted suggestions left pending because their message is protected.</param>
 /// <param name="SkippedIds">Their ids, at most <see cref="ReviewService.MaxSkippedIds"/>.</param>
-public sealed record BulkApproveResponse(int Approved, int SkippedProtected, IReadOnlyList<Guid> SkippedIds);
+/// <param name="ExcludedNewLabel">Suggestions in scope and over the threshold left pending only because the taxonomy is
+/// locked and their label is new (#367); 0 when unlocked.</param>
+public sealed record BulkApproveResponse(int Approved, int SkippedProtected, IReadOnlyList<Guid> SkippedIds, int ExcludedNewLabel = 0);
 
 public sealed record AnalyseIndividuallyRequest(Guid[]? SuggestionIds);
 

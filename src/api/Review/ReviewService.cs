@@ -265,7 +265,7 @@ public sealed partial class ReviewService(
     /// Approves pending suggestions with <c>confidence ≥ threshold</c>: model answers only unless
     /// <paramref name="includeDerived"/> (derived, memory and Stage-0 ones too); a to-be-deleted suggestion of a protected message stays pending (only an
     /// individual approve takes it). With the taxonomy locked (#367), a suggestion whose label Gmail still lacks stays pending
-    /// too until it is approved individually or edited to an existing label.
+    /// too until it is approved individually or edited to an existing label; the response counts those.
     /// </summary>
     public async Task<BulkApproveResponse> BulkApproveAsync(
         double? threshold, bool includeDerived, string? senderAddress, CancellationToken ct)
@@ -277,24 +277,19 @@ public sealed partial class ReviewService(
             : [SuggestionSource.Llm];
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.Status == SuggestionStatus.Pending && s.Confidence >= min && sources.Contains(s.Source));
+        if (senderAddress is not null)
+        {
+            candidates = candidates.Where(s => s.SenderAddress == senderAddress);
+        }
+
+        var excluded = 0;
         if (settings.TaxonomyLocked)
         {
             // New is decided now, not at analysis: a label created in Gmail since then is an existing label.
             var personal = await PersonalLabels.LoadAsync(labels, settings, ct);
-            if (personal.IsUnavailable)
-            {
-                candidates = candidates.Where(s => !s.IsNewLabel);
-            }
-            else
-            {
-                var existing = personal.Names.Values.Select(n => n.Trim().ToLowerInvariant()).Distinct().ToList();
-                candidates = candidates.Where(s => !s.IsNewLabel || existing.Contains(s.TopicLabel.Trim().ToLower()));
-            }
-        }
-
-        if (senderAddress is not null)
-        {
-            candidates = candidates.Where(s => s.SenderAddress == senderAddress);
+            var kept = candidates.Where(ReviewQuery.NotStillNew(personal.IsUnavailable ? null : personal.Names));
+            excluded = await candidates.CountAsync(ct) - await kept.CountAsync(ct);
+            candidates = kept;
         }
 
         var approved = 0;
@@ -321,7 +316,7 @@ public sealed partial class ReviewService(
             }, ct);
         }
 
-        return new BulkApproveResponse(approved, skipped, skippedIds);
+        return new BulkApproveResponse(approved, skipped, skippedIds, excluded);
     }
 
     /// <summary>

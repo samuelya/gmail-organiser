@@ -71,7 +71,10 @@ public sealed class ApprovedLabelSetTests(ApiFactory factory, PostgresFixture po
         await h.RunNextAsync();
         var bulk = new BulkApproveRequest(SettingsValidation.MinBulkApproveThreshold, IncludeDerived: true);
 
-        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk)).Approved.ShouldBe(0);
+        var locked = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk);
+        (locked.Approved, locked.ExcludedNewLabel).ShouldBe((0, 16));
+        var shopOnly = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk with { SenderAddress = AnalysisRunHarness.Shop });
+        (shopOnly.Approved, shopOnly.ExcludedNewLabel).ShouldBe((0, 10));
         var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem();
         group.NewLabelPending.ShouldBeTrue();
         group.Members.ShouldAllBe(m => m.NewLabelPending);
@@ -84,11 +87,13 @@ public sealed class ApprovedLabelSetTests(ApiFactory factory, PostgresFixture po
         // An edit approves the changed outcome.
         (edited.IsNewLabel, edited.NewLabelPending, edited.Status).ShouldBe((false, false, "approved"));
 
-        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk)).Approved.ShouldBe(0);
+        var after = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk);
+        (after.Approved, after.ExcludedNewLabel).ShouldBe((0, 14));
 
         // Unlocked, the remaining new-label suggestions are bulk-approved again.
         await SettingsAsync(x => x with { TaxonomyLocked = false });
-        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk)).Approved.ShouldBe(14);
+        var unlocked = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk);
+        (unlocked.Approved, unlocked.ExcludedNewLabel).ShouldBe((14, 0));
     }
 
     [Fact]
@@ -105,7 +110,8 @@ public sealed class ApprovedLabelSetTests(ApiFactory factory, PostgresFixture po
         var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem();
         group.NewLabelPending.ShouldBeFalse();
         group.Members.ShouldAllBe(m => m.IsNewLabel && !m.NewLabelPending);
-        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk)).Approved.ShouldBe(10);
+        var response = await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk);
+        (response.Approved, response.ExcludedNewLabel).ShouldBe((10, 0));
     }
 
     private async Task SettingsAsync(Func<AppSettings, AppSettings> change)
