@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -13,9 +14,11 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005063213_M8_CanonicalSender")]
+    partial class M8_CanonicalSender
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1016,190 +1019,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.ToTable("decisions", (string)null);
                 });
 
-            modelBuilder.Entity("GmailOrganiser.Policies.SenderPolicyRow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("Action")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("action");
-
-                    b.Property<DateTimeOffset?>("AppliedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("applied_at");
-
-                    b.Property<double>("Confidence")
-                        .HasColumnType("double precision")
-                        .HasColumnName("confidence");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<DateTimeOffset?>("DecidedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("decided_at");
-
-                    b.Property<string>("DisplayName")
-                        .HasColumnType("text")
-                        .HasColumnName("display_name");
-
-                    b.Property<string>("DocumentTypeLabel")
-                        .HasColumnType("text")
-                        .HasColumnName("document_type_label");
-
-                    b.Property<bool>("Edited")
-                        .HasColumnType("boolean")
-                        .HasColumnName("edited");
-
-                    b.Property<bool>("IsMixed")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_mixed");
-
-                    b.Property<string>("MailType")
-                        .HasColumnType("text")
-                        .HasColumnName("mail_type");
-
-                    b.Property<string>("Model")
-                        .HasColumnType("text")
-                        .HasColumnName("model");
-
-                    b.Property<string>("PromptVersion")
-                        .HasColumnType("text")
-                        .HasColumnName("prompt_version");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("reason");
-
-                    b.Property<int?>("RetentionDays")
-                        .HasColumnType("integer")
-                        .HasColumnName("retention_days");
-
-                    b.Property<Guid?>("RunId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("run_id");
-
-                    b.Property<string>("Scope")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("scope");
-
-                    b.Property<string>("ScopeKey")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("scope_key");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("status");
-
-                    b.Property<string>("TopicLabel")
-                        .HasColumnType("text")
-                        .HasColumnName("topic_label");
-
-                    b.HasKey("Id")
-                        .HasName("pk_sender_policies");
-
-                    b.HasIndex("RunId")
-                        .HasDatabaseName("ix_sender_policies_run_id");
-
-                    b.HasIndex("Status")
-                        .HasDatabaseName("ix_sender_policies_status");
-
-                    b.HasIndex("Scope", "ScopeKey")
-                        .IsUnique()
-                        .HasDatabaseName("ix_sender_policies_scope_scope_key");
-
-                    b.ToTable("sender_policies", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_sender_policies_confidence", "confidence BETWEEN 0 AND 1");
-
-                            t.HasCheckConstraint("ck_sender_policies_retention", "retention_days IS NULL OR retention_days > 0");
-
-                            t.HasCheckConstraint("ck_sender_policies_topic", "is_mixed OR topic_label IS NOT NULL");
-                        });
-                });
-
-            modelBuilder.Entity("GmailOrganiser.Policies.SenderPolicyRuleRow", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("Action")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("action");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("DocumentTypeLabel")
-                        .HasColumnType("text")
-                        .HasColumnName("document_type_label");
-
-                    b.Property<string>("MailType")
-                        .HasColumnType("text")
-                        .HasColumnName("mail_type");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("name");
-
-                    b.Property<Guid>("PolicyId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("policy_id");
-
-                    b.Property<int>("Position")
-                        .HasColumnType("integer")
-                        .HasColumnName("position");
-
-                    b.Property<string>("Reason")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("reason");
-
-                    b.Property<int?>("RetentionDays")
-                        .HasColumnType("integer")
-                        .HasColumnName("retention_days");
-
-                    b.Property<string>("Source")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("source");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("status");
-
-                    b.Property<string>("TopicLabel")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("topic_label");
-
-                    b.HasKey("Id")
-                        .HasName("pk_sender_policy_rules");
-
-                    b.HasIndex("PolicyId", "Position")
-                        .HasDatabaseName("ix_sender_policy_rules_policy_id_position");
-
-                    b.ToTable("sender_policy_rules", null, t =>
-                        {
-                            t.HasCheckConstraint("ck_sender_policy_rules_match", "jsonb_strip_nulls(match) <> '{}'::jsonb");
-
-                            t.HasCheckConstraint("ck_sender_policy_rules_retention", "retention_days IS NULL OR retention_days > 0");
-                        });
-                });
-
             modelBuilder.Entity("GmailOrganiser.Review.ActionBatchRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1728,59 +1547,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasConstraintName("fk_external_reviews_suggestions_suggestion_id");
                 });
 
-            modelBuilder.Entity("GmailOrganiser.Policies.SenderPolicyRow", b =>
-                {
-                    b.HasOne("GmailOrganiser.Analysis.AnalysisRunRow", null)
-                        .WithMany()
-                        .HasForeignKey("RunId")
-                        .OnDelete(DeleteBehavior.SetNull)
-                        .HasConstraintName("fk_sender_policies_analysis_runs_run_id");
-                });
-
-            modelBuilder.Entity("GmailOrganiser.Policies.SenderPolicyRuleRow", b =>
-                {
-                    b.HasOne("GmailOrganiser.Policies.SenderPolicyRow", null)
-                        .WithMany("Rules")
-                        .HasForeignKey("PolicyId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_sender_policy_rules_sender_policies_policy_id");
-
-                    b.OwnsOne("GmailOrganiser.Policies.RuleMatch", "Match", b1 =>
-                        {
-                            b1.Property<Guid>("SenderPolicyRuleRowId");
-
-                            b1.Property<string>("Category");
-
-                            b1.Property<string>("FromAddress");
-
-                            b1.Property<string>("FromSubdomain");
-
-                            b1.Property<bool?>("ListIdPresent");
-
-                            b1.Property<bool?>("ListUnsubscribePresent");
-
-                            b1.Property<string>("SubjectContains");
-
-                            b1.Property<string>("SubjectTemplate");
-
-                            b1.HasKey("SenderPolicyRuleRowId");
-
-                            b1.ToTable("sender_policy_rules");
-
-                            b1
-                                .ToJson("match")
-                                .HasColumnType("jsonb");
-
-                            b1.WithOwner()
-                                .HasForeignKey("SenderPolicyRuleRowId")
-                                .HasConstraintName("fk_sender_policy_rules_sender_policy_rules_id");
-                        });
-
-                    b.Navigation("Match")
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("GmailOrganiser.Review.ActionLogRow", b =>
                 {
                     b.HasOne("GmailOrganiser.Review.ActionBatchRow", null)
@@ -1799,11 +1565,6 @@ namespace GmailOrganiser.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_filter_findings_filter_reviews_review_id");
-                });
-
-            modelBuilder.Entity("GmailOrganiser.Policies.SenderPolicyRow", b =>
-                {
-                    b.Navigation("Rules");
                 });
 #pragma warning restore 612, 618
         }

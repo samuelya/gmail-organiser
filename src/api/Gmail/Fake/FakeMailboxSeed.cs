@@ -6,11 +6,19 @@ namespace GmailOrganiser.Gmail.Fake;
 /// supports RFC 8058 one-click, the shop only a link, the forum only <c>mailto:</c>), and the billing,
 /// travel and statement senders attach generated PDFs. Every third message has an html-only body, the next a text-only
 /// one, the next both. Alice's lunch message (#3) has a thread of its own; the last message is the user's reply
-/// (<c>SENT</c>) in it, so that thread, and only Alice's conversation, is replied.
+/// (<c>SENT</c>) in it, so that thread, and only Alice's conversation, is replied. Two archived offers arrive through
+/// Hide-My-Email relay addresses (<see cref="RelayAddresses"/>) that decode to the shop's own address.
 /// </summary>
 public static class FakeMailboxSeed
 {
-    public const int MessageCount = 61;
+    public const int MessageCount = 63;
+
+    /// <summary>Synthetic relay addresses of the shop sender (<c>offers@shop.example.com</c>), one per relay domain.</summary>
+    public static readonly string[] RelayAddresses =
+    [
+        "offers_at_shop_example_com_ab12cd_ef34gh@icloud.com",
+        "offers_at_shop_example_com_k7m2p9_q4r8s1@privaterelay.appleid.com",
+    ];
 
     /// <summary>The thread the user replied to; its received messages are protected from the delete label.</summary>
     public const string RepliedThreadId = "fake-thread-0024";
@@ -53,7 +61,8 @@ public static class FakeMailboxSeed
     public static IReadOnlyList<FakeMessage> Create(DateTimeOffset now)
     {
         var messages = new List<FakeMessage>(MessageCount);
-        for (var i = 0; i < MessageCount - 1; i++)
+        var received = MessageCount - 1 - RelayAddresses.Length;
+        for (var i = 0; i < received; i++)
         {
             var sender = Senders[i % Senders.Length];
             var number = i + 1;
@@ -90,7 +99,7 @@ public static class FakeMailboxSeed
         }
 
         messages.Add(new FakeMessage(
-            Id: $"fake-msg-{MessageCount:D4}",
+            Id: $"fake-msg-{received + 1:D4}",
             ThreadId: RepliedThreadId,
             From: "User <user@example.com>",
             Subject: "Re: Lunch next week? #3",
@@ -99,8 +108,25 @@ public static class FakeMailboxSeed
             To: "Alice Example <alice@example.com>",
             Snippet: "Synthetic reply for testing.",
             SizeEstimate: 900,
-            HistoryId: (HistoryId - MessageCount).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            HistoryId: (HistoryId - received - 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
             BodyText: "Sounds good.\n"));
+        for (var r = 0; r < RelayAddresses.Length; r++)
+        {
+            var number = received + 2 + r;
+            messages.Add(new FakeMessage(
+                Id: $"fake-msg-{number:D4}",
+                ThreadId: $"fake-thread-relay-{r + 1:D4}",
+                From: $"\"Shop Offers\" <{RelayAddresses[r]}>",
+                Subject: $"Special offer inside #{number}",
+                Date: now.AddHours(-31 * (received + r)),
+                LabelIds: ["CATEGORY_PROMOTIONS"],
+                To: "User <user@example.com>",
+                Snippet: $"Synthetic message {number} for testing.",
+                SizeEstimate: 1200,
+                HistoryId: (HistoryId - number).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                BodyText: $"Synthetic relayed offer {number}.\n"));
+        }
+
         return messages;
     }
 

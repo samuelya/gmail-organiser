@@ -22,6 +22,9 @@ public static class JobQueues
     public const string Analysis = "analysis";
     public const string Apply = "apply";
     public const string Claude = "claude";
+
+    /// <summary>Local sender maintenance (the canonical backfill); never blocks a fetch.</summary>
+    public const string Senders = "senders";
 }
 
 /// <summary>A background job (table <c>jobs</c>). Cursor and progress are handler-defined JSON.</summary>

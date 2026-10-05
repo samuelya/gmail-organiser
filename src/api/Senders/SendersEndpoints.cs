@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 
@@ -13,6 +14,7 @@ public static class SendersEndpoints
         var group = endpoints.MapGroup("/api/senders").WithTags("Senders");
         group.MapGet("/", ListAsync);
         group.MapPut("/{address}/allowlist", SetAllowlistAsync);
+        group.MapPost("/canonical/backfill", StartCanonicalBackfillAsync);
         return endpoints;
     }
 
@@ -62,6 +64,18 @@ public static class SendersEndpoints
         return sender is null
             ? TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Sender not found")
             : TypedResults.Ok(await SenderQuery.ToDtoAsync(sender, await DomainsAsync(settings, ct), db, ct));
+    }
+
+    /// <summary>Queues the canonical sender backfill; 409 while one is queued, running or paused.</summary>
+    private static async Task<Results<Accepted<JobDto>, ProblemHttpResult>> StartCanonicalBackfillAsync(IJobService jobs, CancellationToken ct)
+    {
+        var (job, created) = await jobs.EnqueueAsync(CanonicalBackfillJob.JobType, CanonicalBackfillJob.Queue, ct: ct);
+        return created
+            ? TypedResults.Accepted($"/api/jobs/{job.Id}", job)
+            : TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Backfill in progress",
+                detail: "A canonical sender backfill is already queued, running or paused.");
     }
 
     /// <summary>The allowlisted domains: the DTO reads its address flag from the row.</summary>

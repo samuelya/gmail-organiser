@@ -39,6 +39,11 @@ public sealed class MessageRow
     /// <summary>Lower-case sender address.</summary>
     public string FromAddress { get; set; } = "";
 
+    /// <summary>The relay-decoded sender (<see cref="Senders.RelayAddressDecoder"/>); <see cref="FromAddress"/> when not a relay.</summary>
+    public string CanonicalAddress { get; set; } = "";
+
+    public string CanonicalDomain { get; set; } = "";
+
     public string? FromName { get; set; }
     public string? ToHeader { get; set; }
     public string? Subject { get; set; }
