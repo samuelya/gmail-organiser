@@ -70,7 +70,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
 
         (proposal.Source, proposal.SenderAddress, proposal.ListId, proposal.MessageCount).ShouldBe(("policy", ListId, ListId, 3));
         proposal.Suggested.Criteria.From.ShouldBeNull();
-        proposal.Suggested.Criteria.Query.ShouldBe($"list:{ListId}");
+        proposal.Suggested.Criteria.Query.ShouldBe($"list:{ListId} {Negation()}");
         proposal.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Digest"]);
         proposal.Suggested.Action.SkipInbox.ShouldBeTrue();
         (proposal.Partial, proposal.Note, proposal.RuleId).ShouldBe((false, null, null));
@@ -109,7 +109,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     }
 
     [Fact]
-    public async Task A_mixed_policy_proposes_a_filter_per_rule_and_its_delete_rule_excludes_transactional_mail()
+    public async Task A_mixed_policy_proposes_a_label_only_filter_per_rule_whatever_its_order_or_outcome()
     {
         await using (var db = postgres.CreateDbContext())
         {
@@ -118,8 +118,9 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
             policy.IsMixed = true;
             policy.Rules =
             [
-                Rule(policy.Id, 0, new RuleMatch { SubjectContains = "Daily deal" }, PolicyAction.Delete),
-                Rule(policy.Id, 1, new RuleMatch { Category = MessageCategory.Promotions }, PolicyAction.Archive),
+                Rule(policy.Id, 0, new RuleMatch { SubjectContains = "Security alert" }, PolicyAction.Keep),
+                Rule(policy.Id, 1, new RuleMatch { SubjectContains = "Daily deal" }, PolicyAction.Delete),
+                Rule(policy.Id, 2, new RuleMatch { Category = MessageCategory.Promotions }, PolicyAction.Archive),
             ];
             db.SenderPolicies.Add(policy);
             await db.SaveChangesAsync(Ct);
@@ -127,18 +128,32 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
 
         var items = (await ProposalsAsync("policy")).Items;
 
-        items.Count.ShouldBe(2);
+        // No first-match exclusions: a rule's filter never deletes or archives, so overlapping filters only add labels.
+        items.Select(p => p.Suggested.Criteria.Query).ShouldBe(
+            ["subject:\"Security alert\"", "subject:\"Daily deal\"", "category:promotions"], ignoreOrder: true);
         items.ShouldAllBe(p => p.RuleId != null && p.Suggested.Criteria.From == "offers@example.com");
-        var keywords = host.Services.GetRequiredService<IOptions<PolicyOptions>>().Value.TransactionalKeywords;
-        var delete = items.Single(p => p.Pattern.ToBeDeleted == true);
-        keywords.Count.ShouldBeGreaterThan(8);
-        delete.Suggested.Criteria.Query.ShouldBe(
-            $"subject:\"Daily deal\" -has:attachment {string.Join(' ', keywords.Select(k => "-" + k))}");
-        delete.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic", DeleteLabel]);
-        delete.Suggested.Action.SkipInbox.ShouldBeTrue();
-        var archive = items.Single(p => p.Pattern.ToBeDeleted == false);
-        archive.Suggested.Criteria.Query.ShouldBe("category:promotions -subject:\"Daily deal\"");
-        archive.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic"]);
+        items.ShouldAllBe(p => !p.Suggested.Action.SkipInbox && p.Pattern.ToBeDeleted == false);
+        items.ShouldAllBe(p => p.Suggested.Action.AddLabelNames!.SequenceEqual(new[] { "Synthetic/Topic" }));
+        items.ShouldAllBe(p => p.Note!.Contains("Labels only"));
+    }
+
+    [Fact]
+    public async Task A_delete_policy_negates_every_transactional_keyword_as_a_bare_term()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Senders.Add(Sender("deals@example.com", "deals@example.com"));
+            db.SenderPolicies.Add(Policy(PolicyScope.Sender, "deals@example.com", PolicyAction.Delete, null));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var proposal = (await ProposalsAsync("policy")).Items.ShouldHaveSingleItem();
+
+        Keywords().Count.ShouldBeGreaterThan(8);
+        proposal.Suggested.Criteria.Query.ShouldBe(Negation());
+        proposal.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic", DeleteLabel]);
+        proposal.Suggested.Action.SkipInbox.ShouldBeTrue();
+        proposal.Pattern.ToBeDeleted.ShouldBe(true);
     }
 
     [Fact]
@@ -172,14 +187,42 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     }
 
     [Fact]
-    public async Task A_rule_with_a_condition_gmail_cannot_test_is_partial_and_never_marks_for_deletion()
+    public async Task A_rule_with_a_condition_gmail_cannot_test_is_partial_keeps_the_inbox_and_one_with_none_gets_no_filter()
     {
         await using (var db = postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("promo@example.com", "promo@example.com"));
             var policy = Policy(PolicyScope.Sender, "promo@example.com", PolicyAction.Keep, null);
             policy.IsMixed = true;
-            policy.Rules = [Rule(policy.Id, 0, new RuleMatch { ListUnsubscribePresent = true }, PolicyAction.Delete)];
+            policy.Rules =
+            [
+                Rule(policy.Id, 0, new RuleMatch { ListUnsubscribePresent = true, Category = MessageCategory.Updates }, PolicyAction.Archive),
+                Rule(policy.Id, 1, new RuleMatch { ListUnsubscribePresent = true }, PolicyAction.Delete),
+                Rule(policy.Id, 2, new RuleMatch { SubjectContains = "--" }, PolicyAction.Delete),
+            ];
+            db.SenderPolicies.Add(policy);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var proposal = (await ProposalsAsync("policy")).Items.ShouldHaveSingleItem();
+
+        proposal.DisplayName.ShouldBe("Synthetic rule 0");
+        proposal.Partial.ShouldBeTrue();
+        proposal.Note.ShouldNotBeNull().ShouldContain("List-Unsubscribe");
+        proposal.Suggested.Criteria.Query.ShouldBe("category:updates");
+        proposal.Suggested.Action.SkipInbox.ShouldBeFalse();
+        proposal.Pattern.ToBeDeleted.ShouldBe(false);
+    }
+
+    [Fact]
+    public async Task A_punctuation_only_subject_text_is_a_dropped_condition()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Senders.Add(Sender("promo@example.com", "promo@example.com"));
+            var policy = Policy(PolicyScope.Sender, "promo@example.com", PolicyAction.Keep, null);
+            policy.IsMixed = true;
+            policy.Rules = [Rule(policy.Id, 0, new RuleMatch { SubjectContains = "--", Category = MessageCategory.Updates }, PolicyAction.Delete)];
             db.SenderPolicies.Add(policy);
             await db.SaveChangesAsync(Ct);
         }
@@ -187,15 +230,13 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
         var proposal = (await ProposalsAsync("policy")).Items.ShouldHaveSingleItem();
 
         proposal.Partial.ShouldBeTrue();
-        proposal.Note.ShouldNotBeNull().ShouldContain("List-Unsubscribe");
-        proposal.Suggested.Criteria.Query.ShouldBeNull();
+        proposal.Note.ShouldNotBeNull().ShouldContain("\"--\"");
+        proposal.Suggested.Criteria.Query.ShouldBe("category:updates");
         proposal.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic"]);
-        proposal.Suggested.Action.SkipInbox.ShouldBeTrue();
-        proposal.Pattern.ToBeDeleted.ShouldBe(false);
     }
 
     [Fact]
-    public async Task A_delete_filter_that_cannot_negate_every_keyword_within_the_cap_archives_instead()
+    public async Task A_delete_filter_that_cannot_negate_every_keyword_within_the_cap_only_labels()
     {
         await using (var db = postgres.CreateDbContext())
         {
@@ -211,7 +252,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
 
         proposal.Pattern.ToBeDeleted.ShouldBe(false);
         proposal.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic"]);
-        proposal.Suggested.Action.SkipInbox.ShouldBeTrue();
+        proposal.Suggested.Action.SkipInbox.ShouldBeFalse();
         proposal.Suggested.Criteria.Query.ShouldBeNull();
         proposal.Note.ShouldNotBeNull().ShouldContain("too long");
     }
@@ -237,20 +278,17 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     }
 
     [Fact]
-    public async Task A_later_rule_excludes_the_criteria_of_earlier_rules_and_a_mixed_default_gets_no_filter()
+    public async Task A_subject_template_rule_is_partial_whether_or_not_it_has_placeholders()
     {
         await using (var db = postgres.CreateDbContext())
         {
-            db.Senders.Add(Sender("alerts@example.com", "alerts@example.com"));
-            var policy = Policy(PolicyScope.Sender, "alerts@example.com", PolicyAction.Delete, null);
+            db.Senders.Add(Sender("orders@example.com", "orders@example.com"));
+            var policy = Policy(PolicyScope.Sender, "orders@example.com", PolicyAction.Keep, null);
             policy.IsMixed = true;
             policy.Rules =
             [
-                Rule(policy.Id, 0, new RuleMatch { SubjectContains = "Security alert" }, PolicyAction.Keep),
-                Rule(policy.Id, 1, new RuleMatch { Category = MessageCategory.Updates, SubjectContains = "Notice" }, PolicyAction.Keep),
-                Rule(policy.Id, 2, new RuleMatch { FromSubdomain = "mail.example.com" }, PolicyAction.Archive),
-                Rule(policy.Id, 3, new RuleMatch { ListIdPresent = true }, PolicyAction.Keep),
-                Rule(policy.Id, 4, new RuleMatch { SubjectContains = "Deal" }, PolicyAction.Delete),
+                Rule(policy.Id, 0, new RuleMatch { SubjectTemplate = "Order # shipped" }, PolicyAction.Delete),
+                Rule(policy.Id, 1, new RuleMatch { SubjectTemplate = "your weekly digest" }, PolicyAction.Delete),
             ];
             db.SenderPolicies.Add(policy);
             await db.SaveChangesAsync(Ct);
@@ -258,37 +296,81 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
 
         var items = (await ProposalsAsync("policy")).Items;
 
-        // Rule 3 has no criteria Gmail can test, so rule 4 can't exclude it and gets no filter; nor does the default.
-        items.Select(p => p.DisplayName).ShouldBe(["Synthetic rule 0", "Synthetic rule 1", "Synthetic rule 2", "Synthetic rule 3"], ignoreOrder: true);
-        items.Single(p => p.DisplayName == "Synthetic rule 0").Suggested.Criteria.Query.ShouldBe("subject:\"Security alert\"");
-        var archive = items.Single(p => p.DisplayName == "Synthetic rule 2");
-        archive.Suggested.Criteria.From.ShouldBe("@mail.example.com");
-        archive.Suggested.Criteria.Query.ShouldBe("-subject:\"Security alert\" -(category:updates subject:\"Notice\")");
-        archive.Note.ShouldNotBeNull().ShouldContain("earlier rules");
-        items.Single(p => p.DisplayName == "Synthetic rule 3").Suggested.Criteria.Query
-            .ShouldBe("-subject:\"Security alert\" -(category:updates subject:\"Notice\") -from:@mail.example.com");
+        items.Select(p => p.Suggested.Criteria.Query).ShouldBe(["subject:\"shipped\"", "subject:\"your weekly digest\""], ignoreOrder: true);
+        items.ShouldAllBe(p => p.Partial && p.Pattern.ToBeDeleted == false && !p.Suggested.Action.SkipInbox);
+        items.ShouldAllBe(p => p.Note!.Contains("not by the template"));
     }
 
     [Fact]
-    public async Task A_delete_rule_matched_by_a_template_literal_part_archives_instead()
+    public async Task A_rule_from_condition_narrows_the_policy_senders_and_a_mixed_default_gets_no_filter()
     {
         await using (var db = postgres.CreateDbContext())
         {
-            db.Senders.Add(Sender("orders@example.com", "orders@example.com"));
-            var policy = Policy(PolicyScope.Sender, "orders@example.com", PolicyAction.Keep, null);
+            db.Senders.Add(Sender("news@mail.example.com", "news@mail.example.com"));
+            var policy = Policy(PolicyScope.Sender, "news@mail.example.com", PolicyAction.Delete, null);
             policy.IsMixed = true;
-            policy.Rules = [Rule(policy.Id, 0, new RuleMatch { SubjectTemplate = "Order # shipped" }, PolicyAction.Delete)];
+            policy.Rules =
+            [
+                Rule(policy.Id, 0, new RuleMatch { FromSubdomain = "mail.example.com", Category = MessageCategory.Promotions }, PolicyAction.Delete),
+            ];
             db.SenderPolicies.Add(policy);
             await db.SaveChangesAsync(Ct);
         }
 
         var proposal = (await ProposalsAsync("policy")).Items.ShouldHaveSingleItem();
 
-        proposal.Partial.ShouldBeTrue();
+        proposal.Suggested.Criteria.From.ShouldBe("news@mail.example.com");
+        proposal.Suggested.Criteria.Query.ShouldBe("from:@mail.example.com category:promotions");
         proposal.Pattern.ToBeDeleted.ShouldBe(false);
-        proposal.Suggested.Criteria.Query.ShouldBe("subject:\"shipped\"");
-        proposal.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic"]);
-        proposal.Note.ShouldNotBeNull().ShouldContain("wider than the rule");
+    }
+
+    [Fact]
+    public async Task A_domain_filter_excludes_narrower_sender_and_list_policies_and_a_list_filter_its_sender_policies()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Senders.AddRange(Sender("billing@example.com", "billing@example.com"), Sender("promo@example.com", "promo@example.com"));
+            db.Messages.AddRange(Message("m1", "promo@example.com", ListId), Message("m2", "billing@example.com", ListId));
+            db.SenderPolicies.AddRange(
+                Policy(PolicyScope.Domain, "example.com", PolicyAction.Delete, "Synthetic/Domain"),
+                Policy(PolicyScope.Sender, "billing@example.com", PolicyAction.Keep, "Synthetic/Billing"),
+                Policy(PolicyScope.List, ListId, PolicyAction.Delete, "Synthetic/Digest"));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var items = (await ProposalsAsync("policy")).Items;
+
+        var domain = items.Single(p => p.SenderAddress == "example.com");
+        domain.Suggested.Criteria.From.ShouldBe("@example.com");
+        domain.Suggested.Criteria.Query.ShouldBe($"-from:billing@example.com -list:{ListId} {Negation()}");
+        domain.Pattern.ToBeDeleted.ShouldBe(true);
+        domain.Note.ShouldNotBeNull().ShouldContain("narrower policies");
+        items.Single(p => p.SenderAddress == ListId).Suggested.Criteria.Query.ShouldBe($"list:{ListId} -from:billing@example.com {Negation()}");
+    }
+
+    [Fact]
+    public async Task Allowlisted_senders_are_excluded_from_a_list_delete_filter_and_an_allowlisted_sender_policy_only_labels()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            var friend = Sender("friend@example.org", "friend@example.org");
+            friend.Allowlisted = true;
+            db.Senders.Add(friend);
+            db.Messages.Add(Message("m1", "digest@example.com", ListId));
+            db.SenderPolicies.AddRange(
+                Policy(PolicyScope.List, ListId, PolicyAction.Delete, "Synthetic/Digest"),
+                Policy(PolicyScope.Sender, "friend@example.org", PolicyAction.Delete, "Synthetic/Friend"));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var items = (await ProposalsAsync("policy")).Items;
+
+        items.Single(p => p.SenderAddress == ListId).Suggested.Criteria.Query.ShouldBe($"list:{ListId} -from:friend@example.org {Negation()}");
+        var friendly = items.Single(p => p.SenderAddress == "friend@example.org");
+        friendly.Pattern.ToBeDeleted.ShouldBe(false);
+        friendly.Suggested.Action.SkipInbox.ShouldBeFalse();
+        friendly.Suggested.Criteria.Query.ShouldBeNull();
+        friendly.Note.ShouldNotBeNull().ShouldContain("allowlisted sender");
     }
 
     [Fact]
@@ -305,6 +387,10 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
         (await ProposalsAsync("pattern")).Total.ShouldBe(0);
         (await host.CreateClient().GetAsync("/api/rules/filters/proposals?source=other", Ct)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
+
+    private List<string> Keywords() => host.Services.GetRequiredService<IOptions<PolicyOptions>>().Value.TransactionalKeywords;
+
+    private string Negation() => string.Join(' ', Keywords().Select(k => "-" + k).Prepend("-has:attachment"));
 
     private async Task<PagedDto<FilterProposalDto>> ProposalsAsync(string source, WebApplicationFactory<Program>? app = null) =>
         (await (app ?? host).CreateClient().GetFromJsonAsync<PagedDto<FilterProposalDto>>($"/api/rules/filters/proposals?source={source}", Ct))
@@ -325,6 +411,8 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
         Id = id,
         ThreadId = $"t-{id}",
         FromAddress = from,
+        CanonicalAddress = from,
+        CanonicalDomain = from[(from.IndexOf('@') + 1)..],
         Subject = "Synthetic subject",
         ListId = listId,
         InternalDate = Now,
