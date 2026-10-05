@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -13,9 +14,11 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005072028_M8_RunTriageCounters")]
+    partial class M8_RunTriageCounters
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -678,10 +681,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasDefaultValue("not_analysed")
                         .HasColumnName("analysis_status");
 
-                    b.Property<string>("AutoSubmitted")
-                        .HasColumnType("text")
-                        .HasColumnName("auto_submitted");
-
                     b.Property<string>("CanonicalAddress")
                         .IsRequired()
                         .HasColumnType("text")
@@ -739,10 +738,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("ListUnsubscribe")
                         .HasColumnType("text")
                         .HasColumnName("list_unsubscribe");
-
-                    b.Property<string>("Precedence")
-                        .HasColumnType("text")
-                        .HasColumnName("precedence");
 
                     b.Property<int>("SizeEstimate")
                         .HasColumnType("integer")
