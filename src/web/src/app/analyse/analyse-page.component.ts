@@ -47,12 +47,15 @@ import {
   AnalysisSelection,
   analysisJobsKey,
   COUNT_PRESETS,
+  DEFAULT_TOP_SENDERS,
   FINISHED_RUNS_SHOWN,
   GroupingPreviewDto,
   MAX_SENDER_LENGTH,
+  MAX_TOP_SENDERS,
   parseAnalyseParams,
   queueOrder,
   SCOPE_OPTIONS,
+  TOP_SENDERS,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
 import { confirmCompareRun, injectAnalysisRunActive, MAX_COMPARE } from './compare-run';
@@ -65,6 +68,8 @@ const SENDER_OPTIONS = 10;
 const MAX_COUNT = 1000;
 
 type CountPreset = number | 'custom';
+/** What the count counts: emails, or senders for the top senders scope. */
+type CountUnit = 'emails' | 'senders';
 
 interface FormValue {
   scope: AnalysisScope;
@@ -75,12 +80,28 @@ interface FormValue {
 
 /** The selection to preview and start, or `null` while it is incomplete or invalid. */
 export function selectionOf(v: FormValue): AnalysisSelection | null {
-  const count = v.preset === 'custom' ? v.customCount : v.preset;
-  if (count === null || !Number.isInteger(count) || count < 1 || count > MAX_COUNT) return null;
-  if (v.scope !== 'sender') return { scope: v.scope, count };
+  const count = countOf(v);
+  if (count === null || !Number.isInteger(count) || count < 1 || count > maxCountOf(v.scope)) {
+    return null;
+  }
+  if (v.scope !== 'sender' && v.scope !== TOP_SENDERS) return { scope: v.scope, count };
   const sender = v.sender.trim();
-  if (!sender || sender.length > MAX_SENDER_LENGTH) return null;
-  return { scope: 'sender', senderAddress: sender, count };
+  if (sender.length > MAX_SENDER_LENGTH) return null;
+  // The top senders scope takes an optional sender; the sender scope needs one.
+  if (!sender) return v.scope === TOP_SENDERS ? { scope: v.scope, count } : null;
+  return { scope: v.scope, senderAddress: sender, count };
+}
+
+function countOf(v: Pick<FormValue, 'preset' | 'customCount'>): number | null {
+  return v.preset === 'custom' ? v.customCount : v.preset;
+}
+
+function unitOf(scope: AnalysisScope): CountUnit {
+  return scope === TOP_SENDERS ? 'senders' : 'emails';
+}
+
+function maxCountOf(scope: AnalysisScope): number {
+  return unitOf(scope) === 'senders' ? MAX_TOP_SENDERS : MAX_COUNT;
 }
 
 /** `/analyse`: choose a scope and count with a live grouping preview, start a run, and follow the run queue. */
@@ -136,9 +157,16 @@ export class AnalysePage {
   private readonly refreshPreview = new Subject<void>();
   /** The deep link set the count: the settings default must not overwrite it. */
   private countFromLink = false;
+  /** The settings default for an email count, once loaded. */
+  private emailDefault: number | null = null;
+  /** The count each unit had when the scope last switched away from it. */
+  private readonly savedCounts: Record<CountUnit, number | null> = {
+    emails: null,
+    senders: null,
+  };
+  private unit: CountUnit = 'emails';
 
   readonly presets = COUNT_PRESETS;
-  readonly maxCount = MAX_COUNT;
   readonly maxSender = MAX_SENDER_LENGTH;
   readonly form = new FormGroup({
     scope: new FormControl<AnalysisScope>('inbox', { nonNullable: true }),
@@ -163,7 +191,10 @@ export class AnalysePage {
   );
   readonly selection = computed(() => selectionOf(this.formValue()));
   readonly isCustom = computed(() => this.formValue().preset === 'custom');
-  readonly isSender = computed(() => this.formValue().scope === 'sender');
+  readonly isTopSenders = computed(() => this.formValue().scope === TOP_SENDERS);
+  /** The sender field: required for the sender scope, optional for top senders. */
+  readonly showSender = computed(() => this.formValue().scope === 'sender' || this.isTopSenders());
+  readonly maxCount = computed(() => maxCountOf(this.formValue().scope));
   readonly scopes = SCOPE_OPTIONS;
   readonly scopeHelp = computed(
     () => SCOPE_OPTIONS.find((o) => o.value === this.formValue().scope)?.help ?? null,
@@ -191,6 +222,9 @@ export class AnalysePage {
   );
 
   constructor() {
+    this.form.controls.scope.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((scope) => this.switchUnit(unitOf(scope)));
     this.route.queryParamMap
       .pipe(map(parseAnalyseParams), takeUntilDestroyed(this.destroyRef))
       .subscribe(({ sender, count }) => {
@@ -207,7 +241,13 @@ export class AnalysePage {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((s) => {
-        if (s && !this.countFromLink && this.form.controls.preset.value === null) {
+        if (!s) return;
+        this.emailDefault = s.analysisDefaultCount;
+        if (
+          this.unit === 'emails' &&
+          !this.countFromLink &&
+          this.form.controls.preset.value === null
+        ) {
           this.setCount(s.analysisDefaultCount);
         }
       });
@@ -239,7 +279,7 @@ export class AnalysePage {
         map(cleanSearch),
         distinctUntilChanged(),
         switchMap((search) =>
-          search && this.isSender()
+          search && this.showSender()
             ? this.senders
                 .list({
                   search,
@@ -351,9 +391,30 @@ export class AnalysePage {
       });
   }
 
-  /** Selects the matching preset chip, or "Custom" with the value. */
-  private setCount(count: number): void {
-    if (COUNT_PRESETS.includes(count)) {
+  /**
+   * Emails and senders keep their own count: switching to top senders starts at its default, and switching back
+   * restores the email count (the settings default until one was chosen).
+   */
+  private switchUnit(unit: CountUnit): void {
+    if (unit === this.unit) return;
+    this.savedCounts[this.unit] = countOf(this.form.getRawValue());
+    this.unit = unit;
+    const custom = this.form.controls.customCount;
+    custom.setValidators([
+      Validators.min(1),
+      Validators.max(unit === 'senders' ? MAX_TOP_SENDERS : MAX_COUNT),
+      Validators.pattern(/^\d+$/),
+    ]);
+    const fallback = unit === 'senders' ? DEFAULT_TOP_SENDERS : this.emailDefault;
+    this.setCount(this.savedCounts[unit] ?? fallback);
+    custom.updateValueAndValidity();
+  }
+
+  /** Selects the matching preset chip, or "Custom" with the value; `null` clears the count. */
+  private setCount(count: number | null): void {
+    if (count === null) {
+      this.form.patchValue({ preset: null, customCount: null });
+    } else if (COUNT_PRESETS.includes(count)) {
       this.form.patchValue({ preset: count });
     } else {
       this.form.patchValue({ preset: 'custom', customCount: count });
