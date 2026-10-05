@@ -183,7 +183,7 @@ public sealed partial class SenderProfileBuilder(
 
     /// <summary>
     /// The newest message of the top template, plus the newest of the first template whose dominant category differs
-    /// (a mixed sender); bodies Gmail no longer returns are skipped.
+    /// (a mixed sender); bodies Gmail no longer returns or fails to return (other than not connected) are skipped.
     /// </summary>
     private async Task<IReadOnlyList<ProfileBody>> BodiesAsync(
         List<(SenderTemplate Template, Recent Newest)> shown, int maxChars, CancellationToken ct)
@@ -196,16 +196,23 @@ public sealed partial class SenderProfileBuilder(
         var bodies = new List<ProfileBody>(picks.Count);
         foreach (var (template, message) in picks)
         {
-            if (await gmail.GetMessageBodyAsync(message.Id, ct) is { } body)
+            try
             {
-                bodies.Add(new ProfileBody(template.Template, BodyCleaner.Clean(body.Text, body.Html, maxChars)));
+                if (await gmail.GetMessageBodyAsync(message.Id, ct) is { } body)
+                {
+                    bodies.Add(new ProfileBody(template.Template, BodyCleaner.Clean(body.Text, body.Html, maxChars)));
+                }
+            }
+            catch (Exception ex) when (ex is not (OperationCanceledException or GmailNotConnectedException))
+            {
+                LogBodyUnavailable(logger, ex.GetType().Name);
             }
         }
 
         return bodies;
     }
 
-    /// <summary>User labels by message count, then name; empty when Gmail is not connected (names come from Gmail).</summary>
+    /// <summary>User labels by message count, then name; empty when Gmail cannot list labels (names come from Gmail).</summary>
     private async Task<IReadOnlyList<LabelUse>> LabelsInUseAsync(List<Recent> recent, CancellationToken ct)
     {
         IReadOnlyList<GmailLabel> all;
@@ -213,9 +220,9 @@ public sealed partial class SenderProfileBuilder(
         {
             all = await labels.GetAsync(ct);
         }
-        catch (GmailNotConnectedException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            LogLabelsUnavailable(logger);
+            LogLabelsUnavailable(logger, ex.GetType().Name);
             return [];
         }
 
@@ -264,8 +271,11 @@ public sealed partial class SenderProfileBuilder(
 
     private static double Ratio(int part, int total) => total == 0 ? 0 : Math.Round((double)part / total, 3);
 
-    [LoggerMessage(Level = LogLevel.Information, Message = "Sender profile built without labels in use: Gmail is not connected")]
-    private static partial void LogLabelsUnavailable(ILogger logger);
+    [LoggerMessage(Level = LogLevel.Information, Message = "Sender profile built without labels in use: Gmail could not list labels ({Error})")]
+    private static partial void LogLabelsUnavailable(ILogger logger, string error);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Sender profile skipped a sample body: Gmail could not return it ({Error})")]
+    private static partial void LogBodyUnavailable(ILogger logger, string error);
 
     private sealed record Recent(
         string Id,

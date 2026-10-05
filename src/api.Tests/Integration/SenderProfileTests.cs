@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 
 namespace GmailOrganiser.Tests.Integration;
 
@@ -36,7 +37,8 @@ public sealed class SenderProfileTests(ApiFactory factory, PostgresFixture postg
     {
         host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
         {
-            services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), []));
+            var retry = new GmailRetryPolicy(Options.Create(new GmailOptions { MaxRetryAttempts = 1 }), TimeProvider.System);
+            services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), [], retry));
             services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<FakeGmailClient>());
             services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)));
         }));
@@ -147,6 +149,19 @@ public sealed class SenderProfileTests(ApiFactory factory, PostgresFixture postg
         p.Bodies[0].Text.ShouldBe($"{BodyMarker} offer00");
         p.Bodies[1].Text.ShouldBe($"{BodyMarker} receipt0");
         p.PromptText.ShouldContain($"{BodyMarker} receipt0");
+    }
+
+    [Fact]
+    public async Task Gmail_rate_limits_skip_labels_and_bodies_but_keep_the_profile()
+    {
+        host.Services.GetRequiredService<FakeGmailClient>().FailNext(HttpStatusCode.TooManyRequests, 10);
+
+        var p = await GetAsync($"/api/senders/{News}/profile?includeBodies=true");
+
+        p.Stats.Total.ShouldBeGreaterThan(0);
+        p.Templates.ShouldNotBeEmpty();
+        p.LabelsInUse.ShouldBeEmpty();
+        p.Bodies.ShouldBeEmpty();
     }
 
     [Fact]
