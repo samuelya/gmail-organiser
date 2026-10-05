@@ -233,7 +233,7 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
             await db.Messages.Where(m => m.Id == "b00").ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "STARRED" }), Ct);
         }
 
-        await using (var scope = factory.Services.CreateAsyncScope())
+        await using (var scope = h.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
                 .UpdateAsync(x => x with { Protection = new ProtectionSettings(Starred: false) }, Ct);
@@ -253,7 +253,7 @@ public sealed class ReviewEndpointsTests(ApiFactory factory, PostgresFixture pos
             await db.Suggestions.Where(s => s.Id == deletionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.ToBeDeleted, true), Ct);
         }
 
-        await using (var scope = factory.Services.CreateAsyncScope())
+        await using (var scope = h.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
                 .UpdateAsync(x => x with { Protection = x.Protection with { AllowlistedDomains = ["example.com"] } }, Ct);
