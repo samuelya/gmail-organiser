@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Memory;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
@@ -135,6 +137,54 @@ public sealed class AnalysisRunPackingTests(ApiFactory factory, PostgresFixture 
         resumed.Count.ShouldBe(2);
         resumed[0].ShouldContain($"Synthetic body of {LowConfidenceId}");
         resumed[1].ShouldContain(AnalysisRunJob.SnippetOnlyMarker);
+    }
+
+    [Fact]
+    public async Task Memory_runs_before_packing_so_the_model_bound_leftovers_share_one_pack()
+    {
+        // Memory covers all but the run's newest (pack 1) and oldest (pack 2) email: packed first, each would go alone.
+        await using (var db = postgres.CreateDbContext())
+        {
+            var messages = await db.Messages.AsNoTracking().OrderByDescending(m => m.InternalDate).ThenBy(m => m.Id).Take(20).ToListAsync(Ct);
+            var at = new DateTimeOffset(2026, 2, 1, 0, 0, 0, TimeSpan.Zero);
+            db.Decisions.AddRange(messages.Skip(1).SkipLast(1).SelectMany(m => Enumerable.Range(0, 3).Select(i => new DecisionRow
+            {
+                Id = Guid.NewGuid(),
+                MessageId = $"seed-{m.Id}-{i}",
+                SenderAddress = m.FromAddress,
+                ScopeKey = GroupKey.For(m),
+                SubjectTemplate = SubjectNormaliser.Template(m.Subject),
+                TopicLabel = "Synthetic Remembered",
+                Outcome = DecisionOutcome.Approved,
+                Source = SuggestionSource.Llm,
+                CreatedAt = at.AddHours(i),
+            })));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var preview = await PreviewAsync();
+        (preview.Packs, preview.EstimatedLlmCalls).ShouldBe((1, 1));
+
+        var done = await RunAsync();
+
+        (done.LlmCalls, done.PackedMessages, done.PackRetries, done.MessagesFromMemory, done.MessagesLlm).ShouldBe((1, 2, 0, 18, 2));
+        h.Chat.Requests.Select(Text).ShouldHaveSingleItem().ShouldContain(AnalysisRunJob.SnippetOnlyMarker);
+        bodies.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_low_confidence_pack_answer_is_stored_when_the_retry_alone_stays_invalid()
+    {
+        h.Chat.Respond = (ids, _, _, _) => Task.FromResult(ids.Count > 1 ? Answer(ids, id => id == LowConfidenceId ? 0.3 : 0.9) : "not json");
+
+        var done = await RunAsync();
+
+        // Two packs, then the retry and its repeat; the pack's own answer fills in.
+        (done.LlmCalls, done.PackRetries, done.MessagesCovered, done.MessagesLlm, done.FailedMessages).ShouldBe((4, 1, 20, 20, 0));
+        bodies.ShouldBe([LowConfidenceId]);
+        await using var db = postgres.CreateDbContext();
+        var row = await db.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == LowConfidenceId, Ct);
+        (row.Source, row.Confidence, row.TopicLabel).ShouldBe((SuggestionSource.Llm, 0.3, AnalysisRunHarness.LabelFor(LowConfidenceId)));
     }
 
     private async Task<AnalysisRunDto> RunAsync()

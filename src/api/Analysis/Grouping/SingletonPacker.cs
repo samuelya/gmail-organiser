@@ -7,14 +7,16 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// Packs one-off senders into shared snippet-only prompts (#376): individual groups of unprotected mail, in the order
 /// given, fill the first open pack without their canonical sender, up to the pack size. A pack takes the place of its
 /// first member; every member is a representative. A pack of one stays an individual group, and so does protected
-/// mail (its body and attachments decide). Pure: the same input gives the same packs.
+/// mail (its body and attachments decide), and any group <c>keep</c> names (the run's memory-covered singles).
+/// Pure: the same input gives the same packs.
 /// </summary>
 public static class SingletonPacker
 {
     public const string KeyPrefix = "pack:";
 
     public static IReadOnlyList<MessageGroup> Pack(
-        IReadOnlyList<MessageGroup> groups, Guid runId, int packSize, Allowlist allowlist, ProtectionSettings protection)
+        IReadOnlyList<MessageGroup> groups, Guid runId, int packSize, Allowlist allowlist, ProtectionSettings protection,
+        Func<MessageGroup, bool>? keep = null)
     {
         packSize = Math.Min(packSize, SettingsValidation.MaxAnalysisPackSize);
         if (packSize < 2)
@@ -28,7 +30,7 @@ public static class SingletonPacker
         var open = new List<(int Index, HashSet<string> Senders)>();
         foreach (var group in groups)
         {
-            if (!group.Individual || group.Packed || group.Members.Count != 1
+            if (!group.Individual || group.Packed || group.Members.Count != 1 || keep?.Invoke(group) == true
                 || MessageProtection.IsProtected(group.Members[0], allowlist, protection))
             {
                 slots.Add((group, -1));

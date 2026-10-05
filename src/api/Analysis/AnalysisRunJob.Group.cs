@@ -16,7 +16,7 @@ namespace GmailOrganiser.Analysis;
 /// the prompt's emails converted or skipped, and the tokens and time its model calls spent. <see cref="LlmCalls"/>
 /// counts every call, <see cref="TriageCalls"/> the triage model's and <see cref="EscalatedCalls"/> those repeated
 /// with the chat model. <see cref="PackedMessages"/> went to a pack's prompt, <see cref="PackRetries"/> of them go to
-/// the model again one by one.
+/// the model again one by one; <see cref="Fallbacks"/> holds their low-confidence pack answers.
 /// </summary>
 internal sealed record GroupOutcome(
     IReadOnlyList<SuggestionRow> Suggestions,
@@ -30,7 +30,8 @@ internal sealed record GroupOutcome(
     int TriageCalls = 0,
     int EscalatedCalls = 0,
     int PackedMessages = 0,
-    int PackRetries = 0);
+    int PackRetries = 0,
+    IReadOnlyDictionary<string, PackFallback>? Fallbacks = null);
 
 /// <summary>
 /// The valid answers about a group's representatives, the ids the triage model answered (the chat model answered the
@@ -77,7 +78,7 @@ public sealed partial class AnalysisRunJob
         // A compare run shows what the current prompt does, so memory never answers for the model.
         var found = context.Run.Kind == AnalysisRunKind.Compare
             ? new ShortCircuitResult?[lookups.Count]
-            : await shortCircuit.TryAsync(lookups, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelIndex, context.Labels, context.Run.DocumentTypeParent), ct);
+            : await shortCircuit.TryAsync(lookups, MemoryContext(context), ct);
         var covered = new ShortCircuitResult?[batch.Count];
         for (int i = 0, at = 0; i < batch.Count; at += batch[i].Packed ? batch[i].Members.Count : 1, i++)
         {
