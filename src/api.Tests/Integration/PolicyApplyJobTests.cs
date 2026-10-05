@@ -229,6 +229,28 @@ public sealed class PolicyApplyJobTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
+    public async Task A_single_label_policy_ignores_a_leftover_topic_less_rule()
+    {
+        var policy = await SeedPolicyAsync(AnalysisRunHarness.News, isMixed: false, PolicyAction.Archive,
+            ("Leftover", "offer 1", PolicyAction.Delete));
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.SenderPolicyRules.Where(r => r.PolicyId == policy).ExecuteUpdateAsync(
+                u => u.SetProperty(r => r.TopicLabel, "").SetProperty(r => r.Status, PolicyStatus.Approved), Ct);
+        }
+
+        (await h.PostWithoutBodyAsync($"/api/policies/{policy}/approve")).IsSuccessStatusCode.ShouldBeTrue();
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.SenderPolicies.SingleAsync(p => p.Id == policy, Ct)).Status.ShouldBe(PolicyStatus.Approved);
+            await db.Jobs.Where(j => j.Type == PolicyApplyJob.JobType).ExecuteDeleteAsync(Ct);
+        }
+
+        (await h.PostWithoutBodyAsync($"/api/policies/{policy}/apply")).IsSuccessStatusCode.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task Apply_needs_an_approved_policy()
     {
         var policy = await SeedPolicyAsync(AnalysisRunHarness.News, isMixed: false, PolicyAction.Archive);
