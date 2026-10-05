@@ -42,8 +42,8 @@ export type SettingsDto = AppSettings &
   ProtectionSettingsDto &
   AppsScriptSettingsDto &
   LabelSettings &
-  TaxonomySettings &
-  RetentionSettingsDto;
+  Partial<TaxonomySettings> &
+  Partial<RetentionSettingsDto>;
 
 /**
  * The analysis part of `UpdateSettingsRequest`: only changed fields are sent; an empty prompt

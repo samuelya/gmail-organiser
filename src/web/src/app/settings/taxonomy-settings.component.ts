@@ -10,6 +10,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
   FormControl,
+  FormGroup,
   ReactiveFormsModule,
   ValidationErrors,
   Validators,
@@ -112,15 +113,15 @@ export const TAXONOMY_SAVE_DEBOUNCE_MS = 600;
         @if (blockedError(); as error) {
           <p class="error m-0" role="alert" data-testid="blocked-server-error">{{ error }}</p>
         }
-        <form class="flex flex-wrap items-start gap-2" (ngSubmit)="addBlocked()" novalidate>
+        <form
+          class="flex flex-wrap items-start gap-2"
+          [formGroup]="newBlockedForm"
+          (ngSubmit)="addBlocked()"
+          novalidate
+        >
           <mat-form-field class="min-w-48 flex-1" subscriptSizing="dynamic">
             <mat-label>Block a label</mat-label>
-            <input
-              matInput
-              autocomplete="off"
-              [formControl]="newBlocked"
-              data-testid="blocked-new"
-            />
+            <input matInput autocomplete="off" formControlName="label" data-testid="blocked-new" />
             @if (newBlocked.hasError('duplicate')) {
               <mat-error data-testid="blocked-new-error">That label is already blocked.</mat-error>
             } @else if (newBlocked.hasError('blocked')) {
@@ -173,10 +174,13 @@ export class TaxonomySettingsSection implements OnInit {
   ]);
   readonly blocked = signal<readonly string[]>([]);
   readonly blockedError = signal<string | null>(null);
-  readonly newBlocked = new FormControl('', {
-    nonNullable: true,
-    validators: [blockedValidator, (c: AbstractControl<string>) => this.unique(c)],
+  readonly newBlockedForm = new FormGroup({
+    label: new FormControl('', {
+      nonNullable: true,
+      validators: [blockedValidator, (c: AbstractControl<string>) => this.unique(c)],
+    }),
   });
+  readonly newBlocked = this.newBlockedForm.controls.label;
   /** The fields as last saved; a failed save goes back to them. */
   private saved: TaxonomySettings | null = null;
   private readonly changes = new Subject<TaxonomyUpdate>();
@@ -233,7 +237,10 @@ export class TaxonomySettingsSection implements OnInit {
     this.changes.next({ analysisBlockedLabels: [...this.blocked()] });
   }
 
-  private load(settings: TaxonomySettings): void {
+  /** An older API without the fields leaves the section disabled. */
+  private load(settings: Partial<TaxonomySettings>): void {
+    if (settings.taxonomyLocked === undefined || settings.analysisMaxNewLabelsPerRun === undefined)
+      return;
     this.saved = {
       taxonomyLocked: settings.taxonomyLocked,
       analysisMaxNewLabelsPerRun: settings.analysisMaxNewLabelsPerRun,
@@ -291,7 +298,7 @@ function blockedValidator(control: AbstractControl<string>): ValidationErrors | 
 }
 
 /** The saved values of the fields `change` sent. */
-function pick(settings: TaxonomySettings, change: TaxonomyUpdate): TaxonomyUpdate {
+function pick(settings: Partial<TaxonomySettings>, change: TaxonomyUpdate): TaxonomyUpdate {
   return Object.fromEntries(
     Object.keys(change).map((k) => [k, settings[k as keyof TaxonomySettings]]),
   ) as TaxonomyUpdate;
