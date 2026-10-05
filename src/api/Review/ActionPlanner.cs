@@ -15,11 +15,15 @@ public sealed record ActionPlan(IReadOnlyList<string> Add, IReadOnlyList<string>
 /// A protected message (§6.4) never gets the delete label, whichever way it was asked for. The replaced labels
 /// (labelled phase, or an applied outcome an accepted alternative replaces) are removed when the message carries them:
 /// user labels only, never one the plan adds. A protected Stage-0 suggestion (its topic is the delete label) changes
-/// nothing: the message stays where it is rather than leave the inbox unlabelled. Pure.
+/// nothing: the message stays where it is rather than leave the inbox unlabelled. The delete label is only ever added
+/// to a deletable suggestion: one not to be deleted whose topic is the delete label changes nothing either. Pure.
 /// </summary>
 public static class ActionPlanner
 {
     public const string InboxLabel = "INBOX";
+
+    /// <summary>The note of a suggestion not to be deleted whose topic is the delete label: nothing is changed.</summary>
+    public const string NotDeletableNote = "not deletable: the topic is the delete label";
 
     /// <summary>System labels that stay the user's: apply never adds or removes them.</summary>
     public static readonly IReadOnlySet<string> Untouched = new HashSet<string>(
@@ -39,12 +43,17 @@ public static class ActionPlanner
         Allowlist allowlist,
         IReadOnlySet<string>? removable = null)
     {
+        var topicIsDelete = string.Equals(suggestion.TopicLabel, settings.DeleteLabelName, StringComparison.OrdinalIgnoreCase);
+        if (topicIsDelete && !suggestion.ToBeDeleted)
+        {
+            return new ActionPlan([], [], NotDeletableNote);
+        }
+
         var protectedReason = MessageProtection.Reason(message, allowlist, settings.Protection);
         // An unedited Stage-0 delete card (or one still filed under the delete label) has nothing else to add: a
         // protected message stays put. An edited card with a real topic follows the normal path below.
         var stage0Delete = suggestion.Source == SuggestionSource.Stage0
-            && ((suggestion.ToBeDeleted && !suggestion.Edited)
-                || string.Equals(suggestion.TopicLabel, settings.DeleteLabelName, StringComparison.OrdinalIgnoreCase));
+            && ((suggestion.ToBeDeleted && !suggestion.Edited) || topicIsDelete);
         if (stage0Delete && protectedReason is not null)
         {
             return new ActionPlan([], [], $"protected: {protectedReason}");
@@ -71,8 +80,8 @@ public static class ActionPlanner
             add.Add(labelIds[settings.DeleteLabelName]);
         }
 
-        // The topic or action label may itself be the delete label; protection wins over any of them.
-        if (protectedReason is not null && labelIds.TryGetValue(settings.DeleteLabelName, out var deleteId))
+        // The topic or action label may itself be the delete label; protection and not being deletable win over them.
+        if ((protectedReason is not null || !suggestion.ToBeDeleted) && labelIds.TryGetValue(settings.DeleteLabelName, out var deleteId))
         {
             add.RemoveAll(id => id == deleteId);
         }

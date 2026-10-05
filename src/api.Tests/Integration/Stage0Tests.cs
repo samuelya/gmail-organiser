@@ -129,6 +129,50 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
     }
 
     [Theory]
+    [InlineData(DeleteLabel)]
+    [InlineData(" synthetic delete ")]
+    public async Task Unticking_to_be_deleted_while_the_topic_stays_the_delete_label_is_400(string topic)
+    {
+        // #405: the edit is refused, so nothing is saved.
+        (await h.PostAsync("/api/senders/noisy/proposals", new Stage0ProposalsRequest([Shop], true, false))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        Guid id;
+        await using (var db = postgres.CreateDbContext())
+        {
+            id = (await db.Suggestions.SingleAsync(s => s.MessageId == "a02", Ct)).Id;
+        }
+
+        var response = await h.PutAsync($"/api/review/suggestions/{id}", new EditSuggestionRequest(topic, false, false));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("topicLabel");
+        await using var after = postgres.CreateDbContext();
+        var stored = await after.Suggestions.AsNoTracking().SingleAsync(s => s.Id == id, Ct);
+        (stored.ToBeDeleted, stored.Edited, stored.Status).ShouldBe((true, false, SuggestionStatus.Pending));
+    }
+
+    [Fact]
+    public async Task A_suggestion_not_to_be_deleted_under_the_delete_label_changes_nothing_on_apply()
+    {
+        // #405 past the endpoint: the planner itself never adds the delete label to mail not to be deleted.
+        (await h.PostAsync("/api/senders/noisy/proposals", new Stage0ProposalsRequest([Shop], true, false))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await BulkApproveAsync(new BulkApproveRequest(null, IncludeDerived: true, SenderAddress: Shop))).Approved.ShouldBe(7);
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a02")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ToBeDeleted, false).SetProperty(x => x.Edited, true), Ct);
+        }
+
+        var before = Labels("a02").ToList();
+        (await h.PostAsync("/api/review/apply", new ApplyRequest(Shop))).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+
+        Labels("a02").ShouldBe(before, ignoreOrder: true);
+        Labels("a02").ShouldContain("INBOX");
+        Labels("a02").ShouldNotContain(deleteLabelId);
+        Labels("a04").ShouldContain(deleteLabelId);
+    }
+
+    [Theory]
     [InlineData("/api/senders/noisy/proposals", 5, SenderKind.Bulk)]
     [InlineData("/api/senders/archive", 5, SenderKind.Bulk)]
     [InlineData("/api/senders/noisy/proposals", 10, SenderKind.Unknown)]

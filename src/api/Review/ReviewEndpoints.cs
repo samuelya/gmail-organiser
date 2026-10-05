@@ -146,16 +146,23 @@ public static class ReviewEndpoints
     /// Saves the edited outcome and approves it; 400 on an invalid label path or a missing flag, 404, 409 when applied,
     /// then 400 naming the replaced labels the message does not carry and 503 when the Gmail label list cannot be loaded.
     /// A document-type label needs the document-type parent setting (<see cref="DocumentTypeEdit.Validate"/>); 400 too
-    /// when the topic label would equal the document type the suggestion keeps.
+    /// when the topic label would equal the document type the suggestion keeps, and when it is the delete label on an
+    /// email not to be deleted (any source).
     /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct)
     {
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
         ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
+        var current = await settings.GetAsync(ct);
+        if (request.ToBeDeleted == false && string.Equals(label, current.DeleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            errors["topicLabel"] = ["The delete label is only the topic of an email to be deleted."];
+        }
+
         var type = request.DocumentTypeLabel is null
             ? DocumentTypeChange.Unchanged
-            : DocumentTypeEdit.Validate(request.DocumentTypeLabel, (await settings.GetAsync(ct)).DocumentTypeParent, label, errors);
+            : DocumentTypeEdit.Validate(request.DocumentTypeLabel, current.DocumentTypeParent, label, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);

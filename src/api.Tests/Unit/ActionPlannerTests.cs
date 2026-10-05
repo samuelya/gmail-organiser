@@ -64,10 +64,36 @@ public sealed class ActionPlannerTests
         var message = Message("INBOX");
         message.HasAttachment = true;
 
-        var plan = Plan(Suggestion(topic: "synthetic delete"), message);
+        var plan = Plan(Suggestion(topic: "synthetic delete", toBeDeleted: true), message);
 
         plan.Add.ShouldBeEmpty();
         plan.Remove.ShouldBe(["INBOX"]);
+    }
+
+    [Theory]
+    [InlineData(SuggestionSource.Llm, false)]
+    [InlineData(SuggestionSource.Stage0, false)]
+    [InlineData(SuggestionSource.Stage0, true)]
+    public void Mail_not_to_be_deleted_whose_topic_is_the_delete_label_changes_nothing(SuggestionSource source, bool edited)
+    {
+        // #405: unticking "to be deleted" on a Stage-0 card keeps the mail in the inbox without the delete label.
+        var suggestion = Suggestion(topic: "Synthetic Delete");
+        suggestion.Source = source;
+        suggestion.Edited = edited;
+
+        var plan = Plan(suggestion, Message("INBOX", "CATEGORY_UPDATES"));
+
+        plan.Add.ShouldBeEmpty();
+        plan.Remove.ShouldBeEmpty();
+        plan.Note.ShouldBe(ActionPlanner.NotDeletableNote);
+    }
+
+    [Fact]
+    public void The_delete_label_is_never_added_through_the_action_label_unless_deletable()
+    {
+        var settings = Settings with { ActionLabelName = "Synthetic Delete" };
+
+        Plan(Suggestion(needsAction: true), Message("INBOX"), settings: settings).Add.ShouldBe(["L1"]);
     }
 
     [Fact]
