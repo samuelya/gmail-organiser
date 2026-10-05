@@ -220,8 +220,9 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         Allowlist allowlist,
         ProtectionSettings rules,
         IReadOnlyDictionary<string, string>? labelNames = null,
-        IReadOnlyList<string>? appLabelIds = null) =>
-        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds);
+        IReadOnlyList<string>? appLabelIds = null,
+        bool taxonomyLocked = false) =>
+        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds, taxonomyLocked: taxonomyLocked);
 
     public static SuggestionDto ToDto(
         SuggestionRow s,
@@ -232,7 +233,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         ExternalReviewDto? claudeReview,
         bool suggestedForClaude,
         SuggestionAlternativeRow? alternative = null,
-        IReadOnlyList<string>? appLabelIds = null)
+        IReadOnlyList<string>? appLabelIds = null,
+        bool taxonomyLocked = false)
     {
         var current = CurrentLabels(m, labelNames);
         var replaced = Replaced(s.Replaced(labelNames), s.TopicLabel, m, labelNames, appLabelIds);
@@ -261,8 +263,18 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         s.DocumentTypeLabel,
         s.DocumentTypeIsNew,
         alternative is null ? null : ToDto(alternative, m, current, labelNames),
-        s.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null);
+        s.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
+        taxonomyLocked && s.Status == SuggestionStatus.Pending && IsStillNew(s, labelNames));
     }
+
+    /// <summary>
+    /// Whether the suggestion's new topic label is still missing from Gmail: <see cref="SuggestionRow.IsNewLabel"/> is
+    /// set at analysis and never updated, so a label created since no longer counts. Without the label list
+    /// (<paramref name="labelNames"/> null) the stored flag stands.
+    /// </summary>
+    public static bool IsStillNew(SuggestionRow s, IReadOnlyDictionary<string, string>? labelNames) =>
+        s.IsNewLabel
+        && (labelNames is null || !labelNames.Values.Any(n => string.Equals(n.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
     /// The names of the replaced labels apply would remove now: those the message still carries, never the topic label,
@@ -361,7 +373,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var settings = claude.Settings;
         var dtos = members.Select(x => ToDto(
                 x.S, x.M, allowlist, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
-                IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel), alternatives.GetValueOrDefault(x.S.Id), appLabelIds))
+                IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel), alternatives.GetValueOrDefault(x.S.Id), appLabelIds,
+                settings.TaxonomyLocked))
             .ToList();
         var change = Combined(dtos.Select(d => d.LabelChange));
         return new ReviewGroupDto(
@@ -388,7 +401,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             shared.DocumentTypeLabel,
             shared.DocumentTypeLabel is not null
                 && members.Any(x => x.S.DocumentTypeIsNew && x.S.DocumentTypeLabel == shared.DocumentTypeLabel),
-            GroupAlternative(dtos, alternativeCount));
+            GroupAlternative(dtos, alternativeCount),
+            dtos.Any(d => d.NewLabelPending));
     }
 
     /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags and type.</summary>

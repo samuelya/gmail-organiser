@@ -41,7 +41,10 @@ public sealed record SettingsDto(
     string? TriageModel,
     double TriageConfidenceThreshold,
     int TaxonomyMaxSenders,
-    int TaxonomyMaxLabels)
+    int TaxonomyMaxLabels,
+    bool TaxonomyLocked,
+    int AnalysisMaxNewLabelsPerRun,
+    IReadOnlyList<string> AnalysisBlockedLabels)
 {
     /// <param name="claudeTokenSet">Whether <c>CLAUDE_CODE_OAUTH_TOKEN</c> is set; the token itself is never returned.</param>
     public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet) => new(
@@ -85,7 +88,10 @@ public sealed record SettingsDto(
         s.TriageModel,
         s.TriageConfidenceThreshold,
         s.TaxonomyMaxSenders,
-        s.TaxonomyMaxLabels);
+        s.TaxonomyMaxLabels,
+        s.TaxonomyLocked,
+        s.AnalysisMaxNewLabelsPerRun,
+        s.AnalysisBlockedLabels);
 }
 
 /// <summary>Never carries the secret itself.</summary>
@@ -94,7 +100,7 @@ public sealed record GoogleClientDto(string? ClientId, bool SecretSet, bool Lock
 /// <summary>
 /// Partial update: <c>null</c> leaves a value unchanged; an empty model name (including <see cref="ClaudeModel"/>) or a
 /// blank prompt template or <see cref="DocumentTypeParent"/> clears it. <see cref="AppsScript"/> replaces the whole saved block
-/// (see <see cref="UpdateAppsScriptSettingsRequest"/>).
+/// (see <see cref="UpdateAppsScriptSettingsRequest"/>), and <see cref="AnalysisBlockedLabels"/> the whole list.
 /// </summary>
 public sealed record UpdateSettingsRequest(
     string? OllamaBaseUrl,
@@ -135,7 +141,10 @@ public sealed record UpdateSettingsRequest(
     string? TriageModel = null,
     double? TriageConfidenceThreshold = null,
     int? TaxonomyMaxSenders = null,
-    int? TaxonomyMaxLabels = null);
+    int? TaxonomyMaxLabels = null,
+    bool? TaxonomyLocked = null,
+    int? AnalysisMaxNewLabelsPerRun = null,
+    IReadOnlyList<string?>? AnalysisBlockedLabels = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>

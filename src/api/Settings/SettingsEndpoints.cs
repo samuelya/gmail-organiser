@@ -112,6 +112,11 @@ public static class SettingsEndpoints
         TriageConfidenceThreshold = request.TriageConfidenceThreshold ?? s.TriageConfidenceThreshold,
         TaxonomyMaxSenders = request.TaxonomyMaxSenders ?? s.TaxonomyMaxSenders,
         TaxonomyMaxLabels = request.TaxonomyMaxLabels ?? s.TaxonomyMaxLabels,
+        TaxonomyLocked = request.TaxonomyLocked ?? s.TaxonomyLocked,
+        AnalysisMaxNewLabelsPerRun = request.AnalysisMaxNewLabelsPerRun ?? s.AnalysisMaxNewLabelsPerRun,
+        AnalysisBlockedLabels = request.AnalysisBlockedLabels is { } blocked
+            ? [.. blocked.OfType<string>().Select(n => n.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)]
+            : s.AnalysisBlockedLabels,
         ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
         Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
         ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,

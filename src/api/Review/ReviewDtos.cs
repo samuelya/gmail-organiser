@@ -21,6 +21,7 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="DocumentTypeLabel">The shown outcome's document-type label; null when it has none.</param>
 /// <param name="DocumentTypeIsNew">A listed member with the shown document-type label would create it in Gmail.</param>
 /// <param name="Alternative">The listed members' compare-run alternative (<see cref="SuggestionAlternativeDto.Mixed"/> when they disagree); null when none has one.</param>
+/// <param name="NewLabelPending">A listed member is <see cref="SuggestionDto.NewLabelPending"/>.</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -44,7 +45,8 @@ public sealed record ReviewGroupDto(
     bool SuggestedForClaude = false,
     string? DocumentTypeLabel = null,
     bool DocumentTypeIsNew = false,
-    SuggestionAlternativeDto? Alternative = null);
+    SuggestionAlternativeDto? Alternative = null,
+    bool NewLabelPending = false);
 
 /// <param name="ReplaceLabels">Current labels apply removes: the replaced labels the message still carries, never the topic label.</param>
 /// <param name="CurrentLabels">The message's personal (user) label names; empty when Gmail is not reachable.</param>
@@ -54,6 +56,8 @@ public sealed record ReviewGroupDto(
 /// <param name="DocumentTypeIsNew">Gmail did not have <paramref name="DocumentTypeLabel"/> when it was suggested or edited.</param>
 /// <param name="Alternative">The compare run's answer stored next to it (#248); null when none.</param>
 /// <param name="MailType">The snake_case <c>MailType</c> (#365); null when none.</param>
+/// <param name="NewLabelPending">The taxonomy is locked and this pending suggestion proposes a label Gmail still lacks (#367): bulk
+/// approve skips it until it is approved individually or edited to an existing label.</param>
 public sealed record SuggestionDto(
     Guid Id,
     string MessageId,
@@ -79,7 +83,8 @@ public sealed record SuggestionDto(
     string? DocumentTypeLabel = null,
     bool DocumentTypeIsNew = false,
     SuggestionAlternativeDto? Alternative = null,
-    string? MailType = null);
+    string? MailType = null,
+    bool NewLabelPending = false);
 
 /// <summary>A compare run's alternative to a suggestion, shown next to it; nothing changes until it is accepted.</summary>
 /// <param name="ReplaceLabels">As on <see cref="SuggestionDto.ReplaceLabels"/>, for the alternative's topic label.</param>

@@ -51,7 +51,9 @@ public sealed record PromptInput(
     string ActionLabel,
     string DeleteLabel,
     string? DocumentTypeParent = null,
-    IReadOnlyList<SenderPolicyHint>? Policies = null);
+    IReadOnlyList<SenderPolicyHint>? Policies = null,
+    IReadOnlyCollection<string>? BlockedLabels = null,
+    bool TaxonomyLocked = false);
 
 /// <summary>A validated suggestion for one email; <see cref="Confidence"/> is always within [0, 1].</summary>
 /// <param name="DocumentTypeLabel">The second label under the document-type parent; null when none or the feature is off.</param>
