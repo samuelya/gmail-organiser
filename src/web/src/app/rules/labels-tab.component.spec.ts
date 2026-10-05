@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { signal } from '@angular/core';
+import { computed, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatDialog } from '@angular/material/dialog';
@@ -9,7 +9,7 @@ import { provideRouter } from '@angular/router';
 import { of, Subject, throwError } from 'rxjs';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
-import { JobDto } from '../core/jobs.models';
+import { isActiveJob, JobDto } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { LabelDto } from '../review/labels.models';
 import { LabelsService } from '../review/labels.service';
@@ -60,6 +60,8 @@ describe('LabelsTab', () => {
   let rules: Record<string, ReturnType<typeof vi.fn>>;
   let jobs: Map<string, JobDto>;
   let held: ReturnType<typeof signal<ReadonlyMap<string, JobDto>>>;
+  let reconnects: ReturnType<typeof signal<number>>;
+  let fetchJob: ReturnType<typeof vi.fn>;
   let confirm: boolean;
   let dialogData: unknown[];
   let claudeMode: ClaudeReviewerMode;
@@ -69,6 +71,8 @@ describe('LabelsTab', () => {
   async function render(latest: () => ReturnType<RulesService['latestPlan']>) {
     jobs = new Map();
     held = signal<ReadonlyMap<string, JobDto>>(jobs);
+    reconnects = signal(0);
+    fetchJob = vi.fn((id: string) => throwError(() => new Error(`no job ${id}`)));
     confirm = true;
     dialogData = [];
     claudeChanges = new Subject();
@@ -84,6 +88,9 @@ describe('LabelsTab', () => {
       updateItem: vi.fn(() => of(plan())),
       applyPlan: vi.fn(() => of({ jobId: 'j-1' })),
       discardPlan: vi.fn(() => of(plan({ status: 'discarded' }))),
+      proposeTaxonomy: vi.fn(() =>
+        of(job({ id: 't-1', type: 'taxonomy_propose', status: 'queued' })),
+      ),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -98,7 +105,9 @@ describe('LabelsTab', () => {
           provide: JobsService,
           useValue: {
             job: (id: string) => held().get(id),
-            reconnects: signal(0),
+            activeJobs: computed(() => [...held().values()].filter(isActiveJob)),
+            reconnects,
+            fetch: fetchJob,
             externalReviewChanges: claudeChanges,
             cancel: vi.fn(() => of(undefined)),
           },
@@ -250,7 +259,7 @@ describe('LabelsTab', () => {
 
     q('plan-apply')!.click();
     await fixture.whenStable();
-    expect(dialogData).toEqual([{ empty: 0, near_duplicate: 0, nest: 1 }]);
+    expect(dialogData).toEqual([{ create: 0, empty: 0, near_duplicate: 0, nest: 1 }]);
     expect(rules['applyPlan']).toHaveBeenCalledWith('p-1');
     latest.next(applying);
     held.set(new Map([['j-1', job()]]));
@@ -337,5 +346,114 @@ describe('LabelsTab', () => {
     claudeMode = 'claude_desktop';
     const applied = await render(() => of(plan({ status: 'applied' })));
     expect(applied.q<HTMLButtonElement>('claude-send')!.disabled).toBe(true);
+  });
+
+  describe('taxonomy proposal', () => {
+    const taxonomyJob = (over: Partial<JobDto> = {}) =>
+      job({ id: 't-1', type: 'taxonomy_propose', progress: null, ...over });
+    const taxonomyPlan = plan({
+      id: 'p-3',
+      items: [
+        planItem({
+          id: 'c-1',
+          kind: 'create',
+          labelId: '',
+          labelName: 'Area/Synthetic',
+          proposedName: null,
+          description: 'Synthetic description.',
+          senderKeys: ['news@example.com', 'billing@example.com'],
+        }),
+      ],
+    });
+
+    it('queues the proposal, disables the buttons while it runs and opens the new plan in the tree', async () => {
+      const { fixture, q, all } = await render(notFound);
+      q('plan-propose-taxonomy')!.click();
+      await fixture.whenStable();
+      expect(dialogData).toEqual([]);
+      expect(rules['proposeTaxonomy']).toHaveBeenCalledTimes(1);
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(true);
+      expect(q<HTMLButtonElement>('plan-review')!.disabled).toBe(true);
+
+      held.set(
+        new Map([['t-1', taxonomyJob({ progress: { done: 3, total: 10, message: 'Profiling' } })]]),
+      );
+      await fixture.whenStable();
+      expect(q('taxonomy-progress')!.textContent).toContain('3');
+      expect(q('taxonomy-progress')!.textContent).toContain('Profiling');
+
+      rules['latestPlan'].mockImplementation(() => of(taxonomyPlan));
+      held.set(new Map([['t-1', taxonomyJob({ status: 'completed', version: 2 })]]));
+      await fixture.whenStable();
+      expect(q('taxonomy-progress')).toBeNull();
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(false);
+      const created = all('plan-tree-row').find((r) => r.dataset['path'] === 'Area/Synthetic');
+      expect(created?.classList).toContain('new');
+      expect(created?.textContent).toContain('create');
+    });
+
+    it('follows a proposal already running and shows its failure', async () => {
+      const { fixture, q } = await render(() => of(plan()));
+      held.set(new Map([['t-1', taxonomyJob()]]));
+      await fixture.whenStable();
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(true);
+      expect(q<HTMLButtonElement>('plan-apply')!.disabled).toBe(true);
+
+      held.set(
+        new Map([
+          ['t-1', taxonomyJob({ status: 'failed', error: 'Synthetic failure', version: 2 })],
+        ]),
+      );
+      await fixture.whenStable();
+      expect(q('taxonomy-error')!.textContent).toContain('Synthetic failure');
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(false);
+    });
+
+    it('ends a proposal that finished while the hub was down once it reconnects', async () => {
+      const { fixture, q } = await render(notFound);
+      q('plan-propose-taxonomy')!.click();
+      await fixture.whenStable();
+      expect(q<HTMLButtonElement>('plan-review')!.disabled).toBe(true);
+
+      // The hub's snapshot holds active jobs only, so the finished proposal never reaches the service.
+      fetchJob.mockImplementation((id: string) => {
+        const done = taxonomyJob({ id, status: 'completed', version: 2 });
+        held.set(new Map([[id, done]]));
+        return of(done);
+      });
+      rules['latestPlan'].mockImplementation(() => of(taxonomyPlan));
+      reconnects.set(1);
+      await fixture.whenStable();
+      expect(fetchJob).toHaveBeenCalledWith('t-1');
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(false);
+      expect(q<HTMLButtonElement>('plan-review')!.disabled).toBe(false);
+      expect(q('plan-tree-row')).not.toBeNull();
+    });
+
+    it('stops following a proposal whose status cannot be read after a reconnect', async () => {
+      const { fixture, q } = await render(notFound);
+      q('plan-propose-taxonomy')!.click();
+      await fixture.whenStable();
+      reconnects.set(1);
+      await fixture.whenStable();
+      expect(fetchJob).toHaveBeenCalledWith('t-1');
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(false);
+    });
+
+    it('confirms before replacing a draft', async () => {
+      const { fixture, q } = await render(() => of(plan()));
+      confirm = false;
+      q('plan-propose-taxonomy')!.click();
+      await fixture.whenStable();
+      expect(dialogData).toHaveLength(1);
+      expect(rules['proposeTaxonomy']).not.toHaveBeenCalled();
+    });
+
+    it('lists create items under their own heading', async () => {
+      const { all } = await render(() => of(taxonomyPlan));
+      expect(all('plan-group').map((g) => g.querySelector('h3')!.textContent!.trim())).toEqual([
+        'Taxonomy labels (1)',
+      ]);
+    });
   });
 });

@@ -15,6 +15,8 @@ const analysis = (over: Partial<AnalysisSettings> = {}): AnalysisSettings => ({
   analysisMemoryMinApprovals: 3,
   bulkApproveThreshold: 0.8,
   autoArchiveOnActionDone: false,
+  taxonomyMaxSenders: 80,
+  taxonomyMaxLabels: 25,
   analysisPromptTemplate: null,
   ...over,
 });
@@ -130,6 +132,21 @@ describe('AnalysisSettingsSection', () => {
         analysisMemoryShortCircuit: false,
       },
     ]);
+  });
+
+  it('emits the taxonomy limits and rejects one out of range', async () => {
+    await render();
+    await type('taxonomyMaxLabels', '61');
+    q('save-analysis')!.click();
+    await fixture.whenStable();
+    expect(fieldError('taxonomyMaxLabels')).toBe('Enter a number from 5 to 60.');
+    expect(emitted).toEqual([]);
+
+    await type('taxonomyMaxLabels', '30');
+    await type('taxonomyMaxSenders', '120');
+    q('save-analysis')!.click();
+    await fixture.whenStable();
+    expect(emitted).toEqual([{ taxonomyMaxSenders: 120, taxonomyMaxLabels: 30 }]);
   });
 
   it('emits an empty object when nothing changed', async () => {

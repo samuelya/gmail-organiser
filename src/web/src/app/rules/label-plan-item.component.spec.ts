@@ -139,4 +139,63 @@ describe('LabelPlanItem', () => {
     );
     expect(q('plan-item-name')).toBeNull();
   });
+
+  describe('taxonomy items', () => {
+    const createItem = (over: Partial<LabelPlanItemDto> = {}) =>
+      planItem({
+        id: 'c-1',
+        kind: 'create',
+        labelId: '',
+        labelName: 'Area/Synthetic',
+        proposedName: null,
+        description: 'Synthetic description.',
+        senderKeys: ['news@example.com', 'billing@example.com'],
+        rationale: 'A new area label for 2 senders.',
+        ...over,
+      });
+
+    it('shows the description and an expandable sender list', async () => {
+      const { fixture, q } = await render(createItem());
+      expect(q('plan-item-description')!.textContent).toContain('Synthetic description.');
+      expect(q('plan-item-proposal')!.textContent!.trim()).toBe('create');
+      expect(q('plan-item-near-duplicate')).toBeNull();
+      const toggle = q<HTMLButtonElement>('plan-item-senders-toggle')!;
+      expect(toggle.textContent).toContain('2 senders');
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(q('plan-item-senders')).toBeNull();
+
+      toggle.click();
+      await fixture.whenStable();
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(q('plan-item-senders')!.textContent).toContain('billing@example.com');
+    });
+
+    it('edits the name of a label to create, starting from the proposed one', async () => {
+      const { fixture, q, host } = await render(createItem());
+      const input = q<HTMLInputElement>('plan-item-name')!;
+      expect(input.value).toBe('Area/Synthetic');
+      expect(q<HTMLButtonElement>('plan-item-save-name')!.disabled).toBe(true);
+      input.value = 'Area/Renamed';
+      input.dispatchEvent(new Event('input'));
+      await fixture.whenStable();
+      q<HTMLButtonElement>('plan-item-save-name')!.click();
+      expect(host.updates).toEqual([{ proposedName: 'Area/Renamed' }]);
+    });
+
+    it('offers no name edit for an existing label', async () => {
+      const { q } = await render(createItem({ labelId: 'L2', labelName: 'Topic/Beta' }));
+      expect(q('plan-item-name')).toBeNull();
+      expect(q('plan-item-proposal')!.textContent).toContain('existing label');
+    });
+
+    it('warns about a near-duplicate without a label id and lets the target change', async () => {
+      const { q } = await render(
+        createItem({ kind: 'near_duplicate', targetLabelId: 'L2', targetLabelName: 'Topic/Beta' }),
+      );
+      expect(q('plan-item-near-duplicate')!.textContent).toContain('"Topic/Beta"');
+      expect(q('plan-item-proposal')!.textContent).toContain('senders into Topic/Beta');
+      expect(q('plan-item-name')).toBeNull();
+      expect(q('plan-item-change-target')).not.toBeNull();
+    });
+  });
 });

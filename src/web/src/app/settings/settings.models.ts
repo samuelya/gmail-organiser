@@ -18,6 +18,10 @@ export interface AnalysisSettings {
   analysisMemoryMinApprovals: number;
   bulkApproveThreshold: number;
   autoArchiveOnActionDone: boolean;
+  /** Top senders the taxonomy proposal profiles. */
+  taxonomyMaxSenders: number;
+  /** Most labels the taxonomy proposal may suggest. */
+  taxonomyMaxLabels: number;
   /** The custom prompt; `null` when the built-in one applies. */
   analysisPromptTemplate: string | null;
 }
@@ -71,6 +75,8 @@ export const ANALYSIS_LIMITS: Record<NumericAnalysisField, Range> = {
   analysisClusterDistance: { min: 0.02, max: 0.6, step: 0.01, integer: false },
   analysisMemoryMinApprovals: { min: 1, max: 20, step: 1, integer: true },
   bulkApproveThreshold: { min: 0.5, max: 1, step: 0.01, integer: false },
+  taxonomyMaxSenders: { min: 10, max: 300, step: 10, integer: true },
+  taxonomyMaxLabels: { min: 5, max: 60, step: 1, integer: true },
 };
 
 export const MAX_PROMPT_TEMPLATE_LENGTH = 20_000;

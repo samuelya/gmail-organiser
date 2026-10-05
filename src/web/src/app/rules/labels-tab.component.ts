@@ -33,6 +33,7 @@ import {
   LabelPlanDto,
   LabelPlanItemDto,
   PLAN_KINDS,
+  TAXONOMY_PROPOSE_JOB,
   UpdatePlanItemRequest,
 } from './label-plan.models';
 import { RulesClaude } from './rules-claude.service';
@@ -42,8 +43,8 @@ import { RulesService } from './rules.service';
 type Loaded = LabelPlanDto | 'none' | 'error';
 
 /**
- * The Rules page's Labels tab: review the label plan, send it to Claude, edit and accept items, apply them as a job,
- * discard.
+ * The Rules page's Labels tab: review the label plan or propose a taxonomy (a job), send the plan to Claude, edit and
+ * accept items, apply them as a job, discard.
  */
 @Component({
   selector: 'app-labels-tab',
@@ -112,6 +113,24 @@ export class LabelsTab {
   readonly percent = computed(() => progressPercent(this.job()?.progress));
   readonly cancelling = signal(false);
 
+  /** The taxonomy proposal this tab started or found running. */
+  private readonly proposeJobId = signal<string | null>(null);
+  readonly proposeJob = computed(() => {
+    const id = this.proposeJobId();
+    return id ? (this.jobs.job(id) ?? null) : null;
+  });
+  /** Queued or running (or the request in flight): no second proposal, review or apply meanwhile. */
+  readonly proposing = computed(() => {
+    const job = this.proposeJob();
+    return this.proposeRequested() || (!!this.proposeJobId() && (!job || isActiveJob(job)));
+  });
+  readonly proposePercent = computed(() => progressPercent(this.proposeJob()?.progress));
+  /** The last proposal's failure, until the next one starts. */
+  readonly proposeError = signal<string | null>(null);
+  private readonly proposeRequested = signal(false);
+  /** The jobs service has held the followed proposal. */
+  private proposeSeen = false;
+
   /** Each reload cancels the one in flight, so a stale plan never lands last. */
   private readonly reloads = new Subject<void>();
   /** Item edits run one at a time, so each response (the whole plan) includes every earlier edit. */
@@ -120,7 +139,7 @@ export class LabelsTab {
     itemId: string;
     request: UpdatePlanItemRequest;
   }>();
-  /** Apply jobs whose end already reloaded the plan. */
+  /** Apply and taxonomy jobs whose end already reloaded the plan. */
   private readonly finishedJobIds = new Set<string>();
 
   readonly trackItem = (_: number, i: LabelPlanItemDto) => i.id;
@@ -176,10 +195,49 @@ export class LabelsTab {
         this.refreshLabels();
       });
     });
-    // Updates may have been missed while disconnected.
+    // A proposal started elsewhere or before this tab opened: follow it.
+    effect(() => {
+      const active = this.jobs
+        .activeJobs()
+        .find((j) => j.type === TAXONOMY_PROPOSE_JOB && !this.finishedJobIds.has(j.id));
+      if (active && !untracked(this.proposeJobId))
+        untracked(() => this.proposeJobId.set(active.id));
+    });
+    // The proposal ended: a completed one stored a new draft, which opens in the tree. A job that
+    // ended while the hub was disconnected drops out of the jobs service: the reload shows the result.
+    effect(() => {
+      const id = this.proposeJobId();
+      const job = this.proposeJob();
+      if (id && !job && this.proposeSeen) {
+        this.proposeSeen = false;
+        untracked(() => {
+          this.proposeJobId.set(null);
+          this.reload();
+        });
+        return;
+      }
+      if (job) this.proposeSeen = true;
+      if (!job || isActiveJob(job) || this.finishedJobIds.has(job.id)) return;
+      this.finishedJobIds.add(job.id);
+      this.proposeSeen = false;
+      untracked(() => {
+        this.proposeJobId.set(null);
+        if (job.status === 'completed') {
+          this.view.set('tree');
+          this.reload();
+        } else if (job.status === 'failed') {
+          this.proposeError.set(job.error ?? 'The taxonomy proposal failed.');
+        }
+      });
+    });
+    // Updates may have been missed while disconnected. A proposal that ended meanwhile is missing from
+    // the hub's snapshot (active jobs only): its REST status ends it as above.
     effect(() => {
       if (this.jobs.reconnects() === 0) return;
-      untracked(() => this.reload());
+      untracked(() => {
+        this.reload();
+        this.checkProposal();
+      });
     });
     this.reload();
   }
@@ -213,6 +271,38 @@ export class LabelsTab {
         next: (plan) => this.landed(plan),
         // The error interceptor shows the 502 / 503 reason.
         error: () => this.working.set(false),
+      });
+  }
+
+  /**
+   * Queues the taxonomy proposal; its new draft replaces the current one, so that asks first. The
+   * error interceptor shows a 409 (no chat model, or a proposal already in progress).
+   */
+  proposeTaxonomy(): void {
+    if (this.working() || this.proposing()) return;
+    const confirmed: Observable<boolean> = this.draft()
+      ? openConfirm(this.dialog, {
+          title: 'Propose a taxonomy?',
+          message: 'The proposal replaces the current draft plan and your decisions on it.',
+          confirm: 'Propose taxonomy',
+        })
+      : of(true);
+    confirmed
+      .pipe(
+        filter(Boolean),
+        switchMap(() => {
+          this.proposeRequested.set(true);
+          this.proposeError.set(null);
+          return this.rules.proposeTaxonomy();
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: (job) => {
+          this.proposeJobId.set(job.id);
+          this.proposeRequested.set(false);
+        },
+        error: () => this.proposeRequested.set(false),
       });
   }
 
@@ -305,6 +395,23 @@ export class LabelsTab {
     this.none.set(false);
     this.loadFailed.set(false);
     this.plan.set(plan);
+  }
+
+  /** Reads the followed proposal over REST when the jobs service lacks it; unreadable stops following. */
+  private checkProposal(): void {
+    const id = this.proposeJobId();
+    if (!id || this.jobs.job(id)) return;
+    this.jobs
+      .fetch(id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        error: () => {
+          if (this.proposeJobId() !== id) return;
+          this.proposeSeen = false;
+          this.proposeJobId.set(null);
+          this.reload();
+        },
+      });
   }
 
   private refreshLabels(): void {

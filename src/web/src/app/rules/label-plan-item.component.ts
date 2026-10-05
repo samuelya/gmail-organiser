@@ -20,9 +20,18 @@ import { RouterLink } from '@angular/router';
 import { LabelTreePicker } from '../review/label-tree-picker.component';
 import { LabelDto } from '../review/labels.models';
 import { labelPathValidator } from '../review/labels.service';
-import { LabelPlanItemDto, proposalText, UpdatePlanItemRequest } from './label-plan.models';
+import {
+  createName,
+  isTaxonomyItem,
+  LabelPlanItemDto,
+  proposalText,
+  UpdatePlanItemRequest,
+} from './label-plan.models';
 
-/** One plan item: accept / reject, the editable nest name or merge target, filters, rationale and outcome. */
+/**
+ * One plan item: accept / reject, the editable nest or new-label name or merge target, filters,
+ * rationale and outcome; a taxonomy item also shows its description and senders.
+ */
 @Component({
   selector: 'app-label-plan-item',
   imports: [
@@ -85,12 +94,50 @@ import { LabelPlanItemDto, proposalText, UpdatePlanItemRequest } from './label-p
           <mat-icon aria-hidden="true">error</mat-icon>{{ i.error }}
         </p>
       }
+      @if (taxonomy() && i.kind === 'near_duplicate') {
+        <p class="warn m-0 flex items-center gap-1 text-sm" data-testid="plan-item-near-duplicate">
+          <mat-icon aria-hidden="true">warning</mat-icon>Nearly duplicates "{{
+            i.targetLabelName ?? i.targetLabelId
+          }}": its senders go there instead of a new label.
+        </p>
+      }
+      @if (i.description) {
+        <p class="m-0 text-sm" data-testid="plan-item-description">{{ i.description }}</p>
+      }
       <p class="muted m-0 text-sm" data-testid="plan-item-rationale">{{ i.rationale }}</p>
+      @if (i.senderKeys; as senders) {
+        <div>
+          <button
+            mat-button
+            type="button"
+            [attr.aria-expanded]="showSenders()"
+            [attr.aria-controls]="'senders-' + i.id"
+            (click)="showSenders.set(!showSenders())"
+            data-testid="plan-item-senders-toggle"
+          >
+            <mat-icon aria-hidden="true">{{
+              showSenders() ? 'expand_less' : 'expand_more'
+            }}</mat-icon
+            >{{ senders.length | number }} {{ senders.length === 1 ? 'sender' : 'senders' }}
+          </button>
+          @if (showSenders()) {
+            <ul
+              class="m-0 pl-8 text-sm break-all"
+              [id]="'senders-' + i.id"
+              data-testid="plan-item-senders"
+            >
+              @for (sender of senders; track sender) {
+                <li>{{ sender }}</li>
+              }
+            </ul>
+          }
+        </div>
+      }
 
-      @if (i.kind === 'nest' && editable()) {
+      @if (nameEditable() && editable()) {
         <form class="flex flex-wrap items-start gap-2" (submit)="saveName($event)">
           <mat-form-field class="min-w-64 flex-1" subscriptSizing="dynamic">
-            <mat-label>New name</mat-label>
+            <mat-label>{{ i.kind === 'create' ? 'Label name' : 'New name' }}</mat-label>
             <input matInput [formControl]="name" data-testid="plan-item-name" />
             @if (name.errors?.['labelPath']; as error) {
               <mat-error data-testid="plan-item-name-error">{{ error }}</mat-error>
@@ -133,6 +180,9 @@ import { LabelPlanItemDto, proposalText, UpdatePlanItemRequest } from './label-p
     .muted {
       color: var(--mat-sys-on-surface-variant);
     }
+    .warn {
+      color: var(--mat-sys-tertiary);
+    }
     .error,
     mat-chip.failed {
       color: var(--mat-sys-error);
@@ -152,7 +202,17 @@ export class LabelPlanItem {
   readonly name = new FormControl('', { nonNullable: true, validators: labelPathValidator });
   private readonly nameValue = toSignal(this.name.valueChanges, { initialValue: '' });
   /** Changes only when the stored name does, not when a plan update replaces the item object. */
-  private readonly proposedName = computed(() => this.item().proposedName ?? '');
+  private readonly proposedName = computed(() => {
+    const item = this.item();
+    return item.kind === 'create' ? createName(item) : (item.proposedName ?? '');
+  });
+  readonly taxonomy = computed(() => isTaxonomyItem(this.item()));
+  /** A nest item's new name, or the name of a label a `create` item makes. */
+  readonly nameEditable = computed(() => {
+    const item = this.item();
+    return item.kind === 'nest' || (item.kind === 'create' && !item.labelId);
+  });
+  readonly showSenders = signal(false);
   readonly nameChanged = computed(() => this.nameValue().trim() !== this.proposedName());
   readonly picking = signal(false);
   readonly decision = computed(() => {

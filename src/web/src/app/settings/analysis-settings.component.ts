@@ -136,6 +136,18 @@ export class AnalysisSettingsSection {
       ? 'Maximum embedding distance within one Auto group; lower is stricter.'
       : 'Choose an embedding model in the Ollama section to use this.',
   }));
+  readonly taxonomyFields: readonly NumberField[] = [
+    {
+      key: 'taxonomyMaxSenders',
+      label: 'Senders to profile',
+      hint: 'Top senders by message count that "Propose taxonomy" sends to the LLM.',
+    },
+    {
+      key: 'taxonomyMaxLabels',
+      label: 'Maximum labels',
+      hint: 'Most area labels one taxonomy proposal may suggest.',
+    },
+  ];
   readonly memoryField: NumberField = {
     key: 'analysisMemoryMinApprovals',
     label: 'Minimum approvals',
@@ -154,6 +166,8 @@ export class AnalysisSettingsSection {
     analysisMemoryMinApprovals: numberControl('analysisMemoryMinApprovals'),
     bulkApproveThreshold: numberControl('bulkApproveThreshold'),
     autoArchiveOnActionDone: new FormControl(false, { nonNullable: true }),
+    taxonomyMaxSenders: numberControl('taxonomyMaxSenders'),
+    taxonomyMaxLabels: numberControl('taxonomyMaxLabels'),
     analysisPromptTemplate: new FormControl('', {
       nonNullable: true,
       validators: [Validators.maxLength(MAX_PROMPT_TEMPLATE_LENGTH), requiresEmailsPlaceholder],

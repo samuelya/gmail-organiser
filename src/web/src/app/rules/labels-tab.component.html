@@ -3,17 +3,26 @@
     <button
       mat-flat-button
       type="button"
-      [disabled]="working() || plan()?.status === 'applying'"
+      [disabled]="working() || proposing() || plan()?.status === 'applying'"
       (click)="review()"
       data-testid="plan-review"
     >
       <mat-icon aria-hidden="true">label</mat-icon>Review labels
     </button>
+    <button
+      mat-stroked-button
+      type="button"
+      [disabled]="working() || proposing() || plan()?.status === 'applying'"
+      (click)="proposeTaxonomy()"
+      data-testid="plan-propose-taxonomy"
+    >
+      <mat-icon aria-hidden="true">category</mat-icon>Propose taxonomy from top senders
+    </button>
     @if (draft()) {
       <button
         mat-stroked-button
         type="button"
-        [disabled]="working() || !accepted()"
+        [disabled]="working() || proposing() || !accepted()"
         (click)="apply()"
         data-testid="plan-apply"
       >
@@ -22,7 +31,7 @@
       <button
         mat-button
         type="button"
-        [disabled]="working()"
+        [disabled]="working() || proposing()"
         (click)="discard()"
         data-testid="plan-discard"
       >
@@ -50,6 +59,37 @@
   @if (loading() || working()) {
     <mat-progress-bar mode="indeterminate" aria-label="Loading the label plan" />
   }
+  @if (proposing()) {
+    <div class="flex flex-col gap-2" role="status" data-testid="taxonomy-progress">
+      <span class="text-sm">
+        Proposing a taxonomy
+        @if (proposeJob()?.progress; as pr) {
+          · {{ pr.done | number }}
+          @if (pr.total !== null) {
+            of {{ pr.total | number }}
+          }
+          @if (pr.message; as m) {
+            · {{ m }}
+          }
+        }
+      </span>
+      @if (proposePercent() !== null) {
+        <mat-progress-bar
+          mode="determinate"
+          [value]="proposePercent()"
+          aria-label="Taxonomy proposal progress"
+        />
+      } @else {
+        <mat-progress-bar mode="indeterminate" aria-label="Taxonomy proposal progress" />
+      }
+    </div>
+  }
+  @if (proposeError(); as e) {
+    <p class="m-0 flex items-center gap-2" role="alert" data-testid="taxonomy-error">
+      <mat-icon aria-hidden="true">error</mat-icon>
+      The taxonomy proposal failed: {{ e }}
+    </p>
+  }
   @if (loadFailed()) {
     <p class="m-0 flex items-center gap-2" role="alert" data-testid="plan-error">
       <mat-icon aria-hidden="true">error</mat-icon>
@@ -60,7 +100,7 @@
   @if (none() && !plan()) {
     <p class="muted m-0" role="status" data-testid="plan-empty">
       No label plan yet. "Review labels" looks for empty labels, near-duplicate names and flat names
-      that could be nested.
+      that could be nested; "Propose taxonomy" suggests area labels for your top senders.
     </p>
   }
 

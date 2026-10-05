@@ -14,5 +14,7 @@ export const planItem = (over: Partial<LabelPlanItemDto> = {}): LabelPlanItemDto
   rationale: 'Synthetic rationale.',
   status: 'proposed',
   error: null,
+  description: null,
+  senderKeys: null,
   ...over,
 });
