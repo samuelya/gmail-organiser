@@ -40,7 +40,9 @@
             mat-list-item
             [routerLink]="item.path"
             routerLinkActive
+            [routerLinkActiveOptions]="item.active"
             #rla="routerLinkActive"
+            [class.pl-6]="item.nested"
             [activated]="rla.isActive"
             [attr.aria-current]="rla.isActive ? 'page' : null"
             (click)="onNavigate()"

@@ -212,3 +212,114 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   }
   return format.format(0, 'second');
 }
+
+/** `SenderCategoryMixDto`: messages per Gmail category tab. */
+export interface SenderCategoryMix {
+  primary: number;
+  promotions: number;
+  social: number;
+  updates: number;
+  forums: number;
+}
+
+/** `NoisySenderDto` from `GET /api/senders/noisy`: one canonical sender, counts summed over its raw addresses. */
+export interface NoisySenderDto {
+  canonicalAddress: string;
+  canonicalDomain: string;
+  displayName: string | null;
+  /** The raw addresses behind the canonical one, highest volume first. */
+  addresses: string[];
+  totalCount: number;
+  unreadCount: number;
+  /** 0–1. */
+  unreadRatio: number;
+  listUnsubscribeCount: number;
+  kind: SenderKind;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  categoryMix: SenderCategoryMix;
+  unsubscribedAt: string | null;
+  /** An approved sender policy already handles this sender; it is not selectable. */
+  hasApprovedPolicy: boolean;
+}
+
+/** The noisy-senders request; also the page's URL query params. */
+export interface NoisyQuery {
+  minMessages: number;
+  /** 0–100; the API takes it as a 0–1 ratio. */
+  minUnreadPercent: number;
+  /** Only senders last seen more than this many days ago; `null` for all. */
+  dormantDays: number | null;
+  search: string;
+  page: number;
+  pageSize: number;
+}
+
+/** `POST /api/senders/noisy/proposals`: Stage-0 suggestions always mark To-Be-Deleted. */
+export interface NoisyProposalRequest {
+  canonicalAddresses: string[];
+  toBeDeleted: true;
+  unsubscribe: boolean;
+}
+
+/** `Stage0ProposalsResponse`. */
+export interface NoisyProposalResult {
+  created: number;
+  skippedProtected: number;
+  skippedAlreadySuggested: number;
+}
+
+/** `POST /api/senders/archive`. */
+export interface ArchiveSendersRequest {
+  canonicalAddresses: string[];
+}
+
+/** `sender_archive`, the job type `POST /api/senders/archive` enqueues. */
+export const SENDER_ARCHIVE_JOB = 'sender_archive';
+
+/** The API's limits for the noisy filters. */
+export const MAX_MIN_MESSAGES = 100_000;
+export const MAX_DORMANT_DAYS = 3650;
+
+export const DEFAULT_NOISY_QUERY: Readonly<NoisyQuery> = {
+  minMessages: 10,
+  minUnreadPercent: 90,
+  dormantDays: null,
+  search: '',
+  page: 1,
+  pageSize: 25,
+};
+
+/** An integer param within `[min, max]`, or `null` when missing or out of range. */
+function intParam(params: ParamMap, name: string, min: number, max: number): number | null {
+  const raw = params.get(name);
+  const value = raw === null || raw.trim() === '' ? NaN : Number(raw);
+  return Number.isInteger(value) && value >= min && value <= max ? value : null;
+}
+
+/** Reads the noisy query from URL params; anything missing or invalid falls back to the default. */
+export function parseNoisyQuery(params: ParamMap): NoisyQuery {
+  const d = DEFAULT_NOISY_QUERY;
+  const pageSize = Number(params.get('pageSize'));
+  return {
+    minMessages: intParam(params, 'minMessages', 1, MAX_MIN_MESSAGES) ?? d.minMessages,
+    minUnreadPercent: intParam(params, 'minUnread', 0, 100) ?? d.minUnreadPercent,
+    dormantDays: intParam(params, 'dormantDays', 1, MAX_DORMANT_DAYS),
+    search: cleanSearch(params.get('search') ?? ''),
+    page: intParam(params, 'page', 1, MAX_PAGE) ?? d.page,
+    pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : d.pageSize,
+  };
+}
+
+/** URL query params for a noisy query; defaults are left out (`null` removes them when merging). */
+export function noisyQueryParams(query: NoisyQuery): Params {
+  const d = DEFAULT_NOISY_QUERY;
+  return {
+    minMessages: query.minMessages === d.minMessages ? null : query.minMessages,
+    minUnread: query.minUnreadPercent === d.minUnreadPercent ? null : query.minUnreadPercent,
+    dormantDays: query.dormantDays,
+    search: query.search || null,
+    page: query.page === d.page ? null : query.page,
+    pageSize: query.pageSize === d.pageSize ? null : query.pageSize,
+  };
+}

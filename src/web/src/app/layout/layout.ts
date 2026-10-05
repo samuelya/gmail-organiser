@@ -20,7 +20,7 @@ import { distinctUntilChanged, filter, map, startWith, tap } from 'rxjs';
 import { readLocal, writeLocal } from '../core/local-store';
 import { ThemeChoice, ThemeService } from '../core/theme.service';
 import { SetupState } from '../setup/setup-state';
-import { NAV_ITEMS } from './nav-items';
+import { NAV_ITEMS, navActiveOptions } from './nav-items';
 
 export const WIDE_QUERY = '(min-width: 1024px)';
 export const NAV_COLLAPSED_KEY = 'gmo.navCollapsed';
@@ -51,7 +51,10 @@ const THEME_ICONS: Record<ThemeChoice, string> = {
 })
 export class Layout {
   protected readonly appName = 'Gmail Organiser';
-  protected readonly navItems = NAV_ITEMS;
+  protected readonly navItems = NAV_ITEMS.map((item) => ({
+    ...item,
+    active: navActiveOptions(item),
+  }));
   protected readonly theme = inject(ThemeService);
   protected readonly setupState = inject(SetupState);
   private readonly router = inject(Router);

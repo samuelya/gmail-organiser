@@ -160,4 +160,9 @@ describe('SendersPage Stage-0 columns and kind filter', () => {
     const { q } = await render([], '/senders?kind=human');
     expect(q('no-matches')?.textContent).toContain('selected kinds');
   });
+
+  it('links each row to the noisy senders at its canonical domain', async () => {
+    const { q } = await render([sender({ canonicalDomain: 'example.org' })]);
+    expect(q('noisy-senders')!.getAttribute('href')).toBe('/senders/noisy?search=example.org');
+  });
 });

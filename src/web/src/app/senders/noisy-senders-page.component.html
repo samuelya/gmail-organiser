@@ -1,0 +1,247 @@
+<app-page-header title="Noisy senders" />
+
+@if (trackedJobId()) {
+  <mat-card appearance="outlined" class="mb-4" data-testid="job-progress">
+    <mat-card-content class="flex flex-col gap-2">
+      <span role="status" data-testid="job-message">
+        {{ job()?.progress?.message || 'Archiving…' }}
+      </span>
+      <mat-progress-bar
+        [mode]="percent() === null ? 'indeterminate' : 'determinate'"
+        [value]="percent() ?? 0"
+        aria-label="Archive progress"
+      />
+    </mat-card-content>
+  </mat-card>
+}
+
+<mat-card appearance="outlined">
+  <mat-card-content class="flex flex-col gap-4">
+    <p class="muted m-0">
+      Senders with many messages, mostly unread and never replied to. Clearing them here uses no
+      model: archiving is undone from History, and proposals wait in Review.
+    </p>
+
+    <app-noisy-filter-bar [query]="query()" (changed)="onFilters($event)" />
+
+    <div
+      class="flex flex-wrap items-center gap-2"
+      role="toolbar"
+      aria-label="Selected senders"
+      data-testid="selection-toolbar"
+    >
+      <span class="muted min-w-24" data-testid="selected-count">
+        {{ selected().length | number }} selected
+      </span>
+      <button
+        mat-flat-button
+        type="button"
+        [disabled]="actionsDisabled()"
+        (click)="archiveAll()"
+        data-testid="archive-all"
+      >
+        <mat-icon aria-hidden="true">archive</mat-icon>
+        Archive all
+      </button>
+      <button
+        mat-stroked-button
+        type="button"
+        [disabled]="actionsDisabled()"
+        (click)="proposeToBeDeleted()"
+        data-testid="propose"
+      >
+        <mat-icon aria-hidden="true">delete_sweep</mat-icon>
+        Propose To-Be-Deleted
+      </button>
+      <mat-checkbox
+        [checked]="alsoUnsubscribe()"
+        (change)="alsoUnsubscribe.set($event.checked)"
+        data-testid="also-unsubscribe"
+      >
+        Also propose unsubscribe
+      </mat-checkbox>
+    </div>
+
+    @if (actionError(); as error) {
+      <p class="m-0 flex items-center gap-2" role="alert" data-testid="action-error">
+        <mat-icon aria-hidden="true">block</mat-icon>
+        <span class="flex-1">{{ error }}</span>
+        <button mat-button type="button" (click)="actionError.set(null)">Dismiss</button>
+      </p>
+    }
+
+    @if (loading()) {
+      <mat-progress-bar mode="indeterminate" aria-label="Loading noisy senders" />
+    }
+    @if (loadError(); as error) {
+      <p class="m-0 flex items-center gap-2" role="alert" data-testid="load-error">
+        <mat-icon aria-hidden="true">error</mat-icon>
+        <span class="flex-1">{{ error }}</span>
+        <button mat-button type="button" (click)="reload()">Retry</button>
+      </p>
+    }
+
+    @if (result(); as page) {
+      @if (page.total === 0) {
+        <p class="muted m-0" role="status" data-testid="empty">
+          No sender has at least {{ query().minMessages | number }} messages with
+          {{ query().minUnreadPercent }}% or more unread{{
+            query().dormantDays ? ' and no mail in the last ' + query().dormantDays + ' days' : ''
+          }}{{ query().search ? ' matching “' + query().search + '”' : '' }}. Senders you replied
+          to, allowlisted senders and people are never listed. Lower the thresholds to see more.
+        </p>
+      } @else {
+        <div class="overflow-x-auto">
+          <table
+            mat-table
+            [dataSource]="rows()"
+            [trackBy]="trackRow"
+            class="w-full"
+            aria-label="Noisy senders, most messages first"
+          >
+            <ng-container matColumnDef="select">
+              <th mat-header-cell *matHeaderCellDef>
+                <mat-checkbox
+                  [checked]="allSelected()"
+                  [indeterminate]="selected().length > 0 && !allSelected()"
+                  [disabled]="selectable().length === 0"
+                  (change)="toggleAll()"
+                  aria-label="Select all senders on this page"
+                  data-testid="select-all"
+                />
+              </th>
+              <td mat-cell *matCellDef="let row">
+                <mat-checkbox
+                  [checked]="isSelected(row)"
+                  [disabled]="row.hasApprovedPolicy"
+                  (change)="toggle(row)"
+                  [attr.aria-label]="'Select ' + row.canonicalAddress"
+                  data-testid="select-row"
+                />
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="sender">
+              <th mat-header-cell *matHeaderCellDef>Sender</th>
+              <td mat-cell *matCellDef="let row" data-testid="cell-sender">
+                <div class="flex min-w-0 flex-col">
+                  @if (row.displayName) {
+                    <span>{{ row.displayName }}</span>
+                  }
+                  <span [class.address]="!!row.displayName">{{ row.canonicalAddress }}</span>
+                  @if (row.addresses.length > 1 || row.unsubscribedAt || row.hasApprovedPolicy) {
+                    <mat-chip-set aria-label="Status">
+                      @if (row.addresses.length > 1) {
+                        <mat-chip
+                          disableRipple
+                          [matTooltip]="'Sent as ' + row.addresses.join(', ')"
+                          data-testid="relay-chip"
+                        >
+                          <mat-icon matChipAvatar aria-hidden="true">forward_to_inbox</mat-icon>
+                          Relay ({{ row.addresses.length }})
+                        </mat-chip>
+                      }
+                      @if (row.unsubscribedAt; as at) {
+                        <mat-chip disableRipple data-testid="unsubscribed-chip">
+                          <mat-icon matChipAvatar aria-hidden="true">unsubscribe</mat-icon>
+                          Unsubscribed {{ at | date: 'mediumDate' }}
+                        </mat-chip>
+                      }
+                      @if (row.hasApprovedPolicy) {
+                        <mat-chip
+                          disableRipple
+                          matTooltip="An approved sender policy handles this sender"
+                          data-testid="policy-chip"
+                        >
+                          <mat-icon matChipAvatar aria-hidden="true">policy</mat-icon>
+                          Policy
+                        </mat-chip>
+                      }
+                    </mat-chip-set>
+                  }
+                </div>
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="kind">
+              <th mat-header-cell *matHeaderCellDef>Kind</th>
+              <td mat-cell *matCellDef="let row"><app-sender-kind-chip [kind]="row.kind" /></td>
+            </ng-container>
+
+            <ng-container matColumnDef="total">
+              <th mat-header-cell *matHeaderCellDef aria-sort="descending">
+                Total
+                <mat-icon class="align-middle text-base" aria-hidden="true"
+                  >arrow_downward</mat-icon
+                >
+              </th>
+              <td mat-cell *matCellDef="let row" data-testid="cell-total">
+                {{ row.totalCount | number }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="unread">
+              <th mat-header-cell *matHeaderCellDef>Unread</th>
+              <td mat-cell *matCellDef="let row" data-testid="cell-unread">
+                {{ row.unreadRatio | percent }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="listUnsubscribe">
+              <th mat-header-cell *matHeaderCellDef>List-Unsubscribe</th>
+              <td mat-cell *matCellDef="let row">
+                {{ (row.totalCount ? row.listUnsubscribeCount / row.totalCount : 0) | percent }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="categories">
+              <th mat-header-cell *matHeaderCellDef>Categories</th>
+              <td mat-cell *matCellDef="let row">
+                <app-category-mix-bar [mix]="row.categoryMix" />
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="firstSeen">
+              <th mat-header-cell *matHeaderCellDef>First seen</th>
+              <td mat-cell *matCellDef="let row" class="whitespace-nowrap">
+                {{ (row.firstSeenAt | date: 'mediumDate') ?? '—' }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="lastSeen">
+              <th mat-header-cell *matHeaderCellDef>Last seen</th>
+              <td mat-cell *matCellDef="let row" class="whitespace-nowrap">
+                {{ (row.lastSeenAt | date: 'mediumDate') ?? '—' }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="actions">
+              <th mat-header-cell *matHeaderCellDef><span class="sr-only">Actions</span></th>
+              <td mat-cell *matCellDef="let row">
+                @if (row.listUnsubscribeCount > 0) {
+                  <app-unsubscribe-button [address]="row.addresses[0] ?? row.canonicalAddress" />
+                }
+              </td>
+            </ng-container>
+
+            <tr mat-header-row *matHeaderRowDef="columns"></tr>
+            <tr mat-row *matRowDef="let row; columns: columns" data-testid="noisy-row"></tr>
+          </table>
+        </div>
+
+        <mat-paginator
+          [length]="page.total"
+          [pageIndex]="query().page - 1"
+          [pageSize]="query().pageSize"
+          [pageSizeOptions]="pageSizes"
+          (page)="onPage($event)"
+          aria-label="Noisy senders pages"
+        />
+      }
+    }
+    <a mat-button routerLink="/senders" class="self-start">
+      <mat-icon aria-hidden="true">arrow_back</mat-icon>
+      All senders
+    </a>
+  </mat-card-content>
+</mat-card>

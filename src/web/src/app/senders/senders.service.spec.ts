@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { convertToParamMap } from '@angular/router';
+import { QUIET_STATUSES } from '../core/error.interceptor';
 import {
   DEFAULT_SENDER_QUERY,
   hasControlChars,
@@ -40,6 +41,47 @@ describe('SendersService', () => {
       'page=3&pageSize=25&sort=lastSeen&dir=asc&search=news',
     );
     req.flush({ items: [], page: 3, pageSize: 25, total: 0 });
+  });
+
+  it('listNoisy sends the thresholds as a ratio and leaves out an empty dormant filter', () => {
+    service
+      .listNoisy({
+        minMessages: 12,
+        minUnreadPercent: 85,
+        dormantDays: null,
+        search: ' shop ',
+        page: 2,
+        pageSize: 50,
+      })
+      .subscribe();
+    const req = http.expectOne((r) => r.method === 'GET' && r.url === '/api/senders/noisy');
+    expect(req.request.params.toString()).toBe(
+      'minMessages=12&minUnreadRatio=0.85&page=2&pageSize=50&search=shop',
+    );
+    req.flush({ items: [], page: 2, pageSize: 50, total: 0 });
+  });
+
+  it('proposeNoisy and archiveSenders post the senders and keep a 422 out of the snackbar', () => {
+    service
+      .proposeNoisy({
+        canonicalAddresses: ['a@example.com'],
+        toBeDeleted: true,
+        unsubscribe: false,
+      })
+      .subscribe();
+    service.archiveSenders({ canonicalAddresses: ['a@example.com'] }).subscribe();
+    const propose = http.expectOne('/api/senders/noisy/proposals');
+    expect(propose.request.body).toEqual({
+      canonicalAddresses: ['a@example.com'],
+      toBeDeleted: true,
+      unsubscribe: false,
+    });
+    expect(propose.request.context.get(QUIET_STATUSES)).toEqual([422]);
+    const archive = http.expectOne('/api/senders/archive');
+    expect(archive.request.method).toBe('POST');
+    expect(archive.request.context.get(QUIET_STATUSES)).toEqual([422]);
+    propose.flush({ created: 1, skippedProtected: 0, skippedAlreadySuggested: 0 });
+    archive.flush({ id: 'job-1' });
   });
 
   it('list repeats kind once per selected kind and sends the unread sort', () => {
