@@ -141,7 +141,7 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
         overlap.PolicyId.ShouldBe(seed.Policies["example.org"]);
         overlap.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe("@example.org");
         overlap.Fix.Create.Criteria.Query.ShouldBe("-from:x@example.org -from:y@example.org");
-        var excluded = review.Findings.Single(f => f.FilterIds[0] == seed.Excluded);
+        var excluded = review.Findings.Single(f => f.Kind == FilterFindingKind.PolicyConflict && f.FilterIds[0] == seed.Excluded);
         excluded.Kind.ShouldBe(FilterFindingKind.PolicyConflict);
         excluded.PolicyId.ShouldBe(seed.Policies["x@example.org"]);
         excluded.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe("x@example.org");

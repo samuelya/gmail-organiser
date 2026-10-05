@@ -6,7 +6,7 @@ using GmailOrganiser.Rules.Review;
 
 namespace GmailOrganiser.Tests.Unit.Rules;
 
-public sealed class FilterChecksTests
+public sealed partial class FilterChecksTests
 {
     private static readonly DateTimeOffset Seen = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
@@ -228,7 +228,8 @@ public sealed class FilterChecksTests
         FilterRow[] rows =
         [
             Row("in", new(From: "one@example.com"), label),
-            Row("sub", new(From: "two@news.example.com", Subject: "Weekly"), new(["Label_2"], [])),
+            Row("sub", new(From: "two@news.example.com"), new(["Label_2"], [])),
+            Row("narrowed", new(From: "two@news.example.com", Subject: "Weekly"), new(["Label_2"], [])),
             Row("excluded", new(From: "own@example.com"), label),
             Row("wider", new(From: "three@example.com", Query: "a OR b"), label),
             Row("other", new(From: "one@example.org"), new(["Label_2"], [])),
@@ -339,85 +340,6 @@ public sealed class FilterChecksTests
             .Where(f => f.Kind is FilterFindingKind.OverlapsPolicy or FilterFindingKind.PolicyConflict).ToList();
 
         findings.Select(f => f.Kind).ShouldBe(within ? [FilterFindingKind.OverlapsPolicy] : []);
-    }
-
-    // A skip-inbox proposal carves transactional mail out for policy auto-apply; that carve-out is no requirement on the
-    // filter, but a filter whose own conditions sit inside it is not within the proposal.
-    [Fact]
-    public void A_filter_is_within_a_skip_inbox_proposal_unless_its_own_conditions_are_in_the_transactional_carve_out()
-    {
-        const string negation = "-has:attachment -invoice -\"two words\"";
-        var proposal = Proposal("a@example.com", negation, "Synthetic/Shop", skipInbox: true);
-        var labels = Labels.Append(new("TRASH", "TRASH", GmailLabelType.System)).ToList();
-        FilterRow[] rows =
-        [
-            Row("archives", new(From: "a@example.com"), new(["Label_1"], ["INBOX"])),
-            Row("labels", new(From: "a@example.com"), new(["Label_1"], [])),
-            Row("other", new(From: "a@example.com"), new(["Label_2"], [])),
-            Row("trash", new(From: "a@example.com"), new(["TRASH"], [])),
-            Row("attachments", new(From: "a@example.com", HasAttachment: true), new(["Label_2"], [])),
-            Row("invoices", new(From: "a@example.com", Query: "invoice"), new(["Label_2"], [])),
-        ];
-
-        var findings = PolicyFindings(FilterChecks.Run(rows, labels, NotEvaluable, 365, [proposal]));
-
-        findings.Select(f => (f.Kind, string.Join(',', f.FilterIds)))
-            .ShouldBe([(FilterFindingKind.PolicyConflict, "other"), (FilterFindingKind.PolicyConflict, "trash"), (FilterFindingKind.OverlapsPolicy, "archives")]);
-        findings.ShouldAllBe(f => f.Fix.PolicyId == proposal.PolicyId && f.Fix.Create!.Criteria.Query == negation && f.Fix.Create.Action.RemoveLabelIds.SequenceEqual(new[] { "INBOX" }));
-    }
-
-    // Every exclusion is its own term; an excluded sender's filter belongs to that sender's own policy, found there.
-    [Fact]
-    public void A_proposal_excluding_two_senders_judges_the_other_filters_and_leaves_the_excluded_senders_to_their_own_policy()
-    {
-        var domain = Proposal("@example.com", "-from:x@example.com -from:y@example.com", "Synthetic/Shop");
-        var own = Proposal("x@example.com", null, "Synthetic/News");
-        var list = Proposal(null, "list:news.example.com -from:x@example.com", "Synthetic/Shop");
-        FilterRow[] rows =
-        [
-            Row("in", new(From: "a@example.com"), new(["Label_1"], [])),
-            Row("wrong", new(From: "b@example.com"), new(["Label_2"], [])),
-            Row("x", new(From: "x@example.com"), new(["Label_1"], [])),
-            Row("y", new(From: "y@example.com"), new(["Label_2"], [])),
-            Row("list", new(Query: "list:<news.example.com>"), new(["Label_1"], [])),
-            Row("list-x", new(Query: "list:<news.example.com> from:x@example.com"), new(["Label_1"], [])),
-        ];
-
-        var findings = PolicyFindings(FilterChecks.Run(rows, Labels, NotEvaluable, 365, [domain, own, list]));
-
-        findings.Select(f => (f.Kind, string.Join(',', f.FilterIds), f.Fix.PolicyId)).ShouldBe(
-        [
-            (FilterFindingKind.PolicyConflict, "wrong", domain.PolicyId),
-            (FilterFindingKind.PolicyConflict, "x", own.PolicyId),
-            (FilterFindingKind.OverlapsPolicy, "in", domain.PolicyId),
-            (FilterFindingKind.OverlapsPolicy, "list", list.PolicyId),
-        ]);
-        findings.Single(f => f.FilterIds[0] == "in").Fix.Create!.Criteria.Query.ShouldBe("-from:x@example.com -from:y@example.com");
-    }
-
-    [Fact]
-    public void A_relabel_names_the_filters_other_actions_the_policy_filter_drops()
-    {
-        var labels = Labels.Concat([new("TRASH", "TRASH", GmailLabelType.System), new("STARRED", "STARRED", GmailLabelType.System)]).ToList();
-        FilterRow[] rows =
-        [
-            Row("starred", new(From: "a@example.com"), new(["Label_2", "STARRED"], ["UNREAD"])),
-            Row("trash", new(From: "b@example.com"), new(["TRASH", "Label_2"], ["INBOX"])),
-            Row("plain", new(From: "c@example.com"), new(["Label_2"], [])),
-        ];
-
-        var findings = PolicyFindings(FilterChecks.Run(rows, labels, NotEvaluable, 365, [DomainProposal()]));
-
-        findings.Select(f => f.Kind).ShouldAllBe(k => k == FilterFindingKind.PolicyConflict);
-        var starred = findings.Single(f => f.FilterIds[0] == "starred").Description;
-        starred.ShouldContain("adds Synthetic/News");
-        starred.ShouldContain("won't add STARRED and remove UNREAD, as this one does; those actions are dropped");
-        var trash = findings.Single(f => f.FilterIds[0] == "trash").Description;
-        trash.ShouldContain("sends to Trash or Spam");
-        trash.ShouldContain("won't add Synthetic/News, as this one does");
-        trash.ShouldNotContain("INBOX");
-        findings.Single(f => f.FilterIds[0] == "plain").Description.ShouldNotContain("dropped");
-        findings.ShouldAllBe(f => f.Fix.Create!.Action.AddLabelIds.SequenceEqual(new[] { "Label_1" }) && f.Fix.Create.Action.RemoveLabelIds.Count == 0);
     }
 
     [Fact]

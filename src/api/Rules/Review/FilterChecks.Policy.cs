@@ -8,8 +8,9 @@ namespace GmailOrganiser.Rules.Review;
 /// The consolidation checks against the policy proposals (#374). A filter is within a proposal when the policy decides
 /// at least what the filter matches: each of the filter's <c>from</c> terms is one of the proposal's, or under one of its
 /// <c>@domain</c>s and not excluded by a <c>-from:</c>, and the filter has every positive token of the proposal's query
-/// (compared after <see cref="PolicyFilterProposalQuery.CriteriaTerms"/>; see <see cref="Within"/> for the proposal's
-/// negated tokens); only a filter whose raw criteria pass <see cref="PlainCriteria"/> is judged at all. A fix always
+/// (compared after <see cref="PolicyFilterProposalQuery.CriteriaTerms"/>; see <see cref="Within"/> for a proposal with
+/// negated tokens, where only a filter with no condition of its own is judged); only a filter whose raw criteria pass
+/// <see cref="PlainCriteria"/> is judged at all. A fix always
 /// creates the proposal as #373 built it, so it never adds the delete label, skips the inbox only where #373 allows and
 /// fits the length cap; a relabel's text names the filter's other actions it drops. A proposal whose label the mailbox
 /// doesn't have yet, or a filter only partly within one, gets no finding.
@@ -37,7 +38,7 @@ public static partial class FilterChecks
         foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0 && PlainCriteria(f.Criteria)))
         {
             var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(f.Criteria);
-            var within = targets.Where(t => Within(from, tokens, t)).ToList();
+            var within = targets.Where(t => Within(f.Criteria, from, tokens, t)).ToList();
 
             // A filter that is a proposal already (same criteria and action) is the policy's own filter.
             if (within.Any(t => t.ActionKey == f.ActionKey && t.From.SequenceEqual(from) && t.Tokens.SequenceEqual(tokens)))
@@ -76,7 +77,7 @@ public static partial class FilterChecks
 
                 if (Dropped(f.Action, target.Action, userIds) is { IsEmpty: false } dropped)
                 {
-                    text += $" The policy's filter won't {Describe(dropped, names)}, as this one does; those actions are dropped.";
+                    text += $" The policy's filter won't {DescribeDropped(dropped, names)}, as this one does; those actions are dropped.";
                 }
 
                 yield return new(
@@ -115,13 +116,17 @@ public static partial class FilterChecks
     }
 
     /// <summary>
-    /// Whether the policy decides at least what a filter with these terms matches. The proposal's positive tokens must all
-    /// be in the filter. A negated token carves out mail the portal decides by another route (a narrower policy's filter,
-    /// the list policy, an earlier rule of a mixed policy, or policy auto-apply for transactional mail), so it only
-    /// disqualifies a filter whose own conditions put all of its mail in that carve-out: the filter carries that very
-    /// token, or its sender is one a <c>-from:</c> excludes.
+    /// Whether the policy decides at least what a filter with these terms matches. The filter's <c>from</c> must be
+    /// covered and the proposal's positive tokens must all be in the filter. A negated token carves out mail the portal
+    /// decides by another route (a narrower policy's filter, the list policy, an earlier rule of a mixed policy, or policy
+    /// auto-apply for transactional mail); which of a filter's mail falls in it can't be told from its tokens (#454:
+    /// <c>subject:invoice</c> is all in <c>-invoice</c>, <c>filename:pdf</c> in <c>-has:attachment</c>), so against such a
+    /// proposal only a filter with no condition beyond the proposal's own positive ones is judged: its raw criteria are
+    /// covered <c>from</c> terms, none under a <c>-from:</c> exclusion, plus exactly the proposal's positive query tokens
+    /// (none for a sender or domain proposal, the <c>list:</c> for a list proposal) and nothing else. Such a filter always
+    /// has mail outside the carve-out and the carved-out part is decided elsewhere, so a merge never strands mail.
     /// </summary>
-    private static bool Within(IReadOnlyList<string> from, IReadOnlyList<string> tokens, PolicyTarget target)
+    private static bool Within(GmailFilterCriteria criteria, IReadOnlyList<string> from, IReadOnlyList<string> tokens, PolicyTarget target)
     {
         var excluded = target.Tokens.Where(t => t.StartsWith("-from:", StringComparison.Ordinal) && t.Length > 6).Select(t => t[6..]).ToList();
         if (from.Count == 0 ? target.From.Count > 0 : !from.All(e => Covers(target.From, excluded, e)))
@@ -129,7 +134,14 @@ public static partial class FilterChecks
             return false;
         }
 
-        return target.Tokens.All(t => t.StartsWith('-') ? !tokens.Contains(t[1..], StringComparer.Ordinal) : tokens.Contains(t, StringComparer.Ordinal));
+        var positive = target.Tokens.Where(t => !t.StartsWith('-')).ToList();
+        if (positive.Count == target.Tokens.Count)
+        {
+            return positive.All(t => tokens.Contains(t, StringComparer.Ordinal));
+        }
+
+        return tokens.SequenceEqual(positive, StringComparer.Ordinal)
+            && criteria is { NegatedQuery: null or "", To: null or "", Subject: null or "", Size: null } and not { HasAttachment: true };
     }
 
     private static bool Covers(IReadOnlyList<string> proposalFrom, List<string> excluded, string term) =>
@@ -166,6 +178,44 @@ public static partial class FilterChecks
             [.. filter.AddLabelIds.Where(id => !proposal.AddLabelIds.Contains(id, StringComparer.Ordinal)
                 && id is not (MailboxFetchJob.TrashLabelId or MailboxFetchJob.SpamLabelId) && (hides || !userIds.Contains(id)))],
             [.. filter.RemoveLabelIds.Where(id => !proposal.RemoveLabelIds.Contains(id, StringComparer.Ordinal) && id != FilterSpec.Inbox)]);
+    }
+
+    /// <summary>
+    /// <see cref="Dropped"/> as the filter editor names its actions: star, mark important or read, never spam, never mark
+    /// important; a user label (when the finding is about Trash or Spam) or an unknown id goes through <see cref="Describe"/>.
+    /// </summary>
+    private static string DescribeDropped(GmailFilterAction dropped, Dictionary<string, string> names)
+    {
+        var parts = new List<string>();
+        var rest = new GmailFilterAction(
+            [.. dropped.AddLabelIds.Where(id => !Friendly(id, added: true))],
+            [.. dropped.RemoveLabelIds.Where(id => !Friendly(id, added: false))]);
+        if (rest.AddLabelIds.Count > 0 || rest.RemoveLabelIds.Count > 0)
+        {
+            parts.Add(Describe(rest, names));
+        }
+
+        return parts.Count == 1 ? parts[0] : $"{string.Join(", ", parts[..^1])} and {parts[^1]}";
+
+        bool Friendly(string id, bool added)
+        {
+            var verb = (id, added) switch
+            {
+                ("STARRED", true) => "star",
+                ("IMPORTANT", true) => "mark important",
+                (FilterSpec.Unread, false) => "mark read",
+                (MailboxFetchJob.SpamLabelId, false) => "never send to spam",
+                ("IMPORTANT", false) => "never mark important",
+                _ => null,
+            };
+            if (verb is null)
+            {
+                return false;
+            }
+
+            parts.Add(verb);
+            return true;
+        }
     }
 
     /// <summary>
