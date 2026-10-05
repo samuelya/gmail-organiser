@@ -42,6 +42,7 @@ const ALLOWLIST_QUERY: Omit<SenderQuery, 'page'> = {
   pageSize: ALLOWLIST_PAGE_SIZE,
   sort: 'address',
   dir: 'asc',
+  kinds: [],
 };
 
 /**

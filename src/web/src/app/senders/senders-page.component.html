@@ -63,6 +63,18 @@
       </form>
     </div>
 
+    <mat-chip-listbox
+      multiple
+      aria-label="Filter by kind"
+      [value]="query().kinds"
+      (change)="onKinds($event.value)"
+      data-testid="kind-filter"
+    >
+      @for (option of kinds; track option.kind) {
+        <mat-chip-option [value]="option.kind">{{ option.label }}</mat-chip-option>
+      }
+    </mat-chip-listbox>
+
     @if (loading()) {
       <mat-progress-bar mode="indeterminate" aria-label="Loading senders" />
     }
@@ -78,7 +90,13 @@
       @if (page.total === 0) {
         @if (query().search) {
           <p class="muted m-0" role="status" data-testid="no-matches">
-            No senders match “{{ query().search }}”.
+            No senders match “{{ query().search }}”{{
+              query().kinds.length ? ' and the kind filter' : ''
+            }}.
+          </p>
+        } @else if (query().kinds.length) {
+          <p class="muted m-0" role="status" data-testid="no-matches">
+            No senders of the selected kinds.
           </p>
         } @else {
           <p class="muted m-0" role="status" data-testid="no-senders">
@@ -103,16 +121,36 @@
               <th mat-header-cell *matHeaderCellDef mat-sort-header="address">Sender</th>
               <td mat-cell *matCellDef="let row" data-testid="cell-sender">
                 <div class="flex min-w-0 flex-col">
-                  <span>{{ row.sender.displayName || row.sender.address }}</span>
+                  @let canonical = row.sender.canonicalAddress;
+                  @let raw = canonical === row.sender.address ? '' : row.sender.address;
                   @if (row.sender.displayName) {
-                    <span class="address">{{ row.sender.address }}</span>
+                    <span>{{ row.sender.displayName }}</span>
                   }
+                  <span
+                    [class.address]="!!row.sender.displayName"
+                    [matTooltip]="raw ? 'Sent as ' + raw : ''"
+                    [attr.tabindex]="raw ? 0 : null"
+                    [attr.aria-label]="raw ? canonical + ', sent as ' + raw : null"
+                    data-testid="canonical-address"
+                    >{{ canonical }}</span
+                  >
                   @if (
+                    row.sender.isRelay ||
                     row.sender.allowlisted ||
                     row.sender.allowlistedByDomain ||
                     row.sender.unsubscribedAt
                   ) {
                     <mat-chip-set aria-label="Status">
+                      @if (row.sender.isRelay) {
+                        <mat-chip
+                          disableRipple
+                          [matTooltip]="'Relayed through ' + row.sender.address"
+                          data-testid="relay-chip"
+                        >
+                          <mat-icon matChipAvatar aria-hidden="true">forward_to_inbox</mat-icon>
+                          Relay
+                        </mat-chip>
+                      }
                       @if (row.sender.allowlisted) {
                         <mat-chip disableRipple data-testid="allowlisted-chip">
                           <mat-icon matChipAvatar aria-hidden="true">shield</mat-icon>
@@ -137,15 +175,53 @@
               </td>
             </ng-container>
 
+            <ng-container matColumnDef="kind">
+              <th mat-header-cell *matHeaderCellDef>Kind</th>
+              <td mat-cell *matCellDef="let row">
+                <app-sender-kind-chip [kind]="row.sender.kind" />
+              </td>
+            </ng-container>
+
             <ng-container matColumnDef="domain">
               <th mat-header-cell *matHeaderCellDef>Domain</th>
-              <td mat-cell *matCellDef="let row">{{ row.sender.domain }}</td>
+              <td mat-cell *matCellDef="let row">{{ row.sender.canonicalDomain }}</td>
             </ng-container>
 
             <ng-container matColumnDef="total">
               <th mat-header-cell *matHeaderCellDef mat-sort-header="total">Total</th>
               <td mat-cell *matCellDef="let row" data-testid="cell-total">
                 {{ row.sender.totalCount | number }}
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="unread">
+              <th mat-header-cell *matHeaderCellDef mat-sort-header="unread">Unread %</th>
+              <td
+                mat-cell
+                *matCellDef="let row"
+                class="whitespace-nowrap"
+                data-testid="cell-unread"
+              >
+                {{ row.unread }}%
+                <span class="muted text-xs">({{ row.sender.unreadCount | number }})</span>
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="replied">
+              <th mat-header-cell *matHeaderCellDef>Replied</th>
+              <td mat-cell *matCellDef="let row" data-testid="cell-replied">
+                @if (row.sender.repliedCount > 0) {
+                  <mat-icon
+                    [matTooltip]="'Replied ' + row.sender.repliedCount + '×'"
+                    [attr.aria-label]="'Replied ' + row.sender.repliedCount + ' times'"
+                    role="img"
+                    tabindex="0"
+                    data-testid="replied-icon"
+                    >reply</mat-icon
+                  >
+                } @else {
+                  <span class="muted" aria-label="Never replied">—</span>
+                }
               </td>
             </ng-container>
 
@@ -166,6 +242,17 @@
                     {{ row.sender.appliedCount | number }} applied
                   </span>
                 </div>
+              </td>
+            </ng-container>
+
+            <ng-container matColumnDef="firstSeen">
+              <th mat-header-cell *matHeaderCellDef>First seen</th>
+              <td mat-cell *matCellDef="let row" class="whitespace-nowrap">
+                @if (row.sender.firstSeenAt; as seen) {
+                  {{ seen | date: 'mediumDate' }}
+                } @else {
+                  <span class="muted">—</span>
+                }
               </td>
             </ng-container>
 
@@ -218,28 +305,32 @@
                   }}</mat-icon>
                 </button>
                 @let listed = listedDomain(row.sender);
-                <button
-                  mat-icon-button
-                  type="button"
-                  (click)="toggleDomainAllowlist(row.sender)"
-                  [disabled]="domainSaving() || allowlistedDomains() === null"
-                  [attr.aria-pressed]="!!listed"
-                  [matTooltip]="
-                    listed
-                      ? 'Remove ' + listed + ' from allowlist'
-                      : 'Allowlist domain ' + row.sender.domain
-                  "
-                  [attr.aria-label]="
-                    listed
-                      ? 'Remove ' + listed + ' from allowlist'
-                      : 'Allowlist domain ' + row.sender.domain
-                  "
-                  data-testid="allowlist-domain"
-                >
-                  <mat-icon aria-hidden="true">{{
-                    listed ? 'domain_disabled' : 'domain_add'
-                  }}</mat-icon>
-                </button>
+                <!-- A relay row's domain is the relay service; the allowlist matches the raw sender domain, so only
+                     offer removing a domain that already covers it. -->
+                @if (!row.sender.isRelay || listed) {
+                  <button
+                    mat-icon-button
+                    type="button"
+                    (click)="toggleDomainAllowlist(row.sender)"
+                    [disabled]="domainSaving() || allowlistedDomains() === null"
+                    [attr.aria-pressed]="!!listed"
+                    [matTooltip]="
+                      listed
+                        ? 'Remove ' + listed + ' from allowlist'
+                        : 'Allowlist domain ' + row.sender.domain
+                    "
+                    [attr.aria-label]="
+                      listed
+                        ? 'Remove ' + listed + ' from allowlist'
+                        : 'Allowlist domain ' + row.sender.domain
+                    "
+                    data-testid="allowlist-domain"
+                  >
+                    <mat-icon aria-hidden="true">{{
+                      listed ? 'domain_disabled' : 'domain_add'
+                    }}</mat-icon>
+                  </button>
+                }
                 @if (rowJobs().get(row.sender.address); as job) {
                   <app-sender-progress
                     [job]="job"

@@ -1,3 +1,4 @@
+import { AbstractControl, ValidationErrors } from '@angular/forms';
 import { ParamMap, Params } from '@angular/router';
 import { JobDto } from '../core/jobs.models';
 import { SortDirection } from '../core/paging.models';
@@ -19,7 +20,22 @@ export interface SenderDto {
   activeFetchJob: JobDto | null;
   /** When the sender was last unsubscribed from (one-click, or a link / `mailto:` the user marked). */
   unsubscribedAt: string | null;
+  /** The relay-decoded address senders are grouped by; `address` when it is not a relay. */
+  canonicalAddress: string;
+  canonicalDomain: string;
+  /** `address` is a relay (e.g. a mailing service) that `canonicalAddress` was decoded from. */
+  isRelay: boolean;
+  kind: SenderKind;
+  unreadCount: number;
+  repliedCount: number;
+  firstSeenAt: string | null;
 }
+
+/** How a sender writes, from its Stage-0 stats. */
+export type SenderKind = 'human' | 'bulk' | 'mixed' | 'unknown';
+
+/** Every kind, in the order the filter shows them. */
+export const SENDER_KINDS: readonly SenderKind[] = ['human', 'bulk', 'mixed', 'unknown'];
 
 /** `POST /api/fetch/sender`: `created` for a new job (202), not when the target's job was active or resumed (200). */
 export interface SenderFetchStarted {
@@ -27,7 +43,7 @@ export interface SenderFetchStarted {
   created: boolean;
 }
 
-export type SenderSort = 'total' | 'lastSeen' | 'address' | 'analysed';
+export type SenderSort = 'total' | 'lastSeen' | 'address' | 'analysed' | 'unread';
 
 /** The senders list request; also the page's URL query params. */
 export interface SenderQuery {
@@ -36,6 +52,8 @@ export interface SenderQuery {
   pageSize: number;
   sort: SenderSort;
   dir: SortDirection;
+  /** Only senders of these kinds; empty for all. The URL repeats `kind`. */
+  kinds: readonly SenderKind[];
 }
 
 /** `sender_fetch`, the job type `POST /api/fetch/sender` enqueues. */
@@ -51,6 +69,7 @@ export const DEFAULT_SENDER_QUERY: Readonly<SenderQuery> = {
   pageSize: 50,
   sort: 'total',
   dir: 'desc',
+  kinds: [],
 };
 
 /** What the API's `char.IsControl` rejects: C0, DEL and C1. */
@@ -65,7 +84,7 @@ export function cleanSearch(value: string): string {
   return value.replace(CONTROL_CHARS, ' ').trim().slice(0, MAX_SEARCH_LENGTH).trim();
 }
 
-const SORTS: readonly SenderSort[] = ['total', 'lastSeen', 'address', 'analysed'];
+const SORTS: readonly SenderSort[] = ['total', 'lastSeen', 'address', 'analysed', 'unread'];
 /** Keeps a hand-edited URL inside the API's page limit, so it never answers 400. */
 const MAX_PAGE = 1_000_000;
 
@@ -76,12 +95,14 @@ export function parseSenderQuery(params: ParamMap): SenderQuery {
   const pageSize = Number(params.get('pageSize'));
   const sort = params.get('sort') as SenderSort | null;
   const dir = params.get('dir');
+  const kinds = new Set(params.getAll('kind'));
   return {
     search: cleanSearch(params.get('search') ?? ''),
     page: Number.isInteger(page) && page >= 1 && page <= MAX_PAGE ? page : d.page,
     pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : d.pageSize,
     sort: sort && SORTS.includes(sort) ? sort : d.sort,
     dir: dir === 'asc' || dir === 'desc' ? dir : d.dir,
+    kinds: SENDER_KINDS.filter((kind) => kinds.has(kind)),
   };
 }
 
@@ -94,6 +115,7 @@ export function senderQueryParams(query: SenderQuery): Params {
     pageSize: query.pageSize === d.pageSize ? null : query.pageSize,
     sort: query.sort === d.sort ? null : query.sort,
     dir: query.dir === d.dir ? null : query.dir,
+    kind: query.kinds.length ? [...query.kinds] : null,
   };
 }
 
@@ -139,6 +161,17 @@ function isHostname(value: string): boolean {
   return value.length <= MAX_DOMAIN && HOSTNAME.test(value);
 }
 
+/** API-side rules for a sender fetch target; blank (spaces only, too) is `required`. */
+export function fetchTargetValidator(control: AbstractControl<string>): ValidationErrors | null {
+  if (!control.value.trim()) return { required: true };
+  return normaliseFetchTarget(control.value) ? null : { target: true };
+}
+
+/** The API rejects control characters in a search, e.g. a tab pasted from a spreadsheet. */
+export function searchValidator(control: AbstractControl<string>): ValidationErrors | null {
+  return hasControlChars(control.value) ? { controlChars: true } : null;
+}
+
 /** Last page that has rows; at least 1. */
 export function lastPage(total: number, pageSize: number): number {
   return Math.max(1, Math.ceil(total / pageSize));
@@ -148,6 +181,17 @@ export function lastPage(total: number, pageSize: number): number {
 export function analysedPercent(sender: Pick<SenderDto, 'analysedCount' | 'totalCount'>): number {
   if (sender.totalCount <= 0) return 0;
   return Math.min(100, Math.round((sender.analysedCount / sender.totalCount) * 100));
+}
+
+/** Unread share of a sender's mail, 0–100. */
+export function unreadPercent(sender: Pick<SenderDto, 'unreadCount' | 'totalCount'>): number {
+  if (sender.totalCount <= 0) return 0;
+  return Math.min(100, Math.round((sender.unreadCount / sender.totalCount) * 100));
+}
+
+/** A list row: one stable object per sender, with its analysed and unread shares. */
+export function senderRow(sender: SenderDto) {
+  return { sender, percent: analysedPercent(sender), unread: unreadPercent(sender) };
 }
 
 const UNITS: readonly [Intl.RelativeTimeFormatUnit, number][] = [

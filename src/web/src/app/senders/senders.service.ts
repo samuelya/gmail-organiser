@@ -19,6 +19,7 @@ export class SendersService {
       .set('dir', query.dir);
     const search = query.search.trim();
     if (search) params = params.set('search', search);
+    for (const kind of query.kinds) params = params.append('kind', kind);
     if (allowlisted !== undefined) params = params.set('allowlisted', allowlisted);
     return this.http.get<PagedDto<SenderDto>>('/api/senders', { params });
   }

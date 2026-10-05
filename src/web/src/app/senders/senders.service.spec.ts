@@ -9,7 +9,10 @@ import {
   normaliseFetchTarget,
   parseSenderQuery,
   relativeTime,
+  senderRow,
+  SenderDto,
   SenderFetchStarted,
+  SenderQuery,
   senderQueryParams,
 } from './senders.models';
 import { SendersService } from './senders.service';
@@ -30,13 +33,21 @@ describe('SendersService', () => {
 
   it('list sends page, size, sort and dir, and the trimmed search', () => {
     service
-      .list({ search: '  news ', page: 3, pageSize: 25, sort: 'lastSeen', dir: 'asc' })
+      .list({ search: '  news ', page: 3, pageSize: 25, sort: 'lastSeen', dir: 'asc', kinds: [] })
       .subscribe();
     const req = http.expectOne((r) => r.method === 'GET' && r.url === '/api/senders');
     expect(req.request.params.toString()).toBe(
       'page=3&pageSize=25&sort=lastSeen&dir=asc&search=news',
     );
     req.flush({ items: [], page: 3, pageSize: 25, total: 0 });
+  });
+
+  it('list repeats kind once per selected kind and sends the unread sort', () => {
+    service.list({ ...DEFAULT_SENDER_QUERY, sort: 'unread', kinds: ['bulk', 'mixed'] }).subscribe();
+    const req = http.expectOne((r) => r.method === 'GET' && r.url === '/api/senders');
+    expect(req.request.params.get('sort')).toBe('unread');
+    expect(req.request.params.getAll('kind')).toEqual(['bulk', 'mixed']);
+    req.flush({ items: [], page: 1, pageSize: 50, total: 0 });
   });
 
   it('list filters on the allowlist flag when asked', () => {
@@ -86,6 +97,14 @@ describe('sender query params', () => {
     expect(parseSenderQuery(convertToParamMap({ page: '1.5' })).page).toBe(1);
   });
 
+  it('keep only known kinds, once each, in display order', () => {
+    const params = convertToParamMap({ kind: ['mixed', 'robot', 'human', 'mixed'] });
+    expect(parseSenderQuery(params).kinds).toEqual(['human', 'mixed']);
+    expect(senderQueryParams({ ...DEFAULT_SENDER_QUERY, kinds: ['bulk'] })['kind']).toEqual([
+      'bulk',
+    ]);
+  });
+
   it('turn control characters in the search into spaces', () => {
     expect(parseSenderQuery(convertToParamMap({ search: 'a\tb\n' })).search).toBe('a b');
     expect(hasControlChars('a\u0085b')).toBe(true);
@@ -93,7 +112,14 @@ describe('sender query params', () => {
   });
 
   it('round-trip, leaving the defaults out of the URL', () => {
-    const query = { search: 'news', page: 2, pageSize: 100, sort: 'address', dir: 'asc' } as const;
+    const query: SenderQuery = {
+      search: 'news',
+      page: 2,
+      pageSize: 100,
+      sort: 'unread',
+      dir: 'asc',
+      kinds: ['human', 'unknown'],
+    };
     const params = senderQueryParams(query);
     expect(parseSenderQuery(convertToParamMap(params))).toEqual(query);
     expect(Object.values(senderQueryParams(DEFAULT_SENDER_QUERY)).every((v) => v === null)).toBe(
@@ -147,6 +173,14 @@ describe('normaliseAllowlistAddress', () => {
     'a;b@example.com',
   ])('rejects %j', (input) => {
     expect(normaliseAllowlistAddress(input)).toBeNull();
+  });
+});
+
+describe('senderRow', () => {
+  it('rounds the unread share and treats an empty sender as 0%', () => {
+    const counts = { analysedCount: 0, unreadCount: 2, totalCount: 3 };
+    expect(senderRow(counts as SenderDto).unread).toBe(67);
+    expect(senderRow({ ...counts, totalCount: 0 } as SenderDto).unread).toBe(0);
   });
 });
 

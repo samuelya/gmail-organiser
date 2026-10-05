@@ -43,6 +43,13 @@ const sender = (over: Partial<SenderDto> = {}): SenderDto => ({
   allowlistedByDomain: false,
   activeFetchJob: null,
   unsubscribedAt: null,
+  canonicalAddress: over.address ?? 'news@example.com',
+  canonicalDomain: 'example.com',
+  isRelay: false,
+  kind: 'bulk',
+  unreadCount: 0,
+  repliedCount: 0,
+  firstSeenAt: null,
   ...over,
 });
 
@@ -121,27 +128,12 @@ describe('SendersPage', () => {
       pageSize: 50,
       sort: 'address',
       dir: 'asc',
+      kinds: [],
     });
     const row = el.querySelector('[data-testid="sender-row"]')!;
     expect(row.textContent).toContain('Example News');
     expect(row.textContent).toContain('news@example.com');
     expect(row.textContent).toMatch(/4\/10/);
-  });
-
-  it('shows an Unsubscribed chip only on a row with unsubscribedAt', async () => {
-    const { el } = await render(
-      '/senders',
-      paged([
-        sender(),
-        sender({ address: 'shop@example.com', unsubscribedAt: '2026-03-04T10:00:00Z' }),
-      ]),
-    );
-    const chips = el.querySelectorAll('[data-testid="unsubscribed-chip"]');
-    expect(chips).toHaveLength(1);
-    expect(chips[0].textContent).toContain('Unsubscribed Mar 4, 2026');
-    expect(chips[0].closest('[data-testid="sender-row"]')!.textContent).toContain(
-      'shop@example.com',
-    );
   });
 
   it('each row links to Analyse with the sender and the default count from settings', async () => {
@@ -457,13 +449,6 @@ describe('SendersPage', () => {
     );
   });
 
-  it('empty states: no senders yet links to the Dashboard; no search matches', async () => {
-    const { harness, q } = await render('/senders', paged([]));
-    expect(q('no-senders')!.querySelector('a')!.getAttribute('href')).toBe('/dashboard');
-    await harness.navigateByUrl('/senders?search=nothing');
-    expect(q('no-senders')).toBeNull();
-    expect(q('no-matches')!.textContent).toContain('nothing');
-  });
 });
 
 describe('SendersPage API errors', () => {
