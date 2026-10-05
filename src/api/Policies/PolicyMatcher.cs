@@ -25,7 +25,7 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
 {
     /// <summary>
     /// <list type="number">
-    /// <item>The first approved rule, in saved <see cref="SenderPolicyRuleRow.Position"/> order, whose every set match
+    /// <item>The first approved rule of a mixed policy, in saved <see cref="SenderPolicyRuleRow.Position"/> order, whose every set match
     /// field holds. Saved order wins so a specific rule placed above a broad one is never overridden.</item>
     /// <item>When the message is transactional and no rule matched or the rule deletes: a mixed policy gives null (review);
     /// otherwise the policy default with delete downgraded to archive, <see cref="PolicyMatch.Guarded"/> set.</item>
@@ -56,9 +56,12 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
         return policy.IsMixed ? null : Default(policy);
     }
 
-    /// <summary>The first approved rule, in saved order, whose every set match field holds; before the guard.</summary>
+    /// <summary>
+    /// The first approved rule of a mixed policy, in saved order, whose every set match field holds; before the guard.
+    /// Rules left on a single-label policy are ignored, not applied behind its default.
+    /// </summary>
     internal static SenderPolicyRuleRow? FirstRule(MessageRow m, SenderPolicyRow policy, string? canonicalAddress) =>
-        policy.Rules
+        !policy.IsMixed ? null : policy.Rules
             .Where(r => r.Status == PolicyStatus.Approved)
             .OrderBy(r => r.Position)
             .FirstOrDefault(r => Holds(r.Match, m, canonicalAddress));

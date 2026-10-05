@@ -45,6 +45,17 @@ public sealed class PolicyMatcherTests
     }
 
     [Fact]
+    public void Non_mixed_policy_ignores_its_rules()
+    {
+        var policy = Policy(PolicyAction.Keep, Rule(PolicyAction.Delete, new RuleMatch { ListIdPresent = true }, topic: "Shops/Example/Ads"));
+
+        var match = Matcher.Match(Message(listId: "news.example.com"), policy).ShouldNotBeNull();
+
+        match.Rule.ShouldBeNull();
+        (match.TopicLabel, match.Action).ShouldBe(("Shops/Example", PolicyAction.Keep));
+    }
+
+    [Fact]
     public void Guard_downgrades_a_non_mixed_delete_to_archive()
     {
         var match = Matcher.Match(Message(subject: "Invoice 42"), Policy(PolicyAction.Delete)).ShouldNotBeNull();

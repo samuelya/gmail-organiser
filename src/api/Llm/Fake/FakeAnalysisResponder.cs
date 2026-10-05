@@ -3,13 +3,15 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using GmailOrganiser.Analysis.Prompts;
+using GmailOrganiser.Policies.Prompts;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Llm.Fake;
 
 /// <summary>
 /// The deterministic answer of <c>LLM_FAKE=true</c>: a schema-valid suggestion per email of an analysis prompt, derived
-/// from the email headers only. Any other prompt (model test, vision) gets <see cref="FixedAnswer"/>.
+/// from the email headers only. A sender-policy prompt (#356) gets a policy derived from the profile's scope and
+/// categories. Any other prompt (model test, vision) gets <see cref="FixedAnswer"/>.
 /// </summary>
 public static class FakeAnalysisResponder
 {
@@ -26,6 +28,11 @@ public static class FakeAnalysisResponder
     {
         ArgumentNullException.ThrowIfNull(messages);
         var lines = string.Join('\n', messages.Select(m => m.Text)).Split('\n').Select(l => l.TrimEnd('\r')).ToList();
+        if (lines[0].Trim() == SenderPolicyPromptBuilder.Marker)
+        {
+            return Policy(lines);
+        }
+
         var emails = ReadEmails(lines);
         if (emails.Count == 0)
         {
@@ -70,6 +77,65 @@ public static class FakeAnalysisResponder
             reason = $"Fake answer for the {category} email",
             replaceLabels = replace,
         };
+    }
+
+    /// <summary>
+    /// Mixed with one rule per category when the profile has at least two (none excluded), else a single-label archive
+    /// policy. Reads only the profile's first <c>scope:</c> and <c>categories:</c> lines, which come before any
+    /// subject or body.
+    /// </summary>
+    private static string Policy(List<string> lines)
+    {
+        var start = lines.FindIndex(l => l.Trim() == SenderPolicyPromptBuilder.ProfileHeading);
+        var profile = start < 0 ? [] : lines[(start + 1)..];
+        var scope = profile.Select(l => Field(l, "scope")).FirstOrDefault(v => v is not null) ?? "";
+        var key = scope.Contains(' ', StringComparison.Ordinal) ? scope[(scope.IndexOf(' ', StringComparison.Ordinal) + 1)..] : scope;
+        var domain = DomainLabel(key.Contains('@', StringComparison.Ordinal) ? key : "fake@" + key);
+        var categories = (profile.Select(l => Field(l, "categories")).FirstOrDefault(v => v is not null) ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(c => c.Split(' ')[0].ToLowerInvariant())
+            .Where(c => c is not ("-" or "none"))
+            .ToList();
+        var tree = ReadLabelTree(lines);
+        var updates = $"Updates/{domain}";
+        var mixed = categories.Count >= 2;
+        var rules = mixed
+            ? categories.Take(SenderPolicyOutputParser.MaxRules).Select(c =>
+            {
+                var (label, mailType, action) = c switch
+                {
+                    "promotions" => ("Promotions", "marketing", "delete"),
+                    "social" => ("Social", "social", "archive"),
+                    "primary" => (updates, "personal", "keep"),
+                    _ => (updates, "notification", "archive"),
+                };
+                return new
+                {
+                    name = $"Fake {c} rule",
+                    match = new { category = c },
+                    topicLabel = label,
+                    documentTypeLabel = (string?)null,
+                    mailType,
+                    retentionDays = (int?)null,
+                    action,
+                    reason = $"Fake answer for the {c} mail",
+                };
+            }).ToList()
+            : [];
+
+        return JsonSerializer.Serialize(new
+        {
+            topicLabel = mixed ? null : updates,
+            isNewLabel = !mixed && !tree.Contains(updates),
+            documentTypeLabel = (string?)null,
+            mailType = mixed ? null : "notification",
+            retentionDays = (int?)null,
+            action = "archive",
+            confidence = Confidence(key),
+            reason = mixed ? "Fake answer for a mixed sender" : "Fake answer for a single-label sender",
+            isMixed = mixed,
+            rules,
+        });
     }
 
     // Reads at most the announced number of email blocks and skips every body, so email or attachment text can never
