@@ -25,6 +25,12 @@ public enum LabelPlanItemKind
 
     /// <summary>A flat <c>X-Y</c> label: proposed rename to <see cref="LabelPlanItem.ProposedName"/> (<c>X/Y</c>).</summary>
     Nest,
+
+    /// <summary>
+    /// A taxonomy label (#366) to create (<see cref="LabelPlanItem.ProposedName"/> when edited, else
+    /// <see cref="LabelPlanItem.LabelName"/>); its <see cref="LabelPlanItem.SenderKeys"/> get proposed policies.
+    /// </summary>
+    Create,
 }
 
 [JsonConverter(typeof(SnakeCaseJsonConverter<LabelPlanItemStatus>))]
@@ -44,6 +50,11 @@ public sealed class SnakeCaseJsonConverter<TEnum>() : JsonStringEnumConverter<TE
 /// <summary>One proposal of a label plan, stored in <see cref="LabelPlanRow.Items"/>.</summary>
 /// <param name="MessageCount">The label's message count when the plan was built.</param>
 /// <param name="AffectedFilterIds">Active filters whose action adds or removes the label.</param>
+/// <param name="Description">A taxonomy item's description of the label, for the user.</param>
+/// <param name="SenderKeys">
+/// A taxonomy item's canonical senders, which get proposed policies for the created label or, for a
+/// <see cref="LabelPlanItemKind.NearDuplicate"/> taxonomy item (empty <see cref="LabelId"/>), for its target label.
+/// </param>
 public sealed record LabelPlanItem(
     Guid Id,
     LabelPlanItemKind Kind,
@@ -56,7 +67,13 @@ public sealed record LabelPlanItem(
     IReadOnlyList<string> AffectedFilterIds,
     string Rationale,
     LabelPlanItemStatus Status,
-    string? Error = null);
+    string? Error = null,
+    string? Description = null,
+    IReadOnlyList<string>? SenderKeys = null)
+{
+    /// <summary>A taxonomy item (#366): it assigns senders instead of changing an existing label.</summary>
+    public bool IsTaxonomy => SenderKeys is not null;
+}
 
 /// <summary>
 /// One label review plan (<c>label_plans</c>): deterministic proposals over the account's user labels that the user edits,

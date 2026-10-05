@@ -55,7 +55,8 @@ public sealed class LlmClientFactory(
     private bool UseFake => options.Value.UseFake;
 
     // A new fake per call: callers dispose it, and its request log lives no longer than one run.
-    private static FakeChatClient CreateFakeChatClient() => new() { Responder = FakeAnalysisResponder.Answer };
+    private static FakeChatClient CreateFakeChatClient() =>
+        new() { Responder = m => FakeTaxonomyResponder.Answer(m) ?? FakeAnalysisResponder.Answer(m) };
 
     // Reports the fake model name, so memory never records fake vectors under the real model chosen in Settings.
     private static FakeEmbeddingGenerator CreateFakeEmbeddingGenerator() =>
