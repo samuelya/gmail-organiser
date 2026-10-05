@@ -125,7 +125,7 @@ public static class SuggestionOutputParser
     /// fences, trailing prose). A candidate that parses but holds no object (<c>[3]</c> in leading prose) is passed
     /// over for a later one. Null when no candidate is valid JSON.
     /// </summary>
-    private static JsonDocument? ReadFirstValue(string raw, out int candidates)
+    internal static JsonDocument? ReadFirstValue(string raw, out int candidates)
     {
         var bytes = Encoding.UTF8.GetBytes(raw);
         JsonDocument? fallback = null;
@@ -398,6 +398,6 @@ public static class SuggestionOutputParser
     private static string Shorten(string id) => id.Length <= MaxIdInError ? id : Cut(id, MaxIdInError) + "…";
 
     /// <summary>First <paramref name="max"/> chars without splitting a surrogate pair.</summary>
-    private static string Cut(string value, int max) =>
+    internal static string Cut(string value, int max) =>
         value.Length <= max ? value : value[..(char.IsHighSurrogate(value[max - 1]) ? max - 1 : max)];
 }

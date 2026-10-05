@@ -1,10 +1,10 @@
-using System.Text;
 using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Settings;
 
 namespace GmailOrganiser.Policies.Prompts;
 
@@ -33,23 +33,20 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
     public const int MaxNameLength = 100;
     public const int MaxMatchValueLength = 200;
 
-    private const int MaxCandidates = 32;
     private const string InvalidText = "Output contains a string that is not valid UTF-16 text.";
+    private const string Ellipsis = "…";
 
-    private static readonly JsonReaderOptions ReaderOptions = new()
-    {
-        AllowTrailingCommas = true,
-        CommentHandling = JsonCommentHandling.Skip,
-    };
-
-    public ParsedPolicy Parse(string? json, SenderProfile profile, LabelTreeIndex labelTree)
+    /// <param name="settings">The delete and action label names (never a topic or document-type label) and the
+    /// document-type parent (null turns <c>documentTypeLabel</c> off).</param>
+    public ParsedPolicy Parse(string? json, SenderProfile profile, LabelTreeIndex labelTree, AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(profile);
         ArgumentNullException.ThrowIfNull(labelTree);
+        ArgumentNullException.ThrowIfNull(settings);
         var errors = new List<string>();
         var dropped = new List<string>();
-        using var document = ReadFirstObject(json ?? "");
-        if (document is null)
+        using var document = SuggestionOutputParser.ReadFirstValue(json ?? "", out _);
+        if (document?.RootElement.ValueKind != JsonValueKind.Object)
         {
             errors.Add("Output is not a JSON object.");
             return new ParsedPolicy(null, [], errors, dropped);
@@ -57,7 +54,7 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
 
         try
         {
-            return Read(document.RootElement, profile, labelTree, errors, dropped);
+            return Read(document.RootElement, new Context(profile, labelTree, settings, dropped), errors);
         }
         catch (InvalidOperationException)
         {
@@ -67,9 +64,10 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
         }
     }
 
-    private ParsedPolicy Read(JsonElement root, SenderProfile profile, LabelTreeIndex tree, List<string> errors, List<string> dropped)
+    private ParsedPolicy Read(JsonElement root, Context ctx, List<string> errors)
     {
-        var isMixed = ReadBool(root, "isMixed", "", errors) ?? false;
+        var (profile, tree, dropped) = (ctx.Profile, ctx.Tree, ctx.Dropped);
+        var isMixed = ReadBool(root, "isMixed", errors) ?? false;
         var action = ReadEnum<PolicyAction>(root, "action", out _);
         if (action is null)
         {
@@ -83,16 +81,16 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             errors.Add("'reason' is missing.");
         }
 
-        var topic = ReadLabel(root, "topicLabel", tree);
+        var topic = ReadLabel(root, "topicLabel", ctx);
         if (topic.Invalid)
         {
             if (isMixed)
             {
-                dropped.Add("'topicLabel' is not a valid label path; dropped (the sender is mixed).");
+                dropped.Add("'topicLabel' is not a valid label path or is a reserved label; dropped (the sender is mixed).");
             }
             else
             {
-                errors.Add("'topicLabel' is not a valid label path.");
+                errors.Add("'topicLabel' is not a valid label path or is a reserved label.");
             }
         }
         else if (topic.Label is null && !isMixed)
@@ -100,7 +98,7 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             errors.Add("'topicLabel' is required unless the sender is mixed.");
         }
 
-        var documentType = ReadDocumentType(root, topic.Label, tree, "", dropped);
+        var documentType = ReadDocumentType(root, topic.Label, ctx, "");
         var mailType = ReadOptionalEnum<MailType>(root, "mailType", "", dropped);
         var retention = ReadRetention(root, "", dropped);
 
@@ -116,7 +114,13 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             action = PolicyAction.Keep;
         }
 
-        var rules = ReadRules(root, profile.Stats.Allowlisted, tree, dropped);
+        var rules = isMixed ? ReadRules(root, ctx) : IgnoreRules(root, dropped);
+        if (isMixed && rules.Count == 0)
+        {
+            // A mixed policy without rules matches nothing: approving it would never organise the sender.
+            errors.Add("'rules': a mixed sender needs at least one usable rule.");
+        }
+
         if (errors.Count > 0)
         {
             return new ParsedPolicy(null, [], errors, dropped);
@@ -159,7 +163,18 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
         };
     }
 
-    private List<SenderPolicyRuleRow> ReadRules(JsonElement root, bool allowlisted, LabelTreeIndex tree, List<string> dropped)
+    /// <summary>A sender that is not mixed has no rules (PolicyMatcher ignores them too); any given are noted.</summary>
+    private static List<SenderPolicyRuleRow> IgnoreRules(JsonElement root, List<string> dropped)
+    {
+        if (root.TryGetProperty("rules", out var array) && array.ValueKind == JsonValueKind.Array && array.GetArrayLength() > 0)
+        {
+            dropped.Add($"'rules': {array.GetArrayLength()} rule(s) ignored; the sender is not mixed.");
+        }
+
+        return [];
+    }
+
+    private List<SenderPolicyRuleRow> ReadRules(JsonElement root, Context ctx)
     {
         var rules = new List<SenderPolicyRuleRow>();
         if (!root.TryGetProperty("rules", out var array) || array.ValueKind == JsonValueKind.Null)
@@ -169,22 +184,23 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
 
         if (array.ValueKind != JsonValueKind.Array)
         {
-            dropped.Add("'rules' is not an array; ignored.");
+            ctx.Dropped.Add("'rules' is not an array; ignored.");
             return rules;
         }
 
         var number = 0;
-        foreach (var item in array.EnumerateArray())
+        foreach (var item in array.EnumerateArray().Take(MaxRules))
         {
             number++;
-            if (rules.Count == MaxRules)
-            {
-                dropped.Add($"Rule {number}: more than {MaxRules} rules; dropped.");
-            }
-            else if (ReadRule(item, $"Rule {number}: ", allowlisted, tree, dropped) is { } rule)
+            if (ReadRule(item, $"Rule {number}: ", ctx) is { } rule)
             {
                 rules.Add(rule);
             }
+        }
+
+        if (array.GetArrayLength() > MaxRules)
+        {
+            ctx.Dropped.Add($"'rules': {array.GetArrayLength() - MaxRules} rule(s) beyond the first {MaxRules} dropped.");
         }
 
         // The initial order is cheapest-first (#354); the user may reorder before approving.
@@ -197,8 +213,9 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
         return ordered;
     }
 
-    private SenderPolicyRuleRow? ReadRule(JsonElement item, string prefix, bool allowlisted, LabelTreeIndex tree, List<string> dropped)
+    private SenderPolicyRuleRow? ReadRule(JsonElement item, string prefix, Context ctx)
     {
+        var dropped = ctx.Dropped;
         if (item.ValueKind != JsonValueKind.Object)
         {
             dropped.Add(prefix + "not an object; dropped.");
@@ -212,10 +229,10 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             return null;
         }
 
-        var topic = ReadLabel(item, "topicLabel", tree);
+        var topic = ReadLabel(item, "topicLabel", ctx);
         if (topic.Label is null)
         {
-            dropped.Add(prefix + "'topicLabel' is missing or not a valid label path; dropped.");
+            dropped.Add(prefix + "'topicLabel' is missing, not a valid label path or a reserved label; dropped.");
             return null;
         }
 
@@ -225,13 +242,27 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             return null;
         }
 
-        if (action == PolicyAction.Delete && (guard.HasKeyword(match.SubjectTemplate) || guard.HasKeyword(match.SubjectContains)))
+        // Transactional mail is never deleted and never unsubscribed (DESIGN §6.2).
+        if (action is PolicyAction.Delete or PolicyAction.Unsubscribe
+            && (guard.HasKeyword(match.SubjectTemplate) || guard.HasKeyword(match.SubjectContains)))
         {
-            dropped.Add(prefix + "deletes mail whose subject names a transactional document; dropped.");
+            dropped.Add(prefix + $"'{Snake(action)}' on mail whose subject names a transactional document; dropped.");
             return null;
         }
 
-        if (allowlisted && action != PolicyAction.Keep)
+        if (match.SubjectTemplate is { } given)
+        {
+            if (ResolveTemplate(given, ctx.Profile) is not { } template)
+            {
+                // Dropping only the field would widen the rule; a template that matches no subject would never fire.
+                dropped.Add(prefix + "'subjectTemplate' is not one of the profile's templates; dropped.");
+                return null;
+            }
+
+            match.SubjectTemplate = template;
+        }
+
+        if (ctx.Profile.Stats.Allowlisted && action != PolicyAction.Keep)
         {
             dropped.Add(prefix + $"the sender is allowlisted; action '{Snake(action)}' changed to 'keep'.");
             action = PolicyAction.Keep;
@@ -242,7 +273,7 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             Name = ReadText(item, "name", MaxNameLength) ?? Describe(match),
             Match = match,
             TopicLabel = topic.Label,
-            DocumentTypeLabel = ReadDocumentType(item, topic.Label, tree, prefix, dropped),
+            DocumentTypeLabel = ReadDocumentType(item, topic.Label, ctx, prefix),
             MailType = ReadOptionalEnum<MailType>(item, "mailType", prefix, dropped),
             RetentionDays = ReadRetention(item, prefix, dropped),
             Action = action,
@@ -282,12 +313,36 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             m.SubjectTemplate is { } t ? $"subject \"{t}\"" : null,
             m.SubjectContains is { } s ? $"subject contains \"{s}\"" : null,
         };
-        var name = string.Join(", ", parts.OfType<string>());
-        return name.Length <= MaxNameLength ? name : name[..(char.IsHighSurrogate(name[MaxNameLength - 1]) ? MaxNameLength - 1 : MaxNameLength)];
+        return SuggestionOutputParser.Cut(string.Join(", ", parts.OfType<string>()), MaxNameLength);
     }
 
-    /// <summary>The trimmed, respelled label; <c>Invalid</c> when a value was given but is not a usable topic label.</summary>
-    private static (string? Label, bool Invalid) ReadLabel(JsonElement item, string name, LabelTreeIndex tree)
+    /// <summary>
+    /// The profile template the model copied, as stored: the profile quotes templates and clips them with an ellipsis,
+    /// while <see cref="PolicyMatcher"/> compares the full template. A clipped value resolves when exactly one profile
+    /// template starts with it. Null when no profile template matches.
+    /// </summary>
+    private static string? ResolveTemplate(string value, SenderProfile profile)
+    {
+        var text = value.Trim().Trim('"', '“', '”').Trim();
+        var clipped = text.EndsWith(Ellipsis, StringComparison.Ordinal);
+        if (clipped)
+        {
+            text = text[..^Ellipsis.Length].TrimEnd();
+        }
+
+        var candidates = profile.Templates.Select(t => t.Template)
+            .Where(t => clipped
+                ? text.Length > 0 && t.StartsWith(text, StringComparison.OrdinalIgnoreCase)
+                : string.Equals(t, text, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(2)
+            .ToList();
+        return candidates.Count == 1 ? candidates[0] : null;
+    }
+
+    /// <summary>The trimmed, respelled label; <c>Invalid</c> when given but not a valid path, a system label, or the
+    /// configured delete or action label (those come only from the action).</summary>
+    private static (string? Label, bool Invalid) ReadLabel(JsonElement item, string name, Context ctx)
     {
         if (!item.TryGetProperty(name, out var element) || element.ValueKind == JsonValueKind.Null)
         {
@@ -300,19 +355,45 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             return (null, false);
         }
 
-        return label is null || !LabelPath.IsValid(label) || LabelPath.IsReserved(label) ? (null, true) : (tree.Respell(label), false);
+        return label is null || !LabelPath.IsValid(label) || LabelPath.IsReserved(label) || ctx.IsConfiguredLabel(label)
+            ? (null, true)
+            : (ctx.Tree.Respell(label), false);
     }
 
-    private static string? ReadDocumentType(JsonElement item, string? topic, LabelTreeIndex tree, string prefix, List<string> dropped)
+    /// <summary>
+    /// A label 1 to <see cref="DocumentTypePath.MaxDepth"/> levels under the document-type parent, as
+    /// <see cref="SuggestionOutputParser"/> reads it; anything else, or any value with the parent off, is dropped with a note.
+    /// </summary>
+    private static string? ReadDocumentType(JsonElement item, string? topic, Context ctx, string prefix)
     {
-        var (label, invalid) = ReadLabel(item, "documentTypeLabel", tree);
-        if (invalid || (label is not null && string.Equals(label, topic, StringComparison.OrdinalIgnoreCase)))
+        if (!item.TryGetProperty("documentTypeLabel", out var element) || element.ValueKind == JsonValueKind.Null)
         {
-            dropped.Add(prefix + "'documentTypeLabel' is not a valid label path or equals 'topicLabel'; dropped.");
             return null;
         }
 
-        return label;
+        var value = element.ValueKind == JsonValueKind.String ? element.GetString()!.Trim() : null;
+        if (value is { Length: 0 })
+        {
+            return null;
+        }
+
+        if (value is null || ctx.DocumentTypeParent is not { } parent || ctx.IsConfiguredLabel(value))
+        {
+            return Ignored(value is null ? "not a string" : ctx.DocumentTypeParent is null ? "document types are off" : "a reserved label");
+        }
+
+        return DocumentTypePath.Normalise(value, parent, topic, out var error) ?? Ignored(error switch
+        {
+            DocumentTypePathError.InvalidPath => "not a valid label path",
+            DocumentTypePathError.NotUnderParent => $"not {DocumentTypePath.LevelsUnder(parent)} below the document-type parent",
+            _ => "same as topicLabel",
+        });
+
+        string? Ignored(string reason)
+        {
+            ctx.Dropped.Add(prefix + $"'documentTypeLabel' ignored ({reason}).");
+            return null;
+        }
     }
 
     private static TEnum? ReadEnum<TEnum>(JsonElement item, string name, out bool present) where TEnum : struct, Enum
@@ -365,7 +446,7 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
         return 0;
     }
 
-    private static bool? ReadBool(JsonElement item, string name, string prefix, List<string> errors)
+    private static bool? ReadBool(JsonElement item, string name, List<string> errors)
     {
         if (!item.TryGetProperty(name, out var element) || element.ValueKind == JsonValueKind.Null)
         {
@@ -377,7 +458,7 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             return element.GetBoolean();
         }
 
-        errors.Add(prefix + $"'{name}' must be true or false.");
+        errors.Add($"'{name}' must be true or false.");
         return null;
     }
 
@@ -399,34 +480,19 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             return null;
         }
 
-        return text.Length <= max ? text : text[..(char.IsHighSurrogate(text[max - 1]) ? max - 1 : max)];
-    }
-
-    /// <summary>The first <c>{</c> that starts a valid JSON object, ignoring code fences and prose around it.</summary>
-    private static JsonDocument? ReadFirstObject(string raw)
-    {
-        var bytes = Encoding.UTF8.GetBytes(raw);
-        var candidates = 0;
-        for (var i = 0; i < bytes.Length && candidates < MaxCandidates; i++)
-        {
-            if (bytes[i] != (byte)'{')
-            {
-                continue;
-            }
-
-            candidates++;
-            var reader = new Utf8JsonReader(bytes.AsSpan(i), ReaderOptions);
-            try
-            {
-                return JsonDocument.ParseValue(ref reader);
-            }
-            catch (JsonException)
-            {
-            }
-        }
-
-        return null;
+        return SuggestionOutputParser.Cut(text, max);
     }
 
     private static string Snake(PolicyAction action) => SnakeCaseEnumConverter<PolicyAction>.ToDb(action);
+
+    /// <summary>What one parse reads besides the JSON, and where it notes what it drops.</summary>
+    private sealed record Context(SenderProfile Profile, LabelTreeIndex Tree, AppSettings Settings, List<string> Dropped)
+    {
+        public string? DocumentTypeParent { get; } =
+            string.IsNullOrWhiteSpace(Settings.DocumentTypeParent) ? null : Settings.DocumentTypeParent.Trim();
+
+        public bool IsConfiguredLabel(string label) =>
+            string.Equals(label.Trim(), Settings.DeleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase)
+            || string.Equals(label.Trim(), Settings.ActionLabelName.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
 }

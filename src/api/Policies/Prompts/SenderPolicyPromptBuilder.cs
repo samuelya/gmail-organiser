@@ -3,6 +3,7 @@ using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Settings;
 using Microsoft.Extensions.AI;
@@ -11,7 +12,7 @@ namespace GmailOrganiser.Policies.Prompts;
 
 /// <summary>
 /// The policy prompt for one sender. <see cref="System"/> holds only the instructions and the person's own labels;
-/// <see cref="User"/> holds the email-derived profile and the related senders' policies.
+/// <see cref="User"/> holds the email-derived profile, which carries the related senders' approved policies.
 /// </summary>
 public sealed record SenderPolicyPrompt(string System, string User, string PromptVersion = SenderPolicyPromptBuilder.Version)
 {
@@ -30,10 +31,8 @@ public static class SenderPolicyPromptBuilder
     /// <summary>The template's first line; <c>FakeAnalysisResponder</c> answers a policy prompt by it.</summary>
     public const string Marker = "Task: " + Version;
     public const string ProfileHeading = "Sender profile:";
-    public const string HintsHeading = "Approved policies of related senders:";
 
     private const string ResourceName = "GmailOrganiser.Policies.Prompts.sender-policy-v1.md";
-    private static readonly string[] UserPlaceholders = ["{{policyHints}}", "{{profile}}"];
 
     /// <summary>One line per mail type, so the model reads the same meaning the review page shows.</summary>
     private static readonly Dictionary<MailType, string> MailTypeDefinitions = new()
@@ -50,16 +49,17 @@ public static class SenderPolicyPromptBuilder
         [MailType.SecurityOtp] = "a one-time code, sign-in or security alert",
     };
 
-    private static readonly JsonElement OutputSchema = JsonDocument.Parse("""
+    // Enums let Ollama's constrained decoding rule out an unknown action, mail type or category.
+    private static readonly JsonElement OutputSchema = JsonDocument.Parse($$"""
         {
           "type": "object",
           "properties": {
             "topicLabel": { "type": ["string", "null"] },
             "isNewLabel": { "type": "boolean" },
             "documentTypeLabel": { "type": ["string", "null"] },
-            "mailType": { "type": ["string", "null"] },
+            "mailType": {{EnumSchema<MailType>(nullable: true)}},
             "retentionDays": { "type": ["integer", "null"] },
-            "action": { "type": "string" },
+            "action": {{EnumSchema<PolicyAction>(nullable: false)}},
             "confidence": { "type": "number" },
             "reason": { "type": "string" },
             "isMixed": { "type": "boolean" },
@@ -76,16 +76,16 @@ public static class SenderPolicyPromptBuilder
                       "listUnsubscribePresent": { "type": ["boolean", "null"] },
                       "fromAddress": { "type": ["string", "null"] },
                       "fromSubdomain": { "type": ["string", "null"] },
-                      "category": { "type": ["string", "null"] },
+                      "category": {{EnumSchema<MessageCategory>(nullable: true)}},
                       "subjectTemplate": { "type": ["string", "null"] },
                       "subjectContains": { "type": ["string", "null"] }
                     }
                   },
                   "topicLabel": { "type": "string" },
                   "documentTypeLabel": { "type": ["string", "null"] },
-                  "mailType": { "type": ["string", "null"] },
+                  "mailType": {{EnumSchema<MailType>(nullable: true)}},
                   "retentionDays": { "type": ["integer", "null"] },
-                  "action": { "type": "string" },
+                  "action": {{EnumSchema<PolicyAction>(nullable: false)}},
                   "reason": { "type": "string" }
                 },
                 "required": ["match", "topicLabel", "action", "reason"]
@@ -119,11 +119,11 @@ public static class SenderPolicyPromptBuilder
             ["actionLabel"] = AnalysisPromptBuilder.OneLine(settings.ActionLabelName),
             ["deleteLabel"] = AnalysisPromptBuilder.OneLine(settings.DeleteLabelName),
             ["documentTypes"] = AnalysisPromptBuilder.RenderDocumentTypes(settings.DocumentTypeParent, labelTree),
-            ["policyHints"] = RenderHints(profile.ApprovedPolicyHints),
         };
 
-        var index = UserPlaceholders.Select(p => Template.IndexOf(p, StringComparison.Ordinal)).Where(i => i >= 0).Min();
-        var lineStart = Template.LastIndexOf('\n', index) + 1;
+        // The user message starts at the profile heading. The profile's approved_policies_same_domain line carries the
+        // related senders' policies.
+        var lineStart = Template.IndexOf("\n" + ProfileHeading + "\n", StringComparison.Ordinal) + 1;
         return new SenderPolicyPrompt(
             PromptTemplate.Substitute(Template[..lineStart], values).Trim(),
             PromptTemplate.Substitute(Template[lineStart..], values).Trim());
@@ -132,24 +132,12 @@ public static class SenderPolicyPromptBuilder
     private static string RenderMailTypes() => string.Join('\n', Enum.GetValues<MailType>()
         .Select(t => $"- `{SnakeCaseEnumConverter<MailType>.ToDb(t)}`: {MailTypeDefinitions[t]}"));
 
-    private static string RenderHints(IReadOnlyList<PolicyHint> hints)
+    private static string EnumSchema<TEnum>(bool nullable) where TEnum : struct, Enum
     {
-        if (hints.Count == 0)
-        {
-            return HintsHeading + " none";
-        }
-
-        var sb = new StringBuilder(HintsHeading);
-        foreach (var h in hints)
-        {
-            var label = h.IsMixed ? "mixed" : AnalysisPromptBuilder.OneLine(h.TopicLabel ?? "-");
-            sb.Append("\n- ").Append(SnakeCaseEnumConverter<PolicyScope>.ToDb(h.Scope)).Append(' ')
-                .Append(AnalysisPromptBuilder.OneLine(h.ScopeKey)).Append(" -> ").Append(label)
-                .Append(h.DocumentTypeLabel is { } d ? " + " + AnalysisPromptBuilder.OneLine(d) : "")
-                .Append(' ').Append(SnakeCaseEnumConverter<PolicyAction>.ToDb(h.Action));
-        }
-
-        return sb.ToString();
+        var names = Enum.GetValues<TEnum>().Select(v => JsonSerializer.Serialize(SnakeCaseEnumConverter<TEnum>.ToDb(v)));
+        return nullable
+            ? $"{{ \"type\": [\"string\", \"null\"], \"enum\": [{string.Join(", ", names)}, null] }}"
+            : $"{{ \"type\": \"string\", \"enum\": [{string.Join(", ", names)}] }}";
     }
 
     private static string Load()

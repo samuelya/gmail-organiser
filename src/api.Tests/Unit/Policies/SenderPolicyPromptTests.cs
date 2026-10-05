@@ -45,7 +45,8 @@ public sealed class SenderPolicyPromptTests
         prompt.System.ShouldContain("Synthetic Delete");
         prompt.System.ShouldContain("`Synthetic Types/Bills`");
         prompt.System.ShouldNotContain("news@example.com");
-        prompt.User.ShouldContain(SenderPolicyPromptBuilder.HintsHeading + "\n- sender billing@example.com -> Shop archive");
+        prompt.User.ShouldContain("approved_policies_same_domain: sender billing@example.com -> Shop archive");
+        prompt.User.Split("billing@example.com").Length.ShouldBe(2);
         prompt.User.ShouldContain(SenderPolicyPromptBuilder.ProfileHeading + "\nscope: sender news@example.com");
         prompt.Messages.Select(m => m.Role).ShouldBe([ChatRole.System, ChatRole.User]);
     }
@@ -55,7 +56,12 @@ public sealed class SenderPolicyPromptTests
     {
         var options = SenderPolicyPromptBuilder.CreateOptions(8192);
 
-        options.ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema.ShouldNotBeNull();
+        var schema = options.ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema!.Value;
+        var rule = schema.GetProperty("properties").GetProperty("rules").GetProperty("items").GetProperty("properties");
+        schema.GetProperty("properties").GetProperty("action").GetProperty("enum").EnumerateArray().Select(e => e.GetString())
+            .ShouldBe(["keep", "archive", "delete", "unsubscribe"]);
+        rule.GetProperty("mailType").GetProperty("enum").EnumerateArray().ShouldContain(e => e.GetString() == "action_bill");
+        rule.GetProperty("match").GetProperty("properties").GetProperty("category").GetProperty("enum").GetArrayLength().ShouldBe(6);
         options.Temperature.ShouldBe(0);
         options.AdditionalProperties![LlmCallMeter.NumCtxKey].ShouldBe(8192);
     }
@@ -66,7 +72,7 @@ public sealed class SenderPolicyPromptTests
         var profile = Profile(new CategoryMix(0, 0, 0, 12, 0, 3));
         var prompt = SenderPolicyPromptBuilder.Build(profile, ["Updates/Example"], Settings);
 
-        var parsed = Parser.Parse(FakeAnalysisResponder.Answer(prompt.Messages.ToList()), profile, new LabelTreeIndex(["Updates/Example"]));
+        var parsed = Parser.Parse(FakeAnalysisResponder.Answer(prompt.Messages.ToList()), profile, new LabelTreeIndex(["Updates/Example"]), Settings);
 
         parsed.Errors.ShouldBeEmpty();
         parsed.Policy.ShouldNotBeNull();
@@ -84,7 +90,7 @@ public sealed class SenderPolicyPromptTests
         var prompt = SenderPolicyPromptBuilder.Build(profile, [], Settings);
 
         var answer = FakeAnalysisResponder.Answer(prompt.Messages.ToList());
-        var parsed = Parser.Parse(answer, profile, LabelTreeIndex.Empty);
+        var parsed = Parser.Parse(answer, profile, LabelTreeIndex.Empty, Settings);
 
         answer.ShouldBe(FakeAnalysisResponder.Answer(prompt.Messages.ToList()));
         parsed.Errors.ShouldBeEmpty();
