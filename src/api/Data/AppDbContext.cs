@@ -77,6 +77,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.ThreadId).IsRequired();
             e.Property(r => r.FromAddress).IsRequired();
+            e.Property(r => r.CanonicalAddress).IsRequired();
+            e.Property(r => r.CanonicalDomain).IsRequired();
             e.Property(r => r.LabelIds).IsRequired();
             e.Property(r => r.Category).HasConversion(new SnakeCaseEnumConverter<MessageCategory>());
             e.Property(r => r.AnalysisStatus)
@@ -90,6 +92,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(r => r.AnalysisStatus);
             // The replied-thread check reads and writes a thread's rows.
             e.HasIndex(r => r.ThreadId);
+            e.HasIndex(r => r.CanonicalAddress);
         });
 
         modelBuilder.Entity<SenderRow>(e =>
@@ -98,9 +101,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasKey(r => r.Address);
             e.Property(r => r.Address).ValueGeneratedNever();
             e.Property(r => r.Domain).IsRequired();
+            e.Property(r => r.CanonicalAddress).IsRequired();
+            e.Property(r => r.CanonicalDomain).IsRequired();
+            e.Property(r => r.IsRelay).HasDefaultValue(false);
             e.Property(r => r.Allowlisted).HasDefaultValue(false);
             e.Property(r => r.UnsubscribeMethod).HasConversion(new SnakeCaseEnumConverter<UnsubscribeMethod>());
             e.HasIndex(r => r.Domain);
+            e.HasIndex(r => r.CanonicalAddress);
+            e.HasIndex(r => r.CanonicalDomain);
             // Trigram indexes for SenderQuery's ILIKE '%term%' search (a leading wildcard can't use a B-tree).
             e.HasIndex(r => r.Address, "ix_senders_address_trgm").HasDatabaseName("ix_senders_address_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
             e.HasIndex(r => r.Domain, "ix_senders_domain_trgm").HasDatabaseName("ix_senders_domain_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");

@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Senders;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Fetch;
@@ -10,7 +11,8 @@ namespace GmailOrganiser.Fetch;
 /// mutable fields refreshed. <c>analysis_status</c> and <c>fetched_at</c> of existing rows are never touched, and a
 /// row whose Gmail metadata is unchanged is not written at all (<c>updated_at</c> means "changed in Gmail").
 /// An inserted message updates its thread's <c>thread_replied</c> (#177): <c>SENT</c> makes the thread replied, any
-/// other message makes a stored "not replied" unknown again; "replied" is final.
+/// other message makes a stored "not replied" unknown again; "replied" is final. Every stored row gets its canonical
+/// (relay-decoded) sender.
 /// </summary>
 public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
 {
@@ -60,6 +62,9 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
                 {
                     row.UpdatedAt = now;
                 }
+
+                // After the check: a row decoded only now (stored before the decoder) has not changed in Gmail.
+                SetCanonical(row);
             }
             else
             {
@@ -113,7 +118,16 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
             UpdatedAt = now,
         };
         Refresh(row, m);
+        SetCanonical(row);
         return row;
+    }
+
+    /// <summary>Sets the relay-decoded sender from <see cref="MessageRow.FromAddress"/>.</summary>
+    public static void SetCanonical(MessageRow row)
+    {
+        var canonical = RelayAddressDecoder.Decode(row.FromAddress);
+        row.CanonicalAddress = canonical.CanonicalAddress;
+        row.CanonicalDomain = canonical.CanonicalDomain;
     }
 
     private static void Refresh(MessageRow row, GmailMessageMetadata m)
