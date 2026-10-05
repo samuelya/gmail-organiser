@@ -2,6 +2,7 @@ import { HttpClient, HttpContext, HttpErrorResponse, HttpParams } from '@angular
 import { inject, Injectable } from '@angular/core';
 import { catchError, Observable, of, throwError } from 'rxjs';
 import { QUIET_STATUSES } from '../core/error.interceptor';
+import { JobDto } from '../core/jobs.models';
 import { PagedDto } from '../core/paging.models';
 import { LabelPlanApplyDto, LabelPlanDto, UpdatePlanItemRequest } from './label-plan.models';
 import {
@@ -134,6 +135,14 @@ export class RulesService {
   /** `409` once the plan is being applied or applied. */
   discardPlan(planId: string): Observable<LabelPlanDto> {
     return this.http.post<LabelPlanDto>(`${PLANS}/${encodeURIComponent(planId)}/discard`, null);
+  }
+
+  /**
+   * Queues the taxonomy proposal, whose result is a new draft plan; `409` when no chat model is
+   * chosen or a proposal is already queued, running or paused.
+   */
+  proposeTaxonomy(): Observable<JobDto> {
+    return this.http.post<JobDto>('/api/rules/labels/taxonomy', null);
   }
 }
 

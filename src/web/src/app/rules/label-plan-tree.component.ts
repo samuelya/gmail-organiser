@@ -1,15 +1,20 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
 import { LabelDto, LabelNode } from '../review/labels.models';
 import { buildLabelTree } from '../review/labels.service';
-import { LabelPlanItemDto, proposalText } from './label-plan.models';
+import { createName, LabelPlanItemDto, proposalText } from './label-plan.models';
 
 interface TreeRow {
   node: LabelNode;
   depth: number;
   item: LabelPlanItemDto | undefined;
+  /** A label a `create` item would make. */
+  isNew: boolean;
 }
 
-/** The current label tree, each label with a plan item highlighted and its proposal inline. */
+/**
+ * The current label tree, each label with a plan item highlighted and its proposal inline; labels a
+ * taxonomy item would create are shown where they would land.
+ */
 @Component({
   selector: 'app-label-plan-tree',
   template: `
@@ -21,6 +26,7 @@ interface TreeRow {
             [style.padding-left.rem]="0.5 + row.depth * 1.25"
             [class.proposed]="!!row.item"
             [class.rejected]="row.item?.status === 'rejected'"
+            [class.new]="row.isNew"
             data-testid="plan-tree-row"
             [attr.data-path]="row.node.path"
           >
@@ -53,6 +59,9 @@ interface TreeRow {
     li.rejected {
       opacity: 0.6;
     }
+    li.new span:first-child {
+      font-style: italic;
+    }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -62,17 +71,30 @@ export class LabelPlanTree {
 
   readonly proposal = proposalText;
 
-  /** The tree flattened depth-first; an item matches its label by name, as the plan saw it. */
+  /**
+   * The tree flattened depth-first; an item matches its label by name, as the plan saw it. A
+   * taxonomy near-duplicate (no label id) names no label of its own, so the list view shows it.
+   */
   readonly rows = computed(() => {
-    const byName = new Map(this.items().map((i) => [i.labelName, i]));
+    const labels = this.labels();
+    const existing = new Set(labels.filter((l) => l.type === 'user').map((l) => l.name));
+    const created = this.items().filter((i) => i.kind === 'create' && !i.labelId);
+    const newPaths = new Set(created.map(createName).filter((name) => !existing.has(name)));
+    const byName = new Map<string, LabelPlanItemDto>();
+    for (const item of this.items()) {
+      if (item.labelId) byName.set(item.labelName, item);
+    }
+    for (const item of created) byName.set(createName(item), item);
     const rows: TreeRow[] = [];
     const walk = (nodes: readonly LabelNode[], depth: number) => {
       for (const node of nodes) {
-        rows.push({ node, depth, item: node.exists ? byName.get(node.path) : undefined });
+        const item = node.exists ? byName.get(node.path) : undefined;
+        rows.push({ node, depth, item, isNew: newPaths.has(node.path) });
         walk(node.children, depth + 1);
       }
     };
-    walk(buildLabelTree(this.labels()), 0);
+    const proposed: LabelDto[] = [...newPaths].map((name) => ({ id: '', name, type: 'user' }));
+    walk(buildLabelTree([...labels, ...proposed]), 0);
     return rows;
   });
 }
