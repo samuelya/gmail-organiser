@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -13,9 +14,11 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005061138_M8_SenderPolicies")]
+    partial class M8_SenderPolicies
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -39,10 +42,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<int>("AttachmentsSkipped")
                         .HasColumnType("integer")
                         .HasColumnName("attachments_skipped");
-
-                    b.Property<long>("CompletionTokens")
-                        .HasColumnType("bigint")
-                        .HasColumnName("completion_tokens");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -88,10 +87,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("llm_calls");
 
-                    b.Property<long>("LlmMilliseconds")
-                        .HasColumnType("bigint")
-                        .HasColumnName("llm_milliseconds");
-
                     b.PrimitiveCollection<string[]>("MessageIds")
                         .HasColumnType("text[]")
                         .HasColumnName("message_ids");
@@ -119,14 +114,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("Model")
                         .HasColumnType("text")
                         .HasColumnName("model");
-
-                    b.Property<int>("NearContextLimit")
-                        .HasColumnType("integer")
-                        .HasColumnName("near_context_limit");
-
-                    b.Property<long>("PromptTokens")
-                        .HasColumnType("bigint")
-                        .HasColumnName("prompt_tokens");
 
                     b.Property<string>("PromptVersion")
                         .HasColumnType("text")
@@ -670,16 +657,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasDefaultValue("not_analysed")
                         .HasColumnName("analysis_status");
 
-                    b.Property<string>("CanonicalAddress")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("canonical_address");
-
-                    b.Property<string>("CanonicalDomain")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("canonical_domain");
-
                     b.Property<string>("Category")
                         .HasColumnType("text")
                         .HasColumnName("category");
@@ -762,9 +739,6 @@ namespace GmailOrganiser.Data.Migrations
 
                     b.HasIndex("AnalysisStatus")
                         .HasDatabaseName("ix_messages_analysis_status");
-
-                    b.HasIndex("CanonicalAddress")
-                        .HasDatabaseName("ix_messages_canonical_address");
 
                     b.HasIndex("InternalDate")
                         .HasDatabaseName("ix_messages_internal_date");
@@ -1561,16 +1535,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("applied_count");
 
-                    b.Property<string>("CanonicalAddress")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("canonical_address");
-
-                    b.Property<string>("CanonicalDomain")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("canonical_domain");
-
                     b.Property<string>("DisplayName")
                         .HasColumnType("text")
                         .HasColumnName("display_name");
@@ -1579,12 +1543,6 @@ namespace GmailOrganiser.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("domain");
-
-                    b.Property<bool>("IsRelay")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("is_relay");
 
                     b.Property<DateTimeOffset?>("LastSeenAt")
                         .HasColumnType("timestamp with time zone")
@@ -1609,12 +1567,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.HasKey("Address")
                         .HasName("pk_senders");
 
-                    b.HasIndex("CanonicalAddress")
-                        .HasDatabaseName("ix_senders_canonical_address");
-
-                    b.HasIndex("CanonicalDomain")
-                        .HasDatabaseName("ix_senders_canonical_domain");
-
                     b.HasIndex("Domain")
                         .HasDatabaseName("ix_senders_domain");
 
@@ -1623,18 +1575,6 @@ namespace GmailOrganiser.Data.Migrations
 
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "Address" }, "ix_senders_address_trgm"), "gin");
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "Address" }, "ix_senders_address_trgm"), new[] { "gin_trgm_ops" });
-
-                    b.HasIndex(new[] { "CanonicalAddress" }, "ix_senders_canonical_address_trgm")
-                        .HasDatabaseName("ix_senders_canonical_address_trgm");
-
-                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "CanonicalAddress" }, "ix_senders_canonical_address_trgm"), "gin");
-                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "CanonicalAddress" }, "ix_senders_canonical_address_trgm"), new[] { "gin_trgm_ops" });
-
-                    b.HasIndex(new[] { "CanonicalDomain" }, "ix_senders_canonical_domain_trgm")
-                        .HasDatabaseName("ix_senders_canonical_domain_trgm");
-
-                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "CanonicalDomain" }, "ix_senders_canonical_domain_trgm"), "gin");
-                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "CanonicalDomain" }, "ix_senders_canonical_domain_trgm"), new[] { "gin_trgm_ops" });
 
                     b.HasIndex(new[] { "DisplayName" }, "ix_senders_display_name_trgm")
                         .HasDatabaseName("ix_senders_display_name_trgm");

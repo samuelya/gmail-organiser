@@ -12,6 +12,7 @@ using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Mcp;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Rules;
 using GmailOrganiser.Rules.Labels;
@@ -39,6 +40,7 @@ builder.Services.AddReview();
 builder.Services.AddClaude();
 builder.Services.AddCleanUp();
 builder.Services.AddRules();
+builder.Services.AddPolicies();
 builder.Services.AddUnsubscribe();
 builder.Services.AddMcpServer();
 
