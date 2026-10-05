@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Claude;
@@ -37,14 +38,38 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     };
 
     /// <summary>
+    /// Parses comma-separated snake_case <see cref="MailType"/> names, trimmed and case-insensitive, into a distinct list;
+    /// empty (no filter) when none is given, null when any name is unknown.
+    /// </summary>
+    public static IReadOnlyList<MailType>? ParseMailTypes(string? value)
+    {
+        var types = new List<MailType>();
+        foreach (var name in (value ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (!SnakeCaseEnumConverter<MailType>.TryFromDb(name, out var type))
+            {
+                return null;
+            }
+
+            if (!types.Contains(type))
+            {
+                types.Add(type);
+            }
+        }
+
+        return types;
+    }
+
+    /// <summary>
     /// Senders with at least one suggestion in <paramref name="status"/>, with their counts per status, the most
     /// suggestions in that status first (pending by default), then by address. With <paramref name="hasAlternative"/>
-    /// only suggestions with a compare-run alternative count.
+    /// only suggestions with a compare-run alternative count; with <paramref name="mailTypes"/> only those of one of the types.
     /// </summary>
     public async Task<PagedDto<ReviewSenderDto>> ListAsync(
-        SuggestionStatus status, string? search, int page, int pageSize, CancellationToken ct, bool hasAlternative = false)
+        SuggestionStatus status, string? search, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
+        IReadOnlyList<MailType>? mailTypes = null)
     {
-        var suggestions = Suggestions(hasAlternative);
+        var suggestions = Suggestions(hasAlternative, mailTypes);
         if (search is not null)
         {
             var matching = SenderQuery.Filter(db.Senders.AsNoTracking(), search).Select(x => x.Address);
@@ -86,11 +111,13 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     /// members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
     /// With <paramref name="hasAlternative"/> the counts take only suggestions with a compare-run alternative, and only
     /// groups with such a member are listed, whole, so a group card and its approve/reject act on the same members.
+    /// With <paramref name="mailTypes"/> the counts and groups take only suggestions of one of the types; null when none is.
     /// </summary>
     public async Task<ReviewSenderDetailDto?> DetailAsync(
-        string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct, bool hasAlternative = false)
+        string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
+        IReadOnlyList<MailType>? mailTypes = null)
     {
-        var counts = await Suggestions(hasAlternative)
+        var counts = await Suggestions(hasAlternative, mailTypes)
             .Where(s => s.SenderAddress == address)
             .GroupBy(s => s.SenderAddress)
             .Select(g => new StatusCounts
@@ -108,7 +135,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         }
 
         var sender = await db.Senders.AsNoTracking().SingleOrDefaultAsync(s => s.Address == address, ct);
-        var inStatus = InStatus(address, status, hasAlternative);
+        var inStatus = InStatus(address, status, hasAlternative, mailTypes);
         var stats = inStatus
             .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
             .Select(g => new GroupStats
@@ -275,6 +302,21 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     public static bool IsStillNew(SuggestionRow s, IReadOnlyDictionary<string, string>? labelNames) =>
         s.IsNewLabel
         && (labelNames is null || !labelNames.Values.Any(n => string.Equals(n.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// <see cref="IsStillNew"/> as SQL, negated: the suggestion proposes no new label, or one Gmail has since. The bulk
+    /// approve skip and its <see cref="BulkApproveResponse.ExcludedNewLabel"/> count both take it.
+    /// </summary>
+    public static Expression<Func<SuggestionRow, bool>> NotStillNew(IReadOnlyDictionary<string, string>? labelNames)
+    {
+        if (labelNames is null)
+        {
+            return s => !s.IsNewLabel;
+        }
+
+        var existing = labelNames.Values.Select(n => n.Trim().ToLowerInvariant()).Distinct().ToList();
+        return s => !s.IsNewLabel || existing.Contains(s.TopicLabel.Trim().ToLower());
+    }
 
     /// <summary>
     /// The names of the replaced labels apply would remove now: those the message still carries, never the topic label,
