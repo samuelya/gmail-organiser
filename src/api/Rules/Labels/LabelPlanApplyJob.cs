@@ -3,7 +3,9 @@ using System.Text.Json;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
+using GmailOrganiser.Rules.Taxonomy;
 using Google;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -24,11 +26,14 @@ public sealed record LabelPlanApplyCursor(Guid PlanId, Guid[] ItemIds, int Index
 /// stays and shows as empty in the next plan. A delete re-checks that the label is empty and that no active filter uses
 /// it right before <c>labels.delete</c>. Renames, deletes and retargets are listed in History as
 /// <see cref="ActionKind.LabelPlan"/> entries without undo. Every step re-runs safely, so a resume repeats the current item.
+/// A taxonomy item (#366) creates its label (or uses its near-duplicate target) and proposes a policy for each of its
+/// senders that has none, in the checkpoint that records the item applied.
 /// </summary>
 public sealed partial class LabelPlanApplyJob(
     AppDbContext db,
     IGmailClient gmail,
     LabelCatalog catalog,
+    LabelResolver resolver,
     FilterService filters,
     IOptions<GmailOptions> gmailOptions,
     TimeProvider time,
@@ -42,10 +47,11 @@ public sealed partial class LabelPlanApplyJob(
 
     public string Type => JobType;
 
-    /// <summary>The ids of <paramref name="items"/> in apply order: nest, then merge, then delete; plan order within a kind.</summary>
+    /// <summary>The ids of <paramref name="items"/> in apply order: create, nest, merge, then delete; plan order within a kind.</summary>
     public static Guid[] Order(IEnumerable<LabelPlanItem> items) =>
         [.. items.OrderBy(i => i.Kind switch
         {
+            LabelPlanItemKind.Create => -1,
             LabelPlanItemKind.Nest => 0,
             LabelPlanItemKind.NearDuplicate => 1,
             _ => 2,
@@ -77,13 +83,23 @@ public sealed partial class LabelPlanApplyJob(
                     {
                         LabelPlanItemKind.Nest => Done(cursor, await NestAsync(ctx.JobId, item, ct)),
                         LabelPlanItemKind.Empty => Done(cursor, await DeleteAsync(ctx.JobId, item, ct)),
+                        LabelPlanItemKind.Create => Done(cursor, await CreateAsync(ctx.JobId, item, ct)),
+                        _ when item.IsTaxonomy => Done(cursor, (LabelPlanItemStatus.Applied, null)),
                         _ => await MergeAsync(ctx, cursor, item, ct),
                     };
                     if (signal == JobSignal.Continue)
                     {
                         var next = cursor with { Index = cursor.Index + 1, BatchId = null, Pending = null };
                         signal = await ctx.CheckpointAsync(
-                            next, Progress(next, item.LabelName), t => SetItemAsync(cursor.PlanId, item.Id, status, error, t), ct);
+                            next, Progress(next, item.LabelName), async t =>
+                            {
+                                await SetItemAsync(cursor.PlanId, item.Id, status, error, t);
+                                if (status == LabelPlanItemStatus.Applied)
+                                {
+                                    await ProposePoliciesAsync(item, t);
+                                }
+                            },
+                            ct);
                         db.ChangeTracker.Clear();
                         cursor = next;
                     }
@@ -210,6 +226,58 @@ public sealed partial class LabelPlanApplyJob(
                 catalog.Invalidate();
             }
         });
+    }
+
+    /// <summary>Creates the taxonomy item's label unless it exists (also under another case); the create is listed in History.</summary>
+    private async Task<(LabelPlanItemStatus, string?)> CreateAsync(Guid jobId, LabelPlanItem item, CancellationToken ct) =>
+        await RefusedAsItemAsync(() => resolver.EnsureAsync(
+            [item.ProposedName ?? item.LabelName], (label, t) => RecordAsync(jobId, $"Created label {label.Name}", t), ct));
+
+    /// <summary>
+    /// A <see cref="PolicyStatus.Proposed"/> archive policy (#358 reviews it) for each of a taxonomy item's senders
+    /// without a policy of any status, labelled with the created label or the near-duplicate target.
+    /// </summary>
+    private async Task ProposePoliciesAsync(LabelPlanItem item, CancellationToken ct)
+    {
+        var topic = item.Kind == LabelPlanItemKind.Create ? item.ProposedName ?? item.LabelName : item.TargetLabelName;
+        if (item.SenderKeys is not { Count: > 0 } || string.IsNullOrEmpty(topic))
+        {
+            return;
+        }
+
+        string[] keys = [.. item.SenderKeys.Distinct(StringComparer.Ordinal)];
+        var existing = await db.SenderPolicies
+            .Where(p => p.Scope == PolicyScope.Sender && keys.Contains(p.ScopeKey))
+            .Select(p => p.ScopeKey)
+            .ToListAsync(ct);
+        string[] missing = [.. keys.Except(existing, StringComparer.Ordinal)];
+        var names = (await db.Senders.AsNoTracking()
+                .Where(s => missing.Contains(s.CanonicalAddress) && s.DisplayName != null)
+                .OrderByDescending(s => s.TotalCount)
+                .Select(s => new { s.CanonicalAddress, s.DisplayName })
+                .ToListAsync(ct))
+            .DistinctBy(s => s.CanonicalAddress)
+            .ToDictionary(s => s.CanonicalAddress, s => s.DisplayName, StringComparer.Ordinal);
+        var now = time.GetUtcNow();
+        foreach (var key in missing)
+        {
+            db.SenderPolicies.Add(new SenderPolicyRow
+            {
+                Id = Guid.CreateVersion7(now),
+                Scope = PolicyScope.Sender,
+                ScopeKey = key,
+                DisplayName = names.GetValueOrDefault(key),
+                TopicLabel = topic,
+                Action = PolicyAction.Archive,
+                Confidence = TaxonomyPrompt.ProposalConfidence,
+                Reason = TaxonomyPrompt.ProposalReason,
+                PromptVersion = TaxonomyPrompt.Version,
+                Status = PolicyStatus.Proposed,
+                CreatedAt = now,
+            });
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>

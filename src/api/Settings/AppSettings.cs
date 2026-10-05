@@ -111,6 +111,12 @@ public sealed record AppSettings
     public string? TriageModel { get; init; }
     public double TriageConfidenceThreshold { get; init; } = DefaultTriageConfidenceThreshold;
 
+    /// <summary>The taxonomy proposal (#366) profiles this many canonical senders, most messages first.</summary>
+    public int TaxonomyMaxSenders { get; init; } = DefaultTaxonomyMaxSenders;
+
+    /// <summary>The taxonomy proposal keeps at most this many labels.</summary>
+    public int TaxonomyMaxLabels { get; init; } = DefaultTaxonomyMaxLabels;
+
     /// <summary>Data Protection ciphertext of the <c>/mcp</c> bearer token (#164); never returned by the settings API.</summary>
     public string? McpTokenProtected { get; init; }
 
@@ -131,6 +137,8 @@ public sealed record AppSettings
     public const int DefaultRulesStaleFilterDays = 365;
     public const int DefaultLlmNumCtx = 8192;
     public const double DefaultTriageConfidenceThreshold = 0.70;
+    public const int DefaultTaxonomyMaxSenders = 80;
+    public const int DefaultTaxonomyMaxLabels = 25;
 
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()

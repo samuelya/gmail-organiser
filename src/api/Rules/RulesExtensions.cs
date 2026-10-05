@@ -1,12 +1,13 @@
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Rules.Labels;
 using GmailOrganiser.Rules.Review;
+using GmailOrganiser.Rules.Taxonomy;
 
 namespace GmailOrganiser.Rules;
 
 public static class RulesExtensions
 {
-    /// <summary>Registers the filter snapshot, filter service, proposals, label plans, filter reviews and their summaries. Needs <c>AddGmail</c>, <c>AddLlm</c> and <c>AddReview</c> (label catalog, resolver, sender patterns).</summary>
+    /// <summary>Registers the filter snapshot, filter service, proposals, label plans, the taxonomy proposal, filter reviews and their summaries. Needs <c>AddGmail</c>, <c>AddLlm</c> and <c>AddReview</c> (label catalog, resolver, sender patterns).</summary>
     public static IServiceCollection AddRules(this IServiceCollection services)
     {
         services.AddScoped<FilterSnapshot>();
@@ -19,6 +20,7 @@ public static class RulesExtensions
         // Its account guard comes with FetchJobTypes.ReadsGmail; a cancel is refused while a merge chunk is pending.
         services.AddKeyedScoped<IJobCancelHook, LabelPlanApplyJob>(LabelPlanApplyJob.JobType);
         services.AddKeyedScoped<IJobHandler, LabelPlanApplyJob>(LabelPlanApplyJob.JobType);
+        services.AddKeyedScoped<IJobHandler, TaxonomyProposeJob>(TaxonomyProposeJob.JobType);
         return services;
     }
 }

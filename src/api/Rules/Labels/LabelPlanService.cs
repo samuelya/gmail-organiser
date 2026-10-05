@@ -74,13 +74,23 @@ public sealed class LabelPlanService(
         row.WriteItems(items);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({CreateLockKey})", ct);
-        await db.LabelPlans.Where(p => p.Status == LabelPlanStatus.Draft)
-            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, LabelPlanStatus.Discarded).SetProperty(p => p.UpdatedAt, now), ct);
-        db.LabelPlans.Add(row);
-        await db.SaveChangesAsync(ct);
+        await StoreDraftAsync(row, ct);
         await tx.CommitAsync(ct);
         return LabelPlanDto.From(row);
+    }
+
+    /// <summary>
+    /// Inserts <paramref name="row"/> as the draft and discards the previous draft, inside the caller's transaction (the
+    /// advisory lock serialises concurrent creates until it commits).
+    /// </summary>
+    public async Task StoreDraftAsync(LabelPlanRow row, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        await db.Database.ExecuteSqlAsync($"SELECT pg_advisory_xact_lock({CreateLockKey})", ct);
+        await db.LabelPlans.Where(p => p.Status == LabelPlanStatus.Draft && p.Id != row.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, LabelPlanStatus.Discarded).SetProperty(p => p.UpdatedAt, row.CreatedAt), ct);
+        db.LabelPlans.Add(row);
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>The newest plan that is not discarded, or null.</summary>
@@ -143,9 +153,9 @@ public sealed class LabelPlanService(
         }
 
         var item = items[index];
-        if (request.ProposedName is not null && item.Kind != LabelPlanItemKind.Nest)
+        if (request.ProposedName is not null && item.Kind is not (LabelPlanItemKind.Nest or LabelPlanItemKind.Create))
         {
-            return new PlanEditResult(PlanEditOutcome.Invalid, Detail: "Only a nest item has a proposed name.");
+            return new PlanEditResult(PlanEditOutcome.Invalid, Detail: "Only a nest or create item has a proposed name.");
         }
 
         if (target is not null && item.Kind != LabelPlanItemKind.NearDuplicate)
@@ -158,8 +168,8 @@ public sealed class LabelPlanService(
             return new PlanEditResult(PlanEditOutcome.Invalid, Detail: "A label cannot merge into itself.");
         }
 
-        // Whatever their status: accepting one later must not strand messages in a removed label.
-        var removed = items.Where(i => i.Kind is LabelPlanItemKind.Empty or LabelPlanItemKind.NearDuplicate).ToList();
+        // Whatever their status: accepting one later must not strand messages in a removed label. A taxonomy item removes none.
+        var removed = items.Where(i => i.Kind is LabelPlanItemKind.Empty or LabelPlanItemKind.NearDuplicate && !i.IsTaxonomy).ToList();
         if (target is not null && removed.Exists(i => string.Equals(i.LabelId, target.Id, StringComparison.Ordinal)))
         {
             return new PlanEditResult(PlanEditOutcome.Invalid, Detail: "The plan deletes or merges the target label.");
@@ -265,7 +275,8 @@ public sealed class LabelPlanService(
         string name, LabelPlanItem item, List<LabelPlanItem> items, List<LabelPlanItem> removed,
         IReadOnlyList<GmailLabel> catalogue, IReadOnlyCollection<string> protectedNames)
     {
-        if (catalogue.Any(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase))
+        // A created label may take an existing label's name: its senders then go to that label.
+        if ((item.Kind != LabelPlanItemKind.Create && catalogue.Any(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase)))
             || protectedNames.Contains(name, StringComparer.OrdinalIgnoreCase))
         {
             return "A label with the proposed name already exists or is reserved by the app.";
@@ -276,7 +287,8 @@ public sealed class LabelPlanService(
             return "The proposed name is under a label the app or the Apps Script relies on.";
         }
 
-        if (items.Exists(i => i.Id != item.Id && string.Equals(i.ProposedName, name, StringComparison.OrdinalIgnoreCase)))
+        if (items.Exists(i => i.Id != item.Id && (string.Equals(i.ProposedName, name, StringComparison.OrdinalIgnoreCase)
+            || (i.Kind == LabelPlanItemKind.Create && i.ProposedName is null && string.Equals(i.LabelName, name, StringComparison.OrdinalIgnoreCase)))))
         {
             return "Another item of the plan already proposes this name.";
         }

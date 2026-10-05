@@ -64,6 +64,10 @@ public static class SettingsValidation
     public const int MaxLlmNumCtx = 131_072;
     public const double MinTriageConfidenceThreshold = 0;
     public const double MaxTriageConfidenceThreshold = 1;
+    public const int MinTaxonomyMaxSenders = 10;
+    public const int MaxTaxonomyMaxSenders = 300;
+    public const int MinTaxonomyMaxLabels = 5;
+    public const int MaxTaxonomyMaxLabels = 60;
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
@@ -122,6 +126,8 @@ public static class SettingsValidation
         CheckRange(errors, "llmNumCtx", request.LlmNumCtx, MinLlmNumCtx, MaxLlmNumCtx);
         CheckModelName(errors, "triageModel", request.TriageModel);
         CheckRange(errors, "triageConfidenceThreshold", request.TriageConfidenceThreshold, MinTriageConfidenceThreshold, MaxTriageConfidenceThreshold);
+        CheckRange(errors, "taxonomyMaxSenders", request.TaxonomyMaxSenders, MinTaxonomyMaxSenders, MaxTaxonomyMaxSenders);
+        CheckRange(errors, "taxonomyMaxLabels", request.TaxonomyMaxLabels, MinTaxonomyMaxLabels, MaxTaxonomyMaxLabels);
         if (request.ClaudeReviewerMode is { } reviewer && !Enum.IsDefined(reviewer))
         {
             errors["claudeReviewerMode"] = ["Must be off, headless_claude_code or claude_desktop."];

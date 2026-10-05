@@ -1,5 +1,8 @@
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Jobs;
+using GmailOrganiser.Rules.Taxonomy;
+using GmailOrganiser.Settings;
 using Google;
 using Microsoft.AspNetCore.Http.HttpResults;
 
@@ -16,7 +19,30 @@ public static class LabelPlanEndpoints
         group.MapPatch("/plans/{id:guid}/items/{itemId:guid}", UpdateItemAsync);
         group.MapPost("/plans/{id:guid}/discard", DiscardAsync);
         group.MapPost("/plans/{id:guid}/apply", ApplyAsync).RequireAccountMatch();
+        group.MapPost("/taxonomy", ProposeTaxonomyAsync).RequireAccountMatch();
         return endpoints;
+    }
+
+    /// <summary>
+    /// Queues the taxonomy proposal (#366), whose result is the new draft plan: 202 with the job; 409 when no chat
+    /// model is chosen or a proposal is already queued, running or paused.
+    /// </summary>
+    private static async Task<Results<Accepted<JobDto>, ProblemHttpResult>> ProposeTaxonomyAsync(
+        IJobService jobs, ISettingsStore settings, CancellationToken ct)
+    {
+        if ((await settings.GetAsync(ct)).ChatModel is null)
+        {
+            return TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, title: "No chat model", detail: "Choose a chat model in Settings first.");
+        }
+
+        var (job, created) = await jobs.EnqueueAsync(TaxonomyProposeJob.JobType, TaxonomyProposeJob.Queue, ct: ct);
+        return created
+            ? TypedResults.Accepted($"/api/jobs/{job.Id}", job)
+            : TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Taxonomy proposal in progress",
+                detail: "A taxonomy proposal is already queued, running or paused.");
     }
 
     /// <summary>
