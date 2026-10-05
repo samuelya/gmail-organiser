@@ -37,6 +37,7 @@ class FakeJobs {
   readonly activeJobs = computed(() => this.held().filter(isActiveJob));
   readonly connectionState = signal<JobsConnectionState>('connected');
   readonly reconnects = signal(0);
+  readonly fetch = vi.fn();
   job(id: string) {
     return this.held().find((j) => j.id === id);
   }
@@ -89,6 +90,7 @@ describe('NoisySendersPage', () => {
     proposeNoisy: ReturnType<typeof vi.fn>;
     archiveSenders: ReturnType<typeof vi.fn>;
   };
+  let jobs: FakeJobs;
 
   async function render(rows: NoisySenderDto[], url = '/senders/noisy') {
     api = {
@@ -99,7 +101,7 @@ describe('NoisySendersPage', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([{ path: 'senders/noisy', component: NoisySendersPage }]),
-        { provide: JobsService, useValue: new FakeJobs() },
+        { provide: JobsService, useValue: (jobs = new FakeJobs()) },
         { provide: SendersService, useValue: api },
         { provide: CleanUpService, useValue: { unsubscribeInfo: () => of(null) } },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
@@ -182,6 +184,47 @@ describe('NoisySendersPage', () => {
       canonicalAddresses: ['news@example.com', 'shop@example.org'],
     });
     expect(document.querySelector('[data-testid="job-progress"]')).not.toBeNull();
+  });
+
+  it('on reconnect, ends an archive that finished while the hub was down', async () => {
+    const { harness, button, tick, q } = await render([noisy()]);
+    const queued = { id: 'job-1', type: 'sender_archive', status: 'queued', version: 1 } as JobDto;
+    api.archiveSenders.mockReturnValue(of(queued));
+    await tick(0);
+    button('archive-all').click();
+    await harness.fixture.whenStable();
+    (document.querySelector('[data-testid="archive-ok"]') as HTMLButtonElement).click();
+    await harness.fixture.whenStable();
+    expect(q('job-progress')).not.toBeNull();
+
+    jobs.fetch.mockReturnValue(of({ ...queued, status: 'completed', version: 3 }));
+    const loads = api.listNoisy.mock.calls.length;
+    jobs.reconnects.set(1);
+    await harness.fixture.whenStable();
+
+    expect(jobs.fetch).toHaveBeenCalledWith('job-1');
+    expect(q('job-progress')).toBeNull();
+    expect(api.listNoisy.mock.calls.length).toBeGreaterThan(loads);
+    await tick(0);
+    expect(button('archive-all').disabled).toBe(false);
+  });
+
+  it('on reconnect, stops following a picked-up archive that cannot be read', async () => {
+    const { harness, button, tick, q } = await render([noisy()]);
+    const running = { id: 'job-2', type: 'sender_archive', status: 'running', version: 2 };
+    jobs.held.set([running as JobDto]);
+    await harness.fixture.whenStable();
+    expect(q('job-progress')).not.toBeNull();
+
+    jobs.held.set([]);
+    jobs.fetch.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 404 })));
+    jobs.reconnects.set(1);
+    await harness.fixture.whenStable();
+
+    expect(jobs.fetch).toHaveBeenCalledWith('job-2');
+    expect(q('job-progress')).toBeNull();
+    await tick(0);
+    expect(button('archive-all').disabled).toBe(false);
   });
 
   it('shows the 422 refusal reason on the page', async () => {

@@ -191,6 +191,12 @@ export class NoisySendersPage {
       const job = this.job();
       if (job && !isActiveJob(job)) untracked(() => this.finish(job));
     });
+    // Updates may have been missed while disconnected, and the hub's snapshot holds active jobs only:
+    // the followed archive's REST status ends it as above.
+    effect(() => {
+      if (this.jobs.reconnects() === 0) return;
+      untracked(() => this.checkJob());
+    });
   }
 
   reload(): void {
@@ -296,6 +302,27 @@ export class NoisySendersPage {
             this.actionError.set(problemText(error));
           }
           // Other errors are shown by the error interceptor.
+        },
+      });
+  }
+
+  /** Re-reads the followed archive over REST; unreadable stops following, so the page unlocks. */
+  private checkJob(): void {
+    const id = this.trackedJobId();
+    if (!id) return;
+    this.jobs
+      .fetch(id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (job) => {
+          if (this.trackedJobId() === id) this.startedJob.set(job);
+        },
+        error: () => {
+          if (this.trackedJobId() !== id) return;
+          this.finishedJobIds.add(id);
+          this.trackedJobId.set(null);
+          this.startedJob.set(null);
+          this.reload();
         },
       });
   }
