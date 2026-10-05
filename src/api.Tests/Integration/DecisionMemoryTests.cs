@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
@@ -15,12 +14,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Pgvector;
-using Pgvector.EntityFrameworkCore;
 
 namespace GmailOrganiser.Tests.Integration;
 
 [Collection(PostgresCollection.Name)]
-public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHelper output) : IAsyncLifetime
+public sealed class DecisionMemoryTests(PostgresFixture postgres) : IAsyncLifetime
 {
     private const string EmbeddingModel = "fake-embedding-model";
     private const string Shop = "shop@example.com";
@@ -407,70 +405,10 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         (await Memory(db).FindPatternsAsync([ShopScope], minApprovals: 2, documentTypeParent: null, Ct)).ShouldContainKey(ShopScope);
     }
 
-    /// <summary>
-    /// Design check measurement for #111: an exact cosine top-5 scan over 20 000 decisions of 768 dimensions. Explicit
-    /// (run with <c>--explicit only</c>), not part of CI.
-    /// </summary>
-    [Fact(Explicit = true)]
-    public async Task Measure_top5_cosine_scan_over_20000_decisions_of_768_dimensions()
-    {
-        var generator = new FakeEmbeddingGenerator(768);
-        await using (var db = postgres.CreateDbContext())
-        {
-            for (var batch = 0; batch < 10; batch++)
-            {
-                for (var i = 0; i < 2000; i++)
-                {
-                    var n = (batch * 2000) + i;
-                    var row = Decision($"sender{n % 500}@example.com", $"Label {n % 20}", DecisionOutcome.Approved, Now.AddMinutes(-n));
-                    row.Embedding = new Vector(generator.Vector($"synthetic decision {n}"));
-                    row.EmbeddingModel = EmbeddingModel;
-                    db.Decisions.Add(row);
-                }
+    private DecisionMemory Memory(AppDbContext db) => MemoryTestFactory.Memory(db, settings, embeddings);
 
-                await db.SaveChangesAsync(Ct);
-                db.ChangeTracker.Clear();
-            }
-
-            await db.Database.ExecuteSqlRawAsync("ANALYZE decisions", Ct);
-        }
-
-        var query = new Vector(generator.Vector("synthetic query"));
-        var timings = new List<double>();
-        await using (var db = postgres.CreateDbContext())
-        {
-            for (var run = 0; run < 6; run++)
-            {
-                var watch = Stopwatch.StartNew();
-                var top = await db.Decisions.AsNoTracking()
-                    .Where(d => d.EmbeddingModel == EmbeddingModel && d.Embedding != null)
-                    .Select(d => new { d.Id, Distance = d.Embedding!.CosineDistance(query) })
-                    .OrderBy(x => x.Distance)
-                    .Take(5)
-                    .ToListAsync(Ct);
-                watch.Stop();
-                top.Count.ShouldBe(5);
-                timings.Add(watch.Elapsed.TotalMilliseconds);
-            }
-        }
-
-        var warm = timings.Skip(1).Order().ToList();
-        output.WriteLine($"cold {timings[0]:F1} ms; warm median {warm[warm.Count / 2]:F1} ms, max {warm[^1]:F1} ms");
-    }
-
-    private DecisionMemory Memory(AppDbContext db) =>
-        new(db, new FakeLlmClientFactory(embed: embeddings), settings, NullLogger<DecisionMemory>.Instance);
-
-    private DecisionEmbeddingService EmbeddingService(TimeProvider? clock = null)
-    {
-        var services = new ServiceCollection();
-        services.AddScoped(_ => postgres.CreateDbContext());
-        services.AddScoped<IDecisionMemory>(sp => Memory(sp.GetRequiredService<AppDbContext>()));
-        providers.Add(services.BuildServiceProvider());
-        return new DecisionEmbeddingService(
-            providers[^1].GetRequiredService<IServiceScopeFactory>(), new DecisionEmbeddingQueue(), clock ?? TimeProvider.System,
-            NullLogger<DecisionEmbeddingService>.Instance);
-    }
+    private DecisionEmbeddingService EmbeddingService(TimeProvider? clock = null) =>
+        MemoryTestFactory.EmbeddingService(postgres, Memory, providers, clock);
 
     private async Task<DateTimeOffset?> FailedAt(Guid id)
     {
