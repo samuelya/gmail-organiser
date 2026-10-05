@@ -29,3 +29,20 @@ public sealed record AppsScriptSettings
     /// <summary>The script only logs what it would archive.</summary>
     public bool DryRun { get; init; } = true;
 }
+
+/// <summary>
+/// The <c>appsScript</c> block of <c>PUT /api/settings</c>: it replaces the saved block, except that an omitted or null
+/// <see cref="RetentionRules"/> keeps the saved list, so a client that predates it (#369) doesn't clear it.
+/// </summary>
+public sealed record UpdateAppsScriptSettingsRequest
+{
+    public IReadOnlyList<ArchiveRule> Rules { get; init; } = [];
+
+    public bool ActionDoneArchive { get; init; } = true;
+
+    public IReadOnlyList<string> KeepInInboxLabels { get; init; } = [];
+
+    public IReadOnlyList<RetentionRule>? RetentionRules { get; init; }
+
+    public bool DryRun { get; init; } = true;
+}

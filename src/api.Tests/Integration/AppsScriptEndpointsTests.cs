@@ -66,6 +66,10 @@ public sealed class AppsScriptEndpointsTests(ApiFactory factory, PostgresFixture
             """);
         (await GetAsync()).AppsScript.RetentionRules.ShouldBe([new RetentionRule("Synthetic/Receipts", 365)]);
 
+        // A client that doesn't send retentionRules (the Settings form before #371) keeps the saved list.
+        await PutJsonAsync("""{"appsScript":{"rules":[{"label":"Synthetic/News","days":30}],"dryRun":false}}""");
+        (await GetAsync()).AppsScript.RetentionRules.ShouldBe([new RetentionRule("Synthetic/Receipts", 365)]);
+
         var dto = (await factory.CreateClient().GetFromJsonAsync<AppsScriptConfigDto>("/api/rules/apps-script/config", Ct)).ShouldNotBeNull();
 
         dto.ScriptVersion.ShouldBe(2);

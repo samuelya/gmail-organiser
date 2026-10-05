@@ -83,7 +83,8 @@ public sealed record GoogleClientDto(string? ClientId, bool SecretSet, bool Lock
 
 /// <summary>
 /// Partial update: <c>null</c> leaves a value unchanged; an empty model name (including <see cref="ClaudeModel"/>) or a
-/// blank prompt template or <see cref="DocumentTypeParent"/> clears it. <see cref="AppsScript"/> replaces the whole saved block.
+/// blank prompt template or <see cref="DocumentTypeParent"/> clears it. <see cref="AppsScript"/> replaces the whole saved block
+/// (see <see cref="UpdateAppsScriptSettingsRequest"/>).
 /// </summary>
 public sealed record UpdateSettingsRequest(
     string? OllamaBaseUrl,
@@ -116,7 +117,7 @@ public sealed record UpdateSettingsRequest(
     UpdateProtectionSettingsRequest? Protection = null,
     string? ActionLabelName = null,
     string? DeleteLabelName = null,
-    AppsScriptSettings? AppsScript = null,
+    UpdateAppsScriptSettingsRequest? AppsScript = null,
     string? DocumentTypeParent = null,
     int? RulesStaleFilterDays = null,
     int? LlmNumCtx = null);

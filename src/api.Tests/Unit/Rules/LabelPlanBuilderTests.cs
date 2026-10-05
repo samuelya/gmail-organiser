@@ -257,10 +257,15 @@ public sealed class LabelPlanBuilderTests
     {
         var app = new AppSettings
         {
-            AppsScript = new AppsScriptSettings { Rules = [new ArchiveRule("Synthetic/Rule", 7)], KeepInInboxLabels = ["Synthetic Keep"] },
+            AppsScript = new AppsScriptSettings
+            {
+                Rules = [new ArchiveRule("Synthetic/Rule", 7)],
+                RetentionRules = [new RetentionRule("Synthetic/Retain", 365)],
+                KeepInInboxLabels = ["Synthetic Keep"],
+            },
         };
 
-        LabelPlanService.ProtectedNames(app).ShouldBe([app.ActionLabelName, app.DeleteLabelName, "Synthetic/Rule", "Synthetic Keep"]);
+        LabelPlanService.ProtectedNames(app).ShouldBe([app.ActionLabelName, app.DeleteLabelName, "Synthetic/Rule", "Synthetic/Retain", "Synthetic Keep"]);
     }
 
     private static (GmailLabel Label, long Count) User(string id, string name, long count) =>

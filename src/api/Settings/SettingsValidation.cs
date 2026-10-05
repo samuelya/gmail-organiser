@@ -187,11 +187,15 @@ public static class SettingsValidation
     public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
 
     /// <summary>Trims the label names of a validated block; a missing list becomes empty.</summary>
-    public static AppsScriptSettings NormaliseAppsScript(AppsScriptSettings value) => value with
+    public static AppsScriptSettings NormaliseAppsScript(UpdateAppsScriptSettingsRequest value, AppsScriptSettings saved) => new()
     {
         Rules = [.. (value.Rules ?? []).Select(r => r with { Label = r.Label.Trim() })],
+        ActionDoneArchive = value.ActionDoneArchive,
         KeepInInboxLabels = [.. (value.KeepInInboxLabels ?? []).Select(l => l.Trim())],
-        RetentionRules = [.. (value.RetentionRules ?? []).Select(r => r with { Label = r.Label.Trim() })],
+        RetentionRules = value.RetentionRules is { } retention
+            ? [.. retention.Select(r => r with { Label = r.Label.Trim() })]
+            : saved.RetentionRules,
+        DryRun = value.DryRun,
     };
 
     /// <summary>The validated domains in their stored form (<see cref="CanonicalDomain"/>), dropping duplicates.</summary>
@@ -243,7 +247,7 @@ public static class SettingsValidation
     }
 
     // A rule's label need not exist in Gmail yet: the script skips missing labels.
-    private static void ValidateAppsScript(Dictionary<string, string[]> errors, AppsScriptSettings request)
+    private static void ValidateAppsScript(Dictionary<string, string[]> errors, UpdateAppsScriptSettingsRequest request)
     {
         // The JSON body can carry nulls the non-nullable annotations don't rule out.
         var keep = request.KeepInInboxLabels ?? [];
