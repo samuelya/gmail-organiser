@@ -87,6 +87,9 @@ public sealed record AppSettings
     /// <summary>The Apps Script auto-archive config (#210); see <see cref="AppsScriptSettings"/>.</summary>
     public AppsScriptSettings AppsScript { get; init; } = new();
 
+    /// <summary>The retention sweep (#368); see <see cref="RetentionSettings"/>.</summary>
+    public RetentionSettings Retention { get; init; } = new();
+
     // Claude review (epic #23); ranges are in SettingsValidation.
     public ClaudeReviewerMode ClaudeReviewerMode { get; init; } = DefaultClaudeReviewerMode;
 

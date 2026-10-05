@@ -120,6 +120,7 @@ public static class SettingsEndpoints
             ? s.DocumentTypeParent
             : SettingsValidation.NormaliseDocumentTypeParent(request.DocumentTypeParent),
         AppsScript = request.AppsScript is { } appsScript ? SettingsValidation.NormaliseAppsScript(appsScript, s.AppsScript) : s.AppsScript,
+        Retention = request.Retention?.Apply(s.Retention) ?? s.Retention,
     };
 
     /// <summary>Applies a validated request; listed types change, the others keep their saved value.</summary>

@@ -41,7 +41,8 @@ public sealed record SettingsDto(
     string? TriageModel,
     double TriageConfidenceThreshold,
     int TaxonomyMaxSenders,
-    int TaxonomyMaxLabels)
+    int TaxonomyMaxLabels,
+    RetentionSettingsDto Retention)
 {
     /// <param name="claudeTokenSet">Whether <c>CLAUDE_CODE_OAUTH_TOKEN</c> is set; the token itself is never returned.</param>
     public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet) => new(
@@ -85,7 +86,8 @@ public sealed record SettingsDto(
         s.TriageModel,
         s.TriageConfidenceThreshold,
         s.TaxonomyMaxSenders,
-        s.TaxonomyMaxLabels);
+        s.TaxonomyMaxLabels,
+        RetentionSettingsDto.From(s.Retention));
 }
 
 /// <summary>Never carries the secret itself.</summary>
@@ -135,7 +137,8 @@ public sealed record UpdateSettingsRequest(
     string? TriageModel = null,
     double? TriageConfidenceThreshold = null,
     int? TaxonomyMaxSenders = null,
-    int? TaxonomyMaxLabels = null);
+    int? TaxonomyMaxLabels = null,
+    UpdateRetentionSettingsRequest? Retention = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>

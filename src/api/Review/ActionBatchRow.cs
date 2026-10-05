@@ -27,6 +27,9 @@ public enum ActionKind
 
     /// <summary>A sender archive (#349): <c>INBOX</c> removed from the senders' inbox mail.</summary>
     Archive,
+
+    /// <summary>A retention sweep (#368): the delete label added to expired applied mail and <c>INBOX</c> removed.</summary>
+    Retention,
 }
 
 /// <summary>One History entry (<c>action_batches</c>): the header of a set of <see cref="ActionLogRow"/>s undone together.</summary>

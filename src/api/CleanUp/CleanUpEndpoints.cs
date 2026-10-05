@@ -1,6 +1,7 @@
 using GmailOrganiser.Common;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -23,6 +24,8 @@ public static class CleanUpEndpoints
             StartAsync(ActionKind.Unmark, request, cleanUp, ct)).RequireAccountMatch();
         group.MapPost("/delete", (CleanupSelectionRequest request, CleanUpService cleanUp, CancellationToken ct) =>
             StartAsync(ActionKind.Trash, request, cleanUp, ct)).RequireAccountMatch();
+        group.MapGet("/retention", RetentionAsync);
+        group.MapPost("/retention/run", RunRetentionAsync).RequireAccountMatch();
         return endpoints;
     }
 
@@ -104,6 +107,30 @@ public static class CleanUpEndpoints
             return GmailProblems.NotConnected(ex);
         }
     }
+
+    /// <summary>Whether retention is on, the last and next sweep, and how many messages one would mark now; 503 when Gmail is not connected.</summary>
+    private static async Task<Results<Ok<RetentionStatusDto>, ProblemHttpResult>> RetentionAsync(RetentionService retention, CancellationToken ct)
+    {
+        try
+        {
+            return TypedResults.Ok(await retention.StatusAsync(ct));
+        }
+        catch (GmailNotConnectedException ex)
+        {
+            return GmailProblems.NotConnected(ex);
+        }
+    }
+
+    /// <summary>202 with the queued sweep; 409 while retention is off or a sweep is queued, running or paused.</summary>
+    private static async Task<Results<Accepted<JobDto>, ProblemHttpResult>> RunRetentionAsync(RetentionService retention, CancellationToken ct) =>
+        await retention.RunNowAsync(ct) switch
+        {
+            ({ } job, RetentionRunRefusal.None) => TypedResults.Accepted($"/api/jobs/{job.Id}", job),
+            (_, RetentionRunRefusal.Disabled) => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, title: "Retention is off", detail: "Turn retention on in Settings first."),
+            _ => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict, title: "A retention sweep is already active", detail: "Wait for it to finish, or resume or cancel it in Jobs."),
+        };
 
     /// <summary>The selection, or null with <paramref name="errors"/>: exactly one of message ids, a sender or all.</summary>
     private static CleanUpSelection? Parse(CleanupSelectionRequest request, out Dictionary<string, string[]> errors)
