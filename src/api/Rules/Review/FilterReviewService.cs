@@ -22,6 +22,7 @@ public sealed class FilterReviewService(
     AppDbContext db,
     FilterSnapshot snapshot,
     FilterService filters,
+    PolicyFilterProposalQuery policyProposals,
     LabelCatalog catalog,
     ISettingsStore settings,
     TimeProvider time,
@@ -65,7 +66,8 @@ public sealed class FilterReviewService(
         var checkedFilters = active.Where(r => !busy.Contains(r.Id)).ToList();
         var now = time.GetUtcNow();
         var counts = await RecentCountsAsync(checkedFilters, now.AddDays(-days), ct);
-        var drafts = FilterChecks.Run(checkedFilters, labels, r => counts.TryGetValue(r.Id, out var c) ? c : null, days);
+        var proposals = await policyProposals.ListAsync(ct, includeCovered: true);
+        var drafts = FilterChecks.Run(checkedFilters, labels, r => counts.TryGetValue(r.Id, out var c) ? c : null, days, proposals);
 
         var review = new FilterReviewRow
         {
@@ -368,7 +370,8 @@ public sealed class FilterReviewService(
 
         return new FilterFindingDto(
             f.Id, f.Kind, f.FilterIds, [.. f.FilterIds.Where(rows.ContainsKey).Select(i => FilterSnapshot.ToDto(rows[i], names))],
-            f.Description, new FilterFixDto(fix.Kind, fix.DeleteFilterIds, create), f.Status, f.AppliedAt, f.Error, f.ReviewId);
+            f.Description, new FilterFixDto(fix.Kind, fix.DeleteFilterIds, create), f.Status, f.AppliedAt, f.Error, f.ReviewId,
+            fix.PolicyId);
     }
 
     private static Dictionary<string, string> Names(IReadOnlyList<GmailLabel> labels) =>

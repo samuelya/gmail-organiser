@@ -13,7 +13,7 @@ public sealed record FilterFindingDraft(FilterFindingKind Kind, IReadOnlyList<st
 /// duplicate, without a fix: the app never creates a forwarding filter, so it could not restore a deleted one. The later
 /// copies of a duplicate take part in no other check.
 /// </summary>
-public static class FilterChecks
+public static partial class FilterChecks
 {
     /// <summary>The most addresses one merged <c>from</c> filter lists.</summary>
     public const int MergeMaxAddresses = 20;
@@ -21,8 +21,10 @@ public static class FilterChecks
     private static readonly FilterFix NoFix = new(FilterFixKind.None, []);
 
     /// <param name="recentMatches">Stored messages newer than the stale cutoff the filter matches; null when not evaluable.</param>
+    /// <param name="policyProposals">The policy proposals (#373), those an active filter equals included.</param>
     public static IReadOnlyList<FilterFindingDraft> Run(
-        IEnumerable<FilterRow> activeFilters, IReadOnlyList<GmailLabel> labels, Func<FilterRow, int?> recentMatches, int staleDays)
+        IEnumerable<FilterRow> activeFilters, IReadOnlyList<GmailLabel> labels, Func<FilterRow, int?> recentMatches, int staleDays,
+        IReadOnlyList<FilterProposalDto>? policyProposals = null)
     {
         ArgumentNullException.ThrowIfNull(activeFilters);
         ArgumentNullException.ThrowIfNull(labels);
@@ -61,6 +63,7 @@ public static class FilterChecks
         }
 
         findings.AddRange(Mergeable(distinct, names));
+        findings.AddRange(PolicyFindings(distinct, policyProposals ?? [], labels, names));
         return findings;
     }
 
