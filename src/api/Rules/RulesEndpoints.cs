@@ -117,7 +117,10 @@ public static class RulesEndpoints
         }
     }
 
-    /// <summary>Filters proposed from approved policies, then approved senders, that no active filter covers; <c>source</c> picks one kind.</summary>
+    /// <summary>
+    /// Filters proposed from approved policies, then approved senders, that no active filter covers; <c>source</c> picks
+    /// the kind and defaults to <c>pattern</c>, which the current web UI expects.
+    /// </summary>
     private static async Task<Results<Ok<PagedDto<FilterProposalDto>>, ValidationProblem>> ListProposalsAsync(
         FilterProposalQuery proposals, CancellationToken ct, int? page = null, int? pageSize = null, string? source = null)
     {
@@ -143,7 +146,7 @@ public static class RulesEndpoints
         }
 
         return TypedResults.Ok(await proposals.ListAsync(
-            source ?? FilterProposalSources.All, page ?? 1, pageSize ?? FilterProposalQuery.DefaultPageSize, ct));
+            source ?? FilterProposalSources.Pattern, page ?? 1, pageSize ?? FilterProposalQuery.DefaultPageSize, ct));
     }
 
     /// <summary>Syncs the filters and stores a new review; 503 when Gmail is unreachable, 409 for another account's data.</summary>

@@ -336,6 +336,7 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
 
         page.Total.ShouldBe(2);
         page.Items.Select(p => p.SenderAddress).ShouldBe([Shop, Billing]);
+        page.Items.Select(p => p.Key).ShouldBe([$"sender:{Shop}", $"sender:{Billing}"]);
         var shop = page.Items[0];
         (shop.MessageCount, shop.DisplayName, shop.Pattern.TopicLabel).ShouldBe((4, "Synthetic shop", "Synthetic/Offers"));
         shop.Suggested.Criteria.From.ShouldBe(Shop);

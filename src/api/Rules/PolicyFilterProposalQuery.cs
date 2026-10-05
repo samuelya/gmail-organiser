@@ -1,6 +1,8 @@
 using System.Text.RegularExpressions;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
@@ -45,31 +47,22 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
             .Where(s => senderKeys.Contains(s.CanonicalAddress) || domainKeys.Contains(s.CanonicalDomain))
             .Select(s => new RawSender(s.Address, s.CanonicalAddress, s.CanonicalDomain, s.TotalCount))
             .ToListAsync(ct);
+        List<string> listKeys = [.. policies.Where(p => p.Scope == PolicyScope.List).Select(p => ListKey(p.ScopeKey))];
         var known = new Known(
             senders,
             senderKeys,
-            [.. policies.Where(p => p.Scope == PolicyScope.List).Select(p => ListKey(p.ScopeKey))],
-            await db.Senders.AsNoTracking().Select(s => s.CanonicalDomain).Distinct().ToListAsync(ct));
+            listKeys,
+            await db.Senders.AsNoTracking().Select(s => s.CanonicalDomain).Distinct().ToListAsync(ct),
+            listKeys.Count == 0 ? [] : await db.Messages.AsNoTracking().Where(m => m.ListId != null).Select(m => m.ListId!).Distinct().ToListAsync(ct));
         var settings = await settingsStore.GetAsync(ct);
-        var active = (await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct)).ConvertAll(r => r.ReadCriteria());
-        var fromTerms = active.Select(c => c.From).OfType<string>().SelectMany(f => FilterCriteriaMapping.FromTerms(f) ?? []).ToList();
-        var listTerms = active.Select(c => c.Query).OfType<string>()
-            .SelectMany(q => ListTerm().Matches(q).Select(m => m.Groups[1].Value.Trim('<', '>').ToLowerInvariant()))
-            .ToHashSet(StringComparer.Ordinal);
+        var active = (await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct))
+            .Select(r => Normalised(r.ReadCriteria())).ToHashSet(StringComparer.Ordinal);
         var negation = Negation(options.Value.TransactionalKeywords);
 
         var units = new List<Unit>();
         foreach (var policy in policies)
         {
             var scope = await ScopeAsync(policy, known, ct);
-            var covered = policy.Scope == PolicyScope.List
-                ? listTerms.Contains(ListKey(policy.ScopeKey))
-                : scope.Addresses.All(a => fromTerms.Any(t => FilterCriteriaMapping.FromTermMatches(t, a)));
-            if (covered)
-            {
-                continue;
-            }
-
             if (!policy.IsMixed)
             {
                 // Rules left on a single-label policy are ignored (PolicyMatcher.FirstRule).
@@ -81,17 +74,51 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
                 continue;
             }
 
-            // A mixed policy's unmatched mail goes to review, so its default gets no filter.
+            // A mixed policy's unmatched mail goes to review, so its default gets no filter. Gmail applies every matching
+            // filter, so a rule's filter negates the criteria of the rules above it (PolicyMatcher applies the first).
+            var earlier = new List<string>();
+            var untestable = new List<string>();
             foreach (var rule in policy.Rules.Where(r => r.Status == PolicyStatus.Approved).OrderBy(r => r.Position))
             {
-                if (RuleUnit(policy, rule, scope, settings) is { } unit)
+                var terms = Criteria(rule.Match);
+                if (RuleUnit(policy, rule, terms, scope, earlier, untestable, settings) is { } unit)
                 {
                     units.Add(unit);
+                }
+
+                if (terms.Query.Count == 0)
+                {
+                    untestable.Add(rule.Name);
+                }
+                else
+                {
+                    earlier.Add(terms.Query.Count == 1 ? "-" + terms.Query[0] : $"-({string.Join(' ', terms.Query)})");
                 }
             }
         }
 
-        return [.. Merge(units).OrderByDescending(p => p.MessageCount).ThenBy(p => p.SenderAddress, StringComparer.Ordinal)];
+        // An active filter covers a unit, or a merged proposal, only with the same criteria.
+        units.RemoveAll(u => active.Contains(Normalised(new GmailFilterCriteria(From: u.From.Count > 0 ? string.Join(" OR ", u.From) : null, Query: u.Query))));
+        return
+        [
+            .. Merge(units)
+                .Where(p => !active.Contains(Normalised(new GmailFilterCriteria(From: p.Suggested.Criteria.From, Query: p.Suggested.Criteria.Query))))
+                .OrderByDescending(p => p.MessageCount).ThenBy(p => p.SenderAddress, StringComparer.Ordinal),
+        ];
+    }
+
+    /// <summary>
+    /// Criteria as a comparable key: the lower-cased <c>from</c> terms and the tokens of the rest of the query, each
+    /// sorted, with <c>list:</c> ids stripped of their brackets, so order, case and spacing don't decide coverage.
+    /// </summary>
+    private static string Normalised(GmailFilterCriteria criteria)
+    {
+        IReadOnlyList<string> from = criteria.From is { } f ? FilterCriteriaMapping.FromTerms(f) ?? [f.Trim().ToLowerInvariant()] : [];
+        var tokens = QueryToken().Matches(FilterCriteriaMapping.ToQuery(criteria with { From = null }))
+            .Select(m => m.Value.ToLowerInvariant())
+            .Select(t => t.StartsWith("list:", StringComparison.Ordinal) || t.StartsWith("-list:", StringComparison.Ordinal) ? t.Replace("<", "").Replace(">", "") : t);
+        return string.Join(' ', from.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
+            + "|" + string.Join(' ', tokens.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
     }
 
     /// <summary>
@@ -108,8 +135,10 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         var key = policy.ScopeKey;
         if (policy.Scope == PolicyScope.List)
         {
-            var count = await db.Messages.CountAsync(m => m.ListId != null && m.ListId.ToLower() == key, ct);
-            return new Scope([], [], "list:" + ListKey(key), Excluding("from", known.PolicyAddresses(_ => true)), count);
+            // The stored ids that normalise to the key, compared as stored so an index on the column can serve the count.
+            var stored = known.ListIds.Where(id => GroupKey.NormaliseListId(id) == ListKey(key)).ToList();
+            var count = stored.Count == 0 ? 0 : await db.Messages.CountAsync(m => m.ListId != null && stored.Contains(m.ListId), ct);
+            return new Scope([], "list:" + ListKey(key), Excluding("from", known.PolicyAddresses(_ => true)), count);
         }
 
         var raw = policy.Scope == PolicyScope.Sender
@@ -118,8 +147,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         List<string> addresses = [.. raw.Select(s => s.Address.ToLowerInvariant()).Distinct().Order(StringComparer.Ordinal)];
         if (policy.Scope == PolicyScope.Sender)
         {
-            List<string> terms = addresses.Count > 0 ? addresses : [key.ToLowerInvariant()];
-            return new Scope(terms, terms, null, [], raw.Sum(s => s.TotalCount));
+            return new Scope(addresses.Count > 0 ? addresses : [key.ToLowerInvariant()], null, [], raw.Sum(s => s.TotalCount));
         }
 
         var domain = "@" + key.ToLowerInvariant();
@@ -127,7 +155,6 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         var subdomains = known.Domains.Where(d => d.EndsWith("." + key, StringComparison.Ordinal)).Select(d => "@" + d.ToLowerInvariant());
         return new Scope(
             [domain, .. relays],
-            addresses.Count > 0 ? addresses : [domain],
             null,
             [.. Excluding("from", [.. known.PolicyAddresses(k => k.EndsWith("@" + key, StringComparison.Ordinal)), .. subdomains]), .. Excluding("list", known.ListKeys)],
             raw.Sum(s => s.TotalCount));
@@ -172,23 +199,36 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     }
 
     /// <summary>
-    /// A mixed policy's rule as a label-only filter, or null when Gmail can test none of its conditions, the filter
-    /// doesn't fit the cap or the rule's topic is the delete label.
+    /// A mixed policy's rule as a label-only filter that negates the criteria of the rules above it
+    /// (<paramref name="earlier"/>), or null when Gmail can test none of its conditions, the filter doesn't fit the cap
+    /// or the rule's topic is the delete label. A rule above it that Gmail can't test (<paramref name="untestable"/>)
+    /// can't be negated, so the filter is partial: it also labels that rule's mail.
     /// </summary>
-    private static Unit? RuleUnit(SenderPolicyRow policy, SenderPolicyRuleRow rule, Scope scope, AppSettings settings)
+    private static Unit? RuleUnit(
+        SenderPolicyRow policy, SenderPolicyRuleRow rule, Terms terms, Scope scope, List<string> earlier, List<string> untestable, AppSettings settings)
     {
-        var terms = Criteria(rule.Match);
-
         // With no testable condition the filter would label the whole scope.
         if (terms.Query.Count == 0 || Topic(rule.TopicLabel, settings) is not { } topic)
         {
             return null;
         }
 
+        List<string> notes = [.. terms.Notes];
+        if (untestable.Count > 0)
+        {
+            notes.Add($"Also matches the mail of {string.Join(", ", untestable.Select(n => $"\"{n}\""))} above it, which Gmail filters can't test");
+        }
+
+        if (earlier.Count > 0)
+        {
+            notes.Add("Excludes the mail of the rules above it");
+        }
+
+        notes.Add(LabelOnlyNote(MixedNote, settings));
         var action = new FilterActionRequest([topic], false, false);
         var pattern = new SenderPatternDto(topic, false, false, 0, 1, 0, null);
         return Unit.Fitting(
-            policy, rule, scope, [.. scope.Base, .. scope.Narrower, .. terms.Query], action, pattern, terms.Wider, [.. terms.Notes, LabelOnlyNote(MixedNote, settings)]);
+            policy, rule, scope, [.. scope.Base, .. scope.Narrower, .. terms.Query, .. earlier], action, pattern, terms.Wider || untestable.Count > 0, notes);
     }
 
     /// <summary>The label a filter may add: the topic label, unless it is empty or the delete label.</summary>
@@ -279,6 +319,15 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     /// </summary>
     private static IEnumerable<FilterProposalDto> Merge(List<Unit> units)
     {
+        // A proposal's key is its first unit's policy or rule, numbered when that unit's terms span several chunks.
+        var keys = new Dictionary<string, int>(StringComparer.Ordinal);
+        string Key(Unit first)
+        {
+            var key = first.Rule is { } rule ? $"rule:{rule.Id}" : $"policy:{first.Policy.Id}";
+            var n = keys[key] = keys.GetValueOrDefault(key) + 1;
+            return n == 1 ? key : $"{key}:{n}";
+        }
+
         foreach (var group in units.GroupBy(u => (
             u.Query, string.Join('\n', u.Action.AddLabelNames ?? []), u.Action.SkipInbox, u.Pattern.NeedsAction, u.From.Count == 0,
             Own: u.Partial ? (u.Policy.Id, u.Rule?.Id) : default)))
@@ -288,7 +337,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
             {
                 foreach (var unit in members)
                 {
-                    yield return Dto(unit, [unit], null);
+                    yield return Dto(unit, [unit], null, Key(unit));
                 }
 
                 continue;
@@ -307,7 +356,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
 
                     if (chunk.Count > 0 && !Fits([.. chunk, term], unit.Query))
                     {
-                        yield return Dto(chunkUnits[0], chunkUnits, string.Join(" OR ", chunk));
+                        yield return Dto(chunkUnits[0], chunkUnits, string.Join(" OR ", chunk), Key(chunkUnits[0]));
                         chunk = [];
                         chunkUnits = [];
                     }
@@ -322,7 +371,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
 
             if (chunk.Count > 0)
             {
-                yield return Dto(chunkUnits[0], chunkUnits, string.Join(" OR ", chunk));
+                yield return Dto(chunkUnits[0], chunkUnits, string.Join(" OR ", chunk), Key(chunkUnits[0]));
             }
         }
     }
@@ -331,7 +380,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         terms.Count <= FilterCriteriaLimits.MaxFromTerms
         && FilterCriteriaMapping.ToQuery(new(From: string.Join(" OR ", terms), Query: query)).Length <= FilterCriteriaLimits.MaxQueryChars;
 
-    private static FilterProposalDto Dto(Unit first, List<Unit> units, string? from)
+    private static FilterProposalDto Dto(Unit first, List<Unit> units, string? from, string key)
     {
         var policies = units.Select(u => u.Policy.Id).Distinct().Count();
         List<string> notes = [.. units.SelectMany(u => u.Notes).Distinct(StringComparer.Ordinal)];
@@ -348,6 +397,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
             first.Policy.Scope == PolicyScope.List ? first.Policy.ScopeKey : null,
             first.Pattern,
             new FilterSuggestionDto(criteria, first.Action),
+            key,
             FilterProposalSources.Policy,
             first.Policy.Id,
             units.Count == 1 ? first.Rule?.Id : null,
@@ -379,16 +429,20 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
 
     private static string ListKey(string listId) => listId.Trim().Trim('<', '>').ToLowerInvariant();
 
-    [GeneratedRegex(@"(?<![\w-])list:(\S+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex ListTerm();
+    /// <summary>A query token: a run of non-blank text in which a quoted phrase or a parenthesised group may hold blanks.</summary>
+    [GeneratedRegex(@"(?:""[^""]*""|\([^)]*\)|\S)+", RegexOptions.CultureInvariant)]
+    private static partial Regex QueryToken();
 
     /// <param name="Wider">Whether the filter matches more than the rule: a dropped condition or a subject template.</param>
     private sealed record Terms(List<string> Query, List<string> Notes, bool Wider);
 
     private sealed record RawSender(string Address, string CanonicalAddress, string CanonicalDomain, int TotalCount);
 
-    /// <summary>What the portal knows for the exclusions: the policies' senders, keys and every canonical domain seen.</summary>
-    private sealed record Known(List<RawSender> Senders, string[] SenderKeys, List<string> ListKeys, List<string> Domains)
+    /// <summary>
+    /// What the portal knows for the exclusions: the policies' senders, keys and every canonical domain seen; and the
+    /// stored List-Ids (loaded only with a list policy), as stored, for the list count.
+    /// </summary>
+    private sealed record Known(List<RawSender> Senders, string[] SenderKeys, List<string> ListKeys, List<string> Domains, List<string> ListIds)
     {
         /// <summary>The raw addresses of the sender policies whose key passes <paramref name="where"/>, or the key when none is stored.</summary>
         public IEnumerable<string> PolicyAddresses(Func<string, bool> where) =>
@@ -397,10 +451,9 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     }
 
     /// <param name="From">The <c>from</c> terms; empty for a list scope.</param>
-    /// <param name="Addresses">What decides whether an active filter covers the scope.</param>
     /// <param name="List">The <c>list:</c> term of a list scope.</param>
     /// <param name="Narrower">Exclusions of the mail a narrower policy decides, or a subdomain's.</param>
-    private sealed record Scope(List<string> From, List<string> Addresses, string? List, List<string> Narrower, int MessageCount)
+    private sealed record Scope(List<string> From, string? List, List<string> Narrower, int MessageCount)
     {
         public List<string> Base => List is { } list ? [list] : [];
     }

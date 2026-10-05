@@ -76,6 +76,7 @@ public sealed record FilterSuggestionDto(FilterCriteriaDto Criteria, FilterActio
 /// <param name="DisplayName">The sender's name, the policy's, or the rule's name for a rule proposal.</param>
 /// <param name="ListId">The List-Id all the sender's stored messages share, if any; the List-Id of a list policy.</param>
 /// <param name="Pattern">The approved pattern; for a policy proposal, its outcome (no approvals counted).</param>
+/// <param name="Key">Unique within a listing: <c>sender:&lt;address&gt;</c>, <c>policy:&lt;id&gt;</c> or <c>rule:&lt;id&gt;</c>, numbered for a further chunk.</param>
 /// <param name="Source"><c>pattern</c> or <c>policy</c> (<see cref="FilterProposalSources"/>).</param>
 /// <param name="PolicyId">The policy, or the first of several merged ones; null for a pattern proposal.</param>
 /// <param name="RuleId">The rule; null for a policy default, a merged proposal or a pattern proposal.</param>
@@ -88,6 +89,7 @@ public sealed record FilterProposalDto(
     string? ListId,
     SenderPatternDto Pattern,
     FilterSuggestionDto Suggested,
+    string Key,
     string Source = FilterProposalSources.Pattern,
     Guid? PolicyId = null,
     Guid? RuleId = null,

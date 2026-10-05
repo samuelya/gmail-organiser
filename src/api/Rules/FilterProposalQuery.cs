@@ -80,7 +80,7 @@ public sealed class FilterProposalQuery(
 
             items.Add(new FilterProposalDto(
                 sender.Address, sender.DisplayName, sender.TotalCount, listIds.GetValueOrDefault(sender.Address), pattern,
-                Suggest(sender.Address, pattern, settings.DeleteLabelName, allowlist)));
+                Suggest(sender.Address, pattern, settings.DeleteLabelName, allowlist), "sender:" + sender.Address));
         }
 
         return (total, items);

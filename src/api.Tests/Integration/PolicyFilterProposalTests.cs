@@ -22,50 +22,16 @@ namespace GmailOrganiser.Tests.Integration;
 /// default, never the delete label, skip inbox only for an exact sender policy that archives or deletes.
 /// </summary>
 [Collection(PostgresCollection.Name)]
-public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixture postgres) : PolicyFilterProposalTestBase(factory, postgres), IClassFixture<ApiFactory>
 {
-    private const string DeleteLabel = "Synthetic Delete";
-    private const string ListId = "digest.example.com";
-    private static readonly DateTimeOffset Now = new(2026, 3, 1, 12, 0, 0, TimeSpan.Zero);
-
-    private WebApplicationFactory<Program> host = null!;
-
-    private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    public async ValueTask InitializeAsync()
-    {
-        await postgres.ResetFetchStateAsync();
-        await using (var db = postgres.CreateDbContext())
-        {
-            await db.ActionLog.ExecuteDeleteAsync(Ct);
-            await db.ActionBatches.ExecuteDeleteAsync(Ct);
-            await db.Filters.ExecuteDeleteAsync(Ct);
-            await db.SenderPolicies.ExecuteDeleteAsync(Ct);
-            await db.Suggestions.ExecuteDeleteAsync(Ct);
-            await db.Messages.ExecuteDeleteAsync(Ct);
-            await db.Senders.ExecuteDeleteAsync(Ct);
-            await db.Settings.ExecuteDeleteAsync(Ct);
-        }
-
-        host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true"));
-        await using var scope = host.Services.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(s => s with { DeleteLabelName = DeleteLabel }, Ct);
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        await host.DisposeAsync();
-        await using var db = postgres.CreateDbContext();
-        await db.SenderPolicies.ExecuteDeleteAsync(CancellationToken.None);
-        await db.Settings.ExecuteDeleteAsync(CancellationToken.None);
-    }
-
     [Fact]
     public async Task A_list_policy_proposes_a_label_only_list_query_until_a_filter_covers_it()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
-            db.Messages.AddRange(Enumerable.Range(0, 3).Select(i => Message($"m{i}", "digest@example.com", ListId)));
+            // The count compares stored ids as stored (no wrapped column); a differently cased id still counts.
+            db.Messages.AddRange(Enumerable.Range(0, 2).Select(i => Message($"m{i}", "digest@example.com", ListId)));
+            db.Messages.Add(Message("m2", "digest@example.com", ListId.ToUpperInvariant()));
             db.SenderPolicies.Add(Policy(PolicyScope.List, ListId, PolicyAction.Archive, "Synthetic/Digest"));
             await db.SaveChangesAsync(Ct);
         }
@@ -80,7 +46,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
         (proposal.Partial, proposal.RuleId).ShouldBe((false, null));
         proposal.Note.ShouldNotBeNull().ShouldContain("Labels only: a narrower policy");
 
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Filters.Add(Filter("list", new GmailFilterCriteria(Query: $"list:<{ListId}>")));
             await db.SaveChangesAsync(Ct);
@@ -92,7 +58,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task A_relay_sender_is_matched_by_its_raw_addresses_and_a_domain_by_its_domain_plus_relays()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.AddRange(
                 Sender("x1@relay.example.net", "shop@example.com"),
@@ -117,7 +83,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task A_mixed_policy_proposes_a_label_only_filter_per_rule_whatever_its_order_or_outcome()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("offers@example.com", "offers@example.com"));
             var policy = Policy(PolicyScope.Sender, "offers@example.com", PolicyAction.Archive, null);
@@ -134,10 +100,18 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
 
         var items = (await ProposalsAsync("policy")).Items;
 
-        // No first-match exclusions: a rule's filter never deletes or archives, so overlapping filters only add labels.
+        // First-match exclusions: a rule's filter negates the rules above it, so a message gets one topic label.
         items.Select(p => p.Suggested.Criteria.Query).ShouldBe(
-            ["subject:\"Security alert\"", "subject:\"Daily deal\"", "category:promotions"], ignoreOrder: true);
+            [
+                "subject:\"Security alert\"",
+                "subject:\"Daily deal\" -subject:\"Security alert\"",
+                "category:promotions -subject:\"Security alert\" -subject:\"Daily deal\"",
+            ],
+            ignoreOrder: true);
         items.ShouldAllBe(p => p.RuleId != null && p.Suggested.Criteria.From == "offers@example.com");
+        items.Select(p => p.Key).ShouldBe(items.Select(p => $"rule:{p.RuleId}"));
+        items.Where(p => p.Suggested.Criteria.Query!.Contains('-')).ShouldAllBe(p => p.Note!.Contains("Excludes the mail of the rules above it"));
+        items.ShouldAllBe(p => !p.Partial);
         items.ShouldAllBe(p => !p.Suggested.Action.SkipInbox && p.Pattern.ToBeDeleted == false);
         items.ShouldAllBe(p => p.Suggested.Action.AddLabelNames!.SequenceEqual(new[] { "Synthetic/Topic" }));
         items.ShouldAllBe(p => p.Note!.Contains("Labels only: Gmail can't apply a mixed policy"));
@@ -146,7 +120,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task An_exact_sender_archive_or_delete_policy_skips_the_inbox_without_the_delete_label_and_with_every_keyword_excluded()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.AddRange(Sender("deals@example.com", "deals@example.com"), Sender("bulk@example.com", "bulk@example.com"));
             db.SenderPolicies.AddRange(
@@ -170,7 +144,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task No_proposal_adds_the_delete_label_even_when_it_is_the_topic()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.AddRange(
                 Sender("junk@example.com", "junk@example.com"), Sender("keep@example.com", "keep@example.com"), Sender("mixed@example.com", "mixed@example.com"));
@@ -197,7 +171,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task Action_mail_keeps_the_inbox_and_a_too_long_keyword_negation_only_labels()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.AddRange(Sender("bills@example.com", "bills@example.com"), Sender("bulk@example.com", "bulk@example.com"));
             var bills = Policy(PolicyScope.Sender, "bills@example.com", PolicyAction.Archive, "Synthetic/Bills");
@@ -206,7 +180,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
             await db.SaveChangesAsync(Ct);
         }
 
-        await using var many = host.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.PostConfigure<PolicyOptions>(o =>
+        await using var many = Host.WithWebHostBuilder(b => b.ConfigureTestServices(s => s.PostConfigure<PolicyOptions>(o =>
             o.TransactionalKeywords = [.. Enumerable.Range(0, 200).Select(i => $"syntheticword{i:D3}")])));
 
         var items = (await ProposalsAsync("policy", many)).Items;
@@ -223,14 +197,14 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task When_automatic_policy_apply_on_fetched_mail_is_off_no_filter_skips_the_inbox()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("deals@example.com", "deals@example.com"));
             db.SenderPolicies.Add(Policy(PolicyScope.Sender, "deals@example.com", PolicyAction.Delete, null));
             await db.SaveChangesAsync(Ct);
         }
 
-        await using (var scope = host.Services.CreateAsyncScope())
+        await using (var scope = Host.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(s => s with { PolicyAutoApplyFetched = false }, Ct);
         }
@@ -247,7 +221,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task Policies_with_the_same_outcome_merge_within_the_term_and_length_caps()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             var shortOnes = Enumerable.Range(0, 25).Select(i => $"s{i:D2}@example.com");
             var longOnes = Enumerable.Range(0, 20).Select(i => $"{new string('a', 60)}{i:D2}@{new string('b', 20)}.example.net");
@@ -272,12 +246,14 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
             .Length <= FilterCriteriaLimits.MaxQueryChars);
         items.ShouldAllBe(p => p.Suggested.Action.SkipInbox && p.Note!.StartsWith("Merges the filters of", StringComparison.Ordinal));
         items.ShouldAllBe(p => p.RuleId == null);
+        items.Select(p => p.Key).ShouldBeUnique();
+        items.ShouldAllBe(p => p.Key.StartsWith($"policy:{p.PolicyId}", StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task A_rule_with_a_condition_gmail_cannot_test_is_partial_and_one_with_none_gets_no_filter()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("promo@example.com", "promo@example.com"));
             var policy = Policy(PolicyScope.Sender, "promo@example.com", PolicyAction.Keep, null);
@@ -305,7 +281,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task A_punctuation_only_subject_text_is_a_dropped_condition()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("promo@example.com", "promo@example.com"));
             var policy = Policy(PolicyScope.Sender, "promo@example.com", PolicyAction.Keep, null);
@@ -326,7 +302,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task A_single_label_policy_proposes_only_its_default_and_ignores_leftover_rules()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("news@example.com", "news@example.com"));
             var policy = Policy(PolicyScope.Sender, "news@example.com", PolicyAction.Keep, "Synthetic/News");
@@ -346,7 +322,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task A_subject_template_rule_is_partial_whether_or_not_it_has_placeholders()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("orders@example.com", "orders@example.com"));
             var policy = Policy(PolicyScope.Sender, "orders@example.com", PolicyAction.Keep, null);
@@ -362,7 +338,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
 
         var items = (await ProposalsAsync("policy")).Items;
 
-        items.Select(p => p.Suggested.Criteria.Query).ShouldBe(["subject:\"shipped\"", "subject:\"your weekly digest\""], ignoreOrder: true);
+        items.Select(p => p.Suggested.Criteria.Query).ShouldBe(["subject:\"shipped\"", "subject:\"your weekly digest\" -subject:\"shipped\""], ignoreOrder: true);
         items.ShouldAllBe(p => p.Partial && p.Pattern.ToBeDeleted == false && !p.Suggested.Action.SkipInbox);
         items.ShouldAllBe(p => p.Note!.Contains("not by the template"));
     }
@@ -370,7 +346,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task A_rule_from_condition_narrows_the_policy_senders_and_a_mixed_default_gets_no_filter()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("news@mail.example.com", "news@mail.example.com"));
             var policy = Policy(PolicyScope.Sender, "news@mail.example.com", PolicyAction.Delete, null);
@@ -393,7 +369,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task Domain_and_list_filters_are_label_only_and_exclude_narrower_policies_and_known_subdomains_even_unseen_on_them()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.AddRange(
                 Sender("billing@example.com", "billing@example.com"),
@@ -427,7 +403,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task A_mixed_domain_policy_rule_filter_excludes_narrower_policies_too()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.AddRange(Sender("shop@example.org", "shop@example.org"), Sender("news@example.org", "news@example.org"));
             var policy = Policy(PolicyScope.Domain, "example.org", PolicyAction.Keep, null);
@@ -449,7 +425,7 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     [Fact]
     public async Task Source_picks_the_kind_and_rejects_unknown_values()
     {
-        await using (var db = postgres.CreateDbContext())
+        await using (var db = Postgres.CreateDbContext())
         {
             db.Senders.Add(Sender("shop@example.com", "shop@example.com"));
             db.SenderPolicies.Add(Policy(PolicyScope.Sender, "shop@example.com", PolicyAction.Archive, "Synthetic/Shop"));
@@ -457,78 +433,10 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
         }
 
         (await ProposalsAsync("all")).Items.ShouldHaveSingleItem().Source.ShouldBe("policy");
+
+        // No source keeps the pattern default the current web UI expects (it tracks rows by sender address).
+        (await Host.CreateClient().GetFromJsonAsync<PagedDto<FilterProposalDto>>("/api/rules/filters/proposals", Ct)).ShouldNotBeNull().Total.ShouldBe(0);
         (await ProposalsAsync("pattern")).Total.ShouldBe(0);
-        (await host.CreateClient().GetAsync("/api/rules/filters/proposals?source=other", Ct)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await Host.CreateClient().GetAsync("/api/rules/filters/proposals?source=other", Ct)).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
-
-    private List<string> Keywords() => host.Services.GetRequiredService<IOptions<PolicyOptions>>().Value.TransactionalKeywords;
-
-    private string Negation() => string.Join(' ', Keywords().Select(k => "-" + k).Prepend("-has:attachment"));
-
-    private async Task<PagedDto<FilterProposalDto>> ProposalsAsync(string source, WebApplicationFactory<Program>? app = null) =>
-        (await (app ?? host).CreateClient().GetFromJsonAsync<PagedDto<FilterProposalDto>>($"/api/rules/filters/proposals?source={source}", Ct))
-            .ShouldNotBeNull();
-
-    private static SenderRow Sender(string address, string canonical) => new()
-    {
-        Address = address,
-        Domain = address[(address.IndexOf('@') + 1)..],
-        CanonicalAddress = canonical,
-        CanonicalDomain = canonical[(canonical.IndexOf('@') + 1)..],
-        TotalCount = 2,
-        UpdatedAt = Now,
-    };
-
-    private static MessageRow Message(string id, string from, string? listId) => new()
-    {
-        Id = id,
-        ThreadId = $"t-{id}",
-        FromAddress = from,
-        CanonicalAddress = from,
-        CanonicalDomain = from[(from.IndexOf('@') + 1)..],
-        Subject = "Synthetic subject",
-        ListId = listId,
-        InternalDate = Now,
-        LabelIds = ["INBOX"],
-        FetchedAt = Now,
-        UpdatedAt = Now,
-    };
-
-    private static SenderPolicyRow Policy(PolicyScope scope, string key, PolicyAction action, string? topic) => new()
-    {
-        Id = Guid.NewGuid(),
-        Scope = scope,
-        ScopeKey = key,
-        TopicLabel = topic ?? "Synthetic/Topic",
-        Action = action,
-        Confidence = 0.9,
-        Reason = "Synthetic reason",
-        Status = PolicyStatus.Approved,
-        CreatedAt = Now,
-    };
-
-    private static SenderPolicyRuleRow Rule(Guid policyId, int position, RuleMatch match, PolicyAction action, string topic = "Synthetic/Topic") => new()
-    {
-        Id = Guid.NewGuid(),
-        PolicyId = policyId,
-        Position = position,
-        Name = $"Synthetic rule {position}",
-        Match = match,
-        TopicLabel = topic,
-        Action = action,
-        Status = PolicyStatus.Approved,
-        Source = PolicyRuleSource.User,
-        Reason = "Synthetic reason",
-        CreatedAt = Now,
-    };
-
-    private static FilterRow Filter(string id, GmailFilterCriteria criteria) => new()
-    {
-        Id = id,
-        Criteria = FilterRow.WriteCriteria(criteria),
-        CriteriaSummary = "synthetic",
-        FirstSeenAt = Now,
-        LastSeenAt = Now,
-        UpdatedAt = Now,
-    };
 }
