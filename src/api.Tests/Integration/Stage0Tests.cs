@@ -39,6 +39,8 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
         {
             await db.ActionLog.ExecuteDeleteAsync();
             await db.ActionBatches.ExecuteDeleteAsync();
+            // An approved policy left by another class (LearnedRuleTests) would make a filter proposal of its own.
+            await db.SenderPolicies.ExecuteDeleteAsync();
         }
 
         await h.InitializeAsync();
