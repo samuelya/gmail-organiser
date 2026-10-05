@@ -13,15 +13,16 @@ namespace GmailOrganiser.Tests.Integration;
 
 /// <summary>
 /// Filter review findings against the policy proposals (#374): two keep policies labelled with the fake's first label
-/// propose one merged <c>from:(deals OR news)</c> filter, so a <c>from:deals</c> filter with that label overlaps it and
-/// the seed's <c>from:news</c> filter, which also skips the inbox, conflicts; a <c>from:shop</c> filter that trashes
-/// conflicts with a keep policy labelled with the fake's third label.
+/// each propose their own filter in the review (never one merged across policies), so a <c>from:deals subject:Weekly</c>
+/// filter with that label overlaps the deals policy's and the seed's <c>from:news</c> filter, which also skips the inbox,
+/// conflicts with the news policy's; a <c>from:shop</c> filter that trashes conflicts with a keep policy labelled with
+/// the fake's third label.
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresFixture postgres)
     : PolicyFilterProposalTestBase(factory, postgres), IClassFixture<ApiFactory>
 {
-    private const string Merged = "deals@example.com OR news@example.com";
+    private const string Deals = "deals@example.com";
 
     private FakeGmailClient Gmail => Host.Services.GetRequiredService<FakeGmailClient>();
 
@@ -33,14 +34,14 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
         var finding = Find(await CreateReviewAsync(), FilterFindingKind.OverlapsPolicy);
 
         finding.FilterIds.ShouldBe([deals]);
-        finding.PolicyId.ShouldNotBeNull().ShouldBeOneOf(policies["deals@example.com"], policies["news@example.com"]);
+        finding.PolicyId.ShouldBe(policies[Deals]);
         finding.Fix.Kind.ShouldBe(FilterFixKind.Merge);
-        finding.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe(Merged);
+        finding.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe(Deals);
         (await ApplyAsync(finding.Id, HttpStatusCode.OK)).Status.ShouldBe(FilterFindingStatus.Applied);
 
         var gmail = await Gmail.ListFiltersAsync(Ct);
         gmail.ShouldNotContain(f => f.Id == deals);
-        var created = gmail.Where(f => f.Criteria.From == Merged).ShouldHaveSingleItem();
+        var created = gmail.Where(f => f.Criteria.From == Deals).ShouldHaveSingleItem();
         created.Action.AddLabelIds.ShouldBe(["Label_1"]);
         created.Action.RemoveLabelIds.ShouldBeEmpty();
         await using var db = Postgres.CreateDbContext();
@@ -56,7 +57,8 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
 
         var news = review.Findings.Single(f => f.Kind == FilterFindingKind.PolicyConflict && f.FilterIds[0] == "fake-filter-1");
         news.Description.ShouldContain("skips the inbox");
-        news.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe(Merged);
+        news.PolicyId.ShouldBe(policies["news@example.com"]);
+        news.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe("news@example.com");
         var trash = review.Findings.Single(f => f.Kind == FilterFindingKind.PolicyConflict && f.FilterIds[0] == shop);
         trash.PolicyId.ShouldBe(policies["shop@example.org"]);
         trash.Description.ShouldContain("never trashes");
@@ -103,7 +105,7 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
         var after = await CreateReviewAsync();
         Kinds(after).ShouldNotContain(FilterFindingKind.OverlapsPolicy);
         Kinds(after).Count(k => k == FilterFindingKind.PolicyConflict).ShouldBe(2);
-        (await Gmail.ListFiltersAsync(Ct)).Count(f => f.Criteria.From == Merged).ShouldBe(1);
+        (await Gmail.ListFiltersAsync(Ct)).Count(f => f.Criteria.From == Deals).ShouldBe(1);
     }
 
     /// <summary>The policies, their senders and the two extra Gmail filters; returns the filter ids and the policy ids by key.</summary>
@@ -111,7 +113,7 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
     {
         var policies = new[]
         {
-            Policy(PolicyScope.Sender, "deals@example.com", PolicyAction.Keep, FakeLabelStore.SeedUserLabelNames[0]),
+            Policy(PolicyScope.Sender, Deals, PolicyAction.Keep, FakeLabelStore.SeedUserLabelNames[0]),
             Policy(PolicyScope.Sender, "news@example.com", PolicyAction.Keep, FakeLabelStore.SeedUserLabelNames[0]),
             Policy(PolicyScope.Sender, "shop@example.org", PolicyAction.Keep, FakeLabelStore.SeedUserLabelNames[2]),
         };
@@ -123,7 +125,7 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
             await db.SaveChangesAsync(Ct);
         }
 
-        var deals = await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: "deals@example.com"), new GmailFilterAction(["Label_1"], []), Ct);
+        var deals = await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: Deals, Subject: "Weekly"), new GmailFilterAction(["Label_1"], []), Ct);
         var shop = await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: "shop@example.org"), new GmailFilterAction(["TRASH"], []), Ct);
         return (deals.Id, shop.Id, policies.ToDictionary(p => p.ScopeKey, p => p.Id));
     }

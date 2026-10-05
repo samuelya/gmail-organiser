@@ -31,7 +31,9 @@ public static partial class FilterChecks
         }
 
         var overlaps = new List<(PolicyTarget Target, List<Parsed> Members)>();
-        foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0))
+        // A from that isn't single addresses and domains (a name, an OR with a name, a group) may match mail no proposal does.
+        foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0
+            && (f.Criteria.From is not { } from || FilterCriteriaMapping.FromTerms(from) is not null)))
         {
             var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(f.Criteria);
             var within = targets.Where(t => Within(from, tokens, t)).ToList();

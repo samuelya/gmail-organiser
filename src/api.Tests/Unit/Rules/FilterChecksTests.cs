@@ -244,6 +244,25 @@ public sealed class FilterChecksTests
             .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
     }
 
+    [Fact]
+    public void A_filter_whose_from_is_not_only_addresses_and_domains_is_never_within_a_proposal()
+    {
+        var proposal = new FilterProposalDto(
+            "example.com", null, 1, null, new SenderPatternDto("Synthetic/Shop", false, false, 0, 1, 0, null),
+            new FilterSuggestionDto(
+                new FilterCriteriaDto("@example.com", null, null, null, null, null, null, null, null),
+                new FilterActionRequest(["Synthetic/Shop"], false, false)),
+            "policy:1", FilterProposalSources.Policy, Guid.NewGuid());
+        FilterRow[] rows =
+        [
+            Row("named", new(From: "Synthetic Name OR two@example.com"), new(["Label_1"], [])),
+            Row("named-other", new(From: "Synthetic OR two@example.com"), new(["Label_2"], [])),
+        ];
+
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
+    }
+
     private static IReadOnlyList<FilterFindingDraft> Run(IEnumerable<FilterRow> rows) => FilterChecks.Run(rows, Labels, NotEvaluable, 365);
 
     private static FilterRow Row(string id, GmailFilterCriteria criteria, GmailFilterAction action, int seenDaysLater = 0) => new()
