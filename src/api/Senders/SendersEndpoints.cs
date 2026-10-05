@@ -2,6 +2,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Policies;
@@ -15,6 +16,9 @@ public static class SendersEndpoints
     /// <summary>Bounds the <c>listId</c> query value; real List-Ids are far shorter.</summary>
     public const int MaxListIdLength = 500;
 
+    /// <summary>Most canonical senders one Stage-0 request names.</summary>
+    public const int MaxStage0Senders = 100;
+
     public static IEndpointRouteBuilder MapSendersEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var group = endpoints.MapGroup("/api/senders").WithTags("Senders");
@@ -22,6 +26,8 @@ public static class SendersEndpoints
         group.MapGet("/noisy", ListNoisyAsync);
         group.MapGet("/{address}/profile", GetProfileAsync);
         group.MapGet("/profile", GetListProfileAsync);
+        group.MapPost("/noisy/proposals", ProposeAsync).RequireAccountMatch();
+        group.MapPost("/archive", ArchiveAsync).RequireAccountMatch();
         group.MapPut("/{address}/allowlist", SetAllowlistAsync);
         group.MapPost("/canonical/backfill", StartCanonicalBackfillAsync);
         group.MapPost("/stats/rebuild", StartStatsRebuildAsync);
@@ -170,6 +176,104 @@ public static class SendersEndpoints
                 title: "Backfill in progress",
                 detail: "A canonical sender backfill is already queued, running or paused.");
     }
+
+    /// <summary>
+    /// Creates pending Stage-0 suggestions for the senders' mail (#349); 422 naming a human, replied-to, allowlisted or
+    /// unknown sender (nothing created), 409 when an analysis stored a suggestion meanwhile, 503 without Gmail.
+    /// </summary>
+    private static async Task<Results<Ok<Stage0ProposalsResponse>, ValidationProblem, ProblemHttpResult>> ProposeAsync(
+        Stage0ProposalsRequest request, Stage0Service stage0, CancellationToken ct)
+    {
+        var canonical = ParseSenders(request.CanonicalAddresses, out var errors);
+        if (request.ToBeDeleted is null || request.Unsubscribe is null)
+        {
+            errors["toBeDeleted"] = ["toBeDeleted and unsubscribe are required: true or false."];
+        }
+        else if (request.ToBeDeleted == false && request.Unsubscribe == false)
+        {
+            errors["toBeDeleted"] = ["Propose at least one of toBeDeleted or unsubscribe."];
+        }
+
+        if (canonical is null || errors.Count > 0)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        try
+        {
+            return ToResult(await stage0.ProposeAsync(canonical, request.ToBeDeleted!.Value, request.Unsubscribe!.Value, ct), r => TypedResults.Ok(r));
+        }
+        catch (GmailNotConnectedException ex)
+        {
+            return GmailProblems.NotConnected(ex);
+        }
+    }
+
+    /// <summary>
+    /// Queues the archive of the senders' unprotected inbox mail (#349): 202 with the job, whose History batch undoes it;
+    /// 422 for a refused sender or nothing to archive, 503 without Gmail.
+    /// </summary>
+    private static async Task<Results<Accepted<JobDto>, ValidationProblem, ProblemHttpResult>> ArchiveAsync(
+        SenderArchiveRequest request, Stage0Service stage0, JobNotifier notifier, AppDbContext db, CancellationToken ct)
+    {
+        if (ParseSenders(request.CanonicalAddresses, out var errors) is not { } canonical)
+        {
+            return TypedResults.ValidationProblem(errors);
+        }
+
+        try
+        {
+            var started = await stage0.StartArchiveAsync(canonical, ct);
+            if (started.Value is { } job)
+            {
+                await notifier.PublishAsync(db, job.Id, ct);
+            }
+
+            return ToResult(started, j => TypedResults.Accepted($"/api/jobs/{j.Id}", j));
+        }
+        catch (GmailNotConnectedException ex)
+        {
+            return GmailProblems.NotConnected(ex);
+        }
+    }
+
+    /// <summary>1–<see cref="MaxStage0Senders"/> plain addresses, normalised and distinct; null with <paramref name="errors"/>.</summary>
+    private static string[]? ParseSenders(string[]? addresses, out Dictionary<string, string[]> errors)
+    {
+        errors = [];
+        if (addresses is not { Length: > 0 and <= MaxStage0Senders })
+        {
+            errors["canonicalAddresses"] = [$"Give between 1 and {MaxStage0Senders} canonical sender addresses."];
+            return null;
+        }
+
+        var normalised = new List<string>(addresses.Length);
+        foreach (var address in addresses)
+        {
+            if (SenderAllowlist.Normalise(address, out var error) is not { } value)
+            {
+                errors["canonicalAddresses"] = [error!];
+                return null;
+            }
+
+            normalised.Add(value);
+        }
+
+        return [.. normalised.Distinct(StringComparer.Ordinal)];
+    }
+
+    private static Results<TOk, ValidationProblem, ProblemHttpResult> ToResult<T, TOk>(Stage0Result<T> result, Func<T, TOk> ok)
+        where T : class
+        where TOk : IResult =>
+        result switch
+        {
+            { Value: { } value } => ok(value),
+            { Conflict: true } => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Suggestions changed",
+                detail: "An analysis stored suggestions for these senders meanwhile. Try again."),
+            _ => TypedResults.Problem(statusCode: StatusCodes.Status422UnprocessableEntity, title: "Stage-0 action refused", detail: result.Refusal),
+        };
 
     /// <summary>The allowlisted domains: the DTO reads its address flag from the row.</summary>
     private static async Task<IReadOnlyList<string>> DomainsAsync(ISettingsStore settings, CancellationToken ct) =>

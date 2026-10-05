@@ -10,5 +10,5 @@ public static class ReviewJobTypes
     public const string Undo = "undo_actions";
 
     /// <summary>The job types that write Gmail from <c>action_log</c> chunks and keep a pending chunk in their cursor.</summary>
-    public static readonly string[] WritesGmail = [Apply, Undo, CleanUp.CleanUpJobTypes.Actions, Rules.RulesJobTypes.LabelPlanApply];
+    public static readonly string[] WritesGmail = [Apply, Undo, CleanUp.CleanUpJobTypes.Actions, Rules.RulesJobTypes.LabelPlanApply, Senders.SenderArchiveJob.JobType];
 }

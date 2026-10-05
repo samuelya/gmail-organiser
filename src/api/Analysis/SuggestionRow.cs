@@ -11,6 +11,9 @@ public enum SuggestionSource
     Derived,
     Memory,
     SenderPattern,
+
+    /// <summary>A rule-based proposal for a noisy sender from its Stage-0 stats, no LLM (#349).</summary>
+    Stage0,
 }
 
 public enum SuggestionStatus

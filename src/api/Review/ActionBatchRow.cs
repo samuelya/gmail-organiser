@@ -24,6 +24,9 @@ public enum ActionKind
 
     /// <summary>A label plan rename, empty-label delete or filter retarget (#214): no messages, so History lists it without undo.</summary>
     LabelPlan,
+
+    /// <summary>A sender archive (#349): <c>INBOX</c> removed from the senders' inbox mail.</summary>
+    Archive,
 }
 
 /// <summary>One History entry (<c>action_batches</c>): the header of a set of <see cref="ActionLogRow"/>s undone together.</summary>

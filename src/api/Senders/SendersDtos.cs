@@ -53,3 +53,16 @@ public sealed record NoisySenderDto(
 
 /// <param name="Allowlisted">Required; nullable only so a missing value is a 400 rather than <c>false</c>.</param>
 public sealed record AllowlistRequest(bool? Allowlisted);
+
+/// <param name="CanonicalAddresses">1–100 canonical sender addresses.</param>
+/// <param name="ToBeDeleted">Required; nullable only so a missing value is a 400.</param>
+/// <param name="Unsubscribe">Required; nullable only so a missing value is a 400.</param>
+public sealed record Stage0ProposalsRequest(string[]? CanonicalAddresses, bool? ToBeDeleted, bool? Unsubscribe);
+
+/// <param name="Created">Pending Stage-0 suggestions created.</param>
+/// <param name="SkippedProtected">Messages left alone because they are protected.</param>
+/// <param name="SkippedAlreadySuggested">Messages that already have a suggestion.</param>
+public sealed record Stage0ProposalsResponse(int Created, int SkippedProtected, int SkippedAlreadySuggested);
+
+/// <param name="CanonicalAddresses">1–100 canonical sender addresses.</param>
+public sealed record SenderArchiveRequest(string[]? CanonicalAddresses);
