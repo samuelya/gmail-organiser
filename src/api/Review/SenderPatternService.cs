@@ -232,6 +232,7 @@ public sealed partial class SenderPatternService(
         var rows = await db.Suggestions
             .Where(s => addresses.Contains(s.SenderAddress)
                 && s.Source != SuggestionSource.SenderPattern
+                && s.Source != SuggestionSource.Stage0
                 && (s.Status == SuggestionStatus.Approved || s.Status == SuggestionStatus.Applied))
             .GroupBy(s => new { s.SenderAddress, s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel })
             .Select(g => new

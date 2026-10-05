@@ -19,10 +19,11 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
 
     public async Task<PagedDto<FilterProposalDto>> ListAsync(int page, int pageSize, CancellationToken ct)
     {
-        // Pattern suggestions don't make a pattern (SenderPatternService), so they don't make a proposal either.
+        // Pattern and Stage-0 suggestions don't make a pattern (SenderPatternService), so they don't make a proposal either.
         var candidates = Uncovered(
             db.Senders.AsNoTracking().Where(s => db.Suggestions.Any(g => g.SenderAddress == s.Address
                 && g.Source != SuggestionSource.SenderPattern
+                && g.Source != SuggestionSource.Stage0
                 && (g.Status == SuggestionStatus.Approved || g.Status == SuggestionStatus.Applied))),
             await ActiveFromTermsAsync(ct));
         var total = await candidates.CountAsync(ct);

@@ -214,7 +214,7 @@ public static class SendersEndpoints
     /// 422 for a refused sender or nothing to archive, 503 without Gmail.
     /// </summary>
     private static async Task<Results<Accepted<JobDto>, ValidationProblem, ProblemHttpResult>> ArchiveAsync(
-        SenderArchiveRequest request, Stage0Service stage0, JobNotifier notifier, AppDbContext db, CancellationToken ct)
+        SenderArchiveRequest request, Stage0Service stage0, CancellationToken ct)
     {
         if (ParseSenders(request.CanonicalAddresses, out var errors) is not { } canonical)
         {
@@ -223,13 +223,7 @@ public static class SendersEndpoints
 
         try
         {
-            var started = await stage0.StartArchiveAsync(canonical, ct);
-            if (started.Value is { } job)
-            {
-                await notifier.PublishAsync(db, job.Id, ct);
-            }
-
-            return ToResult(started, j => TypedResults.Accepted($"/api/jobs/{j.Id}", j));
+            return ToResult(await stage0.StartArchiveAsync(canonical, ct), j => TypedResults.Accepted($"/api/jobs/{j.Id}", j));
         }
         catch (GmailNotConnectedException ex)
         {

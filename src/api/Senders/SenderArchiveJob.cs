@@ -174,6 +174,14 @@ public sealed partial class SenderArchiveJob(
                     .FromSql($"SELECT * FROM messages WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
                     .ToListAsync(t);
                 var settings = await settingsStore.GetAsync(t);
+
+                // A reply or a stats rebuild since the start can make a sender human: no further chunk is archived.
+                var senders = await NoisySenderQuery.Stage0SendersAsync(db, settings.Protection.AllowlistedDomains, cursor.CanonicalAddresses, t);
+                if (Stage0Service.Refusal(cursor.CanonicalAddresses, senders) is { } refusal)
+                {
+                    throw new JobRefusedException($"{refusal} The rest is not archived; what was can be undone from History.");
+                }
+
                 var allowlist = await AllowlistLoader.LoadAsync(db, settings, [.. messages.Select(m => m.FromAddress).Distinct()], t);
                 if (messages.Count != ids.Length || messages.Any(m => !Fits(m, settings, allowlist)))
                 {

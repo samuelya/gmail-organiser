@@ -14,7 +14,8 @@ public sealed record ActionPlan(IReadOnlyList<string> Add, IReadOnlyList<string>
 /// else leaves the inbox.
 /// A protected message (§6.4) never gets the delete label, whichever way it was asked for. The replaced labels
 /// (labelled phase, or an applied outcome an accepted alternative replaces) are removed when the message carries them:
-/// user labels only, never one the plan adds. Pure.
+/// user labels only, never one the plan adds. A suggestion that <see cref="SuggestionRow.KeepsMail"/> changes nothing.
+/// Pure.
 /// </summary>
 public static class ActionPlanner
 {
@@ -38,6 +39,11 @@ public static class ActionPlanner
         Allowlist allowlist,
         IReadOnlySet<string>? removable = null)
     {
+        if (suggestion.KeepsMail)
+        {
+            return new ActionPlan([], [], null);
+        }
+
         var protectedReason = MessageProtection.Reason(message, allowlist, settings.Protection);
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
         if (suggestion.DocumentTypeLabel is { } type && AppliesDocumentType(type, settings))

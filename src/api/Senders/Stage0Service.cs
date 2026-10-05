@@ -41,35 +41,41 @@ public sealed class Stage0Service(
         }
 
         var deleteLabel = await catalog.FindByNameAsync(settings.DeleteLabelName, ct);
-        var raw = await db.Senders.Where(s => canonical.Contains(s.CanonicalAddress)).Select(s => s.Address).ToListAsync(ct);
+        // No Gmail label has an empty id, so without a delete label the label check passes every message.
+        var deleteId = deleteLabel?.Id ?? "";
+        var notAnalysed = SnakeCaseEnumConverter<AnalysisStatus>.ToDb(AnalysisStatus.NotAnalysed);
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
 
-        // Suggestions, then messages, each by id: the order the review endpoints and the analysis store lock in.
-        await db.Suggestions
-            .FromSql($"SELECT * FROM suggestions WHERE sender_address = ANY({raw}) ORDER BY id FOR UPDATE")
-            .AsNoTracking()
+        // Suggestions, then messages, each by id: the order the review endpoints and the analysis store lock in. Only the
+        // candidates (live, not analysed, not delete-labelled) are locked and loaded.
+        await db.Database.ExecuteSqlAsync($"""
+            SELECT 1 FROM suggestions s JOIN messages m ON m.id = s.message_id
+            WHERE m.canonical_address = ANY({canonical}) AND NOT m.deleted_in_gmail AND m.analysis_status = {notAnalysed}
+              AND NOT ({deleteId} = ANY(m.label_ids))
+            ORDER BY s.id FOR UPDATE OF s
+            """, ct);
+        var messages = await db.Messages
+            .FromSql($"""
+                SELECT * FROM messages
+                WHERE canonical_address = ANY({canonical}) AND NOT deleted_in_gmail AND analysis_status = {notAnalysed}
+                  AND NOT ({deleteId} = ANY(label_ids))
+                ORDER BY id FOR UPDATE
+                """)
             .ToListAsync(ct);
-        var messages = (await db.Messages
-                .FromSql($"SELECT * FROM messages WHERE canonical_address = ANY({canonical}) ORDER BY id FOR UPDATE")
-                .ToListAsync(ct))
-            .Where(m => !m.DeletedInGmail && (deleteLabel is null || !m.LabelIds.Contains(deleteLabel.Id, StringComparer.Ordinal)))
-            .ToList();
         string[] ids = [.. messages.Select(m => m.Id)];
         var suggested = (await db.Suggestions.Where(s => ids.Contains(s.MessageId)).Select(s => s.MessageId).ToListAsync(ct))
             .ToHashSet(StringComparer.Ordinal);
+        var skippedSuggested = suggested.Count + await db.Messages.CountAsync(
+            m => canonical.Contains(m.CanonicalAddress) && !m.DeletedInGmail && m.AnalysisStatus != AnalysisStatus.NotAnalysed
+                && !m.LabelIds.Contains(deleteId),
+            ct);
         var allowlist = await AllowlistLoader.LoadAsync(db, settings, [.. messages.Select(m => m.FromAddress).Distinct()], ct);
 
         var now = time.GetUtcNow();
-        var (created, skippedProtected, skippedSuggested) = (new List<string>(), 0, 0);
-        foreach (var message in messages)
+        var (created, skippedProtected) = (new List<string>(), 0);
+        foreach (var message in messages.Where(m => !suggested.Contains(m.Id)))
         {
-            if (message.AnalysisStatus != AnalysisStatus.NotAnalysed || suggested.Contains(message.Id))
-            {
-                skippedSuggested++;
-                continue;
-            }
-
             if (MessageProtection.Reason(message, allowlist, settings.Protection) is not null)
             {
                 skippedProtected++;
@@ -84,8 +90,9 @@ public sealed class Stage0Service(
                 SenderAddress = message.FromAddress,
                 GroupKey = GroupKeyPrefix + message.CanonicalAddress,
                 Source = SuggestionSource.Stage0,
-                TopicLabel = settings.DeleteLabelName,
-                IsNewLabel = deleteLabel is null,
+                // Unsubscribe only records the intent: no label, and the mail stays where it is (SuggestionRow.KeepsMail).
+                TopicLabel = toBeDeleted ? settings.DeleteLabelName : "",
+                IsNewLabel = toBeDeleted && deleteLabel is null,
                 ToBeDeleted = toBeDeleted,
                 UnsubscribeSuggested = unsubscribe,
                 Confidence = 1.0,
@@ -161,7 +168,7 @@ public sealed class Stage0Service(
         + "never replied, bulk headers";
 
     /// <summary>Why the first refused sender may not be targeted, naming it; null when every one may.</summary>
-    private static string? Refusal(string[] canonical, Dictionary<string, Stage0Sender> senders)
+    public static string? Refusal(IEnumerable<string> canonical, Dictionary<string, Stage0Sender> senders)
     {
         foreach (var address in canonical)
         {
@@ -173,6 +180,11 @@ public sealed class Stage0Service(
             if (sender.Excluded)
             {
                 return $"{address} is a human, replied-to or allowlisted sender; Stage 0 never targets it.";
+            }
+
+            if (sender.StatsMissing)
+            {
+                return $"{address} has no sender stats yet; rebuild the sender stats first.";
             }
         }
 

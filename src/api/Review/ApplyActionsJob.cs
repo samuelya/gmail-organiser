@@ -175,7 +175,7 @@ public sealed partial class ApplyActionsJob(
             .OrderBy(x => x.Suggestion.Id)
             .ToListAsync(ct);
         var allowlisted = await AllowlistLoader.LoadAsync(db, settings, ct);
-        var valid = rows.Where(r => LabelResolver.IsValid(r.Suggestion.TopicLabel)).ToList();
+        var valid = rows.Where(r => r.Suggestion.KeepsMail || LabelResolver.IsValid(r.Suggestion.TopicLabel)).ToList();
         invalidLabels = rows.Count - valid.Count;
         if (settings.Protection.RepliedThreads)
         {
@@ -187,7 +187,7 @@ public sealed partial class ApplyActionsJob(
                 ct);
         }
 
-        var paths = valid.Select(r => r.Suggestion.TopicLabel).ToList();
+        var paths = valid.Where(r => !r.Suggestion.KeepsMail).Select(r => r.Suggestion.TopicLabel).ToList();
 
         // The approved document-type label is applied even if the parent setting changed since; a stored one Gmail
         // would refuse, or that is now the action or delete label, is skipped for its message (logged once per run),
@@ -211,7 +211,7 @@ public sealed partial class ApplyActionsJob(
             paths.Add(SettingLabel(settings.DeleteLabelName, nameof(AppSettings.DeleteLabelName)));
         }
 
-        var labelIds = valid.Count == 0
+        var labelIds = paths.Count == 0
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : await labels.EnsureAsync(paths, (label, _) => RecordCreatedAsync(cursor.BatchId, label), ct);
         // Ids, not names: a replaced label renamed in Gmail since analysis is still removed; a deleted one is skipped.

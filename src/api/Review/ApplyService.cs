@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Jobs;
 using Microsoft.EntityFrameworkCore;
@@ -22,8 +23,10 @@ public sealed class ApplyService(AppDbContext db, IJobService jobs, TimeProvider
         ActionKind kind, string? senderAddress, Guid[]? suggestionIds, string? description, CancellationToken ct)
     {
         var now = time.GetUtcNow();
-        var topics = await ApplyActionsJob.Eligible(db, now, senderAddress, suggestionIds).Select(s => s.TopicLabel).ToListAsync(ct);
-        var count = topics.Count(LabelResolver.IsValid);
+        var topics = await ApplyActionsJob.Eligible(db, now, senderAddress, suggestionIds)
+            .Select(s => new { s.TopicLabel, KeepsMail = s.Source == SuggestionSource.Stage0 && s.TopicLabel == "" })
+            .ToListAsync(ct);
+        var count = topics.Count(t => t.KeepsMail || LabelResolver.IsValid(t.TopicLabel));
         if (count == 0)
         {
             return null;

@@ -82,14 +82,15 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
 
     /// <summary>
     /// The Stage-0 view of <paramref name="canonical"/> (#349): one entry per known canonical address, with whether a raw
-    /// row of it is human, replied to or allowlisted (by address or domain), as the noisy list excludes them.
+    /// row of it is human, replied to or allowlisted (by address or domain), as the noisy list excludes them, and whether a
+    /// raw row has no stats yet (its kind and replies are unknown, so it may be a human).
     /// </summary>
     public static async Task<Dictionary<string, Stage0Sender>> Stage0SendersAsync(
         AppDbContext db, IReadOnlyList<string> allowlistedDomains, IReadOnlyList<string> canonical, CancellationToken ct)
     {
         var senders = db.Senders.AsNoTracking().Where(s => canonical.Contains(s.CanonicalAddress));
         var rows = await Grouped(senders, allowlistedDomains)
-            .Select(g => new Stage0Sender(g.CanonicalAddress, g.Excluded > 0, g.TotalCount, g.UnreadCount))
+            .Select(g => new Stage0Sender(g.CanonicalAddress, g.Excluded > 0, g.StatsRows < g.Rows, g.TotalCount, g.UnreadCount))
             .ToListAsync(ct);
         return rows.ToDictionary(r => r.CanonicalAddress, StringComparer.Ordinal);
     }
@@ -136,6 +137,7 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
                 CanonicalDomain = g.Max(s => s.Row.CanonicalDomain)!,
                 DisplayName = g.Max(s => s.Row.DisplayName),
                 Excluded = g.Sum(s => s.Excluded ? 1 : 0),
+                Rows = g.Count(),
                 StatsRows = g.Sum(s => s.Stats ? 1 : 0),
                 TotalCount = g.Sum(s => s.Stats ? s.Row.TotalCount : 0),
                 UnreadCount = g.Sum(s => s.Stats ? s.Row.UnreadCount : 0),
@@ -175,6 +177,7 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
         public string CanonicalDomain { get; init; } = "";
         public string? DisplayName { get; init; }
         public int Excluded { get; init; }
+        public int Rows { get; init; }
         public int StatsRows { get; init; }
         public int TotalCount { get; init; }
         public int UnreadCount { get; init; }
@@ -194,4 +197,5 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
 
 /// <summary>A canonical sender as Stage-0 proposals and the sender archive check it; counts as on the noisy list.</summary>
 /// <param name="Excluded">A raw row of it is human, replied to or allowlisted: Stage 0 never targets it.</param>
-public sealed record Stage0Sender(string CanonicalAddress, bool Excluded, int TotalCount, int UnreadCount);
+/// <param name="StatsMissing">A raw row of it has no stats yet: Stage 0 refuses it until a stats rebuild.</param>
+public sealed record Stage0Sender(string CanonicalAddress, bool Excluded, bool StatsMissing, int TotalCount, int UnreadCount);
