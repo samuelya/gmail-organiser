@@ -56,10 +56,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("error");
 
-                    b.Property<int>("EscalatedCalls")
-                        .HasColumnType("integer")
-                        .HasColumnName("escalated_calls");
-
                     b.Property<int>("FailedMessages")
                         .HasColumnType("integer")
                         .HasColumnName("failed_messages");
@@ -161,10 +157,6 @@ namespace GmailOrganiser.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("status");
-
-                    b.Property<int>("TriageCalls")
-                        .HasColumnType("integer")
-                        .HasColumnName("triage_calls");
 
                     b.HasKey("Id")
                         .HasName("pk_analysis_runs");
