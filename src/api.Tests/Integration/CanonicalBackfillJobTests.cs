@@ -22,6 +22,7 @@ public sealed class CanonicalBackfillJobTests(ApiFactory factory, PostgresFixtur
 {
     private const string Shop = "offers@shop.example.com";
     private const string Opaque = "ab12cd34ef@privaterelay.appleid.com";
+    private const string Personal = "person_at_work_01_a@icloud.com";
 
     /// <summary>More relay rows than one chunk, so the backfill checkpoints at least once.</summary>
     private const int RelayCount = CanonicalBackfillJob.ChunkSize + 5;
@@ -102,11 +103,13 @@ public sealed class CanonicalBackfillJobTests(ApiFactory factory, PostgresFixtur
         await using var db = postgres.CreateDbContext();
         var job = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == jobId, Ct);
         job.Status.ShouldBe(JobStatus.Completed);
-        job.ToDto().Progress.ShouldBe(new JobProgress(RelayCount + 1, RelayCount + 1, $"Relay messages: {RelayCount} decoded, 1 undecodable"));
+        job.ToDto().Progress.ShouldBe(new JobProgress(
+            RelayCount + 2, RelayCount + 2, $"Relay-domain messages: {RelayCount} decoded, 1 opaque relay, 1 personal iCloud"));
 
         (await db.Messages.CountAsync(m => m.Id.StartsWith("r") && m.CanonicalAddress == Shop && m.CanonicalDomain == "shop.example.com", Ct))
             .ShouldBe(RelayCount);
         (await db.Messages.SingleAsync(m => m.FromAddress == Opaque, Ct)).CanonicalAddress.ShouldBe(Opaque);
+        (await db.Messages.SingleAsync(m => m.FromAddress == Personal, Ct)).CanonicalAddress.ShouldBe(Personal);
         // Non-relay rows are not read: the migration already set them.
         (await db.Messages.SingleAsync(m => m.FromAddress == Shop, Ct)).CanonicalAddress.ShouldBe("");
 
@@ -122,7 +125,7 @@ public sealed class CanonicalBackfillJobTests(ApiFactory factory, PostgresFixtur
         await using var db = postgres.CreateDbContext();
         var relay = FakeMailboxSeed.RelayAddresses[0];
         db.Messages.AddRange(Enumerable.Range(0, RelayCount).Select(i => Message(string.Create(CultureInfo.InvariantCulture, $"r{i:D5}"), relay, relay)));
-        db.Messages.AddRange(Message("o00001", Opaque, Opaque), Message("p00001", Shop, ""));
+        db.Messages.AddRange(Message("o00001", Opaque, Opaque), Message("i00001", Personal, Personal), Message("p00001", Shop, ""));
         db.Senders.AddRange(Sender(relay, relay), Sender(Opaque, Opaque), Sender(Shop, ""));
         await db.SaveChangesAsync(Ct);
     }

@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261005060956_M8_CanonicalSender")]
+    [Migration("20261005063213_M8_CanonicalSender")]
     partial class M8_CanonicalSender
     {
         /// <inheritdoc />
@@ -42,6 +42,10 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<int>("AttachmentsSkipped")
                         .HasColumnType("integer")
                         .HasColumnName("attachments_skipped");
+
+                    b.Property<long>("CompletionTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("completion_tokens");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -87,6 +91,10 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("llm_calls");
 
+                    b.Property<long>("LlmMilliseconds")
+                        .HasColumnType("bigint")
+                        .HasColumnName("llm_milliseconds");
+
                     b.PrimitiveCollection<string[]>("MessageIds")
                         .HasColumnType("text[]")
                         .HasColumnName("message_ids");
@@ -114,6 +122,14 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("Model")
                         .HasColumnType("text")
                         .HasColumnName("model");
+
+                    b.Property<int>("NearContextLimit")
+                        .HasColumnType("integer")
+                        .HasColumnName("near_context_limit");
+
+                    b.Property<long>("PromptTokens")
+                        .HasColumnType("bigint")
+                        .HasColumnName("prompt_tokens");
 
                     b.Property<string>("PromptVersion")
                         .HasColumnType("text")

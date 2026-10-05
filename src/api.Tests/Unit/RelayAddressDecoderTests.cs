@@ -10,6 +10,7 @@ public sealed class RelayAddressDecoderTests
     [InlineData("news_at_mail_example_co_uk_ab12cd_ef34gh@icloud.com", "news@mail.example.co.uk", "mail.example.co.uk")]
     [InlineData("News_AT_Example_COM_AB12CD_EF34GH@iCloud.com", "news@example.com", "example.com")]
     [InlineData("no_reply_at_example_com_ab12cd_ef34gh@icloud.com", "no_reply@example.com", "example.com")]
+    [InlineData("news_at_mail_at_example_com_ab12cd_ef34gh@icloud.com", "news@mail.at.example.com", "mail.at.example.com")]
     public void Relay_address_with_the_at_form_decodes_to_the_lower_case_original(string address, string canonical, string domain) =>
         RelayAddressDecoder.Decode(address).ShouldBe(new CanonicalSender(canonical, domain, true));
 
@@ -18,7 +19,8 @@ public sealed class RelayAddressDecoderTests
     [InlineData("person@icloud.com", "icloud.com")]
     [InlineData("news_at_example_com@icloud.com", "icloud.com")]
     [InlineData("news_at_example_com_ab-12_cd@icloud.com", "icloud.com")]
-    public void Relay_domain_address_without_the_at_form_stays_as_it_is(string address, string domain) =>
+    [InlineData("person_at_work_01_a@icloud.com", "icloud.com")]
+    public void Relay_domain_address_without_the_at_form_or_a_dotted_domain_stays_as_it_is(string address, string domain) =>
         RelayAddressDecoder.Decode(address).ShouldBe(new CanonicalSender(address, domain, false));
 
     [Theory]
@@ -26,6 +28,7 @@ public sealed class RelayAddressDecoderTests
     [InlineData("news_at_example_com_ab12cd_ef34gh@example.com", "news_at_example_com_ab12cd_ef34gh@example.com", "example.com")]
     [InlineData("news_at_example_com_ab12cd_ef34gh@mail.icloud.com", "news_at_example_com_ab12cd_ef34gh@mail.icloud.com", "mail.icloud.com")]
     [InlineData("not-an-address", "not-an-address", "")]
+    [InlineData("\"a@b\"@example.com", "\"a@b\"@example.com", "example.com")]
     public void Any_other_address_is_its_own_lower_case_canonical(string address, string canonical, string domain) =>
         RelayAddressDecoder.Decode(address).ShouldBe(new CanonicalSender(canonical, domain, false));
 }

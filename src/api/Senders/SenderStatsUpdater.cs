@@ -10,7 +10,8 @@ namespace GmailOrganiser.Senders;
 /// <c>total_count</c>, <c>analysed_count</c>, <c>last_seen_at</c> and <c>display_name</c> are recomputed from
 /// <c>messages</c> (ignoring <c>deleted_in_gmail</c>) in one statement, so replaying a chunk never double-counts and
 /// <c>analysed_count</c> never exceeds <c>total_count</c>. <c>applied_count</c> belongs to analysis and is left alone.
-/// The canonical fields (<see cref="RelayAddressDecoder"/>) are set from the address on every update.
+/// The canonical fields (<see cref="RelayAddressDecoder"/>) are set in the insert; they are a pure function of the
+/// address, so only the canonical backfill rewrites them (<see cref="UpdateCanonicalAsync"/>).
 /// </summary>
 public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
 {
@@ -29,16 +30,19 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
         {
             // DO NOTHING: the allowlist may have stubbed the same address since the read; its row (and flag) wins.
             var domains = Array.ConvertAll(missing, a => new SenderAddress(a, null).Domain);
+            var canonical = Array.ConvertAll(missing, RelayAddressDecoder.Decode);
+            var canonicalAddresses = Array.ConvertAll(canonical, c => c.CanonicalAddress);
+            var canonicalDomains = Array.ConvertAll(canonical, c => c.CanonicalDomain);
+            var relays = Array.ConvertAll(canonical, c => c.IsRelay);
             await db.Database.ExecuteSqlAsync(
                 $"""
-                INSERT INTO senders (address, domain, total_count, analysed_count, applied_count, allowlisted, updated_at)
-                SELECT a, d, 0, 0, 0, FALSE, {now} FROM unnest({missing}, {domains}) AS t(a, d)
+                INSERT INTO senders (address, domain, canonical_address, canonical_domain, is_relay, total_count, analysed_count, applied_count, allowlisted, updated_at)
+                SELECT a, d, ca, cd, r, 0, 0, 0, FALSE, {now}
+                FROM unnest({missing}, {domains}, {canonicalAddresses}, {canonicalDomains}, {relays}) AS t(a, d, ca, cd, r)
                 ON CONFLICT (address) DO NOTHING
                 """,
                 ct);
         }
-
-        await UpdateCanonicalAsync(distinct, ct);
 
         await db.Senders
             .Where(s => distinct.Contains(s.Address))
@@ -84,7 +88,8 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
 
     /// <summary>
     /// Sets <c>canonical_address</c>, <c>canonical_domain</c> and <c>is_relay</c> of the <paramref name="addresses"/>'
-    /// rows from the decoded address in one statement; rows already right are not written.
+    /// rows from the decoded address in one statement; rows already right are not written. The canonical backfill
+    /// calls it after a decoder change.
     /// </summary>
     public async Task UpdateCanonicalAsync(IReadOnlyList<string> addresses, CancellationToken ct)
     {
