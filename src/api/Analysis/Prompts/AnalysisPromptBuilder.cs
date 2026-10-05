@@ -20,6 +20,10 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     public const string PolicyHeading = "Standing policies the person approved for these senders:";
     public const int MaxDocumentTypes = DocumentTypePath.MaxChildren;
     public const string DocumentTypesOff = "Document-type labels are switched off: always set `documentTypeLabel` to null.";
+    public const string BlockedLabelsHeading = "Never use these labels, at any level of a label path:";
+    public const string TaxonomyLockedText =
+        "The label tree is locked: choose `topicLabel` only from the label tree above, spelled exactly as there. Put anything new in "
+        + "`proposedNewLabel`; the person approves each new label one by one.";
 
     /// <summary>
     /// The answer shape: one object wrapping the per-email array, because Ollama's JSON mode only yields a top-level
@@ -86,8 +90,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         {
             ["labelTree"] = RenderLabelTree(input.LabelTree),
             ["mailTypes"] = MailTypes.PromptList(),
-            // Lock mode (#367) fills this; empty until then.
-            ["blockedLabels"] = "",
+            ["blockedLabels"] = RenderLabelSet(input.BlockedLabels ?? [], input.TaxonomyLocked),
             ["documentTypes"] = RenderDocumentTypes(input.DocumentTypeParent, input.LabelTree),
             ["memory"] = RenderMemory(input.Memory) + RenderPolicies(input.Policies ?? []),
             ["attachments"] = DefuseBodyTags(input.AttachmentsSection ?? string.Empty),
@@ -141,6 +144,14 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         var existing = children.Count == 0 ? "none yet" : string.Join(", ", children);
         return $"Document-type labels live under `{OneLine(parent.Trim())}`, {DocumentTypePath.LevelsUnder(parent)} deep. Existing: {existing}.";
     }
+
+    /// <summary>
+    /// The approved label set (#367) after the document types: the blocked names when there are any, then the lock
+    /// paragraph when locked; empty otherwise.
+    /// </summary>
+    internal static string RenderLabelSet(IReadOnlyCollection<string> blocked, bool locked) =>
+        (blocked.Count == 0 ? "" : $"\n\n{BlockedLabelsHeading} {string.Join(", ", blocked.Select(b => $"`{OneLine(b)}`"))}.")
+        + (locked ? "\n\n" + TaxonomyLockedText : "");
 
     private static string RenderMemory(IReadOnlyList<MemoryHint> memory)
     {

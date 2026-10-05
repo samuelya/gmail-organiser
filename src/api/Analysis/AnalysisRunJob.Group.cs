@@ -244,7 +244,7 @@ public sealed partial class AnalysisRunJob
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
         var messages = context.Builder.Build(new PromptInput(
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName,
-            context.Run.DocumentTypeParent, policies));
+            context.Run.DocumentTypeParent, policies, context.LabelSet.Blocked, context.LabelSet.Locked));
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
         if (context.Triage is not { } triage)
         {
@@ -266,7 +266,7 @@ public sealed partial class AnalysisRunJob
             return escalated with { Calls = escalated.Calls + 1, TriageCalls = 1, EscalatedCalls = 1 };
         }
 
-        var parsed = SuggestionOutputParser.Parse(text, expected, current, context.Run.DocumentTypeParent, ParseContext(context));
+        var parsed = Parse(context, text, expected, current);
         LogDropped(parsed);
         var threshold = context.Settings.TriageConfidenceThreshold;
         var triaged = parsed.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
@@ -303,10 +303,9 @@ public sealed partial class AnalysisRunJob
         RunContext context, IList<ChatMessage> messages, HashSet<string> expected, IReadOnlySet<string> answered,
         IReadOnlyDictionary<string, IReadOnlyList<string>> current, CancellationToken ct)
     {
-        var parent = context.Run.DocumentTypeParent;
         var model = context.Run.Model;
         var (firstText, usage) = await ChatAsync(context, context.Chat, model, messages, expected.Count, ct);
-        var first = SuggestionOutputParser.Parse(firstText, expected, current, parent, ParseContext(context));
+        var first = Parse(context, firstText, expected, current);
         LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
         var filter = first.Filter;
@@ -318,7 +317,7 @@ public sealed partial class AnalysisRunJob
         var (retryText, retryUsage) = await ChatAsync(
             context, context.Chat, model, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], expected.Count, ct);
         usage += retryUsage;
-        var retry = SuggestionOutputParser.Parse(retryText, expected, current, parent, ParseContext(context));
+        var retry = Parse(context, retryText, expected, current);
         LogDropped(retry);
         foreach (var o in retry.Valid)
         {
@@ -354,8 +353,11 @@ public sealed partial class AnalysisRunJob
         }
     }
 
-    private static SuggestionParseContext ParseContext(RunContext context) => new(
-        context.LabelIndex, [context.Settings.ActionLabelName, context.Settings.DeleteLabelName], context.Builder.AsksMailType);
+    /// <summary>The parsed answer after the run's approved label set (#367): a blocked label is an error for its email.</summary>
+    private static ParsedSuggestions Parse(
+        RunContext context, string text, IReadOnlySet<string> expected, IReadOnlyDictionary<string, IReadOnlyList<string>> current) =>
+        context.LabelSet.Apply(SuggestionOutputParser.Parse(text, expected, current, context.Run.DocumentTypeParent, new SuggestionParseContext(
+            context.LabelIndex, [context.Settings.ActionLabelName, context.Settings.DeleteLabelName], context.Builder.AsksMailType)));
 
     private Task<(string Text, LlmUsage Usage)> ChatAsync(
         RunContext context, IChatClient chat, string? model, IList<ChatMessage> messages, int groupSize, CancellationToken ct) =>
@@ -389,9 +391,13 @@ public sealed partial class AnalysisRunJob
             throw new InvalidOperationException("A short-circuit result must cover members of its group at most once each.");
         }
 
+        // A remembered decision with a label blocked since (#367) goes to the model like uncovered mail.
+        var usable = covered.Suggestions.Where(s => !context.LabelSet.IsBlocked(s)).ToList();
+        ids.IntersectWith(usable.Select(s => s.Id));
+
         var groupKey = group.Individual ? null : group.Key;
         return new GroupOutcome(
-            [.. covered.Suggestions.Select(s => Row(context, members[s.Id], SuggestionSource.Memory, s, groupKey, null, context.Run.Model))],
+            [.. usable.Select(s => Row(context, members[s.Id], SuggestionSource.Memory, s, groupKey, null, context.Run.Model))],
             [],
             [.. group.Members.Where(m => !ids.Contains(m.Id)).Select(AnalysisGrouper.Single)],
             0,
@@ -407,6 +413,7 @@ public sealed partial class AnalysisRunJob
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson,
         string? model)
     {
+        output = context.LabelSet.Admit(output);
         var type = output.DocumentTypeLabel is { } suggested ? context.LabelIndex.Respell(suggested) : null;
         var row = new SuggestionRow
         {

@@ -56,6 +56,7 @@ public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
 /// paused job is behind it (start-up recovery marks such runs failed; <c>POST /runs/{id}/resume</c> continues them, #378).
 /// A <c>top_senders</c> run counts one group and one call per sender, <c>policiesProposed</c> the policies it stored,
 /// <c>messagesCovered</c> their senders' messages and <c>failedMessages</c> the senders whose output was invalid (#357).
+/// <c>newLabelsProposed</c>: distinct new topic labels among the run's stored suggestions (#367).
 /// </summary>
 public sealed record AnalysisRunDto(
     Guid Id,
@@ -92,7 +93,8 @@ public sealed record AnalysisRunDto(
     int TriageCalls,
     int EscalatedCalls,
     bool IsStalled,
-    int PoliciesProposed);
+    int PoliciesProposed,
+    int NewLabelsProposed);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed

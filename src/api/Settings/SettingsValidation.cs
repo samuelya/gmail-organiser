@@ -68,6 +68,10 @@ public static class SettingsValidation
     public const int MaxTaxonomyMaxSenders = 300;
     public const int MinTaxonomyMaxLabels = 5;
     public const int MaxTaxonomyMaxLabels = 60;
+    public const int MinAnalysisMaxNewLabelsPerRun = 0;
+    public const int MaxAnalysisMaxNewLabelsPerRun = 50;
+    public const int MaxBlockedLabels = 50;
+    public const int MaxBlockedLabelLength = 100;
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
@@ -128,6 +132,14 @@ public static class SettingsValidation
         CheckRange(errors, "triageConfidenceThreshold", request.TriageConfidenceThreshold, MinTriageConfidenceThreshold, MaxTriageConfidenceThreshold);
         CheckRange(errors, "taxonomyMaxSenders", request.TaxonomyMaxSenders, MinTaxonomyMaxSenders, MaxTaxonomyMaxSenders);
         CheckRange(errors, "taxonomyMaxLabels", request.TaxonomyMaxLabels, MinTaxonomyMaxLabels, MaxTaxonomyMaxLabels);
+        CheckRange(errors, "analysisMaxNewLabelsPerRun", request.AnalysisMaxNewLabelsPerRun,
+            MinAnalysisMaxNewLabelsPerRun, MaxAnalysisMaxNewLabelsPerRun);
+        if (request.AnalysisBlockedLabels is { } blocked && (blocked.Count > MaxBlockedLabels
+            || blocked.Any(b => b?.Trim() is not { Length: > 0 and <= MaxBlockedLabelLength } name || name.Contains('/') || name.Any(char.IsControl))))
+        {
+            errors["analysisBlockedLabels"] =
+                [$"At most {MaxBlockedLabels} names, each 1 to {MaxBlockedLabelLength} characters, without '/' or control characters."];
+        }
         if (request.ClaudeReviewerMode is { } reviewer && !Enum.IsDefined(reviewer))
         {
             errors["claudeReviewerMode"] = ["Must be off, headless_claude_code or claude_desktop."];

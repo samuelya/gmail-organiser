@@ -126,6 +126,17 @@ public sealed record AppSettings
     /// <summary>The taxonomy proposal keeps at most this many labels.</summary>
     public int TaxonomyMaxLabels { get; init; } = DefaultTaxonomyMaxLabels;
 
+    /// <summary>
+    /// The approved label set (#367): the analysis picks topic labels from the label tree only, a new one is a proposal
+    /// the person approves one by one (never bulk-approved), and at most <see cref="AnalysisMaxNewLabelsPerRun"/> new
+    /// labels per run keep their confidence.
+    /// </summary>
+    public bool TaxonomyLocked { get; init; }
+    public int AnalysisMaxNewLabelsPerRun { get; init; } = DefaultAnalysisMaxNewLabelsPerRun;
+
+    /// <summary>Label names the analysis never uses, as any level of a label path (#367); user data, empty by default.</summary>
+    public IReadOnlyList<string> AnalysisBlockedLabels { get; init; } = [];
+
     /// <summary>Data Protection ciphertext of the <c>/mcp</c> bearer token (#164); never returned by the settings API.</summary>
     public string? McpTokenProtected { get; init; }
 
@@ -148,6 +159,7 @@ public sealed record AppSettings
     public const double DefaultTriageConfidenceThreshold = 0.70;
     public const int DefaultTaxonomyMaxSenders = 80;
     public const int DefaultTaxonomyMaxLabels = 25;
+    public const int DefaultAnalysisMaxNewLabelsPerRun = 3;
 
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()

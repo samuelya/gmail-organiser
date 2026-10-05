@@ -143,10 +143,17 @@ public sealed partial class AnalysisRunJob(
         using var triage = settings.TriageModel is { } triageModel
             ? llm.CreateChatClient(OllamaHttp.Parse(settings.OllamaBaseUrl), triageModel)
             : null;
+        // A resumed run counts the new labels it already admitted under the cap (#367), never the capped ones.
+        var admitted = settings.TaxonomyLocked
+            ? await db.Suggestions.AsNoTracking()
+                .Where(s => s.RunId == run.Id && s.IsNewLabel && !s.Reason.EndsWith(ApprovedLabelSet.CapNote))
+                .Select(s => s.TopicLabel).Distinct().ToListAsync(ct)
+            : [];
+
         // A compare run's hints leave out decisions about every message it re-analyses, not just the current group's.
         var context = new RunContext(
             run, settings, builder, chat, triage, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
-            compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies);
+            compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies, ApprovedLabelSet.From(settings, admitted));
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
@@ -427,7 +434,8 @@ public sealed partial class AnalysisRunJob(
         Allowlist Allowlisted,
         AttachmentPolicySnapshot Attachments,
         IReadOnlyCollection<string> HintExclusions,
-        PolicyLookup Policies);
+        PolicyLookup Policies,
+        ApprovedLabelSet LabelSet);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]
     private static partial void LogInvalidOutput(ILogger logger, int count, string errors);
