@@ -13,6 +13,7 @@ shift
 require_number "$issue"
 for pair in "$@"; do
   [[ "$pair" == ?*=?* ]] || { echo "Expected Field=Option, got: '$pair'" >&2; exit 1; }
+  [[ "$pair" == "Status=Ready" ]] && check_ready_size "$issue"
 done
 
 lookup=$(gql -F num="$issue" -f owner="$OWNER" -f repo="$REPO" -f title="$PROJECT_TITLE" -f query='

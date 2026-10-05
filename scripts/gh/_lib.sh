@@ -36,3 +36,19 @@ require_number() {
 clean_md() {
   perl -0pe 's/<!--.*?-->//gs; s/\r//g; s/\n{3,}/\n\n/g'
 }
+
+# Size gate for Status=Ready: a non-epic issue needs a "## Files" section listing at most 12 files
+# (one "- path" line each). Over-cap PRs cost 4x per PR (eco-review 3); the BA splits instead.
+check_ready_size() {
+  local body labels count
+  labels=$(gh issue view "$1" -R "$OWNER/$REPO" --json labels --jq '[.labels[].name] | join(",")')
+  [[ ",$labels," == *",type:epic,"* ]] && return 0
+  body=$(gh issue view "$1" -R "$OWNER/$REPO" --json body --jq .body | tr -d '\r')
+  count=$(awk '/^## /{in_files = ($0 ~ /^## Files[[:space:]]*$/); next} in_files && /^[-*] /{n++} END{print n+0}' <<<"$body")
+  if (( count == 0 )); then
+    echo "Issue #$1 has no '## Files' section; list the files to add or change before Ready." >&2; exit 1
+  fi
+  if (( count > 12 )); then
+    echo "Issue #$1 lists $count files (max 12); split it before Ready." >&2; exit 1
+  fi
+}

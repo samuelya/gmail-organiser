@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Lists, and with --apply removes, the Docker volumes agents' compose projects left behind:
-# gmo-test-<pr> (tester) once the PR is closed or merged, gmo-<issue> (coder) once the issue is
+# gmo-test-<pr>[suffix] (tester) once the PR is closed or merged, gmo-<issue>[suffix] (coder; suffix
+# such as -r2, -fresh or f) once the issue is
 # closed. Only volumes whose compose project label matches those names are touched; the owner's
 # stack and anything else are never listed. Lead-run (the guard blocks agents' volume deletes).
 # Usage: scripts/gh/clean-test-volumes.sh [--apply]
@@ -12,7 +13,7 @@ apply=0; [[ "${1:-}" == "--apply" ]] && apply=1
 last=""; s=""
 removed=0; kept=0
 while read -r vol project; do
-  [[ "$project" =~ ^gmo-(test-)?([0-9]+)$ ]] || continue
+  [[ "$project" =~ ^gmo-(test-)?([0-9]+)([a-z]|-[a-z0-9]+)*$ ]] || continue
   n="${BASH_REMATCH[2]}"
   if [[ "$project" != "$last" ]]; then
     last="$project"
