@@ -373,5 +373,7 @@ public sealed partial class AnalysisRunService(
         run.LlmMilliseconds,
         run.LlmMilliseconds / 1000.0,
         run.NearContextLimit,
+        run.TriageCalls,
+        run.EscalatedCalls,
         stalled);
 }

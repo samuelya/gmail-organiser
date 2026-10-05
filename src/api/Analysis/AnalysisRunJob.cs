@@ -119,10 +119,13 @@ public sealed partial class AnalysisRunJob(
         var work = await PlanAsync(run, cursor, settings, labels, ct);
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
+        using var triage = settings.TriageModel is { } triageModel
+            ? llm.CreateChatClient(OllamaHttp.Parse(settings.OllamaBaseUrl), triageModel)
+            : null;
         var compare = run.Kind == AnalysisRunKind.Compare;
         // A compare run's hints leave out decisions about every message it re-analyses, not just the current group's.
         var context = new RunContext(
-            run, settings, builder, chat, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
+            run, settings, builder, chat, triage, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
             compare ? [.. cursor.SuggestionIds!.Keys] : []);
 
         var front = new Queue<MessageGroup>(work.Individual);
@@ -274,6 +277,8 @@ public sealed partial class AnalysisRunJob(
         run.CompletionTokens += outcome.Usage.CompletionTokens;
         run.LlmMilliseconds += outcome.Usage.Milliseconds;
         run.NearContextLimit += outcome.Usage.NearContextLimit;
+        run.TriageCalls += outcome.TriageCalls;
+        run.EscalatedCalls += outcome.EscalatedCalls;
 
         // A unique violation means another writer committed a suggestion for a member after the re-check: the retry's
         // re-check then skips it as decided meanwhile (or replaces it if undecided); it never fails the run.
@@ -381,6 +386,7 @@ public sealed partial class AnalysisRunJob(
         AppSettings Settings,
         AnalysisPromptBuilder Builder,
         IChatClient Chat,
+        IChatClient? Triage,
         IReadOnlyList<string> LabelTree,
         LabelTreeIndex LabelIndex,
         PersonalLabels Labels,

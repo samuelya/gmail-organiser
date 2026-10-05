@@ -78,6 +78,8 @@ public sealed record AnalysisRunDto(
     long LlmMilliseconds,
     double LlmSeconds,
     int NearContextLimit,
+    int TriageCalls,
+    int EscalatedCalls,
     bool IsStalled);
 
 /// <summary>

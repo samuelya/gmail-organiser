@@ -62,6 +62,8 @@ public static class SettingsValidation
     public const int MaxRulesStaleFilterDays = 3650;
     public const int MinLlmNumCtx = 2048;
     public const int MaxLlmNumCtx = 131_072;
+    public const double MinTriageConfidenceThreshold = 0;
+    public const double MaxTriageConfidenceThreshold = 1;
     public const string LabelNamesClashField = "deleteLabelName";
     public const string LabelNamesClashMessage = "Must differ from the action label.";
 
@@ -118,6 +120,8 @@ public static class SettingsValidation
         CheckRange(errors, "claudeMaxTurns", request.ClaudeMaxTurns, MinClaudeMaxTurns, MaxClaudeMaxTurns);
         CheckRange(errors, "rulesStaleFilterDays", request.RulesStaleFilterDays, MinRulesStaleFilterDays, MaxRulesStaleFilterDays);
         CheckRange(errors, "llmNumCtx", request.LlmNumCtx, MinLlmNumCtx, MaxLlmNumCtx);
+        CheckModelName(errors, "triageModel", request.TriageModel);
+        CheckRange(errors, "triageConfidenceThreshold", request.TriageConfidenceThreshold, MinTriageConfidenceThreshold, MaxTriageConfidenceThreshold);
         if (request.ClaudeReviewerMode is { } reviewer && !Enum.IsDefined(reviewer))
         {
             errors["claudeReviewerMode"] = ["Must be off, headless_claude_code or claude_desktop."];

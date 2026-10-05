@@ -103,6 +103,13 @@ public sealed record AppSettings
     /// <summary>Sent as Ollama's <c>num_ctx</c> with every analysis call (#353), so a long prompt is not silently truncated.</summary>
     public int LlmNumCtx { get; init; } = DefaultLlmNumCtx;
 
+    /// <summary>
+    /// A smaller chat model asked first (#375); <c>null</c> is off. Its answer is kept unless it fails to parse or a
+    /// confidence is below <see cref="TriageConfidenceThreshold"/>, then <see cref="ChatModel"/> answers the same prompt.
+    /// </summary>
+    public string? TriageModel { get; init; }
+    public double TriageConfidenceThreshold { get; init; } = DefaultTriageConfidenceThreshold;
+
     /// <summary>Data Protection ciphertext of the <c>/mcp</c> bearer token (#164); never returned by the settings API.</summary>
     public string? McpTokenProtected { get; init; }
 
@@ -122,6 +129,7 @@ public sealed record AppSettings
     public const int DefaultClaudeMaxTurns = 80;
     public const int DefaultRulesStaleFilterDays = 365;
     public const int DefaultLlmNumCtx = 8192;
+    public const double DefaultTriageConfidenceThreshold = 0.70;
 
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()

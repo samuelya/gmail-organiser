@@ -36,7 +36,9 @@ public sealed record SettingsDto(
     AppsScriptSettings AppsScript,
     string? DocumentTypeParent,
     int RulesStaleFilterDays,
-    int LlmNumCtx)
+    int LlmNumCtx,
+    string? TriageModel,
+    double TriageConfidenceThreshold)
 {
     /// <param name="claudeTokenSet">Whether <c>CLAUDE_CODE_OAUTH_TOKEN</c> is set; the token itself is never returned.</param>
     public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet) => new(
@@ -75,7 +77,9 @@ public sealed record SettingsDto(
         s.AppsScript,
         s.DocumentTypeParent,
         s.RulesStaleFilterDays,
-        s.LlmNumCtx);
+        s.LlmNumCtx,
+        s.TriageModel,
+        s.TriageConfidenceThreshold);
 }
 
 /// <summary>Never carries the secret itself.</summary>
@@ -120,7 +124,9 @@ public sealed record UpdateSettingsRequest(
     UpdateAppsScriptSettingsRequest? AppsScript = null,
     string? DocumentTypeParent = null,
     int? RulesStaleFilterDays = null,
-    int? LlmNumCtx = null);
+    int? LlmNumCtx = null,
+    string? TriageModel = null,
+    double? TriageConfidenceThreshold = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>
