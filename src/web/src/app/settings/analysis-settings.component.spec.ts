@@ -15,6 +15,8 @@ const analysis = (over: Partial<AnalysisSettings> = {}): AnalysisSettings => ({
   analysisMemoryMinApprovals: 3,
   bulkApproveThreshold: 0.8,
   autoArchiveOnActionDone: false,
+  policyAutoApplyFetched: true,
+  llmNumCtx: 8192,
   taxonomyMaxSenders: 80,
   taxonomyMaxLabels: 25,
   analysisPromptTemplate: null,
@@ -147,6 +149,30 @@ describe('AnalysisSettingsSection', () => {
     q('save-analysis')!.click();
     await fixture.whenStable();
     expect(emitted).toEqual([{ taxonomyMaxSenders: 120, taxonomyMaxLabels: 30 }]);
+  });
+
+  it('emits the LLM context and the policy toggle, and rejects a context out of range', async () => {
+    await render();
+    expect(q<HTMLInputElement>('llmNumCtx')!.value).toBe('8192');
+    await type('llmNumCtx', '1024');
+    q('save-analysis')!.click();
+    await fixture.whenStable();
+    expect(fieldError('llmNumCtx')).toBe('Enter a number from 2048 to 131072.');
+    expect(emitted).toEqual([]);
+
+    await type('llmNumCtx', '16384');
+    q('policyAutoApplyFetched')!.querySelector('button')!.click();
+    await fixture.whenStable();
+    q('save-analysis')!.click();
+    await fixture.whenStable();
+    expect(emitted).toEqual([{ llmNumCtx: 16384, policyAutoApplyFetched: false }]);
+  });
+
+  it('shows the API validation message on the LLM context field', async () => {
+    await render();
+    fixture.componentRef.setInput('serverErrors', { llmNumCtx: ['Must be at most 131072.'] });
+    await fixture.whenStable();
+    expect(fieldError('llmNumCtx')).toBe('Must be at most 131072.');
   });
 
   it('emits an empty object when nothing changed', async () => {

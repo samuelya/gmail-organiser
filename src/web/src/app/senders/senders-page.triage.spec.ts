@@ -3,7 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
+import { AnalysisService } from '../analyse/analysis.service';
 import { isActiveJob, JobDto, JobsConnectionState } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { SettingsService } from '../settings/settings.service';
@@ -39,6 +40,7 @@ class FakeJobs {
   readonly activeJobs = computed(() => this.held().filter(isActiveJob));
   readonly connectionState = signal<JobsConnectionState>('connected');
   readonly reconnects = signal(0);
+  fetch = vi.fn(() => of({}));
   job(id: string) {
     return this.held().find((j) => j.id === id);
   }
@@ -46,16 +48,24 @@ class FakeJobs {
 
 describe('SendersPage Stage-0 columns and kind filter', () => {
   let api: { list: ReturnType<typeof vi.fn>; fetchFromSender: ReturnType<typeof vi.fn> };
+  let analysis: { start: ReturnType<typeof vi.fn> };
+  let jobs: FakeJobs;
 
   async function render(rows: SenderDto[], url = '/senders') {
     api = {
       list: vi.fn(() => of({ items: rows, page: 1, pageSize: 50, total: rows.length })),
       fetchFromSender: vi.fn(),
     };
+    analysis = { start: vi.fn(() => of({ id: 'run-1', jobId: 'job-7' })) };
+    jobs = new FakeJobs();
     TestBed.configureTestingModule({
       providers: [
-        provideRouter([{ path: 'senders', component: SendersPage }]),
-        { provide: JobsService, useValue: new FakeJobs() },
+        provideRouter([
+          { path: 'senders', component: SendersPage },
+          { path: 'analyse', children: [] },
+        ]),
+        { provide: AnalysisService, useValue: analysis },
+        { provide: JobsService, useValue: jobs },
         { provide: SendersService, useValue: api },
         { provide: SettingsService, useValue: { getSettings: () => of(null) } },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
@@ -164,5 +174,41 @@ describe('SendersPage Stage-0 columns and kind filter', () => {
   it('links each row to the noisy senders at its canonical domain', async () => {
     const { q } = await render([sender({ canonicalDomain: 'example.org' })]);
     expect(q('noisy-senders')!.getAttribute('href')).toBe('/senders/noisy?search=example.org');
+  });
+
+  describe('Propose policy', () => {
+    afterEach(() => document.querySelector('.cdk-overlay-container')?.replaceChildren());
+
+    it('starts a top senders run for the row and opens Analyse with a snackbar', async () => {
+      const { harness, q } = await render([sender()]);
+      const button = q('propose-policy')!;
+      expect(button.getAttribute('aria-label')).toBe('Propose policy for news@example.com');
+
+      button.click();
+      await harness.fixture.whenStable();
+
+      expect(analysis.start).toHaveBeenCalledWith({
+        scope: 'top_senders',
+        senderAddress: 'news@example.com',
+        count: 1,
+      });
+      expect(jobs.fetch).toHaveBeenCalledWith('job-7');
+      expect(TestBed.inject(Router).url).toBe('/analyse');
+      expect(document.querySelector('.mat-mdc-snack-bar-label')?.textContent).toContain(
+        'Proposing a policy for news@example.com',
+      );
+    });
+
+    it('stays on Senders and re-enables the action when the API rejects the run', async () => {
+      const { harness, q } = await render([sender()]);
+      analysis.start.mockReturnValue(throwError(() => new Error('400')));
+
+      q('propose-policy')!.click();
+      await harness.fixture.whenStable();
+
+      expect(TestBed.inject(Router).url).toBe('/senders');
+      expect(q('propose-policy')!.hasAttribute('disabled')).toBe(false);
+      expect(jobs.fetch).not.toHaveBeenCalled();
+    });
   });
 });

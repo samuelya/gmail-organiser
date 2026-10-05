@@ -18,6 +18,10 @@ export interface AnalysisSettings {
   analysisMemoryMinApprovals: number;
   bulkApproveThreshold: number;
   autoArchiveOnActionDone: boolean;
+  /** Whether a fetch applies approved sender policies to newly fetched mail. */
+  policyAutoApplyFetched: boolean;
+  /** The context window (`num_ctx`, tokens) every LLM call asks for. */
+  llmNumCtx: number;
   /** Top senders the taxonomy proposal profiles. */
   taxonomyMaxSenders: number;
   /** Most labels the taxonomy proposal may suggest. */
@@ -77,6 +81,7 @@ export const ANALYSIS_LIMITS: Record<NumericAnalysisField, Range> = {
   bulkApproveThreshold: { min: 0.5, max: 1, step: 0.01, integer: false },
   taxonomyMaxSenders: { min: 10, max: 300, step: 10, integer: true },
   taxonomyMaxLabels: { min: 5, max: 60, step: 1, integer: true },
+  llmNumCtx: { min: 2048, max: 131_072, step: 1024, integer: true },
 };
 
 export const MAX_PROMPT_TEMPLATE_LENGTH = 20_000;
