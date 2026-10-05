@@ -71,6 +71,7 @@ app.MapSetupEndpoints();
 app.MapJobsEndpoints();
 app.MapFetchEndpoints();
 app.MapSendersEndpoints();
+app.MapPolicyEndpoints();
 app.MapAnalysisEndpoints();
 app.MapReviewEndpoints();
 app.MapLabelsEndpoints();

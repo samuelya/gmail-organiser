@@ -46,7 +46,7 @@ public sealed partial class SenderProfileBuilder(
     /// <exception cref="GmailNotConnectedException">Bodies were asked for and Gmail is not connected.</exception>
     public async Task<SenderProfile?> BuildAsync(PolicyScope scope, string scopeKey, bool includeBodies, CancellationToken ct)
     {
-        var messages = InScope(scope, scopeKey);
+        var messages = InScope(db, scope, scopeKey);
         var recent = await messages
             .OrderByDescending(m => m.InternalDate).ThenBy(m => m.Id)
             .Take(MaxMessages)
@@ -79,7 +79,8 @@ public sealed partial class SenderProfileBuilder(
             await PolicyHintsAsync(scope, scopeKey, domain, ct));
     }
 
-    private IQueryable<MessageRow> InScope(PolicyScope scope, string key)
+    /// <summary>The live messages a policy of <paramref name="scope"/> and <paramref name="key"/> covers.</summary>
+    internal static IQueryable<MessageRow> InScope(AppDbContext db, PolicyScope scope, string key)
     {
         var live = db.Messages.AsNoTracking().Where(m => !m.DeletedInGmail);
         return scope switch
