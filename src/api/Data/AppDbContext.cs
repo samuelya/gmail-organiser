@@ -109,7 +109,21 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.Property(r => r.IsRelay).HasDefaultValue(false);
             e.Property(r => r.Allowlisted).HasDefaultValue(false);
             e.Property(r => r.UnsubscribeMethod).HasConversion(new SnakeCaseEnumConverter<UnsubscribeMethod>());
+            foreach (var count in new[]
+            {
+                nameof(SenderRow.UnreadCount), nameof(SenderRow.RepliedCount), nameof(SenderRow.StarredCount),
+                nameof(SenderRow.ListUnsubscribeCount), nameof(SenderRow.BulkHeaderCount), nameof(SenderRow.PrimaryCount),
+                nameof(SenderRow.PromotionsCount), nameof(SenderRow.SocialCount), nameof(SenderRow.UpdatesCount),
+                nameof(SenderRow.ForumsCount),
+            })
+            {
+                // Defaults, so the fetch's raw insert and existing rows need no value.
+                e.Property<int>(count).HasDefaultValue(0);
+            }
+
+            e.Property(r => r.Kind).HasConversion(new SnakeCaseEnumConverter<SenderKind>()).HasDefaultValue(SenderKind.Unknown);
             e.HasIndex(r => r.Domain);
+            e.HasIndex(r => r.Kind);
             e.HasIndex(r => r.CanonicalAddress);
             e.HasIndex(r => r.CanonicalDomain);
             // Trigram indexes for SenderQuery's ILIKE '%term%' search (a leading wildcard can't use a B-tree).

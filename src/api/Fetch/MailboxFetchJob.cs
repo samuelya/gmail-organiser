@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -76,8 +77,16 @@ public sealed class MailboxFetchJob(
             if (cursor.Phase == MailboxPhase.Completed)
             {
                 // One transaction: a failure before the commit leaves fetch_state, the run's ids and the job cursor
-                // at the last checkpoint, so the re-run repeats only the final chunk.
-                await ctx.CompleteAsync(cursor, progress, c => SaveStateAsync(cursor, c), ct);
+                // at the last checkpoint, so the re-run repeats only the final chunk. The stats rebuild is queued in it too.
+                await ctx.CompleteAsync(
+                    cursor,
+                    progress,
+                    async c =>
+                    {
+                        await SaveStateAsync(cursor, c);
+                        await SenderStatsRebuildJob.EnqueueAsync(db, time, null, c);
+                    },
+                    ct);
                 return;
             }
 

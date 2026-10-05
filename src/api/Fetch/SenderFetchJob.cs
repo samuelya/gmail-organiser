@@ -1,7 +1,10 @@
 using System.Text.Json.Serialization;
+using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
+using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Fetch;
 
@@ -37,7 +40,9 @@ public sealed class SenderFetchJob(
     IGmailClient gmail,
     MessageFetchPipeline pipeline,
     LocalAccountClaim accountClaim,
-    ISettingsStore settings) : IJobHandler
+    ISettingsStore settings,
+    AppDbContext db,
+    TimeProvider time) : IJobHandler
 {
     public const string JobType = FetchJobTypes.Sender;
     public const string Queue = JobQueues.Fetch;
@@ -75,7 +80,7 @@ public sealed class SenderFetchJob(
 
             if (chunk.NextPageToken is null)
             {
-                await ctx.CompleteAsync(cursor, new JobProgress(cursor.Fetched, cursor.Fetched, CompletedMessage), _ => Task.CompletedTask, ct);
+                await ctx.CompleteAsync(cursor, new JobProgress(cursor.Fetched, cursor.Fetched, CompletedMessage), c => QueueStatsRebuildAsync(cursor, c), ct);
                 return;
             }
 
@@ -84,5 +89,22 @@ public sealed class SenderFetchJob(
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// Queues a stats rebuild scoped to the target's senders, in the completing transaction: the address itself, or
+    /// every known sender of the domain (the pipeline has created their rows by now).
+    /// </summary>
+    private async Task QueueStatsRebuildAsync(SenderFetchCursor cursor, CancellationToken ct)
+    {
+        List<string> addresses = cursor.Kind == SenderFetchKind.Address
+            ? [cursor.Target]
+            : await db.Senders.Where(s => s.Domain == cursor.Target).Select(s => s.Address).ToListAsync(ct);
+        if (addresses.Count == 0)
+        {
+            return;
+        }
+
+        await SenderStatsRebuildJob.EnqueueAsync(db, time, addresses, ct);
     }
 }

@@ -8,10 +8,13 @@ namespace GmailOrganiser.Senders;
 /// <summary>
 /// Keeps <c>senders</c> current for the addresses a fetch just touched: missing rows are inserted, then
 /// <c>total_count</c>, <c>analysed_count</c>, <c>last_seen_at</c> and <c>display_name</c> are recomputed from
-/// <c>messages</c> (ignoring <c>deleted_in_gmail</c>) in one statement, so replaying a chunk never double-counts and
-/// <c>analysed_count</c> never exceeds <c>total_count</c>. <c>applied_count</c> belongs to analysis and is left alone.
+/// <c>messages</c> and <c>first_seen_at</c> moves earlier if needed, never later (ignoring <c>deleted_in_gmail</c>;
+/// Gmail lists newest first, so later chunks bring older mail) in one statement, so
+/// replaying a chunk never double-counts and <c>analysed_count</c> never exceeds <c>total_count</c>. <c>applied_count</c>
+/// belongs to analysis and the engagement stats to <see cref="SenderStatsRebuildJob"/>.
 /// The canonical fields (<see cref="RelayAddressDecoder"/>) are set in the insert; they are a pure function of the
 /// address, so only the canonical backfill rewrites them (<see cref="UpdateCanonicalAsync"/>).
+/// The count updates lock their rows in address order first (<see cref="LockAsync"/>), like the stats rebuild.
 /// </summary>
 public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
 {
@@ -44,6 +47,7 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
                 ct);
         }
 
+        await LockAsync(db, distinct, ct);
         await db.Senders
             .Where(s => distinct.Contains(s.Address))
             .ExecuteUpdateAsync(set => set
@@ -54,6 +58,10 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
                 .SetProperty(
                     s => s.LastSeenAt,
                     s => db.Messages.Where(m => m.FromAddress == s.Address && !m.DeletedInGmail).Max(m => (DateTimeOffset?)m.InternalDate))
+                .SetProperty(
+                    s => s.FirstSeenAt,
+                    s => EF.Functions.Least(
+                        s.FirstSeenAt, db.Messages.Where(m => m.FromAddress == s.Address && !m.DeletedInGmail).Min(m => (DateTimeOffset?)m.InternalDate)))
                 .SetProperty(
                     s => s.DisplayName,
                     s => db.Messages
@@ -77,6 +85,7 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
         }
 
         var now = time.GetUtcNow();
+        await LockAsync(db, distinct, ct);
         await db.Senders
             .Where(s => distinct.Contains(s.Address))
             .ExecuteUpdateAsync(set => set
@@ -111,6 +120,15 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
             """,
             ct);
     }
+
+    /// <summary>
+    /// Locks the <paramref name="addresses"/>' sender rows in address order until the caller's transaction ends (a
+    /// no-op lock outside one). Every multi-row sender writer takes its locks this way, so two of them updating
+    /// overlapping rows wait for each other instead of deadlocking on opposite lock orders.
+    /// </summary>
+    internal static Task LockAsync(AppDbContext db, IReadOnlyCollection<string> addresses, CancellationToken ct) =>
+        db.Database.SqlQuery<string>(
+            $"SELECT address AS \"Value\" FROM senders WHERE address = ANY({addresses.ToArray()}) ORDER BY address FOR UPDATE").ToListAsync(ct);
 
     private static List<string> DistinctAddresses(IEnumerable<string> addresses) =>
         addresses.Where(a => a.Length > 0).Distinct(StringComparer.Ordinal).ToList();

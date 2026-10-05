@@ -147,8 +147,13 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
         await ConnectAsync(OtherAccount);
         var runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
 
-        (await runner.ClaimAsync(Ct)).ShouldBe([started.JobId]);
-        await runner.RunAsync(started.JobId, Ct);
+        // A completed fetch may have queued the sender stats rebuild on its own queue; it is run too.
+        var claimed = await runner.ClaimAsync(Ct);
+        claimed.ShouldContain(started.JobId);
+        foreach (var id in claimed)
+        {
+            await runner.RunAsync(id, Ct);
+        }
 
         await using var db = postgres.CreateDbContext();
         var job = await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == started.JobId, Ct);
@@ -333,8 +338,13 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
     private static async Task RunAsync(WebApplicationFactory<Program> app, Guid jobId)
     {
         var runner = ActivatorUtilities.CreateInstance<JobRunner>(app.Services);
-        (await runner.ClaimAsync(Ct)).ShouldBe([jobId]);
-        await runner.RunAsync(jobId, Ct);
+        // A completed fetch may have queued the sender stats rebuild on its own queue; it is run too.
+        var claimed = await runner.ClaimAsync(Ct);
+        claimed.ShouldContain(jobId);
+        foreach (var id in claimed)
+        {
+            await runner.RunAsync(id, Ct);
+        }
     }
 
     private async Task AssertRefusedBeforeWritesAsync(Guid? jobId, CountingGmailClient gmail)

@@ -370,8 +370,13 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
 
     public async Task RunNextAsync(CancellationToken? ct = null)
     {
-        var id = (await Runner.ClaimAsync(Ct)).ShouldHaveSingleItem();
-        await Runner.RunAsync(id, ct ?? Ct);
+        // A completed fetch queues the sender stats rebuild on its own queue, so it may be claimed alongside.
+        var claimed = await Runner.ClaimAsync(Ct);
+        claimed.ShouldNotBeEmpty();
+        foreach (var id in claimed)
+        {
+            await Runner.RunAsync(id, ct ?? Ct);
+        }
     }
 
     public List<JobProgress> Progress(Guid jobId) =>

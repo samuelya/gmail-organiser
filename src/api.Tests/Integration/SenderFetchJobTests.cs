@@ -210,7 +210,7 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
         await RunNextAsync(firstId);
         await RunNextAsync(otherId);
         await using var db = postgres.CreateDbContext();
-        var jobs = await db.Jobs.AsNoTracking().OrderBy(j => j.CreatedAt).ToListAsync(Ct);
+        var jobs = await db.Jobs.AsNoTracking().Where(j => j.Queue == JobQueues.Fetch).OrderBy(j => j.CreatedAt).ToListAsync(Ct);
         jobs.Select(j => (j.DedupKey, j.Status)).ShouldBe([(Carol, JobStatus.Completed), (Bob, JobStatus.Completed)]);
         (await db.Messages.CountAsync(Ct)).ShouldBe(CarolCount + BobCount);
     }
@@ -333,9 +333,13 @@ public sealed class SenderFetchJobTests(ApiFactory factory, PostgresFixture post
 
     private async Task RunNextAsync(Guid expected)
     {
-        var id = (await runner.ClaimAsync(Ct)).ShouldHaveSingleItem();
-        id.ShouldBe(expected);
-        await runner.RunAsync(id, Ct);
+        // A completed fetch queues the sender stats rebuild on its own queue, so it may be claimed alongside.
+        var claimed = await runner.ClaimAsync(Ct);
+        claimed.ShouldContain(expected);
+        foreach (var id in claimed)
+        {
+            await runner.RunAsync(id, Ct);
+        }
     }
 
     private static Task<HttpResponseMessage> PostAsync(WebApplicationFactory<Program> app, string? target)

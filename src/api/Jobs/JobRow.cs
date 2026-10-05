@@ -25,6 +25,9 @@ public static class JobQueues
 
     /// <summary>Local sender maintenance (the canonical backfill); never blocks a fetch.</summary>
     public const string Senders = "senders";
+
+    /// <summary>Local recomputes after a fetch (the sender stats rebuild); never blocks a fetch or the senders queue.</summary>
+    public const string Maintenance = "maintenance";
 }
 
 /// <summary>A background job (table <c>jobs</c>). Cursor and progress are handler-defined JSON.</summary>
