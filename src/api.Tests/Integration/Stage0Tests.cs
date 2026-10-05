@@ -375,6 +375,26 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
     }
 
     [Fact]
+    public async Task Archive_goes_on_when_a_gone_message_drops_the_sender_below_the_noisy_thresholds()
+    {
+        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 3;
+        h.Gmail.BeforeBatchModify = (_, ids) => ids.Contains("a00")
+            ? throw GmailRetryPolicy.CreateApiException(HttpStatusCode.NotFound, "notFound")
+            : Task.CompletedTask;
+        var job = await StartArchiveAsync(Shop);
+
+        await h.RunNextAsync();
+
+        string[] archived = ["a02", "a04", "a05", "a06", "a07", "a08", "a09"];
+        archived.ShouldAllBe(id => !Labels(id).Contains("INBOX"));
+        h.Progress(job.Id).Last().Message.ShouldNotBeNull().ShouldNotContain("stopped");
+        await using var db = postgres.CreateDbContext();
+        (await db.Senders.SingleAsync(s => s.Address == Shop, Ct)).TotalCount.ShouldBeLessThan(NoisySenderQuery.DefaultMinMessages);
+        (await db.Jobs.SingleAsync(j => j.Id == job.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+        (await db.ActionLog.Select(l => l.MessageId).ToListAsync(Ct)).ShouldBe(archived, ignoreOrder: true);
+    }
+
+    [Fact]
     public async Task Archive_with_nothing_unprotected_in_the_inbox_is_422()
     {
         await using (var db = postgres.CreateDbContext())
