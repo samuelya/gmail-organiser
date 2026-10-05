@@ -16,6 +16,7 @@ namespace GmailOrganiser.Review;
 /// <param name="SuggestionIds">Null for every approved suggestion (of <paramref name="SenderAddress"/>).</param>
 /// <param name="Pending">The chunk whose undo log is written and whose <c>batchModify</c> may have been sent.</param>
 /// <param name="Skipped">Messages Gmail refused one by one; their suggestions stay approved and are not retried.</param>
+/// <param name="PolicyId">Only the suggestions of this sender policy; its <c>applied_at</c> is set when the batch completes.</param>
 public sealed record ApplyCursor(
     Guid BatchId,
     DateTimeOffset ApprovedBefore,
@@ -25,7 +26,8 @@ public sealed record ApplyCursor(
     int ChunksDone = 0,
     int MessagesDone = 0,
     ApplyChunk? Pending = null,
-    ApplySkip[]? Skipped = null);
+    ApplySkip[]? Skipped = null,
+    Guid? PolicyId = null);
 
 /// <summary>One <c>batchModify</c> call: the same label ids added and removed on every message.</summary>
 public sealed record ApplyChunk(string[] MessageIds, string[] Add, string[] Remove);
@@ -63,7 +65,7 @@ public sealed partial class ApplyActionsJob(
 
     /// <summary>The suggestions a batch applies: approved by <paramref name="approvedBefore"/>, message not deleted in Gmail.</summary>
     public static IQueryable<SuggestionRow> Eligible(
-        AppDbContext db, DateTimeOffset approvedBefore, string? senderAddress, Guid[]? suggestionIds)
+        AppDbContext db, DateTimeOffset approvedBefore, string? senderAddress, Guid[]? suggestionIds, Guid? policyId = null)
     {
         var query = db.Suggestions.Where(s => s.Status == SuggestionStatus.Approved
             && s.DecidedAt <= approvedBefore
@@ -76,6 +78,11 @@ public sealed partial class ApplyActionsJob(
         if (suggestionIds is not null)
         {
             query = query.Where(s => suggestionIds.Contains(s.Id));
+        }
+
+        if (policyId is not null)
+        {
+            query = query.Where(s => s.PolicyId == policyId);
         }
 
         return query;
@@ -150,7 +157,16 @@ public sealed partial class ApplyActionsJob(
             if (!replan)
             {
                 var progress = Progress(cursor, cursor.MessagesDone);
-                await ctx.CompleteAsync(cursor, progress, t => SetDescriptionAsync(cursor.BatchId, null, t), ct);
+                await ctx.CompleteAsync(cursor, progress, async t =>
+                {
+                    await SetDescriptionAsync(cursor.BatchId, null, t);
+                    if (cursor.PolicyId is { } policyId)
+                    {
+                        var now = time.GetUtcNow();
+                        await db.SenderPolicies.Where(p => p.Id == policyId)
+                            .ExecuteUpdateAsync(u => u.SetProperty(p => p.AppliedAt, now), t);
+                    }
+                }, ct);
                 return;
             }
 
@@ -168,7 +184,7 @@ public sealed partial class ApplyActionsJob(
     private async Task<Plan> PlanAsync(ApplyCursor cursor, AppSettings settings, CancellationToken ct)
     {
         var skipped = (cursor.Skipped ?? []).Select(s => s.SuggestionId).ToArray();
-        var rows = await Eligible(db, cursor.ApprovedBefore, cursor.SenderAddress, cursor.SuggestionIds)
+        var rows = await Eligible(db, cursor.ApprovedBefore, cursor.SenderAddress, cursor.SuggestionIds, cursor.PolicyId)
             .Where(s => !skipped.Contains(s.Id))
             .AsNoTracking()
             .Join(db.Messages.AsNoTracking(), s => s.MessageId, m => m.Id, (s, m) => new { Suggestion = s, Message = m })

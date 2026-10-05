@@ -1,5 +1,6 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Policies;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Analysis;
@@ -14,6 +15,9 @@ public enum SuggestionSource
 
     /// <summary>A rule-based proposal for a noisy sender from its Stage-0 stats, no LLM (#349).</summary>
     Stage0,
+
+    /// <summary>An approved sender policy's standing decision (<c>PolicyApplyJob</c>); created approved, no LLM.</summary>
+    Policy,
 }
 
 public enum SuggestionStatus
@@ -51,6 +55,15 @@ public sealed class SuggestionRow
     public bool NeedsAction { get; set; }
     public bool ToBeDeleted { get; set; }
     public bool UnsubscribeSuggested { get; set; }
+
+    /// <summary>Apply labels the message but leaves it in the inbox (a policy's <c>keep</c> action).</summary>
+    public bool KeepInInbox { get; set; }
+
+    /// <summary>The sender policy that created this suggestion; null for every other source, or once the policy is deleted.</summary>
+    public Guid? PolicyId { get; set; }
+
+    /// <summary>The policy's sub-rule that matched; null for the policy default. Not a foreign key: rules are replaced on edit.</summary>
+    public Guid? PolicyRuleId { get; set; }
 
     /// <summary>
     /// Ids of the message's personal labels the suggestion replaces (labelled phase, DESIGN §6.3); apply removes those
@@ -157,10 +170,12 @@ public sealed class SuggestionRow
             e.Property(r => r.Status).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionStatus>());
             e.HasOne<MessageRow>().WithMany().HasForeignKey(r => r.MessageId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<AnalysisRunRow>().WithMany().HasForeignKey(r => r.RunId).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne<SenderPolicyRow>().WithMany().HasForeignKey(r => r.PolicyId).OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(r => r.MessageId).IsUnique();
             e.HasIndex(r => new { r.SenderAddress, r.Status });
             e.HasIndex(r => r.RunId);
             e.HasIndex(r => new { r.Status, r.Confidence });
+            e.HasIndex(r => new { r.PolicyId, r.Status });
         });
     }
 }
