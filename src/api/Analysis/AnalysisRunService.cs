@@ -213,14 +213,14 @@ public sealed partial class AnalysisRunService(
             .OrderByDescending(x => x.Run.CreatedAt)
             .Take(Math.Clamp(limit, 1, MaxListLimit))
             .ToListAsync(ct);
-        return [.. rows.Select(x => ToDto(x.Run, x.Stalled))];
+        return [.. rows.Select(x => ToDto(x.Run, x.Stalled, x.NewLabels))];
     }
 
     public async Task<AnalysisRunDto?> GetAsync(Guid id, CancellationToken ct)
     {
         await SyncEndedJobsAsync(ct);
         return await WithStalled(db.AnalysisRuns.AsNoTracking().Where(r => r.Id == id)).SingleOrDefaultAsync(ct) is { } x
-            ? ToDto(x.Run, x.Stalled)
+            ? ToDto(x.Run, x.Stalled, x.NewLabels)
             : null;
     }
 
@@ -228,6 +228,7 @@ public sealed partial class AnalysisRunService(
     {
         public required AnalysisRunRow Run { get; init; }
         public bool Stalled { get; init; }
+        public int NewLabels { get; init; }
     }
 
     /// <summary>Pairs each run with whether it is queued or running while no active job is behind it.</summary>
@@ -240,6 +241,7 @@ public sealed partial class AnalysisRunService(
             Run = run,
             Stalled = (run.Status == AnalysisRunStatus.Queued || run.Status == AnalysisRunStatus.Running)
                 && (job == null || !JobRow.Active.Contains(job.Status)),
+            NewLabels = db.Suggestions.Where(s => s.RunId == run.Id && s.IsNewLabel).Select(s => s.TopicLabel).Distinct().Count(),
         };
 
     /// <summary>
@@ -352,7 +354,7 @@ public sealed partial class AnalysisRunService(
     /// <summary><c>1 − llmCalls / max(1, covered)</c>; negative when retries cost more calls than emails covered.</summary>
     public static double SavedPercent(long llmCalls, long covered) => 1 - ((double)llmCalls / Math.Max(1, covered));
 
-    private static AnalysisRunDto ToDto(AnalysisRunRow run, bool stalled = false) => new(
+    private static AnalysisRunDto ToDto(AnalysisRunRow run, bool stalled = false, int newLabels = 0) => new(
         run.Id,
         run.JobId,
         SnakeCaseEnumConverter<AnalysisRunKind>.ToDb(run.Kind),
@@ -387,5 +389,6 @@ public sealed partial class AnalysisRunService(
         run.TriageCalls,
         run.EscalatedCalls,
         stalled,
-        run.PoliciesProposed);
+        run.PoliciesProposed,
+        newLabels);
 }

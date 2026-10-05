@@ -264,7 +264,8 @@ public sealed partial class ReviewService(
     /// <summary>
     /// Approves pending suggestions with <c>confidence ≥ threshold</c>: model answers only unless
     /// <paramref name="includeDerived"/> (derived, memory and Stage-0 ones too); a to-be-deleted suggestion of a protected message stays pending (only an
-    /// individual approve takes it).
+    /// individual approve takes it). With the taxonomy locked (#367), a suggestion proposing a new label stays pending too
+    /// until it is approved individually or edited to an existing label.
     /// </summary>
     public async Task<BulkApproveResponse> BulkApproveAsync(
         double? threshold, bool includeDerived, string? senderAddress, CancellationToken ct)
@@ -276,6 +277,11 @@ public sealed partial class ReviewService(
             : [SuggestionSource.Llm];
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.Status == SuggestionStatus.Pending && s.Confidence >= min && sources.Contains(s.Source));
+        if (settings.TaxonomyLocked)
+        {
+            candidates = candidates.Where(s => !s.IsNewLabel);
+        }
+
         if (senderAddress is not null)
         {
             candidates = candidates.Where(s => s.SenderAddress == senderAddress);
@@ -420,7 +426,7 @@ public sealed partial class ReviewService(
         var rules = settings.Protection;
         if (suggestion.Status == SuggestionStatus.Applied)
         {
-            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds));
+            return (ReviewResult.Conflict, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds, settings.TaxonomyLocked));
         }
 
         if (needsChange(suggestion))
@@ -439,7 +445,7 @@ public sealed partial class ReviewService(
 
         await tx.CommitAsync(ct);
         decisions.Committed();
-        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds));
+        return (ReviewResult.Ok, ReviewQuery.ToDto(suggestion, message, allowlist, rules, names, personal.AppLabelIds, settings.TaxonomyLocked));
     }
 
     /// <summary>
