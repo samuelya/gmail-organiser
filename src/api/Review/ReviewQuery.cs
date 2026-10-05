@@ -111,7 +111,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     /// members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
     /// With <paramref name="hasAlternative"/> the counts take only suggestions with a compare-run alternative, and only
     /// groups with such a member are listed, whole, so a group card and its approve/reject act on the same members.
-    /// With <paramref name="mailTypes"/> the counts and groups take only suggestions of one of the types; null when none is.
+    /// With <paramref name="mailTypes"/> the counts take only suggestions of one of the types (null when none is), and only
+    /// groups with such a member are listed, whole, each member with its own mail type.
     /// </summary>
     public async Task<ReviewSenderDetailDto?> DetailAsync(
         string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,

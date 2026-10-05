@@ -66,8 +66,8 @@ public static class ReviewEndpoints
 
     /// <summary>
     /// One page of the sender's groups in <c>status</c>, largest first (<c>hasAlternative=true</c>: only suggestions with
-    /// a compare-run alternative; <c>mailType=a,b</c>: only members of those mail types); 404 when the sender has no such
-    /// suggestions.
+    /// a compare-run alternative; <c>mailType=a,b</c>: only groups with a member of those mail types, listed whole); 404
+    /// when the sender has no such suggestions.
     /// </summary>
     private static async Task<Results<Ok<ReviewSenderDetailDto>, NotFound, ValidationProblem>> GetSenderAsync(
         string address, ReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null,

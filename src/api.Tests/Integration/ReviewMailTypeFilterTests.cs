@@ -50,24 +50,38 @@ public sealed class ReviewMailTypeFilterTests(ApiFactory factory, PostgresFixtur
     }
 
     [Fact]
-    public async Task Sender_detail_lists_only_members_of_the_given_mail_types()
+    public async Task Sender_detail_lists_whole_groups_with_a_member_of_the_given_mail_types()
     {
         var path = $"/api/review/senders/{Uri.EscapeDataString(AnalysisRunHarness.Shop)}";
 
         var one = await GetAsync<ReviewSenderDetailDto>($"{path}?mailType=marketing");
         one.Sender.Pending.ShouldBe(5);
         var group = one.Groups.ShouldHaveSingleItem();
-        group.Size.ShouldBe(5);
-        group.Members.Select(m => m.MessageId).Order().ShouldBe(["a00", "a01", "a02", "a03", "a04"]);
-        group.Members.ShouldAllBe(m => m.MailType == "marketing");
+        group.Size.ShouldBe(10);
+        group.Members.Count(m => m.MailType == "marketing").ShouldBe(5);
+        group.Members.Count(m => m.MailType == "receipt").ShouldBe(5);
 
-        var two = await GetAsync<ReviewSenderDetailDto>($"{path}?mailType=marketing,receipt");
-        two.Groups.ShouldHaveSingleItem().Members.Count.ShouldBe(10);
-
+        (await GetAsync<ReviewSenderDetailDto>($"{path}?mailType=marketing,receipt")).Sender.Pending.ShouldBe(10);
         (await h.GetAsync($"{path}?mailType=newsletter")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
         (await h.GetAsync($"/api/review/senders/{Uri.EscapeDataString(AnalysisRunHarness.Billing)}?mailType=receipt"))
             .StatusCode.ShouldBe(HttpStatusCode.NotFound);
         await BadRequestAsync($"{path}?mailType=bogus");
+    }
+
+    [Fact]
+    public async Task Group_reject_on_a_filtered_card_rejects_exactly_the_members_shown()
+    {
+        var path = $"/api/review/senders/{Uri.EscapeDataString(AnalysisRunHarness.Shop)}";
+        var group = (await GetAsync<ReviewSenderDetailDto>($"{path}?mailType=marketing")).Groups.ShouldHaveSingleItem();
+
+        var response = await h.PostAsync("/api/review/groups/reject", new GroupDecisionRequest(AnalysisRunHarness.Shop, group.GroupKey));
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
+        (await response.Content.ReadFromJsonAsync<GroupDecisionResponse>(Ct)).ShouldNotBeNull().Changed.ShouldBe(group.Members.Count);
+
+        await using var db = postgres.CreateDbContext();
+        var rejected = await db.Suggestions.Where(s => s.SenderAddress == AnalysisRunHarness.Shop && s.Status == SuggestionStatus.Rejected)
+            .Select(s => s.Id).ToListAsync(Ct);
+        rejected.Order().ShouldBe(group.Members.Select(m => m.Id).Order());
     }
 
     private async Task<T> GetAsync<T>(string path)
