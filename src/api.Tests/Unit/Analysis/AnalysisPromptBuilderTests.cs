@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using GmailOrganiser.Analysis.Prompts;
+using GmailOrganiser.Settings;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Tests.Unit.Analysis;
@@ -100,7 +101,7 @@ public sealed class AnalysisPromptBuilderTests
     [Fact]
     public void Options_ask_for_json_at_temperature_zero()
     {
-        var options = AnalysisPromptBuilder.CreateOptions();
+        var options = AnalysisPromptBuilder.CreateOptions(AppSettings.DefaultLlmNumCtx);
 
         var schema = options.ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema.ShouldNotBeNull();
         schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ShouldBe(["suggestions"]);
@@ -171,7 +172,7 @@ public sealed class AnalysisPromptBuilderTests
         system.ShouldContain("`current labels` lists the labels the person already gave this email.");
         system.ShouldContain("`replaceLabels` (array of strings)");
         system.ShouldContain("never `Action/Test` or `Delete/Test`");
-        AnalysisPromptBuilder.CreateOptions().ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema!.Value
+        AnalysisPromptBuilder.CreateOptions(AppSettings.DefaultLlmNumCtx).ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema!.Value
             .GetProperty("properties").GetProperty("suggestions").GetProperty("items").GetProperty("properties")
             .GetProperty("replaceLabels").GetProperty("type").GetString().ShouldBe("array");
     }

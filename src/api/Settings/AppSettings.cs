@@ -100,6 +100,9 @@ public sealed record AppSettings
     /// <summary>A filter review reports a filter with no stored message newer than this many days (#213).</summary>
     public int RulesStaleFilterDays { get; init; } = DefaultRulesStaleFilterDays;
 
+    /// <summary>Sent as Ollama's <c>num_ctx</c> with every analysis call (#353), so a long prompt is not silently truncated.</summary>
+    public int LlmNumCtx { get; init; } = DefaultLlmNumCtx;
+
     /// <summary>Data Protection ciphertext of the <c>/mcp</c> bearer token (#164); never returned by the settings API.</summary>
     public string? McpTokenProtected { get; init; }
 
@@ -118,6 +121,7 @@ public sealed record AppSettings
     public const int DefaultClaudeMaxItemsPerRun = 10;
     public const int DefaultClaudeMaxTurns = 80;
     public const int DefaultRulesStaleFilterDays = 365;
+    public const int DefaultLlmNumCtx = 8192;
 
     /// <summary>Code defaults overlaid with the <c>.env</c> first-run defaults.</summary>
     public static AppSettings Defaults(SettingsEnvOptions env) => new()

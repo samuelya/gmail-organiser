@@ -367,5 +367,10 @@ public sealed class AnalysisRunService(
         SavedPercent(run.LlmCalls, run.MessagesCovered),
         run.CreatedAt,
         run.StartedAt,
-        run.FinishedAt);
+        run.FinishedAt,
+        run.PromptTokens,
+        run.CompletionTokens,
+        run.LlmMilliseconds,
+        run.LlmMilliseconds / 1000.0,
+        run.NearContextLimit);
 }

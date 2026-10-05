@@ -64,6 +64,7 @@ public sealed partial class AnalysisRunJob(
     public const string Queue = JobQueues.Analysis;
     public const int MaxErrorLength = 300;
     private const int MaxStoreAttempts = 3;
+    private readonly LlmCallMeter _meter = new(time, logger);
 
     public string Type => JobType;
 
@@ -265,6 +266,10 @@ public sealed partial class AnalysisRunJob(
         run.MixedGroups += outcome.Mixed ? 1 : 0;
         run.AttachmentsConverted += outcome.AttachmentsConverted;
         run.AttachmentsSkipped += outcome.AttachmentsSkipped;
+        run.PromptTokens += outcome.Usage.PromptTokens;
+        run.CompletionTokens += outcome.Usage.CompletionTokens;
+        run.LlmMilliseconds += outcome.Usage.Milliseconds;
+        run.NearContextLimit += outcome.Usage.NearContextLimit;
 
         // A unique violation means another writer committed a suggestion for a member after the re-check: the retry's
         // re-check then skips it as decided meanwhile (or replaces it if undecided); it never fails the run.
