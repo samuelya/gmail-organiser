@@ -80,7 +80,7 @@ public sealed record FilterSuggestionDto(FilterCriteriaDto Criteria, FilterActio
 /// <param name="PolicyId">The policy, or the first of several merged ones; null for a pattern proposal.</param>
 /// <param name="RuleId">The rule; null for a policy default, a merged proposal or a pattern proposal.</param>
 /// <param name="Partial">A rule condition has no Gmail equivalent, so the filter matches more than the rule.</param>
-/// <param name="Note">Why the proposal is partial, merged or archives instead of marking for deletion.</param>
+/// <param name="Note">Why the proposal is partial, merged, label-only or skips the inbox, and that it never adds the delete label.</param>
 public sealed record FilterProposalDto(
     string SenderAddress,
     string? DisplayName,
