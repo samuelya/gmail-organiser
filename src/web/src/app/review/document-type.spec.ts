@@ -3,8 +3,11 @@ import { GroupCard } from './group-card.component';
 import { LabelDto } from './labels.models';
 import {
   applyRestRequest,
+  documentTypeLevels,
+  documentTypeMaxDepth,
   documentTypeOptions,
   editRequest,
+  normaliseDocumentType,
   outcomeOf,
   patternSummary,
   ReviewGroupDto,
@@ -69,6 +72,41 @@ describe('toDocumentTypeLabel', () => {
     expect(toDocumentTypeLabel('Docs', 'A/')).toBeNull();
     expect(toDocumentTypeLabel('Docs', '/A')).toBeNull();
     expect(toDocumentTypeLabel('Docs', 'A/ /B')).toBeNull();
+  });
+});
+
+describe('documentTypeMaxDepth', () => {
+  it("leaves room for the parent within Gmail's five levels, at least 1, at most 3", () => {
+    expect([documentTypeMaxDepth('Types'), documentTypeLevels('Types')]).toEqual([
+      3,
+      '1 to 3 levels',
+    ]);
+    expect(documentTypeMaxDepth(' A/B ')).toBe(3);
+    expect([documentTypeMaxDepth('A/B/C'), documentTypeLevels('A/B/C')]).toEqual([
+      2,
+      '1 to 2 levels',
+    ]);
+    expect([documentTypeMaxDepth('A/B/C/D'), documentTypeLevels('A/B/C/D')]).toEqual([
+      1,
+      '1 level',
+    ]);
+    expect(documentTypeMaxDepth('A/B/C/D/E')).toBe(1);
+  });
+
+  it('caps the path under a deep parent and its listed options', () => {
+    expect(toDocumentTypeLabel('A/B/C', 'X/Y')).toBe('A/B/C/X/Y');
+    expect(toDocumentTypeLabel('A/B/C', 'X/Y/Z')).toBeNull();
+    expect(
+      documentTypeOptions([label('A/B/C/X'), label('A/B/C/X/Y'), label('A/B/C/X/Y/Z')], 'A/B/C'),
+    ).toEqual(['X', 'X/Y']);
+  });
+});
+
+describe('normaliseDocumentType', () => {
+  it('trims each segment; blank is empty', () => {
+    expect(normaliseDocumentType(' Invoice /  Paid ')).toBe('Invoice/Paid');
+    expect(normaliseDocumentType('A//B')).toBe('A//B');
+    expect(normaliseDocumentType('   ')).toBe('');
   });
 });
 

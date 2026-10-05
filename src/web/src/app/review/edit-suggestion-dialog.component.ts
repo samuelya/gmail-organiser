@@ -45,10 +45,11 @@ import {
   currentLabelsOf,
   decidedReplaceLabels,
   DEFAULT_FLAG_LABELS,
+  documentTypeLevels,
   documentTypeOptions,
   editableMembers,
   editRequest,
-  MAX_DOCUMENT_TYPE_DEPTH,
+  normaliseDocumentType,
   ReviewEditDialog,
   ReviewGroupDto,
   replaceState,
@@ -166,12 +167,12 @@ export class EditSuggestionDialog {
     const parent = this.documentTypeParent();
     const labels = this.labels();
     if (!parent || !labels) return [];
-    const text = this.documentType().trim().toLowerCase();
+    const text = normaliseDocumentType(this.documentType()).toLowerCase();
     return documentTypeOptions(labels, parent).filter((t) => t.toLowerCase().includes(text));
   });
   readonly documentTypeHint = computed(() => {
     const parent = this.documentTypeParent();
-    const text = this.documentType().trim();
+    const text = normaliseDocumentType(this.documentType());
     if (!parent || !text) return 'None: no document-type label.';
     const labels = this.labels();
     const exists = labels
@@ -350,15 +351,13 @@ export class EditSuggestionDialog {
     control.updateValueAndValidity();
   }
 
-  /** The topic field's path rules for `<parent>/<text>`, and 1 to 3 levels under the parent. */
+  /** The topic field's path rules for `<parent>/<text>`, within `documentTypeMaxDepth` levels. */
   private documentTypeValidator(text: string): ValidationErrors | null {
     const parent = this.documentTypeParent();
     if (!parent || !text.trim()) return null;
     const label = toDocumentTypeLabel(parent, text);
     const error =
-      label === null
-        ? `1 to ${MAX_DOCUMENT_TYPE_DEPTH} levels under ${parent}.`
-        : labelPathError(label);
+      label === null ? `${documentTypeLevels(parent)} under ${parent}.` : labelPathError(label);
     return error ? { labelPath: error } : null;
   }
 

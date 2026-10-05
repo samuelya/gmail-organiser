@@ -229,6 +229,40 @@ describe('EditSuggestionDialog', () => {
     ]);
   });
 
+  it('compares and shows spaced segments the way it saves them', () => {
+    const { api, dialog } = setup(undefined, 'Docs');
+    dialog.editMember(suggestion('a')).subscribe();
+    settle();
+    type('edit-document-type', 'Invoice / Paid');
+    expect(q('edit-document-type-hint')!.textContent).toContain('Existing label under Docs');
+    q<HTMLInputElement>('edit-document-type')!.dispatchEvent(new Event('focusin'));
+    settle();
+    const options = Array.from(document.querySelectorAll('mat-option')).map((o) =>
+      o.textContent!.trim(),
+    );
+    expect(options).toEqual(['None', 'Invoice/Paid']);
+    type('edit-document-type', ' Utilities /  Water ');
+    expect(q('edit-document-type-hint')!.textContent).toContain('New: Utilities/Water under Docs');
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls[0][1].documentTypeLabel).toBe('Docs/Utilities/Water');
+  });
+
+  it("allows fewer levels under a deep parent, within Gmail's five", () => {
+    const { api, dialog } = setup(undefined, 'Docs/A/B/C');
+    dialog.editMember(suggestion('a')).subscribe();
+    settle();
+    type('edit-document-type', 'X/Y');
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(q('edit-document-type-error')!.textContent).toContain('1 level under Docs/A/B/C.');
+    expect(api.edit).not.toHaveBeenCalled();
+    type('edit-document-type', 'X');
+    q<HTMLButtonElement>('edit-save')!.click();
+    settle();
+    expect(api.edit.mock.calls[0][1].documentTypeLabel).toBe('Docs/A/B/C/X');
+  });
+
   it('disables To-Be-Deleted for a protected member and never sends it', () => {
     const { api, dialog } = setup();
     dialog.editMember(suggestion('a', { protected: true })).subscribe();
