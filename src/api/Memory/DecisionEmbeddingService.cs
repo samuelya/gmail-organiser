@@ -48,12 +48,21 @@ public sealed partial class DecisionEmbeddingService(
     /// <summary>A rejected decision is tried again once a day, so a new or updated embedding model gets a chance.</summary>
     public static readonly TimeSpan FailedRetryInterval = TimeSpan.FromDays(1);
 
-    /// <summary>Embeds pending decisions, newest first, in batches until none is left or the model fails; returns how many.</summary>
+    /// <summary>
+    /// Embeds pending decisions, newest first, in batches until none is left or the model fails; returns how many. Then,
+    /// with every vector saved, ensures the similarity index for the newest vector's dimension (one catalog query when it exists).
+    /// </summary>
     public async Task<int> EmbedPendingAsync(CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var memory = scope.ServiceProvider.GetRequiredService<IDecisionMemory>();
+        var embedded = await EmbedBatchesAsync(db, scope.ServiceProvider.GetRequiredService<IDecisionMemory>(), ct);
+        await scope.ServiceProvider.GetRequiredService<EmbeddingIndexMaintainer>().EnsureLatestAsync(ct);
+        return embedded;
+    }
+
+    private async Task<int> EmbedBatchesAsync(AppDbContext db, IDecisionMemory memory, CancellationToken ct)
+    {
         var embedded = 0;
         while (true)
         {

@@ -9,7 +9,6 @@ using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Pgvector;
-using Pgvector.EntityFrameworkCore;
 
 namespace GmailOrganiser.Memory;
 
@@ -19,8 +18,7 @@ namespace GmailOrganiser.Memory;
 /// dimension (a scan until it exists); rows of another model are ignored until re-embedded.
 /// </summary>
 public sealed partial class DecisionMemory(
-    AppDbContext db, ILlmClientFactory llm, ISettingsStore settingsStore, EmbeddingIndexMaintainer indexes, ILogger<DecisionMemory> logger)
-    : IDecisionMemory
+    AppDbContext db, ILlmClientFactory llm, ISettingsStore settingsStore, ILogger<DecisionMemory> logger) : IDecisionMemory
 {
     public const int DefaultSimilarCount = 5;
     public const double MaxDistance = 0.35;
@@ -32,6 +30,9 @@ public sealed partial class DecisionMemory(
 
     /// <summary>Embedded to tell an unavailable embedder from inputs it rejects.</summary>
     public const string ProbeText = "example.com | probe | ";
+
+    /// <summary>Whether the database's pgvector has <c>hnsw.iterative_scan</c> (0.8+); read once per process.</summary>
+    private static bool? iterativeScan;
 
     /// <summary>The text a decision and a message are embedded from: sender, subject template and snippet.</summary>
     public static string EmbeddingText(string sender, string? subjectTemplate, string? snippet) =>
@@ -61,19 +62,18 @@ public sealed partial class DecisionMemory(
             decisions[i].Embedding = embedded.Vectors[i];
             decisions[i].EmbeddingModel = embedded.Model;
         }
-
-        await indexes.EnsureAsync(embedded.Vectors[0].Memory.Length, ct);
     }
 
     /// <summary>
     /// The nearest decisions of model <c>{0}</c> to vector <c>{1}</c>, at most <c>{2}</c>, leaving out message IDs <c>{3}</c>
-    /// when <paramref name="excluding"/>. The predicate and ORDER BY match the partial expression index for
-    /// <paramref name="dimension"/>, so the planner can use it; the cast only sees rows of that dimension.
+    /// when <paramref name="excluding"/>. Unless <paramref name="exact"/>, the predicate and ORDER BY match the partial
+    /// expression index for <paramref name="dimension"/>, so the planner can use it; the cast only sees rows of that
+    /// dimension. The exact form orders by the uncast column, which no index serves.
     /// </summary>
-    public static string NearestSql(int dimension, bool excluding) => string.Create(CultureInfo.InvariantCulture, $$"""
+    public static string NearestSql(int dimension, bool excluding, bool exact = false) => string.Create(CultureInfo.InvariantCulture, $$"""
         SELECT * FROM decisions
         WHERE embedding_model = {0} AND vector_dims(embedding) = {{dimension}}{{(excluding ? " AND (message_id IS NULL OR NOT message_id = ANY({3}))" : "")}}
-        ORDER BY embedding::vector({{dimension}}) <=> {1}
+        ORDER BY {{(exact ? "embedding" : $"embedding::vector({dimension})")}} <=> {1}
         LIMIT {2}
         """);
 
@@ -104,6 +104,7 @@ public sealed partial class DecisionMemory(
 
         var excluded = excludeMessageIds.ToArray();
         var hits = new List<(DecisionRow Decision, double Similarity, bool Filled)>();
+        await using var scan = vectors is not null && messages.Any(m => vectors.ById.ContainsKey(m.Id)) ? await StrictOrderScanAsync(ct) : null;
         foreach (var m in messages)
         {
             if (vectors is not null && vectors.ById.TryGetValue(m.Id, out var vector))
@@ -234,17 +235,72 @@ public sealed partial class DecisionMemory(
     }
 
     /// <summary>
-    /// Top <paramref name="k"/> decisions of the same model and dimension within <see cref="MaxDistance"/>. The distance
-    /// limit applies after the LIMIT (same result: the rows come nearest first), so the index serves the ORDER BY.
+    /// Top <paramref name="k"/> decisions of the same model and dimension within <see cref="MaxDistance"/>. The index is
+    /// approximate and filters the model and exclusions after its candidate list: with an iterative scan (pgvector 0.8+) it
+    /// keeps searching until k rows pass, and when fewer than k come back anyway the exact scan answers. The distance limit
+    /// applies after the LIMIT (same result: the rows come nearest first), and the distance is computed here from the
+    /// loaded vector rather than sent and computed twice. A vector pgvector rejects (NaN, infinity) means no hits.
     /// </summary>
     private async Task<List<(DecisionRow Decision, double Similarity)>> NearestAsync(
         string model, Vector vector, int k, string[] excluded, CancellationToken ct)
     {
+        if (!vector.ToArray().All(float.IsFinite))
+        {
+            LogEmbeddingFailed(logger, 1, "query vector is not finite");
+            return [];
+        }
+
         object[] parameters = excluded.Length == 0 ? [model, vector, k] : [model, vector, k, excluded];
-        var rows = await db.Decisions.FromSqlRaw(NearestSql(vector.Memory.Length, excluded.Length > 0), parameters).AsNoTracking()
-            .Select(d => new { Decision = d, Distance = d.Embedding!.CosineDistance(vector) })
-            .ToListAsync(ct);
-        return [.. rows.Where(r => r.Distance <= MaxDistance).OrderBy(r => r.Distance).Select(r => (r.Decision, 1 - r.Distance))];
+        var rows = await db.Decisions.FromSqlRaw(NearestSql(vector.Memory.Length, excluded.Length > 0), parameters).AsNoTracking().ToListAsync(ct);
+        if (rows.Count < k)
+        {
+            rows = await db.Decisions.FromSqlRaw(NearestSql(vector.Memory.Length, excluded.Length > 0, exact: true), parameters).AsNoTracking().ToListAsync(ct);
+        }
+
+        return [.. rows
+            .Select(d => (Decision: d, Distance: CosineDistance(d.Embedding!, vector)))
+            .Where(r => r.Distance <= MaxDistance)
+            .OrderBy(r => r.Distance)
+            .Select(r => (r.Decision, 1 - r.Distance))];
+    }
+
+    /// <summary>pgvector's cosine distance; a zero vector has none, so it is never within <see cref="MaxDistance"/>.</summary>
+    private static double CosineDistance(Vector a, Vector b)
+    {
+        var x = a.Memory.Span;
+        var y = b.Memory.Span;
+        double dot = 0, xx = 0, yy = 0;
+        for (var i = 0; i < x.Length; i++)
+        {
+            dot += x[i] * (double)y[i];
+            xx += x[i] * (double)x[i];
+            yy += y[i] * (double)y[i];
+        }
+
+        return xx == 0 || yy == 0 ? double.PositiveInfinity : 1 - (dot / Math.Sqrt(xx * yy));
+    }
+
+    /// <summary>
+    /// Lets the HNSW scans of this lookup continue past <c>hnsw.ef_search</c> candidates in exact distance order until
+    /// enough rows pass the filters. <c>SET LOCAL</c> needs a transaction: a read-only one opened here (rolled back on
+    /// dispose), or the caller's, where the setting lasts until it ends. Null without pgvector 0.8.
+    /// </summary>
+    private async Task<IAsyncDisposable?> StrictOrderScanAsync(CancellationToken ct)
+    {
+        if (iterativeScan is null)
+        {
+            var version = await db.Database.SqlQuery<string>($"SELECT extversion AS \"Value\" FROM pg_extension WHERE extname = 'vector'").ToListAsync(ct);
+            iterativeScan = version.Count == 1 && Version.TryParse(version[0], out var v) && v >= new Version(0, 8);
+        }
+
+        if (iterativeScan is not true)
+        {
+            return null;
+        }
+
+        var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        await db.Database.ExecuteSqlRawAsync("SET LOCAL hnsw.iterative_scan = strict_order", ct);
+        return transaction;
     }
 
     /// <summary>The latest decisions for the sender (similarity 1) or, failing that, its normalised mailing list.</summary>
