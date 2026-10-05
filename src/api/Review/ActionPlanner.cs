@@ -25,6 +25,13 @@ public static class ActionPlanner
     /// <summary>The note of a suggestion not to be deleted whose topic is the delete label: nothing is changed.</summary>
     public const string NotDeletableNote = "not deletable: the topic is the delete label";
 
+    /// <summary>Why an edit or Claude's alternative may not make the delete label the topic of an email not to be deleted.</summary>
+    public const string DeleteTopicError = "The delete label is only the topic of an email to be deleted.";
+
+    /// <summary>Whether <paramref name="topic"/> is the delete label (trimmed, any case) on an email not to be deleted.</summary>
+    public static bool IsDeleteTopicNotDeleted(string? topic, bool toBeDeleted, string deleteLabelName) =>
+        !toBeDeleted && string.Equals(topic?.Trim(), deleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase);
+
     /// <summary>System labels that stay the user's: apply never adds or removes them.</summary>
     public static readonly IReadOnlySet<string> Untouched = new HashSet<string>(
         [MessageProtection.StarredLabel, MessageProtection.ImportantLabel, "UNREAD"], StringComparer.Ordinal);

@@ -159,7 +159,8 @@ public static class ClaudeReviewEndpoints
             (ExternalReviewResult.NeedsHuman, _) => Conflict("Needs a human", "Claude gave no verdict to accept; decide on the review page."),
             (ExternalReviewResult.NotApplicable, _) => Conflict(
                 "Not applicable", "No pending suggestion can take Claude's outcome (protected mail is never marked to-be-deleted, or the suggestions changed since the review); decide on the review page."),
-            (ExternalReviewResult.InvalidVerdict, _) => Conflict("Invalid verdict", "Claude's label is not a valid label path; edit on the review page."),
+            (ExternalReviewResult.InvalidVerdict, _) => Conflict(
+                "Invalid verdict", "Claude's label is not a valid label path, or is the delete label on an email not to be deleted; edit on the review page."),
             (ExternalReviewResult.InvalidDocumentType, _) => Conflict(
                 "Invalid document type", "Claude's document type no longer fits the document-type parent setting; edit on the review page."),
             (_, var item) => Conflict("Wrong status", $"Not allowed while the item is {item?.Status ?? "in this status"}."),

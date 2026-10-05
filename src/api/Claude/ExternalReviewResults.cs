@@ -14,7 +14,7 @@ public enum ExternalReviewResult
     /// <summary>Claude asked for a human; there is nothing to accept.</summary>
     NeedsHuman,
 
-    /// <summary>The stored alternative's label is not a valid label path.</summary>
+    /// <summary>The stored alternative's label is not a valid label path, or is the delete label on an email not to be deleted.</summary>
     InvalidVerdict,
 
     /// <summary>The stored alternative's document type is not 1 to <see cref="Analysis.DocumentTypePath.MaxDepth"/> levels under the current document-type parent (or it is off).</summary>

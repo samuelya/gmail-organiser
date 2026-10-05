@@ -14,9 +14,10 @@ internal static class ReviewVerdictValidation
     /// <summary>
     /// <paramref name="documentType"/> is an <c>alternative</c>'s document-type change, checked as the review edit
     /// checks it (<see cref="DocumentTypeEdit.Validate"/>) against <paramref name="parent"/>; unchanged otherwise. A bare
-    /// leaf (no '/') is taken as a child of the parent.
+    /// leaf (no '/') is taken as a child of the parent. An <c>alternative</c> may not make the delete label
+    /// (<paramref name="deleteLabelName"/>) the topic of an email not to be deleted, as the review edit refuses it.
     /// </summary>
-    public static string? Validate(ReviewVerdictInput v, string? parent, out DocumentTypeChange documentType)
+    public static string? Validate(ReviewVerdictInput v, string? parent, string deleteLabelName, out DocumentTypeChange documentType)
     {
         documentType = DocumentTypeChange.Unchanged;
         if (Validate(v) is { } invalid)
@@ -29,6 +30,11 @@ internal static class ReviewVerdictValidation
             return v.DocumentTypeLabel is null
                 ? null
                 : "document_type_label is only for 'alternative': to change the document type, answer 'alternative' with topic_label.";
+        }
+
+        if (ActionPlanner.IsDeleteTopicNotDeleted(v.TopicLabel, v.ToBeDeleted ?? false, deleteLabelName))
+        {
+            return $"{ActionPlanner.DeleteTopicError} Set to_be_deleted or choose another topic_label.";
         }
 
         var requested = v.DocumentTypeLabel?.Trim();

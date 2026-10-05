@@ -155,9 +155,9 @@ public static class ReviewEndpoints
         var errors = OutcomeErrors(request.TopicLabel, request.NeedsAction, request.ToBeDeleted, out var label);
         ReplaceLabelsShapeErrors(request.ReplaceLabels, errors);
         var current = await settings.GetAsync(ct);
-        if (request.ToBeDeleted == false && string.Equals(label, current.DeleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase))
+        if (request.ToBeDeleted == false && ActionPlanner.IsDeleteTopicNotDeleted(label, false, current.DeleteLabelName))
         {
-            errors["topicLabel"] = ["The delete label is only the topic of an email to be deleted."];
+            errors["topicLabel"] = [ActionPlanner.DeleteTopicError];
         }
 
         var type = request.DocumentTypeLabel is null

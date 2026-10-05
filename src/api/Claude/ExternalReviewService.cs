@@ -209,10 +209,9 @@ public sealed partial class ExternalReviewService(
             return await SubmitRulesVerdictAsync(id, target, verdict, ct);
         }
 
-        var parent = verdict is { Verdict: ReviewVerdict.Alternative, DocumentTypeLabel: not null }
-            ? (await settings.GetAsync(ct)).DocumentTypeParent
-            : null;
-        if (ReviewVerdictValidation.Validate(verdict, parent, out var documentType) is { } invalid)
+        var current = await settings.GetAsync(ct);
+        var parent = verdict is { Verdict: ReviewVerdict.Alternative, DocumentTypeLabel: not null } ? current.DocumentTypeParent : null;
+        if (ReviewVerdictValidation.Validate(verdict, parent, current.DeleteLabelName, out var documentType) is { } invalid)
         {
             return (ReviewVerdictResult.Invalid, invalid);
         }
@@ -333,7 +332,9 @@ public sealed partial class ExternalReviewService(
         }
 
         var alternative = row.Verdict == ReviewVerdict.Alternative;
-        if (alternative && !ReviewVerdictValidation.IsValidLabel(row.VerdictTopicLabel))
+        // The delete label is checked again: it may have been renamed since Claude's verdict.
+        if (alternative && (!ReviewVerdictValidation.IsValidLabel(row.VerdictTopicLabel) || ActionPlanner.IsDeleteTopicNotDeleted(
+            row.VerdictTopicLabel, row.VerdictToBeDeleted ?? false, (await settings.GetAsync(ct)).DeleteLabelName)))
         {
             return ExternalReviewResult.InvalidVerdict;
         }
