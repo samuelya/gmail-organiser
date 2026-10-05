@@ -1,6 +1,10 @@
+using System.Text.Json.Serialization;
+using GmailOrganiser.Rules.Labels;
+
 namespace GmailOrganiser.Senders;
 
 /// <summary>What a sender's engagement stats say it is (<c>senders.kind</c>); see <see cref="SenderStatsCalculator.Kind"/>.</summary>
+[JsonConverter(typeof(SnakeCaseJsonConverter<SenderKind>))]
 public enum SenderKind
 {
     Unknown,

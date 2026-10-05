@@ -50,7 +50,8 @@ public sealed class SenderAllowlistTests(ApiFactory factory, PostgresFixture pos
     {
         var dto = await PutOkAsync(Uri.EscapeDataString("  New.Sender@Sub.Example.COM "), true);
 
-        dto.ShouldBe(new SenderDto("new.sender@sub.example.com", "sub.example.com", null, 0, 0, 0, null, true, false, null, null));
+        dto.ShouldBe(new SenderDto("new.sender@sub.example.com", "sub.example.com", null, 0, 0, 0, null, true, false, null, null,
+            "new.sender@sub.example.com", "sub.example.com", false, SenderKind.Unknown, 0, 0, null, 0, new SenderCategoryMixDto(0, 0, 0, 0, 0)));
         await using var db = postgres.CreateDbContext();
         (await db.Senders.CountAsync(s => s.Address == "new.sender@sub.example.com", Ct)).ShouldBe(1);
     }

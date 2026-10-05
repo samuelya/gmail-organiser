@@ -14,6 +14,9 @@ public enum SenderSort
     LastSeen,
     Address,
     Analysed,
+
+    /// <summary>Unread ratio (<c>unread_count / total_count</c>); senders without messages sort last either way.</summary>
+    Unread,
 }
 
 /// <summary>A validated senders list request.</summary>
@@ -31,9 +34,14 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
     /// <summary>Only senders with this <c>allowlisted</c> flag; null for all. Stub rows (never fetched) are included.</summary>
     public bool? Allowlisted { get; init; }
 
+    /// <summary>Only senders of these kinds; empty for all.</summary>
+    public IReadOnlyList<SenderKind> Kinds { get; init; } = [];
+
     /// <summary>Parses the query string values; <paramref name="errors"/> holds the field errors when it returns null.</summary>
+    /// <param name="kinds">The repeatable <c>kind</c> values, each one of <c>human|bulk|mixed|unknown</c>.</param>
     public static SenderQuery? Parse(
-        string? search, int? page, int? pageSize, string? sort, string? dir, out Dictionary<string, string[]> errors)
+        string? search, int? page, int? pageSize, string? sort, string? dir, out Dictionary<string, string[]> errors,
+        IReadOnlyList<string>? kinds = null)
     {
         errors = [];
         var p = page ?? 1;
@@ -60,11 +68,25 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
             "lastseen" => SenderSort.LastSeen,
             "address" => SenderSort.Address,
             "analysed" => SenderSort.Analysed,
+            "unread" => SenderSort.Unread,
             _ => null,
         };
         if (sortBy is null)
         {
-            errors["sort"] = ["Must be one of total, lastSeen, address, analysed."];
+            errors["sort"] = ["Must be one of total, lastSeen, address, analysed, unread."];
+        }
+
+        var kindValues = (kinds ?? []).Select(k => k?.Trim().ToLowerInvariant() switch
+        {
+            "human" => SenderKind.Human,
+            "bulk" => SenderKind.Bulk,
+            "mixed" => SenderKind.Mixed,
+            "unknown" => SenderKind.Unknown,
+            _ => (SenderKind?)null,
+        }).ToList();
+        if (kindValues.Contains(null))
+        {
+            errors["kind"] = ["Each must be one of human, bulk, mixed, unknown."];
         }
 
         bool? descending = dir is null ? true : dir.ToLowerInvariant() switch
@@ -78,7 +100,12 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
             errors["dir"] = ["Must be asc or desc."];
         }
 
-        return errors.Count > 0 ? null : new SenderQuery(term, p, size, sortBy!.Value, descending!.Value);
+        return errors.Count > 0
+            ? null
+            : new SenderQuery(term, p, size, sortBy!.Value, descending!.Value)
+            {
+                Kinds = [.. kindValues.Select(k => k!.Value).Distinct()],
+            };
     }
 
     /// <param name="allowlistedDomains"><c>protection.allowlistedDomains</c>, for <see cref="SenderDto.AllowlistedByDomain"/>.</param>
@@ -88,6 +115,12 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
         if (Allowlisted is { } allowlisted)
         {
             senders = senders.Where(s => s.Allowlisted == allowlisted);
+        }
+
+        if (Kinds.Count > 0)
+        {
+            var kinds = Kinds.ToList();
+            senders = senders.Where(s => kinds.Contains(s.Kind));
         }
 
         var total = await senders.LongCountAsync(ct);
@@ -111,7 +144,10 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
         Allowlist.CoversDomain(allowlistedDomains, s.Domain),
         fetchJobs.Find(j => j.Target.Equals(s.Address, StringComparison.OrdinalIgnoreCase)
             || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job,
-        s.UnsubscribedAt);
+        s.UnsubscribedAt,
+        s.CanonicalAddress, s.CanonicalDomain, s.IsRelay, s.Kind, s.UnreadCount, s.RepliedCount, s.FirstSeenAt,
+        s.ListUnsubscribeCount,
+        new SenderCategoryMixDto(s.PrimaryCount, s.PromotionsCount, s.SocialCount, s.UpdatesCount, s.ForumsCount));
 
     /// <summary>
     /// Senders whose address, domain, canonical address or domain, or display name contains <paramref name="search"/>
@@ -151,6 +187,11 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
         // Senders never seen sort last either way.
         (SenderSort.LastSeen, false) => senders.OrderBy(s => s.LastSeenAt == null).ThenBy(s => s.LastSeenAt).ThenBy(s => s.Address),
         (SenderSort.LastSeen, true) => senders.OrderBy(s => s.LastSeenAt == null).ThenByDescending(s => s.LastSeenAt).ThenBy(s => s.Address),
+        // unread_count::float / NULLIF(total_count, 0), nulls last either way.
+        (SenderSort.Unread, false) => senders.OrderBy(s => s.TotalCount == 0)
+            .ThenBy(s => s.TotalCount == 0 ? (double?)null : (double)s.UnreadCount / s.TotalCount).ThenBy(s => s.Address),
+        (SenderSort.Unread, true) => senders.OrderBy(s => s.TotalCount == 0)
+            .ThenByDescending(s => s.TotalCount == 0 ? (double?)null : (double)s.UnreadCount / s.TotalCount).ThenBy(s => s.Address),
         _ => throw new InvalidOperationException($"Unknown sort {Sort}."),
     };
 

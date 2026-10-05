@@ -29,9 +29,10 @@ public static class SendersEndpoints
         int? pageSize = null,
         string? sort = null,
         string? dir = null,
-        bool? allowlisted = null)
+        bool? allowlisted = null,
+        string[]? kind = null)
     {
-        var query = SenderQuery.Parse(search, page, pageSize, sort, dir, out var errors);
+        var query = SenderQuery.Parse(search, page, pageSize, sort, dir, out var errors, kind);
         return query is null
             ? TypedResults.ValidationProblem(errors)
             : TypedResults.Ok(await (query with { Allowlisted = allowlisted }).ExecuteAsync(db, await DomainsAsync(settings, ct), ct));
