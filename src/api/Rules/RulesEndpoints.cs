@@ -117,11 +117,19 @@ public static class RulesEndpoints
         }
     }
 
-    /// <summary>Filters proposed from approved senders no active filter covers, most messages first.</summary>
+    /// <summary>
+    /// Filters proposed from approved policies, then approved senders, that no active filter covers; <c>source</c> picks
+    /// the kind and defaults to <c>pattern</c>, which the current web UI expects.
+    /// </summary>
     private static async Task<Results<Ok<PagedDto<FilterProposalDto>>, ValidationProblem>> ListProposalsAsync(
-        FilterProposalQuery proposals, CancellationToken ct, int? page = null, int? pageSize = null)
+        FilterProposalQuery proposals, CancellationToken ct, int? page = null, int? pageSize = null, string? source = null)
     {
         var errors = new Dictionary<string, string[]>();
+        if (source is not null && !FilterProposalSources.IsValid(source))
+        {
+            errors["source"] = ["Must be 'policy', 'pattern' or 'all'."];
+        }
+
         if (page is < 1)
         {
             errors["page"] = ["Must be at least 1."];
@@ -137,7 +145,8 @@ public static class RulesEndpoints
             return TypedResults.ValidationProblem(errors);
         }
 
-        return TypedResults.Ok(await proposals.ListAsync(page ?? 1, pageSize ?? FilterProposalQuery.DefaultPageSize, ct));
+        return TypedResults.Ok(await proposals.ListAsync(
+            source ?? FilterProposalSources.Pattern, page ?? 1, pageSize ?? FilterProposalQuery.DefaultPageSize, ct));
     }
 
     /// <summary>Syncs the filters and stores a new review; 503 when Gmail is unreachable, 409 for another account's data.</summary>

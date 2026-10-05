@@ -18,6 +18,19 @@ public sealed record FilterSpec(GmailFilterCriteria Criteria, IReadOnlyList<stri
 }
 
 /// <summary>
+/// Caps for a proposed filter's criteria. Gmail documents no limit; these are conservative, and the owner check
+/// confirms the longest criteria Gmail accepts.
+/// </summary>
+public static class FilterCriteriaLimits
+{
+    /// <summary>The rendered search query (<see cref="FilterCriteriaMapping.ToQuery"/>), in characters.</summary>
+    public const int MaxQueryChars = 1500;
+
+    /// <summary>Addresses or domains in one <c>from:(a OR b)</c>.</summary>
+    public const int MaxFromTerms = 20;
+}
+
+/// <summary>
 /// The one mapping of filter criteria: request validation (<see cref="TryRead"/>), the Gmail search query equivalent
 /// (<see cref="ToQuery"/>) and the local count predicate (<see cref="LocalFilter"/>).
 /// </summary>

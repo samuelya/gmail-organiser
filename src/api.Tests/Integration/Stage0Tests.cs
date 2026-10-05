@@ -104,7 +104,7 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
 
         // Rule-made approvals teach no sender pattern and make no filter proposal.
         await using var scope = h.Services.CreateAsyncScope();
-        (await scope.ServiceProvider.GetRequiredService<GmailOrganiser.Rules.FilterProposalQuery>().ListAsync(1, 50, Ct)).Total.ShouldBe(0);
+        (await scope.ServiceProvider.GetRequiredService<GmailOrganiser.Rules.FilterProposalQuery>().ListAsync(GmailOrganiser.Rules.FilterProposalSources.All, 1, 50, Ct)).Total.ShouldBe(0);
     }
 
     [Fact]
