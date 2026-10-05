@@ -27,5 +27,6 @@
     <EmbeddedResource Include="Mcp/Prompts/review-pending.md" LogicalName="GmailOrganiser.Mcp.Prompts.review-pending.md" />
     <EmbeddedResource Include="Mcp/Prompts/review-label-plan.md" LogicalName="GmailOrganiser.Mcp.Prompts.review-label-plan.md" />
     <EmbeddedResource Include="Rules/Prompts/rules-summary-v1.md" LogicalName="GmailOrganiser.Rules.Prompts.rules-summary-v1.md" />
+    <EmbeddedResource Include="Policies/Prompts/sender-policy-v1.md" LogicalName="GmailOrganiser.Policies.Prompts.sender-policy-v1.md" />
   </ItemGroup>
 </Project>

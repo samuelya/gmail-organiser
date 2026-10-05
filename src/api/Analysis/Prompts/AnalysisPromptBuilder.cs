@@ -93,7 +93,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         ];
     }
 
-    private static string RenderLabelTree(IReadOnlyList<string> labels)
+    internal static string RenderLabelTree(IReadOnlyList<string> labels)
     {
         if (labels.Count == 0)
         {
@@ -114,7 +114,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     /// the label tree (<see cref="DocumentTypePath.Children(string?, IEnumerable{string}, out bool)"/>, then a note that
     /// more were omitted).
     /// </summary>
-    private static string RenderDocumentTypes(string? parent, IReadOnlyList<string> labels)
+    internal static string RenderDocumentTypes(string? parent, IReadOnlyList<string> labels)
     {
         if (string.IsNullOrWhiteSpace(parent))
         {
@@ -176,7 +176,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     private static string YesNo(bool value) => value ? "yes" : "no";
 
     /// <summary>Header values stay on one line so they can't start a fake field or email block.</summary>
-    private static string OneLine(string value) =>
+    internal static string OneLine(string value) =>
         DefuseBodyTags(string.Join(' ', value.Split(['\r', '\n', '\v', '\f', '\u0085', '\u2028', '\u2029'],
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
 

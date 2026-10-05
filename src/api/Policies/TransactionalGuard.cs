@@ -35,7 +35,8 @@ public sealed class TransactionalGuard
     public bool IsTransactional(MessageRow m) =>
         m.HasAttachment || HasKeyword(m.Subject) || HasKeyword(m.Snippet);
 
-    private bool HasKeyword(string? text)
+    /// <summary>Whether <paramref name="text"/> holds a keyword; also checks a rule's subject criteria (<c>SenderPolicyOutputParser</c>).</summary>
+    public bool HasKeyword(string? text)
     {
         if (_keywords is null || string.IsNullOrEmpty(text))
         {
