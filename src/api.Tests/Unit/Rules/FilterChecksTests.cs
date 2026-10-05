@@ -288,6 +288,66 @@ public sealed class FilterChecksTests
             .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
     }
 
+    // Gmail joins a filter's fields into one search, so a query starting with OR widens the from (#451).
+    [Theory]
+    [InlineData("OR from:b@other.org")]
+    [InlineData("OR b")]
+    [InlineData("OR\tb")]
+    [InlineData("b OR")]
+    [InlineData("a OR b")]
+    [InlineData("a | b")]
+    [InlineData("{a b}")]
+    public void A_filter_whose_query_has_an_or_in_any_position_is_never_within_a_proposal(string query)
+    {
+        FilterRow[] rows =
+        [
+            Row("same", new(From: "a@example.com", Query: query), new(["Label_1"], [])),
+            Row("other", new(From: "a@example.com", Query: query), new(["Label_2"], [])),
+        ];
+
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [DomainProposal()])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
+    }
+
+    // Eligible: plain from terms and only positive single conditions elsewhere. Ineligible: anything the grammar can't prove narrows.
+    [Theory]
+    [InlineData(true, "a@example.com", null)]
+    [InlineData(true, "A@Example.com OR @news.example.com", "invoice")]
+    [InlineData(true, "a@example.com", "list:<news.example.com> has:attachment")]
+    [InlineData(true, "a@example.com", "subject:Weekly filename:pdf", "me@example.com", "Weekly digest")]
+    [InlineData(true, "a@example.com", null, null, null, "subject:unsubscribe")]
+    [InlineData(true, "a+tag@example.com", "larger:10M older_than:7d")]
+    [InlineData(false, "a@example.com", "-from:x@example.com")]
+    [InlineData(false, "a@example.com", "\"a b\"")]
+    [InlineData(false, "a@example.com", "(a b)")]
+    [InlineData(false, "a@example.com", "a*")]
+    [InlineData(false, "a@example.com", "a AROUND 3 b")]
+    [InlineData(false, "a@example.com", "in:anywhere")]
+    [InlineData(false, "a@example.com", "list:<news.example.com> OR list:<other.example.com>")]
+    [InlineData(false, "a@example.com", null, "me@example.com OR you@other.org")]
+    [InlineData(false, "a@example.com", null, null, "OR b")]
+    [InlineData(false, "a@example.com", null, null, null, "OR b")]
+    [InlineData(false, "a@example.com", null, null, null, "{a b}")]
+    [InlineData(false, "Synthetic Name", null)]
+    [InlineData(false, "a@example.com", "or")]
+    public void Only_a_filter_whose_raw_criteria_are_plain_positive_conditions_is_within_a_proposal(
+        bool within, string from, string? query, string? to = null, string? subject = null, string? negated = null)
+    {
+        var row = Row("f", new(From: from, To: to, Subject: subject, Query: query, NegatedQuery: negated), new(["Label_1"], []));
+
+        var findings = FilterChecks.Run([row], Labels, NotEvaluable, 365, [DomainProposal()])
+            .Where(f => f.Kind is FilterFindingKind.OverlapsPolicy or FilterFindingKind.PolicyConflict).ToList();
+
+        findings.Select(f => f.Kind).ShouldBe(within ? [FilterFindingKind.OverlapsPolicy] : []);
+    }
+
+    private static FilterProposalDto DomainProposal() => new(
+        "example.com", null, 1, null, new SenderPatternDto("Synthetic/Shop", false, false, 0, 1, 0, null),
+        new FilterSuggestionDto(
+            new FilterCriteriaDto("@example.com", null, null, null, null, null, null, null, null),
+            new FilterActionRequest(["Synthetic/Shop"], false, false)),
+        "policy:1", FilterProposalSources.Policy, Guid.NewGuid());
+
     private static IReadOnlyList<FilterFindingDraft> Run(IEnumerable<FilterRow> rows) => FilterChecks.Run(rows, Labels, NotEvaluable, 365);
 
     private static FilterRow Row(string id, GmailFilterCriteria criteria, GmailFilterAction action, int seenDaysLater = 0) => new()

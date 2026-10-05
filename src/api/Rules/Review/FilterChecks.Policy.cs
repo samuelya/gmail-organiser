@@ -8,7 +8,8 @@ namespace GmailOrganiser.Rules.Review;
 /// The consolidation checks against the policy proposals (#374). A filter is within a proposal when the proposal matches
 /// at least what the filter matches: each of the filter's <c>from</c> terms is one of the proposal's, or under one of its
 /// <c>@domain</c>s and not excluded by a <c>-from:</c>, and the filter has every other token of the proposal's query
-/// (compared after <see cref="PolicyFilterProposalQuery.CriteriaTerms"/>). A fix always creates the proposal as #373 built it, so
+/// (compared after <see cref="PolicyFilterProposalQuery.CriteriaTerms"/>); only a filter whose raw criteria pass
+/// <see cref="PlainCriteria"/> is judged at all. A fix always creates the proposal as #373 built it, so
 /// it never adds the delete label, skips the inbox only where #373 allows and fits the length cap. A proposal whose label
 /// the mailbox doesn't have yet, or a filter only partly within one, gets no finding.
 /// </summary>
@@ -32,10 +33,7 @@ public static partial class FilterChecks
         }
 
         var overlaps = new List<(PolicyTarget Target, List<Parsed> Members)>();
-        // A from that isn't only plain addresses and @domains (a name, a negation, a group, a wildcard) may match mail no
-        // proposal does.
-        foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0
-            && (f.Criteria.From is not { } from || FilterCriteriaMapping.FromTerms(from) is { } terms && terms.All(PlainFrom().IsMatch))))
+        foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0 && PlainCriteria(f.Criteria)))
         {
             var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(f.Criteria);
             var within = targets.Where(t => Within(from, tokens, t)).ToList();
@@ -113,14 +111,6 @@ public static partial class FilterChecks
     /// <summary>Whether the proposal matches at least what a filter with these terms matches.</summary>
     private static bool Within(IReadOnlyList<string> from, IReadOnlyList<string> tokens, PolicyTarget target)
     {
-        // An OR, bare or in a group, a {…} group, a nested group or a doubled negation in the filter's query may widen it,
-        // so its tokens no longer only narrow.
-        if (tokens.Any(t => t == "or" || t.Contains(" or ", StringComparison.Ordinal) || !PlainToken().IsMatch(t))
-            || from.Any(t => t.Length == 0))
-        {
-            return false;
-        }
-
         var excluded = target.Tokens.Where(t => t.StartsWith("-from:", StringComparison.Ordinal) && t.Length > 6).Select(t => t[6..]).ToList();
         if (from.Count == 0 ? target.From.Count > 0 : !from.All(e => Covers(target.From, excluded, e)))
         {
@@ -154,16 +144,37 @@ public static partial class FilterChecks
             : null;
     }
 
+    /// <summary>
+    /// The allow-list of the consolidation checks (#446, #451), over the raw criteria rather than the re-serialised
+    /// <see cref="FilterCriteriaMapping.ToQuery"/>: every <c>from</c> term is <c>local@domain</c> or <c>@domain</c>;
+    /// <c>query</c> and <c>negatedQuery</c> are empty or whitespace-separated positive single conditions (a known
+    /// <c>field:value</c>, a <c>list:&lt;id&gt;</c> or a bare alphanumeric word; never <c>or</c>, <c>and</c>, <c>not</c>,
+    /// <c>around</c>, a leading <c>-</c>, quotes, groups, braces or wildcards); <c>to</c> and <c>subject</c> are plain words.
+    /// Gmail joins a filter's fields into one search, so a query starting with <c>OR</c> turns the <c>from</c> into an
+    /// alternative; a filter of only positive conditions can't widen it, and <c>hasAttachment</c>, <c>size</c> and
+    /// <c>excludeChats</c> only narrow. Anything the grammar can't prove narrows is not judged, so a fix never deletes a
+    /// filter that may catch mail the proposal doesn't.
+    /// </summary>
+    private static bool PlainCriteria(GmailFilterCriteria c) =>
+        (c.From is not { } from || FilterCriteriaMapping.FromTerms(from) is { } terms && terms.All(PlainFrom().IsMatch))
+        && Words(c.Query).All(PlainCondition().IsMatch) && Words(c.NegatedQuery).All(PlainCondition().IsMatch)
+        && Words(c.To).All(PlainWord().IsMatch) && Words(c.Subject).All(PlainWord().IsMatch);
+
+    private static IEnumerable<string> Words(string? text) => text?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries) ?? [];
+
     /// <summary>A lower-cased address or <c>@domain</c> with nothing Gmail reads as an operator.</summary>
     [GeneratedRegex(@"^(?:[a-z0-9_%+'][a-z0-9._%+'-]*)?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$", RegexOptions.CultureInvariant)]
     private static partial Regex PlainFrom();
 
-    /// <summary>
-    /// A query token that is one condition: an optional <c>-</c>, an optional <c>operator:</c>, then a quoted phrase, a
-    /// group without nested groups, or a word that doesn't start with <c>-</c>.
-    /// </summary>
-    [GeneratedRegex(@"^-?(?:[a-z_]+:)?(?:""[^""]*""|\((?:""[^""]*""|[^(){}""])*\)|[^\s(){}""\-][^\s(){}""]*)$", RegexOptions.CultureInvariant)]
-    private static partial Regex PlainToken();
+    /// <summary>One positive condition: a known <c>field:value</c> (the value optionally in <c>&lt;&gt;</c>) or a bare alphanumeric word that isn't an operator.</summary>
+    [GeneratedRegex(
+        @"^(?!(?i:or|and|not|around)$)(?:(?i:from|to|cc|bcc|subject|list|has|filename|deliveredto|label|category|larger|smaller|older_than|newer_than):<?[A-Za-z0-9._@+][A-Za-z0-9._@+-]*>?|[A-Za-z0-9]+)$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex PlainCondition();
+
+    /// <summary>A word of a <c>to</c> or <c>subject</c>: address characters, no leading <c>-</c>, not an operator.</summary>
+    [GeneratedRegex(@"^(?!(?i:or|and|not|around)$)[A-Za-z0-9._@+][A-Za-z0-9._@+-]*$", RegexOptions.CultureInvariant)]
+    private static partial Regex PlainWord();
 
     private sealed record PolicyTarget(
         FilterProposalDto Proposal, GmailFilterCriteria Criteria, GmailFilterAction Action, string ActionKey,
