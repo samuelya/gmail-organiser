@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -25,7 +26,7 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
                 && g.Source != SuggestionSource.SenderPattern
                 && g.Source != SuggestionSource.Stage0
                 && (g.Status == SuggestionStatus.Approved || g.Status == SuggestionStatus.Applied))),
-            await ActiveFromTermsAsync(ct));
+            await ActiveFromTermsAsync(db, ct));
         var total = await candidates.CountAsync(ct);
         var senders = await candidates
             .OrderByDescending(s => s.TotalCount)
@@ -97,10 +98,23 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
         return senders;
     }
 
-    private async Task<List<string>> ActiveFromTermsAsync(CancellationToken ct) =>
-        [.. (await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct))
-            .Select(r => r.ReadCriteria().From)
+    /// <summary>The <see cref="FilterCriteriaMapping.FromTerms"/> of every active filter's <c>from</c>.</summary>
+    public static async Task<List<string>> ActiveFromTermsAsync(AppDbContext db, CancellationToken ct) =>
+        [.. (await ActiveCriteriaAsync(db, ct))
+            .Select(c => c.From)
             .OfType<string>()
             .SelectMany(f => FilterCriteriaMapping.FromTerms(f) ?? [])
             .Distinct(StringComparer.Ordinal)];
+
+    /// <summary>The lower-case List-Ids of every active filter whose <c>query</c> is <c>list:&lt;id&gt;</c>.</summary>
+    public static async Task<List<string>> ActiveListIdsAsync(AppDbContext db, CancellationToken ct) =>
+        [.. (await ActiveCriteriaAsync(db, ct))
+            .Select(c => c.Query?.Trim())
+            .Where(q => q is { Length: > 5 } && q.StartsWith("list:", StringComparison.OrdinalIgnoreCase) && !q.Any(char.IsWhiteSpace))
+            .Select(q => q![5..].Trim('<', '>').ToLowerInvariant())
+            .Where(id => id.Length > 0)
+            .Distinct(StringComparer.Ordinal)];
+
+    private static async Task<IEnumerable<GmailFilterCriteria>> ActiveCriteriaAsync(AppDbContext db, CancellationToken ct) =>
+        (await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct)).Select(r => r.ReadCriteria());
 }

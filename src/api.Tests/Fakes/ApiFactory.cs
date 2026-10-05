@@ -1,9 +1,11 @@
+using GmailOrganiser.Dashboard;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Integration;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace GmailOrganiser.Tests.Fakes;
@@ -36,6 +38,15 @@ public sealed class ApiFactory(PostgresFixture postgres) : WebApplicationFactory
         builder.UseSetting("GMAIL_FAKE", "");
         builder.UseSetting("APP_BASE_URL", AllowedOrigin);
         builder.ConfigureServices(services => services.AddTransient<IStartupFilter, TestEndpointStartupFilter>());
+        // The real-clock metrics scheduler would write snapshots into the shared database between a test's arrange and
+        // assert; MetricsSnapshotterTests drive the snapshotter directly.
+        builder.ConfigureTestServices(services =>
+        {
+            foreach (var d in services.Where(d => d.ImplementationType == typeof(MetricsScheduler)).ToList())
+            {
+                services.Remove(d);
+            }
+        });
     }
 
     private sealed class TestEndpointStartupFilter : IStartupFilter
