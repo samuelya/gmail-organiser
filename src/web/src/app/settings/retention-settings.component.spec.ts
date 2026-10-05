@@ -12,6 +12,7 @@ import {
   RetentionSettingsSection,
 } from './retention-settings.component';
 import { AppsScriptSettings } from './settings.models';
+import { SettingsService } from './settings.service';
 import { RetentionSettings, RetentionStatusDto } from './triage-settings.models';
 
 class FakeJobs {
@@ -164,6 +165,28 @@ describe('RetentionSettingsSection', () => {
     expect(q('retention-error-marketing')!.textContent).toContain('Server says no.');
   });
 
+  it('keeps a type pending after a failed save and sends it again with the next change', async () => {
+    await render();
+    await type('retention-days-marketing', '45');
+    await settle();
+    http.expectOne(isPut).flush(null, { status: 500, statusText: 'Server Error' });
+    await fixture.whenStable();
+    expect(q('retention-error-marketing')!.textContent).toContain('Not saved');
+
+    await type('retention-days-security_otp', '');
+    await settle();
+    const put = http.expectOne(isPut);
+    expect(put.request.body).toEqual({
+      retention: { days: { marketing: 45, security_otp: null } },
+    });
+    put.flush({
+      retention: retention({ days: { personal: null, marketing: 45, security_otp: null } }),
+    });
+    http.expectOne(isStatus).flush(status());
+    await fixture.whenStable();
+    expect(q('retention-error-marketing')).toBeNull();
+  });
+
   it('disables Run now while retention is off and enables it once turned on', async () => {
     await render({ retention: retention({ enabled: false }), appsScript: appsScript() });
     expect(q<HTMLButtonElement>('retention-run')!.disabled).toBe(true);
@@ -237,6 +260,24 @@ describe('RetentionSettingsSection', () => {
     put.flush({ appsScript: appsScript({ retentionRules: [{ label: 'Newsletters', days: 30 }] }) });
     await fixture.whenStable();
     expect(saved).toHaveBeenCalled();
+  });
+
+  it('waits for an Apps Script save in flight and keeps its archive rules', async () => {
+    await render();
+    const edited = appsScript({ rules: [{ label: 'Receipts', days: 90 }] });
+    TestBed.inject(SettingsService).saveAppsScript({ appsScript: edited }).subscribe();
+    await type('retention-rule-label', 'Newsletters');
+    q<HTMLButtonElement>('retention-rule-add')!.click();
+    await settle();
+
+    const first = http.expectOne(isPut);
+    expect(first.request.body).toEqual({ appsScript: edited });
+    first.flush({ appsScript: edited });
+    await fixture.whenStable();
+    const retentionRules = [{ label: 'Newsletters', days: 30 }];
+    const put = http.expectOne(isPut);
+    expect(put.request.body).toEqual({ appsScript: { ...edited, retentionRules } });
+    put.flush({ appsScript: { ...edited, retentionRules } });
   });
 
   it('lists a 400 for a retention rule by its row', async () => {

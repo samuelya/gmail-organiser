@@ -1,6 +1,6 @@
 import { HttpClient, HttpContext } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
-import { Observable } from 'rxjs';
+import { AsyncSubject, concatMap, defer, finalize, map, Observable, of, take } from 'rxjs';
 import { QUIET_STATUSES } from '../core/error.interceptor';
 import { JobDto } from '../core/jobs.models';
 import { SetupService } from '../setup/setup.service';
@@ -8,6 +8,7 @@ import { RetentionStatusDto, RetentionUpdate, TaxonomyUpdate } from './triage-se
 import {
   AnalysisSettingsUpdate,
   AppsScriptConfigDto,
+  AppsScriptSettings,
   AppsScriptUpdate,
   AttachmentsUpdate,
   ClaudeSettingsUpdate,
@@ -26,6 +27,8 @@ import {
 export class SettingsService {
   private readonly http = inject(HttpClient);
   private readonly setup = inject(SetupService);
+  /** Completes when the last queued Apps Script save settles. */
+  private appsScriptTurn: Observable<void> = of(undefined);
 
   getSettings(): Observable<SettingsDto> {
     return this.setup.getSettings() as Observable<SettingsDto>;
@@ -51,9 +54,34 @@ export class SettingsService {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
   }
 
-  /** Replaces the whole Apps Script block. */
-  saveAppsScript(changes: AppsScriptUpdate): Observable<SettingsDto> {
-    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  /**
+   * Replaces the whole Apps Script block. Saves run one at a time in subscribe order, and a `build`
+   * function gets the block as the previous save left it, so two sections never write back each
+   * other's stale fields.
+   */
+  saveAppsScript(
+    changes: AppsScriptUpdate | ((saved: AppsScriptSettings) => AppsScriptUpdate),
+  ): Observable<SettingsDto> {
+    return defer(() => {
+      const previous = this.appsScriptTurn;
+      const turn = new AsyncSubject<void>();
+      this.appsScriptTurn = turn;
+      return previous.pipe(
+        concatMap(() =>
+          typeof changes === 'function'
+            ? this.getSettings().pipe(
+                take(1),
+                map((s) => changes(s.appsScript!)),
+              )
+            : of(changes),
+        ),
+        concatMap((request) => this.setup.saveSettings(request) as Observable<SettingsDto>),
+        finalize(() => {
+          turn.next();
+          turn.complete();
+        }),
+      );
+    });
   }
 
   /** A partial update of the retention block: mail types left out stay unchanged. */

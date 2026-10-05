@@ -184,6 +184,8 @@ export class TaxonomySettingsSection implements OnInit {
   /** The fields as last saved; a failed save goes back to them. */
   private saved: TaxonomySettings | null = null;
   private readonly changes = new Subject<TaxonomyUpdate>();
+  /** Blocked-list saves queued or in flight; the chips follow the server once none are left. */
+  private blockedSaves = 0;
 
   constructor() {
     this.locked.disable();
@@ -228,12 +230,17 @@ export class TaxonomySettingsSection implements OnInit {
     }
     this.blocked.update((list) => [...list, name]);
     this.newBlocked.reset();
-    this.changes.next({ analysisBlockedLabels: [...this.blocked()] });
+    this.saveBlocked();
   }
 
   removeBlocked(label: string): void {
     this.blocked.update((list) => list.filter((l) => l !== label));
     this.newBlocked.updateValueAndValidity();
+    this.saveBlocked();
+  }
+
+  private saveBlocked(): void {
+    this.blockedSaves++;
     this.changes.next({ analysisBlockedLabels: [...this.blocked()] });
   }
 
@@ -259,7 +266,11 @@ export class TaxonomySettingsSection implements OnInit {
       map((settings) => {
         // Only the fields sent: a later change may already be queued with its own value.
         if (this.saved) this.saved = { ...this.saved, ...pick(settings, change) };
-        if (change.analysisBlockedLabels) this.blockedError.set(null);
+        if (change.analysisBlockedLabels) {
+          this.blockedError.set(null);
+          if (--this.blockedSaves === 0 && this.saved)
+            this.blocked.set(this.saved.analysisBlockedLabels);
+        }
         this.snackBar.open('Taxonomy settings saved', undefined, { duration: 3000 });
       }),
       // A 400 is shown on its field; the error interceptor shows anything else.
@@ -272,8 +283,9 @@ export class TaxonomySettingsSection implements OnInit {
           this.maxNew.setErrors({ server: errors['analysisMaxNewLabelsPerRun'][0] });
           this.maxNew.markAsTouched();
         }
-        if (change.analysisBlockedLabels && saved) {
-          this.blocked.set(saved.analysisBlockedLabels);
+        // A queued save still sends the chips shown; the last one to settle decides them.
+        if (change.analysisBlockedLabels) {
+          if (--this.blockedSaves === 0 && saved) this.blocked.set(saved.analysisBlockedLabels);
           this.blockedError.set(errors['analysisBlockedLabels']?.[0] ?? null);
         }
         return of(undefined);

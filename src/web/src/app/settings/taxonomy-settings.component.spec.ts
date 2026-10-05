@@ -140,6 +140,27 @@ describe('TaxonomySettingsSection', () => {
     expect(q('blocked-server-error')!.textContent).toContain('At most 50 names.');
   });
 
+  it('keeps the chips of a queued save after an earlier one fails, then shows the server list', async () => {
+    await render();
+    await type('blocked-new', 'Alpha');
+    q<HTMLButtonElement>('blocked-add')!.click();
+    await fixture.whenStable();
+    await type('blocked-new', 'Beta');
+    q<HTMLButtonElement>('blocked-add')!.click();
+    await fixture.whenStable();
+
+    http.expectOne(isPut).flush(null, { status: 500, statusText: 'Server Error' });
+    await fixture.whenStable();
+    const named = (...names: string[]) => names.map((n) => expect.stringContaining(n));
+    expect(chips()).toEqual(named('Misc', 'Alpha', 'Beta'));
+
+    const queued = http.expectOne(isPut);
+    expect(queued.request.body).toEqual({ analysisBlockedLabels: ['Misc', 'Alpha', 'Beta'] });
+    queued.flush(taxonomy({ analysisBlockedLabels: ['Misc', 'Alpha', 'Beta'] }));
+    await fixture.whenStable();
+    expect(chips()).toEqual(named('Misc', 'Alpha', 'Beta'));
+  });
+
   it('blockedLabelError matches the API rules', () => {
     expect(blockedLabelError('Ok')).toBeNull();
     expect(blockedLabelError(' ')).not.toBeNull();

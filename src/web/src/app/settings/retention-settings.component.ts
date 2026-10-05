@@ -31,7 +31,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { catchError, concatMap, debounceTime, defer, map, of, Subject, take, tap } from 'rxjs';
+import { catchError, concatMap, debounceTime, defer, map, of, Subject, tap } from 'rxjs';
 import { errorMessage } from '../core/error.interceptor';
 import { isActiveJob, JobDto, newerJob, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
@@ -264,6 +264,7 @@ export class RetentionSettingsSection implements OnInit {
     if (!control?.invalid) return null;
     return (
       (control.getError('server') as string | undefined) ??
+      (control.getError('unsaved') as string | undefined) ??
       `${this.range.min} to ${this.range.max} whole days, or empty to keep.`
     );
   }
@@ -352,30 +353,48 @@ export class RetentionSettingsSection implements OnInit {
     );
   }
 
-  /** The valid edited types, each with its value now; invalid ones wait for a fix. */
+  /**
+   * The valid edited types, each with its value now; invalid ones wait for a fix. A type stays
+   * pending until a save of its value succeeds, so a failed one goes again with the next save.
+   */
   private saveDays() {
     const days: Record<string, number | null> = {};
-    for (const type of [...this.pendingTypes]) {
+    for (const type of this.pendingTypes) {
       const control = this.days.controls[type];
-      if (control.invalid) continue;
+      if (control.invalid && !onlyUnsaved(control)) continue;
       days[type] = control.value;
-      this.pendingTypes.delete(type);
     }
-    if (!Object.keys(days).length) return of(undefined);
+    const sent = Object.keys(days);
+    if (!sent.length) return of(undefined);
     this.saving.update((n) => n + 1);
     return this.settingsApi.saveRetention({ retention: { days } }).pipe(
       map(() => {
         this.saving.update((n) => n - 1);
+        for (const type of sent) {
+          const control = this.days.controls[type];
+          // Edited again while saving: the newer value is still pending.
+          if (control.value !== days[type]) continue;
+          this.pendingTypes.delete(type);
+          if (control.hasError('unsaved')) control.updateValueAndValidity({ emitEvent: false });
+        }
         this.snackBar.open('Retention settings saved', undefined, { duration: 3000 });
         this.loadStatus();
       }),
-      // A 400 is shown on its field; the error interceptor shows anything else.
+      // A 400 is shown on its field; every other sent field is marked unsaved (the error
+      // interceptor shows why).
       catchError((error: unknown) => {
         this.saving.update((n) => n - 1);
-        for (const [field, messages] of Object.entries(problemErrors(error))) {
-          const control = this.days.controls[field.replace(/^retention\.days\./, '')];
-          if (!control || !field.startsWith('retention.days.')) continue;
-          control.setErrors({ server: messages[0] });
+        const errors = problemErrors(error);
+        for (const type of sent) {
+          const control = this.days.controls[type];
+          // Edited again while saving: the newer value is still pending.
+          if (control.value !== days[type]) continue;
+          const message = errors[`retention.days.${type}`]?.[0];
+          control.setErrors(
+            message
+              ? { server: message }
+              : { unsaved: 'Not saved; it is sent again with the next change.' },
+          );
           control.markAsTouched();
         }
         return of(undefined);
@@ -383,37 +402,35 @@ export class RetentionSettingsSection implements OnInit {
     );
   }
 
-  /** Saves the whole Apps Script block (the API replaces it) with the latest saved other fields. */
+  /** Saves the whole Apps Script block (the API replaces it) with the other fields as last saved. */
   private saveRules() {
     if (this.rules.invalid) return of(undefined);
     const retentionRules = this.rules
       .getRawValue()
       .map((r) => ({ label: r.label.trim(), days: r.days ?? 0 }));
     this.saving.update((n) => n + 1);
-    return this.settingsApi.getSettings().pipe(
-      take(1),
-      concatMap((settings) =>
-        this.settingsApi.saveAppsScript({
-          appsScript: { ...settings.appsScript!, retentionRules },
+    return this.settingsApi
+      .saveAppsScript((saved) => ({
+        appsScript: { ...saved, retentionRules },
+      }))
+      .pipe(
+        map(() => {
+          this.saving.update((n) => n - 1);
+          this.ruleErrors.set([]);
+          this.snackBar.open('Apps Script retention rules saved', undefined, { duration: 3000 });
+          this.appsScriptSaved.emit();
         }),
-      ),
-      map(() => {
-        this.saving.update((n) => n - 1);
-        this.ruleErrors.set([]);
-        this.snackBar.open('Apps Script retention rules saved', undefined, { duration: 3000 });
-        this.appsScriptSaved.emit();
-      }),
-      // A 400 is listed under the table; the error interceptor shows anything else.
-      catchError((error: unknown) => {
-        this.saving.update((n) => n - 1);
-        this.ruleErrors.set(
-          Object.entries(problemErrors(error)).flatMap(([field, messages]) =>
-            messages.map((m) => `${ruleFieldName(field)}${m}`),
-          ),
-        );
-        return of(undefined);
-      }),
-    );
+        // A 400 is listed under the table; the error interceptor shows anything else.
+        catchError((error: unknown) => {
+          this.saving.update((n) => n - 1);
+          this.ruleErrors.set(
+            Object.entries(problemErrors(error)).flatMap(([field, messages]) =>
+              messages.map((m) => `${ruleFieldName(field)}${m}`),
+            ),
+          );
+          return of(undefined);
+        }),
+      );
   }
 
   private finish(job: JobDto): void {
@@ -438,6 +455,11 @@ export class RetentionSettingsSection implements OnInit {
       return key && taken ? { duplicate: true } : null;
     };
   }
+}
+
+/** Invalid only because its last save failed, so it can be sent again. */
+function onlyUnsaved(control: AbstractControl): boolean {
+  return Object.keys(control.errors ?? {}).join() === 'unsaved';
 }
 
 function ruleForm(label: string, days: number | null): RuleForm {
