@@ -67,15 +67,21 @@ public sealed partial class DecisionMemory(
     /// <summary>
     /// The nearest decisions of model <c>{0}</c> to vector <c>{1}</c>, at most <c>{2}</c>, leaving out message IDs <c>{3}</c>
     /// when <paramref name="excluding"/>. Unless <paramref name="exact"/>, the predicate and ORDER BY match the partial
-    /// expression index for <paramref name="dimension"/>, so the planner can use it; the cast only sees rows of that
-    /// dimension. The exact form orders by the uncast column, which no index serves.
+    /// expression index for <paramref name="dimension"/> (<see cref="EmbeddingIndexMaintainer.IndexedExpression"/>), so the
+    /// planner can use it; the cast only sees rows of that dimension. The exact form orders by the uncast column, which no index serves.
     /// </summary>
     public static string NearestSql(int dimension, bool excluding, bool exact = false) => string.Create(CultureInfo.InvariantCulture, $$"""
         SELECT * FROM decisions
         WHERE embedding_model = {0} AND vector_dims(embedding) = {{dimension}}{{(excluding ? " AND (message_id IS NULL OR NOT message_id = ANY({3}))" : "")}}
-        ORDER BY {{(exact ? "embedding" : $"embedding::vector({dimension})")}} <=> {1}
+        ORDER BY {{(exact ? "embedding <=> {1}" : Indexed(dimension))}}
         LIMIT {2}
         """);
+
+    private static string Indexed(int dimension)
+    {
+        var (expression, _, queryCast) = EmbeddingIndexMaintainer.IndexedExpression(dimension);
+        return expression + " <=> {1}::" + queryCast;
+    }
 
     public async Task<bool> CanEmbedAsync(CancellationToken ct) => await EmbedTextsAsync([ProbeText], ct) is not null;
 

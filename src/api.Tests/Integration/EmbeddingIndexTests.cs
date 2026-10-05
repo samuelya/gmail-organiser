@@ -94,6 +94,40 @@ public sealed class EmbeddingIndexTests(PostgresFixture postgres, ITestOutputHel
     }
 
     [Fact]
+    public async Task A_model_over_2000_dimensions_is_indexed_as_halfvec_and_one_over_4000_is_skipped()
+    {
+        const int dimension = 2048;
+        var generator = new FakeEmbeddingGenerator(dimension);
+        await using var db = postgres.CreateDbContext();
+        for (var n = 0; n < 50; n++)
+        {
+            var row = Decision($"sender{n}@example.com", $"Label {n % 5}");
+            row.Embedding = new Vector(Near(generator, $"centre {n % 5}", $"noise {n}"));
+            row.EmbeddingModel = EmbeddingModel;
+            db.Decisions.Add(row);
+        }
+
+        await db.SaveChangesAsync(Ct);
+        await MemoryTestFactory.Indexes(db).EnsureAsync(dimension, Ct);
+        (await IndexesAsync(db)).ShouldBe([($"ix_decisions_embedding_hnsw_{dimension}", true)]);
+
+        var message = Query();
+        var query = new Vector(Near(generator, "centre 2", "query"));
+        await using (var planDb = postgres.CreateDbContext())
+        {
+            (await PlanAsync(planDb, query, noSeqScan: true)).ShouldContain($"Index Scan using ix_decisions_embedding_hnsw_{dimension}");
+        }
+
+        var vectors = new MessageVectors(EmbeddingModel, new Dictionary<string, Vector> { [message.Id] = query });
+        var hits = await Memory(db, generator).FindSimilarAsync([message], vectors, 5, null, [], Ct);
+        hits.ShouldNotBeEmpty();
+        hits.ShouldAllBe(h => h.TopicLabel == "Label 2");
+
+        await MemoryTestFactory.Indexes(db).EnsureAsync(EmbeddingIndexMaintainer.MaxHalfvecDimensions + 1, Ct);
+        (await IndexesAsync(db)).ShouldBe([($"ix_decisions_embedding_hnsw_{dimension}", true)]);
+    }
+
+    [Fact]
     public async Task Similarity_query_uses_the_index_on_2000_decisions_and_returns_what_a_scan_returns()
     {
         var generator = new FakeEmbeddingGenerator(Dimension);
@@ -263,11 +297,18 @@ public sealed class EmbeddingIndexTests(PostgresFixture postgres, ITestOutputHel
         return [.. v.Select(x => x / norm)];
     }
 
-    private static async Task<string> PlanAsync(AppDbContext db, Vector query)
+    private static async Task<string> PlanAsync(AppDbContext db, Vector query, bool noSeqScan = false)
     {
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         await connection.OpenAsync(Ct);
-        await using var command = new NpgsqlCommand("EXPLAIN " + string.Format(DecisionMemory.NearestSql(Dimension, excluding: false), "$1", "$2", "$3"), connection);
+        if (noSeqScan)
+        {
+            await using var set = new NpgsqlCommand("SET enable_seqscan = off", connection);
+            await set.ExecuteNonQueryAsync(Ct);
+        }
+
+        var sql = DecisionMemory.NearestSql(query.ToArray().Length, excluding: false);
+        await using var command = new NpgsqlCommand("EXPLAIN " + string.Format(sql, "$1", "$2", "$3"), connection);
         command.Parameters.Add(new NpgsqlParameter { Value = EmbeddingModel });
         command.Parameters.Add(new NpgsqlParameter { Value = query });
         command.Parameters.Add(new NpgsqlParameter { Value = 5 });
