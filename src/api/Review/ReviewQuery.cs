@@ -4,6 +4,7 @@ using GmailOrganiser.Claude;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -74,7 +75,9 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var senders = await db.Senders.AsNoTracking()
             .Where(s => addresses.Contains(s.Address))
             .ToDictionaryAsync(s => s.Address, ct);
-        return new PagedDto<ReviewSenderDto>([.. rows.Select(r => ToDto(r, senders.GetValueOrDefault(r.Address)))], page, pageSize, total);
+        var policies = await PolicyLookup.ForSendersAsync(db, addresses, ct);
+        return new PagedDto<ReviewSenderDto>(
+            [.. rows.Select(r => ToDto(r, senders.GetValueOrDefault(r.Address), policies))], page, pageSize, total);
     }
 
     /// <summary>
@@ -164,7 +167,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
                 g, outcomes[g.Key], members, allowlist, claude, labelNames, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
         }
 
-        return new ReviewSenderDetailDto(ToDto(counts, sender), groups, page, pageSize, totalGroups);
+        var policies = await PolicyLookup.ForSendersAsync(db, [counts.Address], ct);
+        return new ReviewSenderDetailDto(ToDto(counts, sender, policies), groups, page, pageSize, totalGroups);
     }
 
     /// <summary>
@@ -396,8 +400,9 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         .ThenBy(o => o.DocumentTypeLabel, StringComparer.Ordinal)
         .First();
 
-    private static ReviewSenderDto ToDto(StatusCounts c, SenderRow? sender) => new(
-        c.Address, sender?.DisplayName, c.Pending, c.Approved, c.Rejected, c.Applied, sender?.TotalCount ?? 0);
+    private static ReviewSenderDto ToDto(StatusCounts c, SenderRow? sender, Dictionary<string, Guid> policies) => new(
+        c.Address, sender?.DisplayName, c.Pending, c.Approved, c.Rejected, c.Applied, sender?.TotalCount ?? 0,
+        policies.TryGetValue(c.Address, out var policy) ? policy : null);
 
     /// <summary>A class with settable members (not a record) so EF can filter and sort on the projection.</summary>
     private sealed class StatusCounts

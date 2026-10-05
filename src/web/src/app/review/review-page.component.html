@@ -63,7 +63,7 @@
               <h2 class="sender-title m-0" data-testid="detail-title">
                 {{ d.sender.displayName || d.sender.address }}
               </h2>
-              <app-policy-coverage-chip [address]="d.sender.address" />
+              <app-policy-coverage-chip [policyId]="d.sender.policyId" />
             </div>
             <div class="muted text-sm">
               {{ d.sender.address }} · {{ d.sender.pending }} pending ·

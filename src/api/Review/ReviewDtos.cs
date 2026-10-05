@@ -2,8 +2,9 @@ using GmailOrganiser.Claude;
 
 namespace GmailOrganiser.Review;
 
+/// <param name="PolicyId">The approved policy covering the sender (<see cref="Policies.PolicyLookup.ForSendersAsync"/>); null when none.</param>
 public sealed record ReviewSenderDto(
-    string Address, string? DisplayName, int Pending, int Approved, int Rejected, int Applied, int TotalMessages);
+    string Address, string? DisplayName, int Pending, int Approved, int Rejected, int Applied, int TotalMessages, Guid? PolicyId);
 
 /// <param name="Groups">One page of the sender's groups, largest first.</param>
 /// <param name="TotalGroups">All the sender's groups in the requested status.</param>

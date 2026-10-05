@@ -106,6 +106,7 @@ const detail = (
     rejected: 0,
     applied: 0,
     totalMessages: 1,
+    policyId: null,
   },
   groups,
   page,

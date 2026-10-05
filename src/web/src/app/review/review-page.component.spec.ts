@@ -32,6 +32,7 @@ const sender = (over: Partial<ReviewSenderDto> = {}): ReviewSenderDto => ({
   rejected: 0,
   applied: 0,
   totalMessages: 10,
+  policyId: null,
   ...over,
 });
 
