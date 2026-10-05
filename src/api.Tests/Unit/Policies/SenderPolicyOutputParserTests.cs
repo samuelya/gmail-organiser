@@ -61,16 +61,16 @@ public sealed class SenderPolicyOutputParserTests
         parsed.IsNewLabel.ShouldBeFalse();
         parsed.NewLabels.ShouldBe(["Shop/Example/Offers"]);
 
-        // Cheapest first: header + category before subject words.
+        // The model's order is kept: subject words before header + category.
         parsed.Rules.Select(r => (r.Position, r.TopicLabel, r.Action)).ShouldBe(
         [
-            (0, "Shop/Example", PolicyAction.Keep),
-            (1, "Shop/Example/Offers", PolicyAction.Delete),
+            (0, "Shop/Example/Offers", PolicyAction.Delete),
+            (1, "Shop/Example", PolicyAction.Keep),
         ]);
-        parsed.Rules[0].Match.Category.ShouldBe(MessageCategory.Promotions);
-        parsed.Rules[0].Name.ShouldBe("list, category promotions");
-        parsed.Rules[1].Name.ShouldBe("Offers");
-        parsed.Rules[1].Source.ShouldBe(PolicyRuleSource.Llm);
+        parsed.Rules[1].Match.Category.ShouldBe(MessageCategory.Promotions);
+        parsed.Rules[1].Name.ShouldBe("list, category promotions");
+        parsed.Rules[0].Name.ShouldBe("Offers");
+        parsed.Rules[0].Source.ShouldBe(PolicyRuleSource.Llm);
         p.Rules.ShouldBe(parsed.Rules);
     }
 
@@ -96,7 +96,6 @@ public sealed class SenderPolicyOutputParserTests
 
     [Theory]
     [InlineData("subjectContains", "Your Invoice", "delete")]
-    [InlineData("subjectTemplate", "receipt #", "delete")]
     [InlineData("subjectContains", "invoice", "unsubscribe")]
     public void A_rule_that_removes_mail_with_a_transactional_subject_is_dropped(string field, string value, string action)
     {
@@ -115,7 +114,7 @@ public sealed class SenderPolicyOutputParserTests
 
     [Theory]
     [InlineData("""{"match":{},"topicLabel":"Shop","action":"keep","reason":"r"}""")]
-    [InlineData("""{"match":{"subjectContains":"  ","category":"nonsense"},"topicLabel":"Shop","action":"keep","reason":"r"}""")]
+    [InlineData("""{"match":{"subjectContains":"  ","category":null},"topicLabel":"Shop","action":"keep","reason":"r"}""")]
     [InlineData("""{"topicLabel":"Shop","action":"keep","reason":"r"}""")]
     public void A_rule_with_an_empty_match_is_dropped(string rule)
     {
@@ -294,6 +293,48 @@ public sealed class SenderPolicyOutputParserTests
         var rule = parsed.Rules.SingleOrDefault(r => r.Reason == "r");
         rule?.Match.SubjectTemplate.ShouldBe(expected);
         (rule is null).ShouldBe(expected is null);
+    }
+
+    [Theory]
+    [InlineData("""{"category":"promotions","subjectContains":["sale"]}""", "subjectContains")]
+    [InlineData("""{"category":"promotions","subjectContains":"LONG"}""", "subjectContains")]
+    [InlineData("""{"category":"nonsense","subjectContains":"sale"}""", "category")]
+    [InlineData("""{"category":"promotions","listIdPresent":"true"}""", "listIdPresent")]
+    [InlineData("""{"category":"promotions","fromAddress":42}""", "fromAddress")]
+    public void A_match_field_that_cannot_be_used_drops_the_whole_rule(string match, string field)
+    {
+        match = match.Replace("LONG", new string('a', SenderPolicyOutputParser.MaxMatchValueLength + 1), StringComparison.Ordinal);
+
+        var parsed = Parser.Parse(Mixed($$"""{"match":{{match}},"topicLabel":"Shop","action":"delete","reason":"r"}"""), Profile, Tree, Settings);
+
+        parsed.Errors.ShouldBeEmpty();
+        parsed.Rules.ShouldHaveSingleItem().Reason.ShouldBe("base");
+        parsed.Dropped.ShouldHaveSingleItem().ShouldContain($"'match.{field}'");
+    }
+
+    [Fact]
+    public void The_transactional_check_sees_the_full_template_behind_a_clipped_one()
+    {
+        var full = "your monthly account summary for customer # is ready to view online receipt #";
+        var profile = Profile with { Templates = [Profile.Templates[0] with { Template = full }] };
+
+        var parsed = Parser.Parse(
+            Mixed($$"""{"match":{"subjectTemplate":"\"{{full[..49]}}…\""},"topicLabel":"Shop","action":"delete","reason":"r"}"""), profile, Tree, Settings);
+
+        parsed.Rules.ShouldHaveSingleItem().Reason.ShouldBe("base");
+        parsed.Dropped.ShouldHaveSingleItem().ShouldContain("transactional");
+    }
+
+    [Fact]
+    public void Rules_keep_the_models_order_rather_than_the_cost_order()
+    {
+        const string specific = """{"match":{"subjectTemplate":"weekly offer #"},"topicLabel":"Shop","action":"keep","reason":"specific"}""";
+        const string broad = """{"match":{"listUnsubscribePresent":true},"topicLabel":"Shop","action":"delete","reason":"broad"}""";
+
+        var parsed = Parser.Parse(
+            $$"""{"action":"archive","confidence":0.8,"reason":"r","isMixed":true,"rules":[{{specific}},{{broad}}]}""", Profile, Tree, Settings);
+
+        parsed.Rules.Select(r => (r.Position, r.Reason)).ShouldBe([(0, "specific"), (1, "broad")]);
     }
 
     private static string Single(string label, bool isNewLabel) =>

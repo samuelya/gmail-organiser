@@ -27,7 +27,7 @@ public sealed record ParsedPolicy(
 /// Validates the model's answer to the sender-policy prompt and enforces the safety rules itself instead of trusting the
 /// model (DESIGN §6.2). Never throws on model output; errors and notes name fields and rule numbers, never email content.
 /// </summary>
-public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
+public sealed partial class SenderPolicyOutputParser(TransactionalGuard guard)
 {
     public const int MaxRules = 8;
     public const int MaxNameLength = 100;
@@ -203,14 +203,13 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             ctx.Dropped.Add($"'rules': {array.GetArrayLength() - MaxRules} rule(s) beyond the first {MaxRules} dropped.");
         }
 
-        // The initial order is cheapest-first (#354); the user may reorder before approving.
-        var ordered = PolicyMatcher.CostOrder(rules).ToList();
-        for (var i = 0; i < ordered.Count; i++)
+        // The model's order is kept: the prompt asks for specific rules before broad ones, and the first match wins.
+        for (var i = 0; i < rules.Count; i++)
         {
-            ordered[i].Position = i;
+            rules[i].Position = i;
         }
 
-        return ordered;
+        return rules;
     }
 
     private SenderPolicyRuleRow? ReadRule(JsonElement item, string prefix, Context ctx)
@@ -222,7 +221,19 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             return null;
         }
 
-        var match = item.TryGetProperty("match", out var m) && m.ValueKind == JsonValueKind.Object ? ReadMatch(m) : new RuleMatch();
+        var match = new RuleMatch();
+        if (item.TryGetProperty("match", out var m) && m.ValueKind == JsonValueKind.Object)
+        {
+            if (ReadMatch(m, out var invalid) is not { } read)
+            {
+                // Dropping only the field would widen the rule.
+                dropped.Add(prefix + $"'match.{invalid}' is not a usable value; dropped.");
+                return null;
+            }
+
+            match = read;
+        }
+
         if (match.IsEmpty)
         {
             dropped.Add(prefix + "'match' sets no field; dropped.");
@@ -242,14 +253,6 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             return null;
         }
 
-        // Transactional mail is never deleted and never unsubscribed (DESIGN §6.2).
-        if (action is PolicyAction.Delete or PolicyAction.Unsubscribe
-            && (guard.HasKeyword(match.SubjectTemplate) || guard.HasKeyword(match.SubjectContains)))
-        {
-            dropped.Add(prefix + $"'{Snake(action)}' on mail whose subject names a transactional document; dropped.");
-            return null;
-        }
-
         if (match.SubjectTemplate is { } given)
         {
             if (ResolveTemplate(given, ctx.Profile) is not { } template)
@@ -260,6 +263,14 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             }
 
             match.SubjectTemplate = template;
+        }
+
+        // Transactional mail is never deleted and never unsubscribed (DESIGN §6.2); checked on the full template.
+        if (action is PolicyAction.Delete or PolicyAction.Unsubscribe
+            && (guard.HasKeyword(match.SubjectTemplate) || guard.HasKeyword(match.SubjectContains)))
+        {
+            dropped.Add(prefix + $"'{Snake(action)}' on mail whose subject names a transactional document; dropped.");
+            return null;
         }
 
         if (ctx.Profile.Stats.Allowlisted && action != PolicyAction.Keep)
@@ -281,63 +292,6 @@ public sealed class SenderPolicyOutputParser(TransactionalGuard guard)
             Source = PolicyRuleSource.Llm,
             Reason = ReadText(item, "reason", SuggestionOutputParser.MaxReasonLength) ?? "",
         };
-    }
-
-    /// <summary>The usable match fields; a field of the wrong type or an over-long value counts as unset.</summary>
-    private static RuleMatch ReadMatch(JsonElement m)
-    {
-        bool? Flag(string name) =>
-            m.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False ? v.GetBoolean() : null;
-
-        return new RuleMatch
-        {
-            ListIdPresent = Flag("listIdPresent"),
-            ListUnsubscribePresent = Flag("listUnsubscribePresent"),
-            FromAddress = ReadText(m, "fromAddress", MaxMatchValueLength, clip: false),
-            FromSubdomain = ReadText(m, "fromSubdomain", MaxMatchValueLength, clip: false),
-            Category = ReadEnum<MessageCategory>(m, "category", out _),
-            SubjectTemplate = ReadText(m, "subjectTemplate", MaxMatchValueLength, clip: false),
-            SubjectContains = ReadText(m, "subjectContains", MaxMatchValueLength, clip: false),
-        };
-    }
-
-    private static string Describe(RuleMatch m)
-    {
-        var parts = new[]
-        {
-            m.ListIdPresent is { } l ? (l ? "list" : "not a list") : null,
-            m.ListUnsubscribePresent is { } u ? (u ? "unsubscribe header" : "no unsubscribe header") : null,
-            m.FromAddress is { } a ? "from " + a : null,
-            m.FromSubdomain is { } d ? "from *." + d : null,
-            m.Category is { } c ? "category " + SnakeCaseEnumConverter<MessageCategory>.ToDb(c) : null,
-            m.SubjectTemplate is { } t ? $"subject \"{t}\"" : null,
-            m.SubjectContains is { } s ? $"subject contains \"{s}\"" : null,
-        };
-        return SuggestionOutputParser.Cut(string.Join(", ", parts.OfType<string>()), MaxNameLength);
-    }
-
-    /// <summary>
-    /// The profile template the model copied, as stored: the profile quotes templates and clips them with an ellipsis,
-    /// while <see cref="PolicyMatcher"/> compares the full template. A clipped value resolves when exactly one profile
-    /// template starts with it. Null when no profile template matches.
-    /// </summary>
-    private static string? ResolveTemplate(string value, SenderProfile profile)
-    {
-        var text = value.Trim().Trim('"', '“', '”').Trim();
-        var clipped = text.EndsWith(Ellipsis, StringComparison.Ordinal);
-        if (clipped)
-        {
-            text = text[..^Ellipsis.Length].TrimEnd();
-        }
-
-        var candidates = profile.Templates.Select(t => t.Template)
-            .Where(t => clipped
-                ? text.Length > 0 && t.StartsWith(text, StringComparison.OrdinalIgnoreCase)
-                : string.Equals(t, text, StringComparison.OrdinalIgnoreCase))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(2)
-            .ToList();
-        return candidates.Count == 1 ? candidates[0] : null;
     }
 
     /// <summary>The trimmed, respelled label; <c>Invalid</c> when given but not a valid path, a system label, or the
