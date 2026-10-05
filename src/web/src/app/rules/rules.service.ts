@@ -43,9 +43,12 @@ export class RulesService {
     return this.http.post<FilterDto>(`/api/rules/filters/${encodeURIComponent(id)}/restore`, null);
   }
 
-  /** Most messages first. */
+  /** Policy proposals first, then pattern proposals by most messages. */
   proposals(page: number, pageSize = PROPOSALS_PAGE_SIZE): Observable<PagedDto<FilterProposalDto>> {
-    const params = new HttpParams().set('page', page).set('pageSize', pageSize);
+    const params = new HttpParams()
+      .set('page', page)
+      .set('pageSize', pageSize)
+      .set('source', 'all');
     return this.http.get<PagedDto<FilterProposalDto>>('/api/rules/filters/proposals', { params });
   }
 

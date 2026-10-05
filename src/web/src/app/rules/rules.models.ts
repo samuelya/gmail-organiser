@@ -86,8 +86,18 @@ export interface FilterPreviewDto {
   warnings: string[];
 }
 
-/** `FilterProposalDto`: an approved sender no active filter covers, with the suggested filter. */
+/**
+ * `FilterProposalDto`: an approved policy, policy rule or sender no active filter covers, with the
+ * suggested filter. `key` is unique within a listing; `senderAddress` isn't for policy proposals.
+ */
 export interface FilterProposalDto {
+  key: string;
+  source?: 'policy' | 'pattern';
+  policyId?: string | null;
+  ruleId?: string | null;
+  /** A rule condition has no Gmail equivalent, so the filter matches more than the rule. */
+  partial?: boolean;
+  note?: string | null;
   senderAddress: string;
   displayName: string | null;
   messageCount: number;

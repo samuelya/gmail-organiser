@@ -79,7 +79,7 @@ describe('RulesService', () => {
     service.proposals(2).subscribe();
     expect(
       http.expectOne((r) => r.url === '/api/rules/filters/proposals').request.params.toString(),
-    ).toBe('page=2&pageSize=20');
+    ).toBe('page=2&pageSize=20&source=all');
   });
 
   it('encodes the id on delete and restore', () => {
