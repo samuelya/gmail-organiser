@@ -25,6 +25,34 @@ public sealed partial class ReviewService
         }
     }
 
+    /// <summary>
+    /// A group's chunks. Inside a caller's transaction (accepting a Claude verdict) each chunk's locks last until the caller
+    /// commits, so every pending member is locked up front in id order, before any chunk locks a policy: suggestions, then
+    /// policies, the order a bulk approve takes them in, so the two never deadlock (#426).
+    /// </summary>
+    private async IAsyncEnumerable<Guid[]> GroupChunksAsync(
+        IQueryable<SuggestionRow> candidates, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+    {
+        if (db.Database.CurrentTransaction is null)
+        {
+            await foreach (var chunk in ChunksAsync(candidates, ct))
+            {
+                yield return chunk;
+            }
+
+            yield break;
+        }
+
+        var ids = await candidates.OrderBy(s => s.Id).Select(s => s.Id).ToArrayAsync(ct);
+        await db.Database
+            .SqlQuery<Guid>($"SELECT id AS \"Value\" FROM suggestions WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
+            .ToListAsync(ct);
+        foreach (var chunk in ids.Chunk(ChunkSize))
+        {
+            yield return chunk;
+        }
+    }
+
     /// <summary>Loads and locks the rows until the transaction ends; uncomposed so the lock clause stays at the top level.</summary>
     private Task<List<SuggestionRow>> LockAsync(Guid[] ids, CancellationToken ct) =>
         db.Suggestions.FromSql($"SELECT * FROM suggestions WHERE id = ANY({ids}) ORDER BY id FOR UPDATE").ToListAsync(ct);

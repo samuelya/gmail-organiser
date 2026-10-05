@@ -195,7 +195,7 @@ public sealed partial class ReviewService(
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
         var skipped = new List<Guid>();
-        await foreach (var chunk in ChunksAsync(candidates, ct))
+        await foreach (var chunk in GroupChunksAsync(candidates, ct))
         {
             changed += await ChangeChunkAsync(chunk, outcome, (s, m) =>
             {
@@ -235,7 +235,7 @@ public sealed partial class ReviewService(
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending);
         var changed = 0;
-        await foreach (var chunk in ChunksAsync(candidates, ct))
+        await foreach (var chunk in GroupChunksAsync(candidates, ct))
         {
             changed += await ChangeChunkAsync(chunk, DecisionOutcome.Approved, edit, ct);
         }
