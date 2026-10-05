@@ -1,3 +1,4 @@
+using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
@@ -10,7 +11,9 @@ namespace GmailOrganiser.Senders;
 /// <param name="After">The last sender address rebuilt; the next chunk starts after it.</param>
 /// <param name="Done">Senders rebuilt so far.</param>
 /// <param name="Total">The sender count taken at the start, raised to <paramref name="Done"/> if more rows appear.</param>
-public sealed record SenderStatsRebuildCursor(string? After, int Done, int Total, int Human, int Bulk, int Mixed, int Unknown);
+/// <param name="Addresses">The senders to rebuild, sorted; null rebuilds every sender.</param>
+public sealed record SenderStatsRebuildCursor(
+    string? After, int Done, int Total, int Human, int Bulk, int Mixed, int Unknown, string[]? Addresses = null);
 
 /// <summary>
 /// "Sender stats rebuild" (#347): recomputes every sender row's engagement counts over its live messages
@@ -21,6 +24,10 @@ public sealed record SenderStatsRebuildCursor(string? After, int Done, int Total
 /// Replied = the message's thread holds a <c>SENT</c> message, or <see cref="MessageRow.ThreadReplied"/> is true. The
 /// <c>SENT</c> source needs the user's sent mail in <c>messages</c> (the All Mail phase); after an Inbox-only fetch
 /// <c>replied_count</c> under-counts and only <see cref="MessageRow.ThreadReplied"/> (set at mark time) fills the gap.
+/// </para>
+/// <para>
+/// Each chunk locks its sender rows in address order before writing, as <see cref="SenderStatsUpdater"/> does, so a
+/// fetch updating the same rows concurrently waits instead of deadlocking.
 /// </para>
 /// </summary>
 public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : IJobHandler
@@ -39,11 +46,39 @@ public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : 
     public string Type => JobType;
 
     /// <summary>
-    /// Queues a rebuild unless one is already queued, running or paused (that one is returned); the fetch jobs call it
-    /// after their completion commits, so the rebuild reads the fetched rows.
+    /// Queues a rebuild of <paramref name="addresses"/> (every sender when null) unless a queued, never-started rebuild
+    /// already covers them, and returns that job's id or the new one's. A running, paused or resumed rebuild does not
+    /// count: it may already have passed the senders that just changed, so a follow-up queues behind it. The fetch jobs
+    /// call this inside their completing transaction, so the rebuild is queued exactly when the fetched rows commit.
+    /// Every rebuild gets its id as dedup key, so the active-job index never refuses one; two concurrent enqueues may
+    /// both insert, which costs one redundant recompute.
     /// </summary>
-    public static Task<(JobDto Job, bool Created)> EnqueueAsync(IJobService jobs, CancellationToken ct) =>
-        jobs.EnqueueAsync(JobType, Queue, null, ct);
+    public static async Task<Guid> EnqueueAsync(AppDbContext db, TimeProvider time, IEnumerable<string>? addresses, CancellationToken ct)
+    {
+        var now = time.GetUtcNow();
+        var id = Guid.CreateVersion7(now);
+        var scope = addresses?.Where(a => a.Length > 0).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var scopeJson = scope is null ? null : JsonSerializer.Serialize(scope, JobRow.Json);
+        var cursorJson = scope is null ? null : JsonSerializer.Serialize(new SenderStatsRebuildCursor(null, 0, scope.Length, 0, 0, 0, 0, scope), JobRow.Json);
+        var queued = JobRow.FormatStatus(JobStatus.Queued);
+
+        // Not composable (a data-modifying CTE must be top level): ToListAsync, then Single.
+        var ids = await db.Database.SqlQuery<Guid>(
+            $"""
+            WITH covering AS (
+                SELECT id FROM jobs
+                WHERE type = {JobType} AND status = {queued} AND started_at IS NULL
+                    AND (jsonb_typeof(cursor -> 'addresses') IS DISTINCT FROM 'array' OR cursor -> 'addresses' @> {scopeJson}::jsonb)
+                LIMIT 1),
+            inserted AS (
+                INSERT INTO jobs (id, type, queue, dedup_key, status, cursor, created_at, queued_at, updated_at)
+                SELECT {id}, {JobType}, {Queue}, {id.ToString()}, {queued}, {cursorJson}::jsonb, {now}, {now}, {now}
+                WHERE NOT EXISTS (SELECT 1 FROM covering)
+                RETURNING id)
+            SELECT id AS "Value" FROM inserted UNION ALL SELECT id FROM covering
+            """).ToListAsync(ct);
+        return ids.Single();
+    }
 
     public async Task RunAsync(JobContext ctx, CancellationToken ct)
     {
@@ -51,6 +86,11 @@ public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : 
         while (true)
         {
             var senders = db.Senders.AsNoTracking();
+            if (cursor.Addresses is { } scope)
+            {
+                senders = senders.Where(s => scope.Contains(s.Address));
+            }
+
             if (cursor.After is { } after)
             {
                 senders = senders.Where(s => string.Compare(s.Address, after) > 0);
@@ -89,7 +129,8 @@ public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : 
     /// <summary>
     /// One grouped query for the chunk: counts per sender and distinct bulk-header combination, so
     /// <see cref="BulkSignal.Of"/> itself decides which combinations are bulk (headers only: no category, no
-    /// <c>List-Unsubscribe</c>, which have their own counts). A sender without live messages gets zero counts.
+    /// <c>List-Unsubscribe</c>, which have their own counts). A message with a bulk header and <c>List-Unsubscribe</c>
+    /// counts once in <see cref="SenderCounts.BulkOrListUnsubscribe"/>. A sender without live messages gets zero counts.
     /// </summary>
     private async Task<Dictionary<string, SenderStats>> CountAsync(string[] addresses, CancellationToken ct)
     {
@@ -106,7 +147,8 @@ public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : 
                 count(*) FILTER (WHERE {FilterSpec.Unread} = ANY(m.label_ids))::int AS "unread",
                 count(*) FILTER (WHERE {MessageProtection.StarredLabel} = ANY(m.label_ids))::int AS "starred",
                 count(*) FILTER (WHERE m.thread_replied IS TRUE OR EXISTS (
-                    SELECT 1 FROM messages r WHERE r.thread_id = m.thread_id AND {MessageProtection.SentLabel} = ANY(r.label_ids)))::int AS "replied",
+                    SELECT 1 FROM messages r
+                    WHERE r.thread_id = m.thread_id AND NOT r.deleted_in_gmail AND {MessageProtection.SentLabel} = ANY(r.label_ids)))::int AS "replied",
                 count(*) FILTER (WHERE m.list_unsubscribe ~ '\S')::int AS "list_unsubscribe",
                 count(*) FILTER (WHERE m.category = {Primary})::int AS "primary",
                 count(*) FILTER (WHERE m.category = {Promotions})::int AS "promotions",
@@ -135,14 +177,18 @@ public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : 
                     c.Promotions + g.Promotions,
                     c.Social + g.Social,
                     c.Updates + g.Updates,
-                    c.Forums + g.Forums),
+                    c.Forums + g.Forums,
+                    c.BulkOrListUnsubscribe + (bulk ? g.Total : g.ListUnsubscribe)),
                 first is null || g.FirstSeen < first ? g.FirstSeen : first);
         }
 
         return result;
     }
 
-    /// <summary>Writes the chunk's stats in one statement; <c>first_seen_at</c> is only filled, never moved.</summary>
+    /// <summary>
+    /// Locks the chunk's rows in address order, then writes its stats in one statement; <c>first_seen_at</c> only ever
+    /// moves earlier (<c>LEAST</c> ignores nulls), as in <see cref="SenderStatsUpdater"/>.
+    /// </summary>
     private async Task WriteAsync(string[] addresses, Dictionary<string, SenderStats> stats, SenderKind[] kinds, CancellationToken ct)
     {
         if (addresses.Length == 0)
@@ -164,12 +210,13 @@ public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : 
         var kindNames = Array.ConvertAll(kinds, SnakeCaseEnumConverter<SenderKind>.ToDb);
         var firstSeen = Array.ConvertAll(addresses, a => stats[a].FirstSeen);
         var now = time.GetUtcNow();
+        await SenderStatsUpdater.LockAsync(db, addresses, ct);
         await db.Database.ExecuteSqlAsync(
             $"""
             UPDATE senders AS s SET unread_count = t.unread, replied_count = t.replied, starred_count = t.starred,
                 list_unsubscribe_count = t.list_unsubscribe, bulk_header_count = t.bulk_header, primary_count = t.prim,
                 promotions_count = t.promotions, social_count = t.social, updates_count = t.updates, forums_count = t.forums,
-                kind = t.kind, first_seen_at = COALESCE(s.first_seen_at, t.first_seen), stats_at = {now}
+                kind = t.kind, first_seen_at = LEAST(s.first_seen_at, t.first_seen), stats_at = {now}
             FROM unnest({addresses}, {unread}, {replied}, {starred}, {listUnsubscribe}, {bulkHeader}, {primary}, {promotions},
                 {social}, {updates}, {forums}, {kindNames}, {firstSeen})
                 AS t(a, unread, replied, starred, list_unsubscribe, bulk_header, prim, promotions, social, updates, forums, kind, first_seen)

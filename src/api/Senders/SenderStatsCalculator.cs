@@ -9,7 +9,10 @@ public enum SenderKind
     Mixed,
 }
 
-/// <summary>One sender's live-message counts, as <see cref="SenderStatsRebuildJob"/> computes them.</summary>
+/// <summary>
+/// One sender's live-message counts, as <see cref="SenderStatsRebuildJob"/> computes them. <see cref="BulkOrListUnsubscribe"/>
+/// counts each message with a bulk header, <c>List-Unsubscribe</c> or both once; it is not stored.
+/// </summary>
 public readonly record struct SenderCounts(
     int Total,
     int Unread = 0,
@@ -21,7 +24,8 @@ public readonly record struct SenderCounts(
     int Promotions = 0,
     int Social = 0,
     int Updates = 0,
-    int Forums = 0);
+    int Forums = 0,
+    int BulkOrListUnsubscribe = 0);
 
 /// <summary>The Stage-0 sender classification (DESIGN §6.4): pure, no LLM. Ratios are compared in integers, so the boundaries are exact.</summary>
 public static class SenderStatsCalculator
@@ -34,7 +38,7 @@ public static class SenderStatsCalculator
     /// </summary>
     public static SenderKind Kind(SenderCounts c)
     {
-        var headers = c.BulkHeader + c.ListUnsubscribe;
+        var headers = c.BulkOrListUnsubscribe;
         var marketing = c.Promotions + c.Social;
         var personal = c.Primary + c.Updates;
         if (c.Replied > 0 || (headers + marketing == 0 && c.Total >= 2 && 2 * c.Unread < c.Total))

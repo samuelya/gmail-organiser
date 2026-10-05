@@ -67,10 +67,16 @@ public static class SendersEndpoints
             : TypedResults.Ok(await SenderQuery.ToDtoAsync(sender, await DomainsAsync(settings, ct), db, ct));
     }
 
-    /// <summary>Queues the sender stats rebuild, or returns the one already queued, running or paused (never 409).</summary>
-    private static async Task<Accepted<JobDto>> StartStatsRebuildAsync(IJobService jobs, CancellationToken ct)
+    /// <summary>
+    /// Queues a full sender stats rebuild, or returns the queued one not yet started (never 409); a running or paused
+    /// rebuild gets a follow-up queued behind it.
+    /// </summary>
+    private static async Task<Accepted<JobDto>> StartStatsRebuildAsync(
+        AppDbContext db, TimeProvider time, IJobService jobs, JobNotifier notifier, CancellationToken ct)
     {
-        var (job, _) = await SenderStatsRebuildJob.EnqueueAsync(jobs, ct);
+        var id = await SenderStatsRebuildJob.EnqueueAsync(db, time, null, ct);
+        await notifier.PublishAsync(db, id, ct);
+        var job = await jobs.GetAsync(id, ct) ?? throw new InvalidOperationException($"Job {id} vanished after its enqueue.");
         return TypedResults.Accepted($"/api/jobs/{job.Id}", job);
     }
 

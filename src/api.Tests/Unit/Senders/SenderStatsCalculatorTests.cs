@@ -6,7 +6,7 @@ public sealed class SenderStatsCalculatorTests
 {
     [Fact]
     public void A_reply_makes_any_sender_human() =>
-        SenderStatsCalculator.Kind(new SenderCounts(20, Unread: 20, Replied: 1, BulkHeader: 20, Promotions: 20)).ShouldBe(SenderKind.Human);
+        SenderStatsCalculator.Kind(new SenderCounts(20, Unread: 20, Replied: 1, BulkOrListUnsubscribe: 20, Promotions: 20)).ShouldBe(SenderKind.Human);
 
     [Theory]
     [InlineData(2, 0, SenderKind.Human)]
@@ -18,17 +18,15 @@ public sealed class SenderStatsCalculatorTests
         SenderStatsCalculator.Kind(new SenderCounts(total, Unread: unread, Primary: total)).ShouldBe(expected);
 
     [Theory]
-    [InlineData(nameof(SenderCounts.BulkHeader))]
-    [InlineData(nameof(SenderCounts.ListUnsubscribe))]
+    [InlineData(nameof(SenderCounts.BulkOrListUnsubscribe))]
     [InlineData(nameof(SenderCounts.Promotions))]
     [InlineData(nameof(SenderCounts.Social))]
     public void Any_bulk_signal_rules_out_the_clean_human_branch(string signal) =>
         SenderStatsCalculator.Kind(With(new SenderCounts(10, Primary: 10), signal, 1)).ShouldBe(SenderKind.Unknown);
 
     [Theory]
-    [InlineData(nameof(SenderCounts.BulkHeader), 8, SenderKind.Bulk)]
-    [InlineData(nameof(SenderCounts.BulkHeader), 7, SenderKind.Unknown)]
-    [InlineData(nameof(SenderCounts.ListUnsubscribe), 8, SenderKind.Bulk)]
+    [InlineData(nameof(SenderCounts.BulkOrListUnsubscribe), 8, SenderKind.Bulk)]
+    [InlineData(nameof(SenderCounts.BulkOrListUnsubscribe), 7, SenderKind.Unknown)]
     [InlineData(nameof(SenderCounts.Promotions), 8, SenderKind.Bulk)]
     [InlineData(nameof(SenderCounts.Social), 8, SenderKind.Bulk)]
     [InlineData(nameof(SenderCounts.Social), 7, SenderKind.Unknown)]
@@ -36,8 +34,9 @@ public sealed class SenderStatsCalculatorTests
         SenderStatsCalculator.Kind(With(new SenderCounts(10, Unread: 10), signal, count)).ShouldBe(expected);
 
     [Fact]
-    public void Headers_and_list_unsubscribe_add_up_towards_bulk() =>
-        SenderStatsCalculator.Kind(new SenderCounts(10, Unread: 10, ListUnsubscribe: 4, BulkHeader: 4)).ShouldBe(SenderKind.Bulk);
+    public void A_message_with_both_headers_counts_once_towards_bulk() =>
+        SenderStatsCalculator.Kind(new SenderCounts(10, Unread: 10, ListUnsubscribe: 4, BulkHeader: 4, BulkOrListUnsubscribe: 4))
+            .ShouldBe(SenderKind.Unknown);
 
     [Fact]
     public void Promotions_and_social_add_up_towards_bulk() =>
@@ -62,8 +61,7 @@ public sealed class SenderStatsCalculatorTests
 
     private static SenderCounts With(SenderCounts c, string signal, int count) => signal switch
     {
-        nameof(SenderCounts.BulkHeader) => c with { BulkHeader = count },
-        nameof(SenderCounts.ListUnsubscribe) => c with { ListUnsubscribe = count },
+        nameof(SenderCounts.BulkOrListUnsubscribe) => c with { BulkOrListUnsubscribe = count },
         nameof(SenderCounts.Promotions) => c with { Promotions = count },
         nameof(SenderCounts.Social) => c with { Social = count },
         _ => throw new ArgumentOutOfRangeException(nameof(signal)),

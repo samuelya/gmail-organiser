@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
@@ -97,6 +98,50 @@ public sealed class SenderStatsRebuildJobTests(ApiFactory factory, PostgresFixtu
         (await db.Senders.CountAsync(s => s.StatsAt == null, Ct)).ShouldBe(0);
     }
 
+    [Fact]
+    public async Task An_enqueue_reuses_only_a_queued_unstarted_rebuild_that_covers_its_senders()
+    {
+        await using var db = postgres.CreateDbContext();
+        var time = TimeProvider.System;
+
+        var scoped = await SenderStatsRebuildJob.EnqueueAsync(db, time, [Mixed, Human], Ct);
+        (await SenderStatsRebuildJob.EnqueueAsync(db, time, [Human], Ct)).ShouldBe(scoped);
+        var other = await SenderStatsRebuildJob.EnqueueAsync(db, time, [Bulk], Ct);
+        other.ShouldNotBe(scoped);
+
+        var full = await SenderStatsRebuildJob.EnqueueAsync(db, time, null, Ct);
+        full.ShouldNotBe(scoped);
+        (await SenderStatsRebuildJob.EnqueueAsync(db, time, null, Ct)).ShouldBe(full);
+
+        // A running (or paused) rebuild may have passed the changed senders already: a follow-up queues behind it.
+        await db.Jobs.Where(j => j.Id == full)
+            .ExecuteUpdateAsync(s => s.SetProperty(j => j.Status, JobStatus.Running).SetProperty(j => j.StartedAt, time.GetUtcNow()), Ct);
+        var followUp = await SenderStatsRebuildJob.EnqueueAsync(db, time, null, Ct);
+        followUp.ShouldNotBe(full);
+        (await SenderStatsRebuildJob.EnqueueAsync(db, time, [Bulk, Mixed], Ct)).ShouldBe(followUp);
+
+        var cursor = (await db.Jobs.AsNoTracking().SingleAsync(j => j.Id == scoped, Ct)).Cursor!;
+        JsonSerializer.Deserialize<SenderStatsRebuildCursor>(cursor, JsonSerializerOptions.Web)!.Addresses
+            .ShouldBe([Human, Mixed]);
+    }
+
+    [Fact]
+    public async Task A_scoped_rebuild_writes_only_its_senders()
+    {
+        await SeedAsync();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await SenderStatsRebuildJob.EnqueueAsync(db, TimeProvider.System, [Human, "nobody@example.com"], Ct);
+        }
+
+        await RunNextAsync();
+
+        await using var check = postgres.CreateDbContext();
+        var rebuilt = await check.Senders.AsNoTracking().Where(s => s.StatsAt != null).Select(s => s.Address).ToListAsync(Ct);
+        rebuilt.ShouldBe([Human]);
+        (await check.Senders.AsNoTracking().SingleAsync(s => s.Address == Human, Ct)).Kind.ShouldBe(SenderKind.Human);
+    }
+
     private async Task AssertStatsAsync(Guid jobId)
     {
         await using var db = postgres.CreateDbContext();
@@ -109,18 +154,20 @@ public sealed class SenderStatsRebuildJobTests(ApiFactory factory, PostgresFixtu
         var senders = await db.Senders.AsNoTracking().ToDictionaryAsync(s => s.Address, Ct);
         var human = senders[Human];
         (human.Kind, human.RepliedCount, human.UnreadCount, human.StarredCount).ShouldBe((SenderKind.Human, 2, 1, 1));
+        // Set later by an earlier chunk (Gmail lists newest first), first_seen_at moved back to the oldest message.
         human.FirstSeenAt.ShouldBe(Start.AddDays(1));
 
         var bulk = senders[Bulk];
         (bulk.Kind, bulk.UnreadCount, bulk.ListUnsubscribeCount, bulk.BulkHeaderCount, bulk.PromotionsCount, bulk.RepliedCount)
             .ShouldBe((SenderKind.Bulk, 100, 100, 80, 100, 0));
-        // The deleted message is not counted, and first_seen_at, once set, is moved neither by the updater nor the rebuild.
+        // The deleted message is not counted, and first_seen_at never moves later, in the updater or the rebuild.
         bulk.StarredCount.ShouldBe(0);
         bulk.FirstSeenAt.ShouldBe(Start.AddDays(-30));
 
         var mixed = senders[Mixed];
-        (mixed.Kind, mixed.PromotionsCount, mixed.PrimaryCount, mixed.UpdatesCount, mixed.SocialCount, mixed.ForumsCount)
-            .ShouldBe((SenderKind.Mixed, 4, 3, 3, 0, 1));
+        // A reply deleted in Gmail does not make the thread replied.
+        (mixed.Kind, mixed.PromotionsCount, mixed.PrimaryCount, mixed.UpdatesCount, mixed.SocialCount, mixed.ForumsCount, mixed.RepliedCount)
+            .ShouldBe((SenderKind.Mixed, 4, 3, 3, 0, 1, 0));
         mixed.BulkHeaderCount.ShouldBe(0);
 
         senders[Me].Kind.ShouldBe(SenderKind.Human);
@@ -181,7 +228,8 @@ public sealed class SenderStatsRebuildJobTests(ApiFactory factory, PostgresFixtu
             .. Enumerable.Repeat(MessageCategory.Promotions, 4), .. Enumerable.Repeat(MessageCategory.Primary, 3),
             .. Enumerable.Repeat(MessageCategory.Updates, 3), MessageCategory.Forums,
         ];
-        db.Messages.AddRange(mixed.Select((c, i) => Message(Mixed, Start.AddDays(i), c, null, [FakeLabel.Unread])));
+        db.Messages.AddRange(mixed.Select((c, i) => Message(Mixed, Start.AddDays(i), c, i == 0 ? "t-mixed" : null, [FakeLabel.Unread])));
+        db.Messages.Add(Message(Me, Start.AddDays(1), null, "t-mixed", [FakeLabel.Sent], m => m.DeletedInGmail = true));
 
         for (var i = 0; i < FillerSenders; i++)
         {
@@ -192,16 +240,22 @@ public sealed class SenderStatsRebuildJobTests(ApiFactory factory, PostgresFixtu
         await db.SaveChangesAsync(Ct);
 
         // The fetch's sender update creates the rows and sets first_seen_at; the bulk sender's was set earlier (before
-        // its oldest message was deleted), which the rebuild must keep.
+        // its oldest message was deleted), which the rebuild must keep; the human's was set too late, which it lowers.
         var addresses = await db.Messages.Select(m => m.FromAddress).Distinct().ToListAsync(Ct);
-        await db.Senders.AddAsync(new SenderRow
-        {
-            Address = Bulk, Domain = "shop.example.com", CanonicalAddress = Bulk, CanonicalDomain = "shop.example.com",
-            FirstSeenAt = Start.AddDays(-30), UpdatedAt = Start,
-        }, Ct);
+        db.Senders.AddRange(Sender(Bulk, Start.AddDays(-30)), Sender(Human, Start.AddDays(4)));
         await db.SaveChangesAsync(Ct);
         await new SenderStatsUpdater(db, TimeProvider.System).UpdateAsync(addresses, Ct);
     }
+
+    private static SenderRow Sender(string address, DateTimeOffset firstSeen) => new()
+    {
+        Address = address,
+        Domain = address.Split('@')[1],
+        CanonicalAddress = address,
+        CanonicalDomain = address.Split('@')[1],
+        FirstSeenAt = firstSeen,
+        UpdatedAt = Start,
+    };
 
     private MessageRow Message(
         string from, DateTimeOffset date, MessageCategory? category, string? thread, string[] labels, Action<MessageRow>? configure = null)
