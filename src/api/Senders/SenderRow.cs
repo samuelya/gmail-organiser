@@ -25,6 +25,27 @@ public sealed class SenderRow
     public int AnalysedCount { get; set; }
     public int AppliedCount { get; set; }
     public DateTimeOffset? LastSeenAt { get; set; }
+
+    /// <summary>The oldest live message's date when the row's stats first saw one; never moves later.</summary>
+    public DateTimeOffset? FirstSeenAt { get; set; }
+
+    // Engagement stats over live messages, written by SenderStatsRebuildJob (stale until its next run).
+    public int UnreadCount { get; set; }
+    public int RepliedCount { get; set; }
+    public int StarredCount { get; set; }
+    public int ListUnsubscribeCount { get; set; }
+    public int BulkHeaderCount { get; set; }
+    public int PrimaryCount { get; set; }
+    public int PromotionsCount { get; set; }
+    public int SocialCount { get; set; }
+    public int UpdatesCount { get; set; }
+    public int ForumsCount { get; set; }
+
+    /// <summary>The Stage-0 classification (<see cref="SenderStatsCalculator.Kind"/>) of the counts above.</summary>
+    public SenderKind Kind { get; set; }
+
+    /// <summary>When <see cref="SenderStatsRebuildJob"/> last wrote the engagement stats; null until it has.</summary>
+    public DateTimeOffset? StatsAt { get; set; }
     public bool Allowlisted { get; set; }
 
     /// <summary>When the user last unsubscribed (one-click by the api, or a link/mailto marked by hand).</summary>

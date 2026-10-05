@@ -15,6 +15,7 @@ public static class SendersEndpoints
         group.MapGet("/", ListAsync);
         group.MapPut("/{address}/allowlist", SetAllowlistAsync);
         group.MapPost("/canonical/backfill", StartCanonicalBackfillAsync);
+        group.MapPost("/stats/rebuild", StartStatsRebuildAsync);
         return endpoints;
     }
 
@@ -64,6 +65,13 @@ public static class SendersEndpoints
         return sender is null
             ? TypedResults.Problem(statusCode: StatusCodes.Status404NotFound, title: "Sender not found")
             : TypedResults.Ok(await SenderQuery.ToDtoAsync(sender, await DomainsAsync(settings, ct), db, ct));
+    }
+
+    /// <summary>Queues the sender stats rebuild, or returns the one already queued, running or paused (never 409).</summary>
+    private static async Task<Accepted<JobDto>> StartStatsRebuildAsync(IJobService jobs, CancellationToken ct)
+    {
+        var (job, _) = await SenderStatsRebuildJob.EnqueueAsync(jobs, ct);
+        return TypedResults.Accepted($"/api/jobs/{job.Id}", job);
     }
 
     /// <summary>Queues the canonical sender backfill; 409 while one is queued, running or paused.</summary>

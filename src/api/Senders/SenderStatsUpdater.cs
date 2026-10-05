@@ -8,8 +8,9 @@ namespace GmailOrganiser.Senders;
 /// <summary>
 /// Keeps <c>senders</c> current for the addresses a fetch just touched: missing rows are inserted, then
 /// <c>total_count</c>, <c>analysed_count</c>, <c>last_seen_at</c> and <c>display_name</c> are recomputed from
-/// <c>messages</c> (ignoring <c>deleted_in_gmail</c>) in one statement, so replaying a chunk never double-counts and
-/// <c>analysed_count</c> never exceeds <c>total_count</c>. <c>applied_count</c> belongs to analysis and is left alone.
+/// <c>messages</c> and a null <c>first_seen_at</c> is filled (ignoring <c>deleted_in_gmail</c>) in one statement, so
+/// replaying a chunk never double-counts and <c>analysed_count</c> never exceeds <c>total_count</c>. <c>applied_count</c>
+/// belongs to analysis and the engagement stats to <see cref="SenderStatsRebuildJob"/>.
 /// The canonical fields (<see cref="RelayAddressDecoder"/>) are set in the insert; they are a pure function of the
 /// address, so only the canonical backfill rewrites them (<see cref="UpdateCanonicalAsync"/>).
 /// </summary>
@@ -54,6 +55,9 @@ public sealed class SenderStatsUpdater(AppDbContext db, TimeProvider time)
                 .SetProperty(
                     s => s.LastSeenAt,
                     s => db.Messages.Where(m => m.FromAddress == s.Address && !m.DeletedInGmail).Max(m => (DateTimeOffset?)m.InternalDate))
+                .SetProperty(
+                    s => s.FirstSeenAt,
+                    s => s.FirstSeenAt ?? db.Messages.Where(m => m.FromAddress == s.Address && !m.DeletedInGmail).Min(m => (DateTimeOffset?)m.InternalDate))
                 .SetProperty(
                     s => s.DisplayName,
                     s => db.Messages

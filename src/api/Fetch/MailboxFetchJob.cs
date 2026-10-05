@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
@@ -41,6 +42,7 @@ public sealed class MailboxFetchJob(
     ISettingsStore settings,
     MailboxTotalsReader totalsReader,
     AppDbContext db,
+    IJobService jobs,
     TimeProvider time) : IJobHandler
 {
     public const string JobType = FetchJobTypes.Mailbox;
@@ -78,6 +80,7 @@ public sealed class MailboxFetchJob(
                 // One transaction: a failure before the commit leaves fetch_state, the run's ids and the job cursor
                 // at the last checkpoint, so the re-run repeats only the final chunk.
                 await ctx.CompleteAsync(cursor, progress, c => SaveStateAsync(cursor, c), ct);
+                await SenderStatsRebuildJob.EnqueueAsync(jobs, ct);
                 return;
             }
 

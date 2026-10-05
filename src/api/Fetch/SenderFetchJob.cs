@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 
 namespace GmailOrganiser.Fetch;
@@ -37,7 +38,8 @@ public sealed class SenderFetchJob(
     IGmailClient gmail,
     MessageFetchPipeline pipeline,
     LocalAccountClaim accountClaim,
-    ISettingsStore settings) : IJobHandler
+    ISettingsStore settings,
+    IJobService jobs) : IJobHandler
 {
     public const string JobType = FetchJobTypes.Sender;
     public const string Queue = JobQueues.Fetch;
@@ -76,6 +78,7 @@ public sealed class SenderFetchJob(
             if (chunk.NextPageToken is null)
             {
                 await ctx.CompleteAsync(cursor, new JobProgress(cursor.Fetched, cursor.Fetched, CompletedMessage), _ => Task.CompletedTask, ct);
+                await SenderStatsRebuildJob.EnqueueAsync(jobs, ct);
                 return;
             }
 

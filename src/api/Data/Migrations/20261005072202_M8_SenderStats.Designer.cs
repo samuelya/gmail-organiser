@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -13,9 +14,11 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005072202_M8_SenderStats")]
+    partial class M8_SenderStats
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -55,10 +58,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("Error")
                         .HasColumnType("text")
                         .HasColumnName("error");
-
-                    b.Property<int>("EscalatedCalls")
-                        .HasColumnType("integer")
-                        .HasColumnName("escalated_calls");
 
                     b.Property<int>("FailedMessages")
                         .HasColumnType("integer")
@@ -161,10 +160,6 @@ namespace GmailOrganiser.Data.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("status");
-
-                    b.Property<int>("TriageCalls")
-                        .HasColumnType("integer")
-                        .HasColumnName("triage_calls");
 
                     b.HasKey("Id")
                         .HasName("pk_analysis_runs");

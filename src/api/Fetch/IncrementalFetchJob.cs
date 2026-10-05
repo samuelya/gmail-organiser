@@ -1,6 +1,7 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Senders;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Fetch;
@@ -96,6 +97,7 @@ public sealed partial class IncrementalFetchJob(
                 var newHistoryId = cursor.NewHistoryId!;
                 var total = cursor.Touched + cursor.Deleted;
                 await ctx.CompleteAsync(cursor, progress with { Total = total }, c => SaveHistoryIdAsync(newHistoryId, c), ct);
+                await SenderStatsRebuildJob.EnqueueAsync(jobs, ct);
                 return;
             }
 
