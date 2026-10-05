@@ -196,22 +196,22 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJob
     }
 
     /// <summary>
-    /// Why an approved policy cannot apply, or null when it can: every approved rule, and the default unless the sender
-    /// is mixed (only a non-mixed sender's default or transactional guard uses it), needs a topic label Gmail accepts,
-    /// because the apply labels every message it touches.
+    /// Why an approved policy cannot apply, or null when it can: a mixed sender's approved rules, or a non-mixed
+    /// sender's default (only <see cref="PolicyMatcher"/> on a mixed sender uses rules), need a topic label Gmail
+    /// accepts, because the apply labels every message it touches.
     /// </summary>
     public static string? Unappliable(SenderPolicyRow policy)
     {
-        var rule = policy.Rules.Where(r => r.Status == PolicyStatus.Approved).OrderBy(r => r.Position)
-            .FirstOrDefault(r => !LabelResolver.IsValid(r.TopicLabel));
-        if (rule is not null)
+        if (!policy.IsMixed)
         {
-            return $"Rule '{rule.Name}' has no usable topic label; set one before applying.";
+            return LabelResolver.IsValid(policy.TopicLabel ?? "")
+                ? null
+                : "The policy's default has no usable topic label; set one before applying.";
         }
 
-        return !policy.IsMixed && !LabelResolver.IsValid(policy.TopicLabel ?? "")
-            ? "The policy's default has no usable topic label; set one before applying."
-            : null;
+        var rule = policy.Rules.Where(r => r.Status == PolicyStatus.Approved).OrderBy(r => r.Position)
+            .FirstOrDefault(r => !LabelResolver.IsValid(r.TopicLabel));
+        return rule is null ? null : $"Rule '{rule.Name}' has no usable topic label; set one before applying.";
     }
 
     /// <summary>A proposed policy becomes rejected; its rules are left as they are.</summary>
