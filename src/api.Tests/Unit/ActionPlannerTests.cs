@@ -71,6 +71,16 @@ public sealed class ActionPlannerTests
     }
 
     [Fact]
+    public void A_deletable_suggestion_whose_topic_is_the_delete_label_adds_it_once()
+    {
+        var plan = Plan(Suggestion(topic: "Synthetic Delete", toBeDeleted: true), Message("INBOX"));
+
+        plan.Add.ShouldBe(["L3"]);
+        plan.Remove.ShouldBe(["INBOX"]);
+        plan.Note.ShouldBeNull();
+    }
+
+    [Fact]
     public void Labels_already_in_place_are_dropped_and_user_flags_are_never_touched()
     {
         var plan = Plan(Suggestion(), Message("L1", "STARRED", "UNREAD"));
