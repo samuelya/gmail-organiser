@@ -1,5 +1,12 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  DestroyRef,
+  inject,
+  signal,
+} from '@angular/core';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormGroup, ReactiveFormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
@@ -12,6 +19,7 @@ import {
   BulkApproveResponse,
   percent,
   ReviewSenderDetailDto,
+  SuggestionDto,
 } from './review.models';
 import { ReviewService } from './review.service';
 
@@ -23,30 +31,51 @@ export interface BulkApproveDialogData {
   step: number;
   /** The selected sender, offered as "this sender only". */
   senderAddress: string | null;
-  /** Listed suggestions bulk approve skips while the taxonomy is locked (`newLabelPending`). */
-  newLabelPending: number;
+  /** Bulk approve skips suggestions that propose a label Gmail lacks. */
+  taxonomyLocked: boolean;
+  /**
+   * All of the selected sender's pending `newLabelPending` suggestions; null when the listed page may not
+   * hold them all, so no exact count can be given.
+   */
+  newLabelPending: readonly SuggestionDto[] | null;
 }
 
 /**
- * The dialog's data: the threshold from settings, and the excluded new-label suggestions counted from the
- * selected sender's listed groups, since the bulk approve response has no such count.
+ * The dialog's data: the threshold from settings, and the selected sender's pending new-label suggestions when
+ * its listed groups hold every pending one (one page, no truncated group), since the API has no excluded count.
+ * `listsAll` says the detail is the unfiltered pending tab.
  */
 export function bulkApproveData(
-  settings: { bulkApproveThreshold: number } | null,
+  settings: { bulkApproveThreshold: number; taxonomyLocked?: boolean } | null,
   senderAddress: string | null,
   detail: ReviewSenderDetailDto | null,
+  listsAll: boolean,
 ): BulkApproveDialogData {
   const limits = ANALYSIS_LIMITS.bulkApproveThreshold;
-  const members = detail?.groups.flatMap((g) => g.members) ?? [];
+  const complete =
+    !!detail &&
+    listsAll &&
+    detail.totalGroups <= detail.groups.length &&
+    !detail.groups.some((g) => g.truncated);
   return {
     threshold: settings?.bulkApproveThreshold ?? limits.max,
     min: limits.min,
     max: limits.max,
     step: limits.step,
     senderAddress,
-    newLabelPending: members.filter((m) => m.newLabelPending).length,
+    taxonomyLocked: settings?.taxonomyLocked ?? false,
+    newLabelPending:
+      complete && detail
+        ? detail.groups
+            .flatMap((g) => g.members)
+            .filter((m) => m.newLabelPending && m.status === 'pending')
+        : null,
   };
 }
+
+/** The exclusion sentence when the count is unknown. */
+export const NEW_LABEL_EXCLUDED =
+  'Suggestions with new labels are excluded while the taxonomy is locked.';
 
 /** "n suggestions with new labels are excluded while the taxonomy is locked"; null for none. */
 export function newLabelExclusionText(count: number): string | null {
@@ -54,6 +83,23 @@ export function newLabelExclusionText(count: number): string | null {
   const subject =
     count === 1 ? 'suggestion with a new label is' : 'suggestions with new labels are';
   return `${count} ${subject} excluded while the taxonomy is locked.`;
+}
+
+/**
+ * The exclusion sentence for the form: a count only for "Only this sender" with every new-label suggestion
+ * known, matched like the API (confidence at least the threshold; model suggestions only unless derived and
+ * memory are included). Null when the taxonomy is unlocked or none would be excluded.
+ */
+export function exclusionFor(
+  data: BulkApproveDialogData,
+  form: { threshold: number; includeDerived: boolean; senderOnly: boolean },
+): string | null {
+  if (!data.taxonomyLocked) return null;
+  if (!form.senderOnly || !data.senderAddress || !data.newLabelPending) return NEW_LABEL_EXCLUDED;
+  const excluded = data.newLabelPending.filter(
+    (m) => m.confidence >= form.threshold && (form.includeDerived || m.source === 'llm'),
+  );
+  return newLabelExclusionText(excluded.length);
 }
 
 /** "Bulk approve…": threshold, derived/memory and sender scope; shows what the API approved and skipped. */
@@ -102,7 +148,7 @@ export function newLabelExclusionText(count: number): string | null {
           }
         </form>
       }
-      @if (exclusion; as text) {
+      @if (exclusion(); as text) {
         <p class="m-0 mt-3" data-testid="bulk-new-label-excluded">
           {{ text }} Approve them individually.
         </p>
@@ -141,17 +187,16 @@ export class BulkApproveDialog {
   });
   readonly sending = signal(false);
   readonly result = signal<BulkApproveResponse | null>(null);
-  readonly thresholdValue = signal(this.data.threshold);
-  readonly exclusion = newLabelExclusionText(this.data.newLabelPending);
-
-  constructor() {
-    this.form.controls.threshold.valueChanges
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((v) => this.thresholdValue.set(v));
-  }
+  private readonly value = toSignal(
+    this.form.valueChanges.pipe(map(() => this.form.getRawValue())),
+    {
+      initialValue: this.form.getRawValue(),
+    },
+  );
+  readonly exclusion = computed(() => exclusionFor(this.data, this.value()));
 
   thresholdText(): string {
-    return percent(this.thresholdValue());
+    return percent(this.value().threshold);
   }
 
   /** The request the form describes. */

@@ -612,6 +612,20 @@ describe('ReviewPage', () => {
     expect(q('reanalyse-selection')!.textContent).toContain('(0)');
   });
 
+  it('unticks members the mail-type filter hides', async () => {
+    const { fixture, q, expand, tick, settle } = await render(noPattern, 'off', [
+      group({ members: [member('a', { mailType: 'newsletter' })] }),
+      group({ groupKey: 'key-2', members: [member('c', { mailType: 'receipt' })] }),
+    ]);
+    await expand();
+    await tick(0);
+    expect(q('reanalyse-selection')!.textContent).toContain('(1)');
+    fixture.componentInstance.mailTypes.set(['receipt']);
+    await settle();
+    await settle();
+    expect(fixture.componentInstance.selection().size).toBe(0);
+  });
+
   it('both selection buttons are disabled while a re-analyse is starting', async () => {
     const { q, expand, tick, settle } = await render();
     await expand();

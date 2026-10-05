@@ -148,11 +148,15 @@
         />
       } @empty {
         <p class="muted m-0" data-testid="detail-empty">
-          No {{ status() }} {{ reanalysed() ? 're-analysed ' : '' }}suggestions
-          {{ mailTypes.selected().length ? 'of the selected mail types ' : '' }}for this sender.
+          {{ mailTypes.emptyText(status(), reanalysed(), d.totalGroups > d.pageSize) }}
         </p>
       }
       @if (d.totalGroups > d.pageSize) {
+        @if (mailTypes.selected().length) {
+          <p class="muted m-0" data-testid="mail-type-page-note">
+            The mail-type filter narrows this page; the pages count all of this sender's groups.
+          </p>
+        }
         <mat-paginator
           [length]="d.totalGroups"
           [pageIndex]="d.page - 1"

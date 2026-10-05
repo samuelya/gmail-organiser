@@ -265,6 +265,11 @@ export class ReviewPage {
     effect(() => {
       if (this.jobs.reconnects() > 0) untracked(() => this.refresh());
     });
+    // Hidden members don't stay ticked: the selection actions would act on rows the user can't see.
+    effect(() => {
+      this.mailTypes.selected();
+      untracked(() => this.pruneSelection(this.detail()));
+    });
   }
 
   onStatus(status: ReviewStatus): void {
@@ -381,7 +386,8 @@ export class ReviewPage {
   }
 
   bulkApprove(): void {
-    const data = bulkApproveData(this.settings(), this.selected(), this.detail());
+    const listsAll = this.status() === 'pending' && !this.reanalysed();
+    const data = bulkApproveData(this.settings(), this.selected(), this.detail(), listsAll);
     openBulkApprove(this.dialog, data)
       .pipe(
         filter((changed) => changed),
@@ -468,13 +474,10 @@ export class ReviewPage {
     this.version.update((v) => v + 1);
   }
 
-  /** Ticks only survive a reload on members still shown: an applied or moved member drops out. */
+  /** Ticks only survive on members still shown: an applied, moved or filtered-out member drops out. */
   private pruneSelection(detail: ReviewSenderDetailDto | null): void {
-    const current = this.selection();
-    if (current.size === 0) return;
-    const shown = new Set(detail?.groups.flatMap((g) => g.members.map((m) => m.id)) ?? []);
-    const kept = [...current].filter((id) => shown.has(id));
-    if (kept.length !== current.size) this.selection.set(new Set(kept));
+    const kept = this.mailTypes.kept(this.selection(), detail?.groups ?? []);
+    if (kept) this.selection.set(kept);
   }
 
   private resetDetail(): void {
