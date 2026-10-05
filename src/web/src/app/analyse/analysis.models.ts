@@ -2,8 +2,11 @@ import { ParamMap } from '@angular/router';
 import { JobDto, JobProgress, progressPercent } from '../core/jobs.models';
 import { humanise } from '../dashboard/fetch.models';
 
-/** The scopes the Analyse page starts; the API also has `messages`, used by Review. */
-export type AnalysisScope = 'inbox' | 'all' | 'labelled' | 'sender';
+/**
+ * The scopes the Analyse page starts; the API also has `messages`, used by Review. `top_senders` counts senders
+ * (one policy proposal each), and its sender address is optional.
+ */
+export type AnalysisScope = 'inbox' | 'all' | 'labelled' | 'sender' | 'top_senders';
 
 /** `AnalysisRunStatus` as the API writes it; a paused job's run stays `running`. */
 export type AnalysisRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -24,7 +27,15 @@ export interface GroupPreviewDto {
   representatives: number;
 }
 
-/** `GroupingPreviewDto` from `POST /api/analysis/preview`. */
+/** `PolicyCandidateDto`: a sender a top senders run would propose a policy for; `scopeKey` is an address or list id. */
+export interface PolicyCandidateDto {
+  scope: 'sender' | 'list';
+  scopeKey: string;
+  displayName: string | null;
+  count: number;
+}
+
+/** `GroupingPreviewDto` from `POST /api/analysis/preview`; `senders` is set for the top senders scope. */
 export interface GroupingPreviewDto {
   messages: number;
   skipped: number;
@@ -34,6 +45,7 @@ export interface GroupingPreviewDto {
   estimatedFromMemory: number;
   embeddingsAvailable: boolean;
   largestGroups: GroupPreviewDto[];
+  senders?: PolicyCandidateDto[] | null;
 }
 
 /** `analyse` writes suggestions; `compare` stores its results as alternatives next to them (a re-analysis). */
@@ -65,6 +77,13 @@ export interface AnalysisRunDto {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  promptTokens: number;
+  completionTokens: number;
+  llmSeconds: number;
+  /** Model calls whose prompt filled at least 90 % of the context window. */
+  nearContextLimit: number;
+  /** Sender policies a top senders run stored as proposed. */
+  policiesProposed: number;
 }
 
 /** `AnalysisSummaryDto` from `GET /api/analysis/summary`. */
@@ -92,6 +111,10 @@ export type CompareRunRequest = { suggestionIds: string[] } | { runId: string };
 export const ANALYSIS_RUN_JOB = 'analysis_run';
 
 export const COUNT_PRESETS: readonly number[] = [10, 20, 50];
+export const TOP_SENDERS: AnalysisScope = 'top_senders';
+/** The API's sender range for the top senders scope; its count starts at the default. */
+export const MAX_TOP_SENDERS = 100;
+export const DEFAULT_TOP_SENDERS = 10;
 /** Finished runs shown on the page. */
 export const FINISHED_RUNS_SHOWN = 20;
 /** Active runs requested: the API's maximum. It lists newest first, so a full answer may miss the oldest. */
@@ -108,6 +131,11 @@ export const SCOPE_OPTIONS: readonly { value: AnalysisScope; label: string; help
     help: 'Mail that already has a label and has not been analysed',
   },
   { value: 'sender', label: 'Sender' },
+  {
+    value: 'top_senders',
+    label: 'Top senders',
+    help: 'Proposes a policy for each of the senders and lists with the most mail',
+  },
 ];
 const SCOPES: readonly AnalysisScope[] = SCOPE_OPTIONS.map((o) => o.value);
 const SCOPE_LABELS: Record<string, string> = {
@@ -133,6 +161,23 @@ export function runTarget(
   }
   const label = scopeLabel(run.scope);
   return run.senderAddress ? `${label}: ${run.senderAddress}` : label;
+}
+
+/** "10 senders" for a top senders run, "20 emails" otherwise: what the run's count counts. */
+export function requestedText(run: Pick<AnalysisRunDto, 'scope' | 'requestedCount'>): string {
+  const n = run.requestedCount;
+  const unit =
+    run.scope === TOP_SENDERS ? (n === 1 ? 'sender' : 'senders') : n === 1 ? 'email' : 'emails';
+  return `${n.toLocaleString()} ${unit}`;
+}
+
+/** "1,200 prompt + 300 completion tokens · 12.5 s LLM", or `null` before the run made a model call. */
+export function usageText(
+  run: Pick<AnalysisRunDto, 'promptTokens' | 'completionTokens' | 'llmSeconds'>,
+): string | null {
+  if (run.promptTokens === 0 && run.completionTokens === 0 && run.llmSeconds === 0) return null;
+  const seconds = run.llmSeconds.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return `${run.promptTokens.toLocaleString()} prompt + ${run.completionTokens.toLocaleString()} completion tokens · ${seconds} s LLM`;
 }
 
 /**

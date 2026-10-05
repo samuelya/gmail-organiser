@@ -16,16 +16,28 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar } from '@angular/material/snack-bar';
+import { RouterLink } from '@angular/router';
 import { catchError, finalize, of } from 'rxjs';
 import { sentMessage } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
 import { JobsService } from '../core/jobs.service';
 import { humanise } from '../dashboard/fetch.models';
 import { SettingsService } from '../settings/settings.service';
-import { activeRunView, AnalysisRunDto, runTarget, savingsText } from './analysis.models';
+import {
+  activeRunView,
+  AnalysisRunDto,
+  requestedText,
+  runTarget,
+  savingsText,
+  TOP_SENDERS,
+  usageText,
+} from './analysis.models';
 import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compare-run';
 
-/** Active runs with live progress and Cancel, then the finished runs with their counters and savings. */
+/**
+ * Active runs with live progress and Cancel, then the finished runs with their counters, savings, model usage and,
+ * for top senders runs, the policies proposed.
+ */
 @Component({
   selector: 'app-run-list',
   imports: [
@@ -36,6 +48,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
     MatIconModule,
     MatProgressBarModule,
     MatTooltipModule,
+    RouterLink,
   ],
   template: `
     <section class="flex flex-col gap-3" aria-labelledby="runs-active">
@@ -44,7 +57,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
         <div class="flex flex-col gap-1" data-testid="active-run">
           <div class="flex flex-wrap items-center gap-2">
             <span class="min-w-0 flex-1 break-all">
-              {{ target(v.run) }} · {{ v.run.requestedCount | number }} emails
+              {{ target(v.run) }} · {{ requested(v.run) }}
             </span>
             <mat-chip-set>
               <mat-chip disableRipple data-testid="run-status">{{ label(v.status) }}</mat-chip>
@@ -94,7 +107,17 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <span class="min-w-0 flex-1" data-testid="run-savings">{{ savings(run) }}</span>
-            @if (run.messagesCovered > 0) {
+            @if (run.policiesProposed > 0) {
+              <a
+                mat-button
+                routerLink="/policies"
+                [queryParams]="{ status: 'proposed' }"
+                data-testid="run-review-policies"
+              >
+                Review policies
+              </a>
+            }
+            @if (run.messagesCovered > 0 && !isTopSenders(run)) {
               <button
                 mat-button
                 type="button"
@@ -108,7 +131,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
                 Re-analyse
               </button>
             }
-            @if (claudeEnabled() && run.groups > 0) {
+            @if (claudeEnabled() && run.groups > 0 && !isTopSenders(run)) {
               <button
                 mat-button
                 type="button"
@@ -130,7 +153,29 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
             @if (run.skippedMessages > 0) {
               · {{ run.skippedMessages | number }} skipped
             }
+            @if (isTopSenders(run)) {
+              <span data-testid="run-policies">
+                · {{ run.policiesProposed | number }}
+                {{ run.policiesProposed === 1 ? 'policy' : 'policies' }} proposed
+              </span>
+            }
           </span>
+          @if (usage(run); as u) {
+            <span class="muted flex flex-wrap items-center gap-1 text-sm" data-testid="run-usage">
+              {{ u }}
+              @if (run.nearContextLimit > 0) {
+                <mat-icon
+                  class="warn icon-sm"
+                  tabindex="0"
+                  role="img"
+                  [attr.aria-label]="contextWarning(run)"
+                  [matTooltip]="contextWarning(run)"
+                  data-testid="run-near-context"
+                  >warning</mat-icon
+                >
+              }
+            </span>
+          }
           @if (run.error) {
             <span class="error flex items-center gap-1 text-sm" role="note" data-testid="run-error">
               <mat-icon aria-hidden="true">error</mat-icon>{{ run.error }}
@@ -155,6 +200,14 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
     }
     .run + .run {
       border-top: 1px solid var(--mat-sys-outline-variant);
+    }
+    .warn {
+      color: var(--mat-sys-error);
+    }
+    .icon-sm {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
     }
     mat-chip.failed {
       --mat-chip-label-text-color: var(--mat-sys-error);
@@ -225,6 +278,23 @@ export class RunList {
 
   target(run: AnalysisRunDto): string {
     return runTarget(run);
+  }
+
+  requested(run: AnalysisRunDto): string {
+    return requestedText(run);
+  }
+
+  isTopSenders(run: AnalysisRunDto): boolean {
+    return run.scope === TOP_SENDERS;
+  }
+
+  usage(run: AnalysisRunDto): string | null {
+    return usageText(run);
+  }
+
+  contextWarning(run: AnalysisRunDto): string {
+    const n = run.nearContextLimit;
+    return `${n.toLocaleString()} ${n === 1 ? 'model call' : 'model calls'} filled at least 90 % of the model's context window: part of the prompt may have been cut off`;
   }
 
   label(status: string): string {

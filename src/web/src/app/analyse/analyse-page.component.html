@@ -24,9 +24,11 @@
             }
           </div>
 
-          @if (isSender()) {
+          @if (showSender()) {
             <mat-form-field subscriptSizing="dynamic">
-              <mat-label>Sender address</mat-label>
+              <mat-label>{{
+                isTopSenders() ? 'Sender address (optional)' : 'Sender address'
+              }}</mat-label>
               <input
                 matInput
                 formControlName="sender"
@@ -40,12 +42,20 @@
                   <mat-option [value]="option">{{ option }}</mat-option>
                 }
               </mat-autocomplete>
-              <mat-hint>Type to search the fetched senders.</mat-hint>
+              <mat-hint>
+                @if (isTopSenders()) {
+                  Leave empty for the senders with the most mail, or type to search.
+                } @else {
+                  Type to search the fetched senders.
+                }
+              </mat-hint>
             </mat-form-field>
           }
 
           <div class="flex flex-col gap-2">
-            <span id="analyse-count" class="label">Emails to analyse</span>
+            <span id="analyse-count" class="label" data-testid="count-label">
+              {{ isTopSenders() ? 'Senders to analyse' : 'Emails to analyse' }}
+            </span>
             <div class="flex flex-wrap items-start gap-3">
               <mat-button-toggle-group
                 formControlName="preset"
@@ -65,18 +75,23 @@
                     matInput
                     type="number"
                     min="1"
-                    [max]="maxCount"
+                    [max]="maxCount()"
                     step="1"
                     formControlName="customCount"
                     data-testid="custom-count"
                   />
-                  <mat-hint>1–{{ maxCount }}</mat-hint>
+                  <mat-hint data-testid="count-hint">1–{{ maxCount() }}</mat-hint>
                   @if (form.controls.customCount.invalid) {
-                    <mat-error>A whole number from 1 to {{ maxCount }}.</mat-error>
+                    <mat-error>A whole number from 1 to {{ maxCount() }}.</mat-error>
                   }
                 </mat-form-field>
               }
             </div>
+            @if (isTopSenders()) {
+              <p class="muted m-0" data-testid="senders-hint">
+                1–{{ maxCount() }} senders, one model call each.
+              </p>
+            }
           </div>
 
           @if (noChatModel()) {
