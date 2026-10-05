@@ -18,49 +18,88 @@ public sealed class LearnedRuleProposer(AppDbContext db, ISettingsStore settings
 {
     public const string LearnedReason = "learned from an approved suggestion";
 
-    public async ValueTask ProposeAsync(SuggestionRow suggestion, MessageRow message, CancellationToken ct)
+    /// <summary>The covering approved mixed policy per message id, read under its row lock by <see cref="LockAsync"/>; null when nothing is learned.</summary>
+    private Dictionary<string, SenderPolicyRow?> covering = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Locks the approved mixed policies covering the approvals' messages in ascending id order, before any proposal, and
+    /// reads them and their rules under the lock. The lock serialises concurrent approvals for a policy, so the same match
+    /// is never added twice; the fixed order means two decisions over the same policies never deadlock (#420). The caller
+    /// holds the transaction; a later call replaces the policies read by an earlier one.
+    /// </summary>
+    public async ValueTask LockAsync(IEnumerable<(SuggestionRow Suggestion, MessageRow Message)> approvals, CancellationToken ct)
     {
-        if (suggestion.Source is not (SuggestionSource.Llm or SuggestionSource.Derived or SuggestionSource.Memory or SuggestionSource.Stage0)
-            || string.IsNullOrWhiteSpace(suggestion.TopicLabel))
+        var messages = approvals.Where(a => Learns(a.Suggestion)).Select(a => a.Message).DistinctBy(m => m.Id).ToList();
+        covering = new Dictionary<string, SenderPolicyRow?>(StringComparer.Ordinal);
+        if (messages.Count == 0)
         {
             return;
         }
 
-        var listId = GroupKey.NormaliseListId(message.ListId);
-        var candidates = await db.SenderPolicies.AsNoTracking().Include(p => p.Rules)
+        var addresses = messages.Select(m => m.CanonicalAddress).Distinct().ToList();
+        var listIds = messages.Select(m => GroupKey.NormaliseListId(m.ListId)).OfType<string>().Distinct().ToList();
+        var domains = messages.Select(m => m.CanonicalDomain).Distinct().ToList();
+        var candidates = await db.SenderPolicies.AsNoTracking()
             .Where(p => p.Status == PolicyStatus.Approved
-                && ((p.Scope == PolicyScope.Sender && p.ScopeKey == message.CanonicalAddress)
-                    || (p.Scope == PolicyScope.List && p.ScopeKey == listId)
-                    || (p.Scope == PolicyScope.Domain && p.ScopeKey == message.CanonicalDomain)))
+                && ((p.Scope == PolicyScope.Sender && addresses.Contains(p.ScopeKey))
+                    || (p.Scope == PolicyScope.List && listIds.Contains(p.ScopeKey))
+                    || (p.Scope == PolicyScope.Domain && domains.Contains(p.ScopeKey))))
+            .Select(p => new { p.Id, p.Scope, p.ScopeKey, p.IsMixed })
             .ToListAsync(ct);
 
         // The most specific policy is the one that covers the message; a non-mixed one leaves nothing to learn.
-        var policy = candidates.OrderBy(p => p.Scope switch { PolicyScope.Sender => 0, PolicyScope.List => 1, _ => 2 }).FirstOrDefault();
-        if (policy is not { IsMixed: true } || PolicyMatcher.FirstRule(message, policy, message.CanonicalAddress) is not null)
+        var chosen = messages.ToDictionary(m => m.Id, m => candidates
+            .Where(p => (p.Scope == PolicyScope.Sender && p.ScopeKey == m.CanonicalAddress)
+                || (p.Scope == PolicyScope.List && p.ScopeKey == GroupKey.NormaliseListId(m.ListId))
+                || (p.Scope == PolicyScope.Domain && p.ScopeKey == m.CanonicalDomain))
+            .OrderBy(p => p.Scope switch { PolicyScope.Sender => 0, PolicyScope.List => 1, _ => 2 })
+            .FirstOrDefault() is { IsMixed: true } p ? p.Id : (Guid?)null, StringComparer.Ordinal);
+        var ids = chosen.Values.OfType<Guid>().Distinct().Order().ToArray();
+        if (ids.Length > 0)
+        {
+            await db.Database
+                .SqlQuery<Guid>($"SELECT id AS \"Value\" FROM sender_policies WHERE id = ANY({ids}) ORDER BY id FOR UPDATE")
+                .ToListAsync(ct);
+        }
+
+        // Read again under the lock: a policy rejected or made single-label meanwhile learns nothing, and the stored rules
+        // (any status: a rejected one is not proposed again) include any another approval committed meanwhile.
+        var locked = await db.SenderPolicies.AsNoTracking().Include(p => p.Rules)
+            .Where(p => ids.Contains(p.Id) && p.Status == PolicyStatus.Approved && p.IsMixed)
+            .ToDictionaryAsync(p => p.Id, ct);
+        foreach (var (messageId, id) in chosen)
+        {
+            covering[messageId] = id is { } policyId ? locked.GetValueOrDefault(policyId) : null;
+        }
+    }
+
+    public async ValueTask ProposeAsync(SuggestionRow suggestion, MessageRow message, CancellationToken ct)
+    {
+        if (!Learns(suggestion))
         {
             return;
         }
 
-        var match = new RuleMatch
+        if (!covering.TryGetValue(message.Id, out var policy))
         {
-            SubjectTemplate = SubjectNormaliser.Template(message.Subject) is { Length: > 0 } template ? template : null,
-            Category = message.Category,
-        };
+            await LockAsync([(suggestion, message)], ct);
+            policy = covering[message.Id];
+        }
 
-        // The policy's row lock serialises concurrent approvals for its sender: the rules read after it include any rule
-        // another approval committed meanwhile, so the same match is never added twice. The callers hold a transaction.
-        var status = await db.Database
-            .SqlQuery<string>($"SELECT status AS \"Value\" FROM sender_policies WHERE id = {policy.Id} FOR UPDATE")
-            .ToListAsync(ct);
-        if (status is not [var locked] || SnakeCaseEnumConverter<PolicyStatus>.FromDb(locked) != PolicyStatus.Approved)
+        // A rule learns from a subject template (#421): without one only the category would remain, and the rule would
+        // take every other message of that category the policy's other rules miss.
+        var template = SubjectNormaliser.Template(message.Subject);
+        if (policy is null || string.IsNullOrWhiteSpace(template)
+            || PolicyMatcher.FirstRule(message, policy, message.CanonicalAddress) is not null)
         {
             return;
         }
 
-        // Stored rules of any status (a rejected one is not proposed again) and rules added earlier in this unit of work.
-        var stored = await db.SenderPolicyRules.AsNoTracking().Where(r => r.PolicyId == policy.Id).ToListAsync(ct);
-        var rules = stored.Concat(db.SenderPolicyRules.Local.Where(r => r.PolicyId == policy.Id)).ToList();
-        if (match.IsEmpty || rules.Any(r => SameMatch(r.Match, match)))
+        var match = new RuleMatch { SubjectTemplate = template, Category = message.Category };
+
+        // Rules added earlier in this unit of work too.
+        var rules = policy.Rules.Concat(db.SenderPolicyRules.Local.Where(r => r.PolicyId == policy.Id)).ToList();
+        if (rules.Any(r => SameMatch(r.Match, match)))
         {
             return;
         }
@@ -86,6 +125,10 @@ public sealed class LearnedRuleProposer(AppDbContext db, ISettingsStore settings
             db.SenderPolicyRules.Add(rule);
         }
     }
+
+    private static bool Learns(SuggestionRow suggestion) =>
+        suggestion.Source is (SuggestionSource.Llm or SuggestionSource.Derived or SuggestionSource.Memory or SuggestionSource.Stage0)
+        && !string.IsNullOrWhiteSpace(suggestion.TopicLabel);
 
     private static bool SameMatch(RuleMatch a, RuleMatch b) =>
         a.ListIdPresent == b.ListIdPresent && a.ListUnsubscribePresent == b.ListUnsubscribePresent && a.Category == b.Category

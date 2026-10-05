@@ -449,6 +449,7 @@ public sealed partial class ReviewService(
         var locked = (await LockAsync(ids, ct)).Where(s => s.Status == SuggestionStatus.Pending).ToList();
         var messageIds = locked.ConvertAll(s => s.MessageId);
         var messages = await db.Messages.Where(m => messageIds.Contains(m.Id)).ToDictionaryAsync(m => m.Id, StringComparer.Ordinal, ct);
+        await decisions.LockPoliciesAsync(locked.Select(s => (s, messages[s.MessageId])), outcome, ct);
         var now = time.GetUtcNow();
         var changed = 0;
         foreach (var suggestion in locked)

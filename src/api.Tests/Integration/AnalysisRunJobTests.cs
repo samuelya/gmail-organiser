@@ -335,15 +335,15 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         return client.PostAsync(path, null, Ct);
     }
 
-    /// <summary>Returns once some session waits for a row lock or a uniqueness check another transaction holds.</summary>
-    public async Task WaitForLockWaitAsync()
+    /// <summary>Returns once <paramref name="sessions"/> sessions wait for a row lock or a uniqueness check another transaction holds.</summary>
+    public async Task WaitForLockWaitAsync(int sessions = 1)
     {
         await using var db = postgres.CreateDbContext();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
         while ((await db.Database
                    .SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM pg_stat_activity WHERE wait_event_type = 'Lock'")
-                   .ToListAsync(timeout.Token))[0] == 0)
+                   .ToListAsync(timeout.Token))[0] < sessions)
         {
             await Task.Delay(20, timeout.Token);
         }

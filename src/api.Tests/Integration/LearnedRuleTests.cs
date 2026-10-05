@@ -137,6 +137,98 @@ public sealed class LearnedRuleTests(ApiFactory factory, PostgresFixture postgre
         (await LearnedAsync()).ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task An_empty_subject_learns_no_rule()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Messages.Where(m => m.Id == "a00").ExecuteUpdateAsync(s => s.SetProperty(m => m.Subject, "  "), Ct);
+        }
+
+        await DecideAsync("a00", "approve");
+        (await LearnedAsync()).ShouldBeEmpty();
+
+        await DecideAsync("a01", "approve");
+        (await LearnedAsync()).ShouldHaveSingleItem().Match.SubjectTemplate.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public async Task Bulk_approves_reaching_two_policies_in_opposite_orders_both_succeed()
+    {
+        // A list policy and a domain policy; the shop's first approval teaches the list one, the other sender's the domain one.
+        var listPolicy = Guid.NewGuid();
+        var domainPolicy = Guid.NewGuid();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.SenderPolicies.Where(p => p.Id == policyId).ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, PolicyStatus.Rejected), Ct);
+            await db.Suggestions.ExecuteDeleteAsync(Ct);
+            await db.Messages.Where(m => m.FromAddress == AnalysisRunHarness.Other).ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.CanonicalAddress, AnalysisRunHarness.Other)
+                .SetProperty(m => m.CanonicalDomain, "example.com"), Ct);
+            await db.Messages.Where(m => m.Id == "a00" || m.Id == "x01")
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.ListId, "<offers.example.com>"), Ct);
+            db.SenderPolicies.AddRange(
+                Policy(listPolicy, PolicyScope.List, GroupKey.NormaliseListId("<offers.example.com>")!),
+                Policy(domainPolicy, PolicyScope.Domain, "example.com"));
+            var order = 0;
+            foreach (var message in await db.Messages.Where(m => new[] { "a00", "a01", "x00", "x01" }.Contains(m.Id)).OrderBy(m => m.Id).ToListAsync(Ct))
+            {
+                var suggestion = new SuggestionRow
+                {
+                    Id = new Guid($"00000000-0000-0000-0000-{++order:D12}"),
+                    MessageId = message.Id,
+                    SenderAddress = message.FromAddress,
+                    Source = SuggestionSource.Llm,
+                    TopicLabel = Topic,
+                    Confidence = 0.99,
+                    Reason = "Synthetic reason",
+                    CreatedAt = Created,
+                };
+                suggestion.SetStatus(SuggestionStatus.Pending, message, Created);
+                db.Suggestions.Add(suggestion);
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        // Holding the list policy makes both requests wait with their suggestions locked: without one lock order the shop's
+        // request then holds the list policy and waits for the domain one, which the other sender's request holds.
+        Task<HttpResponseMessage>[] requests;
+        await using (var holder = postgres.CreateDbContext())
+        {
+            await using var tx = await holder.Database.BeginTransactionAsync(Ct);
+            await holder.Database.SqlQuery<Guid>($"SELECT id AS \"Value\" FROM sender_policies WHERE id = {listPolicy} FOR UPDATE").ToListAsync(Ct);
+            requests =
+            [
+                h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(SettingsValidation.MinBulkApproveThreshold, SenderAddress: AnalysisRunHarness.Shop)),
+                h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(SettingsValidation.MinBulkApproveThreshold, SenderAddress: AnalysisRunHarness.Other)),
+            ];
+            await h.WaitForLockWaitAsync(2);
+            await tx.CommitAsync(Ct);
+        }
+
+        foreach (var response in await Task.WhenAll(requests))
+        {
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await response.Content.ReadFromJsonAsync<BulkApproveResponse>(Ct)).ShouldNotBeNull().Approved.ShouldBe(2);
+        }
+
+        (await LearnedAsync()).Select(r => r.PolicyId).Order().ShouldBe(new[] { listPolicy, listPolicy, domainPolicy, domainPolicy }.Order());
+    }
+
+    private static SenderPolicyRow Policy(Guid id, PolicyScope scope, string scopeKey) => new()
+    {
+        Id = id,
+        Scope = scope,
+        ScopeKey = scopeKey,
+        IsMixed = true,
+        Action = PolicyAction.Keep,
+        Confidence = 0.9,
+        Reason = "synthetic",
+        Status = PolicyStatus.Approved,
+        CreatedAt = Created,
+    };
+
     private async Task DecideAsync(string messageId, string action)
     {
         Guid id;

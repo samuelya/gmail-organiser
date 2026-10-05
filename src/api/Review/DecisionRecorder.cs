@@ -24,6 +24,14 @@ public sealed partial class DecisionRecorder(
     private readonly Dictionary<Guid, string?> runParents = [];
     private bool recorded;
 
+    /// <summary>
+    /// Before the approvals of a group or bulk decision: locks the mixed policies they may teach, in one fixed order
+    /// (<see cref="LearnedRuleProposer.LockAsync"/>), so concurrent decisions never deadlock on them.
+    /// </summary>
+    public ValueTask LockPoliciesAsync(
+        IEnumerable<(SuggestionRow Suggestion, MessageRow Message)> changes, DecisionOutcome outcome, CancellationToken ct) =>
+        outcome == DecisionOutcome.Approved && learned is not null ? learned.LockAsync(changes, ct) : ValueTask.CompletedTask;
+
     public async ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
     {
         if (outcome == DecisionOutcome.Approved && learned is not null)
