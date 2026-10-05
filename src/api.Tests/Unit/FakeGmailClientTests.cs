@@ -233,6 +233,8 @@ public sealed class FakeGmailClientTests
         metadata[1].Subject.ShouldBe(source.Subject);
         metadata[1].ListId.ShouldBe("weekly.news.example.com");
         metadata[1].ListUnsubscribe.ShouldBe(source.ListUnsubscribe);
+        (metadata[1].Precedence, metadata[1].AutoSubmitted).ShouldBe(("bulk", "auto-generated"));
+        (metadata[0].Precedence, metadata[0].AutoSubmitted).ShouldBe((null, null));
         metadata[1].InternalDate.ShouldBe(source.Date);
         metadata[1].HistoryId.ShouldBe(source.HistoryId);
     }

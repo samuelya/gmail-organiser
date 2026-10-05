@@ -55,6 +55,13 @@ public sealed class MessageRow
     public string? Snippet { get; set; }
     public string? ListId { get; set; }
     public string? ListUnsubscribe { get; set; }
+
+    /// <summary>The <c>Precedence</c> header (e.g. <c>bulk</c>, <c>list</c>), trimmed, lower-cased, at most 64 chars.</summary>
+    public string? Precedence { get; set; }
+
+    /// <summary>The <c>Auto-Submitted</c> header (RFC 3834, e.g. <c>auto-generated</c>), trimmed, lower-cased, at most 64 chars.</summary>
+    public string? AutoSubmitted { get; set; }
+
     public AnalysisStatus AnalysisStatus { get; set; } = AnalysisStatus.NotAnalysed;
     /// <summary>
     /// Not live: gone from Gmail or in Trash. Every writer keeps a row carrying <c>TRASH</c> at true, so readers

@@ -284,6 +284,8 @@ public sealed record GmailMessageMetadata(
     string? ListId,
     string? ListUnsubscribe,
     string? ListUnsubscribePost,
+    string? Precedence,
+    string? AutoSubmitted,
     string? Snippet,
     int SizeEstimate,
     bool HasAttachment);

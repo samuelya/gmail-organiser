@@ -58,7 +58,7 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
     [Fact]
     public async Task Run_stores_added_mail_updates_removed_labels_marks_deletions_and_advances_the_history_id()
     {
-        gmail.Inner.AddMessage(NewMessage("n1", "INBOX"));
+        gmail.Inner.AddMessage(NewMessage("n1", "INBOX") with { Precedence = "List", AutoSubmitted = "auto-generated" });
         gmail.Inner.AddMessage(NewMessage("n2", "INBOX"));
         gmail.Inner.AddMessage(NewMessage("n3"));
         gmail.Inner.SetLabels(Id(0), ["CATEGORY_UPDATES"]);
@@ -73,7 +73,10 @@ public sealed class IncrementalFetchJobTests(ApiFactory factory, PostgresFixture
         gmail.MetadataCalls.SelectMany(c => c).ShouldBe(["n1", "n2", "n3", Id(0)], ignoreOrder: true);
         await using var db = postgres.CreateDbContext();
         (await db.Messages.CountAsync(Ct)).ShouldBe(MessageCount + 3);
-        (await db.Messages.SingleAsync(m => m.Id == "n1", Ct)).LabelIds.ShouldBe(["INBOX"]);
+        var n1 = await db.Messages.SingleAsync(m => m.Id == "n1", Ct);
+        n1.LabelIds.ShouldBe(["INBOX"]);
+        (n1.Precedence, n1.AutoSubmitted).ShouldBe(("list", "auto-generated"));
+        (await db.Messages.SingleAsync(m => m.Id == "n2", Ct)).Precedence.ShouldBeNull();
         (await db.Messages.SingleAsync(m => m.Id == Id(0), Ct)).LabelIds.ShouldBe(["CATEGORY_UPDATES"]);
         (await db.Messages.SingleAsync(m => m.Id == Id(2), Ct)).DeletedInGmail.ShouldBeTrue();
         (await db.Messages.CountAsync(m => m.DeletedInGmail, Ct)).ShouldBe(1);

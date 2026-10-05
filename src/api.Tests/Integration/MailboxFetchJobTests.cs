@@ -115,6 +115,10 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
         bare.LastSeenAt.ShouldBe(Newest.AddMinutes(-1));
         bare.DisplayName.ShouldBeNull();
         (await db.Senders.CountAsync(Ct)).ShouldBe(SenderCount);
+
+        // The bulk headers are stored normalised; mail without them stays null.
+        (await db.Messages.CountAsync(m => m.Precedence == "bulk" && m.AutoSubmitted == "auto-generated", Ct)).ShouldBe((MessageCount + 3) / 4);
+        (await db.Messages.CountAsync(m => m.Precedence == null && m.AutoSubmitted == null, Ct)).ShouldBe(MessageCount - ((MessageCount + 3) / 4));
     }
 
     [Fact]
@@ -356,7 +360,7 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
 
     /// <summary>
     /// Newest first, one minute apart; sender <c>i % 10</c>; 900 interleaved Inbox messages. <c>sender0</c> changed its
-    /// display name for its newest mail, <c>sender1</c> sends without a name.
+    /// display name for its newest mail, <c>sender1</c> sends without a name; every fourth carries the bulk headers.
     /// </summary>
     private static List<FakeMessage> Seed() =>
     [
@@ -371,7 +375,8 @@ public sealed class MailboxFetchJobTests(ApiFactory factory, PostgresFixture pos
                 _ => $"Sender {sender} <{address}>",
             };
             string[] labels = IsInbox(i) ? ["INBOX", "CATEGORY_UPDATES"] : ["CATEGORY_PROMOTIONS"];
-            return new FakeMessage($"m{i:D5}", $"t{i:D5}", from, $"Synthetic subject {i}", Newest.AddMinutes(-i), labels);
+            return new FakeMessage($"m{i:D5}", $"t{i:D5}", from, $"Synthetic subject {i}", Newest.AddMinutes(-i), labels,
+                Precedence: i % 4 == 0 ? " Bulk " : null, AutoSubmitted: i % 4 == 0 ? "Auto-Generated" : null);
         }),
         .. Enumerable.Range(0, SpamCount + TrashCount).Select(i => new FakeMessage(
             $"x{i:D5}", $"x{i:D5}", "junk@example.com", $"Synthetic junk {i}", Newest.AddMinutes(-i), [i < SpamCount ? "SPAM" : "TRASH"])),
