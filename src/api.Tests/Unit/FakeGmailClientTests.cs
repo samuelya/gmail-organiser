@@ -82,7 +82,7 @@ public sealed class FakeGmailClientTests
         var messages = FakeGmailClient.Seed(Now);
 
         messages.Count.ShouldBe(FakeMailboxSeed.MessageCount);
-        messages.Where(m => !m.LabelIds.Contains("SENT")).Select(m => GmailMetadataMapper.ParseFrom(m.From).Address).Distinct().Count().ShouldBe(8);
+        messages.Where(m => !m.LabelIds.Contains("SENT")).Select(m => GmailMetadataMapper.ParseFrom(m.From).Address).Distinct().Count().ShouldBe(8 + FakeMailboxSeed.RelayAddresses.Length);
         messages.Where(m => m.ThreadId == FakeMailboxSeed.RepliedThreadId).Select(m => m.LabelIds.Contains("SENT")).ShouldBe([false, true], ignoreOrder: true);
         messages.ShouldContain(m => m.LabelIds.SequenceEqual(new[] { "INBOX" }));
         messages.ShouldContain(m => !m.LabelIds.Contains("INBOX"));
