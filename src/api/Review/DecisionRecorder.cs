@@ -3,6 +3,7 @@ using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Policies;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Review;
@@ -13,16 +14,31 @@ namespace GmailOrganiser.Review;
 /// waits on the model. Rows are otherwise only updated with their vector. The document type is decided under the
 /// parent of the suggestion's run (its snapshot, not the current Settings), read once per run per recorder (one request).
 /// Unedited Stage-0 suggestions are rule-made, not the user's per-message teaching, and are not recorded; an edited
-/// Stage-0 card is the user's own outcome and is (#349).
+/// Stage-0 card is the user's own outcome and is (#349). An approval also proposes a learned sub-rule for a mixed
+/// sender's policy (<see cref="LearnedRuleProposer"/>, #361); null in tests that cover only the memory.
 /// </summary>
 public sealed partial class DecisionRecorder(
-    AppDbContext db, IDecisionEmbeddingQueue embedding, TimeProvider time, ILogger<DecisionRecorder> logger)
+    AppDbContext db, IDecisionEmbeddingQueue embedding, TimeProvider time, ILogger<DecisionRecorder> logger,
+    LearnedRuleProposer? learned = null)
 {
     private readonly Dictionary<Guid, string?> runParents = [];
     private bool recorded;
 
+    /// <summary>
+    /// Before the approvals of a group or bulk decision: locks the mixed policies they may teach, in one fixed order
+    /// (<see cref="LearnedRuleProposer.LockAsync"/>), so concurrent decisions never deadlock on them.
+    /// </summary>
+    public ValueTask LockPoliciesAsync(
+        IEnumerable<(SuggestionRow Suggestion, MessageRow Message)> changes, DecisionOutcome outcome, CancellationToken ct) =>
+        outcome == DecisionOutcome.Approved && learned is not null ? learned.LockAsync(changes, ct) : ValueTask.CompletedTask;
+
     public async ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
     {
+        if (outcome == DecisionOutcome.Approved && learned is not null)
+        {
+            await learned.ProposeAsync(suggestion, message, ct);
+        }
+
         if (suggestion.Source == SuggestionSource.Stage0 && !suggestion.Edited)
         {
             return;

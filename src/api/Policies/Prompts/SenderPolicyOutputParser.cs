@@ -273,8 +273,7 @@ public sealed partial class SenderPolicyOutputParser(TransactionalGuard guard)
         }
 
         // Transactional mail is never deleted and never unsubscribed (DESIGN §6.2); checked on the full template.
-        if (action is PolicyAction.Delete or PolicyAction.Unsubscribe
-            && (guard.HasKeyword(match.SubjectTemplate) || guard.HasKeyword(match.SubjectContains)))
+        if (IsTransactionalDelete(match, action))
         {
             dropped.Add(prefix + $"'{Snake(action)}' on mail whose subject names a transactional document; dropped.");
             return null;
@@ -316,7 +315,7 @@ public sealed partial class SenderPolicyOutputParser(TransactionalGuard guard)
             return (null, false);
         }
 
-        return label is null || !LabelPath.IsValid(label) || LabelPath.IsReserved(label) || ctx.IsConfiguredLabel(label)
+        return label is null || !IsUsableLabel(label, ctx.Settings)
             ? (null, true)
             : (ctx.Tree.Respell(label), false);
     }
@@ -452,8 +451,6 @@ public sealed partial class SenderPolicyOutputParser(TransactionalGuard guard)
         public string? DocumentTypeParent { get; } =
             string.IsNullOrWhiteSpace(Settings.DocumentTypeParent) ? null : Settings.DocumentTypeParent.Trim();
 
-        public bool IsConfiguredLabel(string label) =>
-            string.Equals(label.Trim(), Settings.DeleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase)
-            || string.Equals(label.Trim(), Settings.ActionLabelName.Trim(), StringComparison.OrdinalIgnoreCase);
+        public bool IsConfiguredLabel(string label) => SenderPolicyOutputParser.IsConfiguredLabel(label, Settings);
     }
 }
