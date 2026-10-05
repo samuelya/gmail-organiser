@@ -11,8 +11,8 @@ using Microsoft.Extensions.AI;
 namespace GmailOrganiser.Analysis;
 
 /// <summary>
-/// What one group produced: rows to store, members that failed, members to analyse one by one, and the attachments of
-/// the prompt's emails converted or skipped.
+/// What one group produced: rows to store, members that failed, members to analyse one by one, the attachments of
+/// the prompt's emails converted or skipped, and the tokens and time its model calls spent.
 /// </summary>
 internal sealed record GroupOutcome(
     IReadOnlyList<SuggestionRow> Suggestions,
@@ -21,7 +21,8 @@ internal sealed record GroupOutcome(
     int LlmCalls,
     bool Mixed,
     int AttachmentsConverted = 0,
-    int AttachmentsSkipped = 0);
+    int AttachmentsSkipped = 0,
+    LlmUsage Usage = default);
 
 /// <summary>A representative's body and its attachment list (empty with the master switch off); both live only in the group's analysis.</summary>
 internal sealed record FetchedMessage(GmailMessageBody Body, IReadOnlyList<GmailAttachment> Attachments);
@@ -104,8 +105,8 @@ public sealed partial class AnalysisRunJob
             LogMissingBodies(logger, representatives.Count - emails.Count);
         }
 
-        var (outputs, filter, calls) = emails.Count == 0
-            ? ([], null, 0)
+        var (outputs, filter, calls, usage) = emails.Count == 0
+            ? ([], null, 0, default)
             : await AskModelAsync(
                 context,
                 emails,
@@ -117,7 +118,7 @@ public sealed partial class AnalysisRunJob
         if (outputs.Count == 0)
         {
             // Nothing usable: the members stay not analysed rather than costing one call each against a failing model.
-            return new GroupOutcome([], [.. group.Members.Select(m => m.Id)], [], calls, Mixed: false);
+            return new GroupOutcome([], [.. group.Members.Select(m => m.Id)], [], calls, Mixed: false, Usage: usage);
         }
 
         outputs = WithoutAttachmentText(outputs, converted);
@@ -133,7 +134,7 @@ public sealed partial class AnalysisRunJob
         var others = group.Members.Where(m => !group.RepresentativeIds.Contains(m.Id, StringComparer.Ordinal)).ToList();
         if (others.Count == 0)
         {
-            return new GroupOutcome(rows, failed, [], calls, Mixed: false, convertedCount, skipped);
+            return new GroupOutcome(rows, failed, [], calls, Mixed: false, convertedCount, skipped, usage);
         }
 
         var decision = DerivationRule.Decide(
@@ -143,7 +144,7 @@ public sealed partial class AnalysisRunJob
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
         {
-            return new GroupOutcome(rows, failed, [.. others.Select(AnalysisGrouper.Single)], calls, Mixed: true, convertedCount, skipped);
+            return new GroupOutcome(rows, failed, [.. others.Select(AnalysisGrouper.Single)], calls, Mixed: true, convertedCount, skipped, usage);
         }
 
         // A derived toBeDeleted never lands on protected mail; the grouper makes such members representatives, this
@@ -168,7 +169,7 @@ public sealed partial class AnalysisRunJob
             }
         }
 
-        return new GroupOutcome(rows, failed, individual, calls, Mixed: false, convertedCount, skipped);
+        return new GroupOutcome(rows, failed, individual, calls, Mixed: false, convertedCount, skipped, usage);
     }
 
     /// <summary>
@@ -201,7 +202,7 @@ public sealed partial class AnalysisRunJob
     /// The prompt, then the same prompt with <see cref="RetryInstruction"/> when an email has no valid answer. Failed
     /// ids are the expected ids without a valid answer, never derived from the error count.
     /// </summary>
-    private async Task<(Dictionary<string, SuggestionOutput> Outputs, FilterCriteriaOutput? Filter, int Calls)> AskModelAsync(
+    private async Task<(Dictionary<string, SuggestionOutput> Outputs, FilterCriteriaOutput? Filter, int Calls, LlmUsage Usage)> AskModelAsync(
         RunContext context, IReadOnlyList<EmailForPrompt> emails, IReadOnlyList<MemoryHint> hints, string attachmentsSection, CancellationToken ct)
     {
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
@@ -211,17 +212,19 @@ public sealed partial class AnalysisRunJob
 
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
         var parent = context.Run.DocumentTypeParent;
-        var first = SuggestionOutputParser.Parse(await ChatAsync(context, messages, ct), expected, current, parent);
+        var (firstText, usage) = await ChatAsync(context, messages, emails.Count, ct);
+        var first = SuggestionOutputParser.Parse(firstText, expected, current, parent);
         LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
         var filter = first.Filter;
         if (outputs.Count == expected.Count)
         {
-            return (outputs, filter, 1);
+            return (outputs, filter, 1, usage);
         }
 
-        var retry = SuggestionOutputParser.Parse(
-            await ChatAsync(context, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], ct), expected, current, parent);
+        var (retryText, retryUsage) = await ChatAsync(context, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], emails.Count, ct);
+        usage += retryUsage;
+        var retry = SuggestionOutputParser.Parse(retryText, expected, current, parent);
         LogDropped(retry);
         foreach (var o in retry.Valid)
         {
@@ -235,7 +238,7 @@ public sealed partial class AnalysisRunJob
             LogInvalidOutput(logger, expected.Count - outputs.Count, string.Join("; ", retry.Errors));
         }
 
-        return (outputs, filter, 2);
+        return (outputs, filter, 2, usage);
     }
 
     private void LogDropped(ParsedSuggestions parsed)
@@ -246,11 +249,15 @@ public sealed partial class AnalysisRunJob
         }
     }
 
-    private async Task<string> ChatAsync(RunContext context, IList<ChatMessage> messages, CancellationToken ct)
+    private async Task<(string Text, LlmUsage Usage)> ChatAsync(
+        RunContext context, IList<ChatMessage> messages, int groupSize, CancellationToken ct)
     {
         try
         {
-            return (await context.Chat.GetResponseAsync(messages, AnalysisPromptBuilder.CreateOptions(), ct)).Text;
+            var numCtx = context.Settings.LlmNumCtx;
+            var (response, usage) = await _meter.GetResponseAsync(
+                context.Chat, messages, AnalysisPromptBuilder.CreateOptions(numCtx), context.Run.Model, numCtx, groupSize, ct);
+            return (response.Text, usage);
         }
         catch (Exception ex) when (ex is HttpRequestException or TimeoutException or OllamaSharp.Models.Exceptions.OllamaException
             || (ex is TaskCanceledException && !ct.IsCancellationRequested))

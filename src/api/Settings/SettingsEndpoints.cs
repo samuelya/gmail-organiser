@@ -106,6 +106,7 @@ public static class SettingsEndpoints
         ClaudeMaxItemsPerRun = request.ClaudeMaxItemsPerRun ?? s.ClaudeMaxItemsPerRun,
         ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
         RulesStaleFilterDays = request.RulesStaleFilterDays ?? s.RulesStaleFilterDays,
+        LlmNumCtx = request.LlmNumCtx ?? s.LlmNumCtx,
         ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
         Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
         ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,

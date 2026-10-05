@@ -41,7 +41,9 @@ public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
 /// One run. <c>kind</c> is <c>analyse</c> or <c>compare</c> (results stored as alternatives, #248). <c>status</c> stays <c>running</c> while its job is paused (the run has no paused status; the job shows
 /// it). <c>skippedMessages</c>: ids of a messages scope not analysed because they are approved, applied, deleted or
 /// unknown, plus candidates that stopped qualifying before their group ran. <c>savedPercent</c> is
-/// <c>1 − llmCalls / max(1, messagesCovered)</c>; retries count as calls, so it can go negative.
+/// <c>1 − llmCalls / max(1, messagesCovered)</c>; retries count as calls, so it can go negative. Tokens and
+/// <c>llmMilliseconds</c> (<c>llmSeconds</c>) are summed over the model calls; <c>nearContextLimit</c> counts calls whose
+/// prompt filled at least 90 % of <c>num_ctx</c> (#353).
 /// </summary>
 public sealed record AnalysisRunDto(
     Guid Id,
@@ -69,7 +71,12 @@ public sealed record AnalysisRunDto(
     double SavedPercent,
     DateTimeOffset CreatedAt,
     DateTimeOffset? StartedAt,
-    DateTimeOffset? FinishedAt);
+    DateTimeOffset? FinishedAt,
+    long PromptTokens,
+    long CompletionTokens,
+    long LlmMilliseconds,
+    double LlmSeconds,
+    int NearContextLimit);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed

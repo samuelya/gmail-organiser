@@ -65,6 +65,14 @@ public sealed class AnalysisRunRow
     public int SkippedMessages { get; set; }
     public int AttachmentsConverted { get; set; }
     public int AttachmentsSkipped { get; set; }
+
+    /// <summary>Summed over the run's model calls (#353); 0 when the model reports no usage.</summary>
+    public long PromptTokens { get; set; }
+    public long CompletionTokens { get; set; }
+    public long LlmMilliseconds { get; set; }
+
+    /// <summary>Model calls whose prompt filled at least 90 % of <c>num_ctx</c>, so Ollama likely truncated it.</summary>
+    public int NearContextLimit { get; set; }
     public string? Model { get; set; }
     public string? PromptVersion { get; set; }
 

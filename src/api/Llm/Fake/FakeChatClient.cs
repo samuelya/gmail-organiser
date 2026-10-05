@@ -5,7 +5,7 @@ namespace GmailOrganiser.Llm.Fake;
 
 /// <summary>
 /// Answers with canned JSON (queued responses, then <see cref="Responder"/>, then <see cref="DefaultResponse"/>) and
-/// records every request. Set <see cref="Failure"/> to make calls throw. Used by tests and by <c>LLM_FAKE=true</c>.
+/// records every request; options such as <c>num_ctx</c> are ignored. Set <see cref="Failure"/> to make calls throw. Used by tests and by <c>LLM_FAKE=true</c>.
 /// </summary>
 public sealed class FakeChatClient(params string[] responses) : IChatClient
 {
@@ -18,6 +18,9 @@ public sealed class FakeChatClient(params string[] responses) : IChatClient
     /// <summary>Computes an answer from the request when no response is queued; <c>null</c> falls back to <see cref="DefaultResponse"/>.</summary>
     public Func<IReadOnlyList<ChatMessage>, string?>? Responder { get; set; }
     public Exception? Failure { get; set; }
+
+    /// <summary>Returned as every response's <see cref="ChatResponse.Usage"/>; null like a model that reports none.</summary>
+    public UsageDetails? Usage { get; set; }
     public bool Disposed { get; private set; }
 
     public IReadOnlyList<FakeChatRequest> Requests
@@ -44,7 +47,7 @@ public sealed class FakeChatClient(params string[] responses) : IChatClient
     {
         cancellationToken.ThrowIfCancellationRequested();
         var text = Next(messages, options);
-        return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, text)));
+        return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, text)) { Usage = Usage });
     }
 
     public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using GmailOrganiser.Llm;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Analysis.Prompts;
@@ -59,11 +60,15 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
 
     public string Version => template.Version;
 
-    /// <summary>Schema-constrained JSON at temperature 0: the most reliable structured output across local models.</summary>
-    public static ChatOptions CreateOptions() => new()
+    /// <summary>
+    /// Schema-constrained JSON at temperature 0: the most reliable structured output across local models. Ollama gets
+    /// <paramref name="numCtx"/> as <c>num_ctx</c>, else it uses the model's default and truncates a long prompt (#353).
+    /// </summary>
+    public static ChatOptions CreateOptions(int numCtx) => new()
     {
         ResponseFormat = ChatResponseFormat.ForJsonSchema(OutputSchema, "suggestions"),
         Temperature = 0,
+        AdditionalProperties = new() { [LlmCallMeter.NumCtxKey] = numCtx },
     };
 
     public IList<ChatMessage> Build(PromptInput input)

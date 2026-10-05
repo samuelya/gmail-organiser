@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis.Prompts;
+using GmailOrganiser.Settings;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Tests.Unit.Analysis;
@@ -85,7 +86,7 @@ public sealed class SuggestionOutputParserDocumentTypeTests
     [Fact]
     public void Output_schema_declares_the_optional_field()
     {
-        var schema = AnalysisPromptBuilder.CreateOptions().ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema!.Value;
+        var schema = AnalysisPromptBuilder.CreateOptions(AppSettings.DefaultLlmNumCtx).ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema!.Value;
         var item = schema.GetProperty("properties").GetProperty("suggestions").GetProperty("items");
 
         item.GetProperty("properties").GetProperty("documentTypeLabel").GetProperty("type").EnumerateArray().Select(e => e.GetString())
