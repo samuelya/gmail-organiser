@@ -60,6 +60,8 @@ describe('LabelsTab', () => {
   let rules: Record<string, ReturnType<typeof vi.fn>>;
   let jobs: Map<string, JobDto>;
   let held: ReturnType<typeof signal<ReadonlyMap<string, JobDto>>>;
+  let reconnects: ReturnType<typeof signal<number>>;
+  let fetchJob: ReturnType<typeof vi.fn>;
   let confirm: boolean;
   let dialogData: unknown[];
   let claudeMode: ClaudeReviewerMode;
@@ -69,6 +71,8 @@ describe('LabelsTab', () => {
   async function render(latest: () => ReturnType<RulesService['latestPlan']>) {
     jobs = new Map();
     held = signal<ReadonlyMap<string, JobDto>>(jobs);
+    reconnects = signal(0);
+    fetchJob = vi.fn((id: string) => throwError(() => new Error(`no job ${id}`)));
     confirm = true;
     dialogData = [];
     claudeChanges = new Subject();
@@ -102,7 +106,8 @@ describe('LabelsTab', () => {
           useValue: {
             job: (id: string) => held().get(id),
             activeJobs: computed(() => [...held().values()].filter(isActiveJob)),
-            reconnects: signal(0),
+            reconnects,
+            fetch: fetchJob,
             externalReviewChanges: claudeChanges,
             cancel: vi.fn(() => of(undefined)),
           },
@@ -401,6 +406,37 @@ describe('LabelsTab', () => {
       );
       await fixture.whenStable();
       expect(q('taxonomy-error')!.textContent).toContain('Synthetic failure');
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(false);
+    });
+
+    it('ends a proposal that finished while the hub was down once it reconnects', async () => {
+      const { fixture, q } = await render(notFound);
+      q('plan-propose-taxonomy')!.click();
+      await fixture.whenStable();
+      expect(q<HTMLButtonElement>('plan-review')!.disabled).toBe(true);
+
+      // The hub's snapshot holds active jobs only, so the finished proposal never reaches the service.
+      fetchJob.mockImplementation((id: string) => {
+        const done = taxonomyJob({ id, status: 'completed', version: 2 });
+        held.set(new Map([[id, done]]));
+        return of(done);
+      });
+      rules['latestPlan'].mockImplementation(() => of(taxonomyPlan));
+      reconnects.set(1);
+      await fixture.whenStable();
+      expect(fetchJob).toHaveBeenCalledWith('t-1');
+      expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(false);
+      expect(q<HTMLButtonElement>('plan-review')!.disabled).toBe(false);
+      expect(q('plan-tree-row')).not.toBeNull();
+    });
+
+    it('stops following a proposal whose status cannot be read after a reconnect', async () => {
+      const { fixture, q } = await render(notFound);
+      q('plan-propose-taxonomy')!.click();
+      await fixture.whenStable();
+      reconnects.set(1);
+      await fixture.whenStable();
+      expect(fetchJob).toHaveBeenCalledWith('t-1');
       expect(q<HTMLButtonElement>('plan-propose-taxonomy')!.disabled).toBe(false);
     });
 

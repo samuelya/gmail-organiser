@@ -189,6 +189,18 @@ describe('JobsService', () => {
     http.verify();
   });
 
+  it('fetch reads a job over REST and holds it', async () => {
+    await create();
+    const http = TestBed.inject(HttpTestingController);
+    let fetched: JobDto | undefined;
+    service.fetch('a').subscribe((j) => (fetched = j));
+    const done = job('a', 2, 'completed');
+    http.expectOne({ method: 'GET', url: '/api/jobs/a' }).flush(done);
+    expect(fetched).toEqual(done);
+    expect(service.job('a')?.status).toBe('completed');
+    http.verify();
+  });
+
   it('passes every externalReviewChanged on', async () => {
     await create();
     const seen: unknown[] = [];

@@ -230,10 +230,14 @@ export class LabelsTab {
         }
       });
     });
-    // Updates may have been missed while disconnected.
+    // Updates may have been missed while disconnected. A proposal that ended meanwhile is missing from
+    // the hub's snapshot (active jobs only): its REST status ends it as above.
     effect(() => {
       if (this.jobs.reconnects() === 0) return;
-      untracked(() => this.reload());
+      untracked(() => {
+        this.reload();
+        this.checkProposal();
+      });
     });
     this.reload();
   }
@@ -391,6 +395,23 @@ export class LabelsTab {
     this.none.set(false);
     this.loadFailed.set(false);
     this.plan.set(plan);
+  }
+
+  /** Reads the followed proposal over REST when the jobs service lacks it; unreadable stops following. */
+  private checkProposal(): void {
+    const id = this.proposeJobId();
+    if (!id || this.jobs.job(id)) return;
+    this.jobs
+      .fetch(id)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        error: () => {
+          if (this.proposeJobId() !== id) return;
+          this.proposeSeen = false;
+          this.proposeJobId.set(null);
+          this.reload();
+        },
+      });
   }
 
   private refreshLabels(): void {

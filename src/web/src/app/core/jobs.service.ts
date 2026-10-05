@@ -1,7 +1,7 @@
 import { HttpClient } from '@angular/common/http';
 import { computed, DestroyRef, inject, Injectable, InjectionToken, signal } from '@angular/core';
 import { HubConnection, HubConnectionBuilder, IRetryPolicy, LogLevel } from '@microsoft/signalr';
-import { Observable, Subject } from 'rxjs';
+import { Observable, Subject, tap } from 'rxjs';
 import { ExternalReviewDto } from './claude.models';
 import { isActiveJob, JobDto, JobsConnectionState } from './jobs.models';
 
@@ -99,6 +99,13 @@ export class JobsService {
   /** The held state of a job, if any. */
   job(id: string): JobDto | undefined {
     return this.byId().get(id);
+  }
+
+  /** Reads a job over REST and holds it, for a job whose end the hub may have missed. */
+  fetch(id: string): Observable<JobDto> {
+    return this.http
+      .get<JobDto>(`/api/jobs/${encodeURIComponent(id)}`)
+      .pipe(tap((job) => this.onChanged(job)));
   }
 
   pause(id: string): Observable<void> {
