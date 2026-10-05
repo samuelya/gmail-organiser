@@ -15,6 +15,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { catchError, map, of } from 'rxjs';
 import { DEFAULT_FLAG_LABELS } from '../review/review.models';
 import { ReviewService } from '../review/review.service';
@@ -23,10 +24,13 @@ import { openFilterPreview } from './filter-preview-dialog.component';
 import { FilterDto, FilterProposalDto, FilterRequest } from './rules.models';
 import { RulesService } from './rules.service';
 
-/** Filters proposed from approved senders no active filter covers, 20 per page with "Load more". */
+/**
+ * Filters proposed from approved policies, policy rules and senders no active filter covers, 20 per
+ * page with "Load more".
+ */
 @Component({
   selector: 'app-filter-proposals',
-  imports: [DecimalPipe, MatButtonModule, MatIconModule, MatProgressBarModule],
+  imports: [DecimalPipe, MatButtonModule, MatIconModule, MatProgressBarModule, MatTooltipModule],
   template: `
     <section class="flex flex-col gap-2" aria-labelledby="proposals-heading">
       <h2 id="proposals-heading" class="m-0 text-base font-medium">Proposed filters</h2>
@@ -42,18 +46,35 @@ import { RulesService } from './rules.service';
       }
       @if (loaded() && total() === 0) {
         <p class="muted m-0" role="status" data-testid="no-proposals">
-          No proposals. Approved senders without a covering filter are proposed here.
+          No proposals. Approved senders and policies without a covering filter are proposed here.
         </p>
       }
       <ul class="m-0 flex list-none flex-col p-0">
-        @for (p of items(); track p.senderAddress) {
+        @for (p of items(); track p.key) {
           <li class="row flex flex-wrap items-center gap-x-4 gap-y-1 py-2" data-testid="proposal">
             <div class="min-w-48 flex-1">
               <div class="break-all">{{ p.senderAddress }}</div>
               @if (p.displayName) {
                 <div class="muted text-sm">{{ p.displayName }}</div>
               }
+              @if (p.note) {
+                <div class="muted text-sm break-words" data-testid="proposal-note">
+                  {{ p.note }}
+                </div>
+              }
             </div>
+            <span class="tag text-sm" data-testid="proposal-origin">{{ origin(p) }}</span>
+            @if (p.partial) {
+              <span
+                class="tag text-sm"
+                tabindex="0"
+                [matTooltip]="partialHint(p)"
+                [attr.aria-label]="partialHint(p)"
+                data-testid="proposal-partial"
+              >
+                Partial
+              </span>
+            }
             <span class="text-sm">
               {{ p.messageCount | number }} {{ p.messageCount === 1 ? 'message' : 'messages' }}
             </span>
@@ -62,7 +83,7 @@ import { RulesService } from './rules.service';
               mat-stroked-button
               type="button"
               (click)="open(p)"
-              [attr.aria-label]="'Preview a filter for ' + p.senderAddress"
+              [attr.aria-label]="previewLabel(p)"
               data-testid="proposal-preview"
             >
               Preview
@@ -87,6 +108,11 @@ import { RulesService } from './rules.service';
   styles: `
     .muted {
       color: var(--mat-sys-on-surface-variant);
+    }
+    .tag {
+      border: 1px solid var(--mat-sys-outline-variant);
+      border-radius: 4px;
+      padding: 0 6px;
     }
     .row + .row {
       border-top: 1px solid var(--mat-sys-outline-variant);
@@ -144,10 +170,10 @@ export class FilterProposals implements OnInit {
           this.loaded.set(true);
           this.pagesLoaded.set(page);
           this.total.set(result.total);
-          const known = new Set(this.items().map((p) => p.senderAddress));
+          const known = new Set(this.items().map((p) => p.key));
           this.items.update((items) => [
             ...(page === 1 ? [] : items),
-            ...result.items.filter((p) => page === 1 || !known.has(p.senderAddress)),
+            ...result.items.filter((p) => page === 1 || !known.has(p.key)),
           ]);
           if (page === 1) this.openProposed();
         },
@@ -170,8 +196,36 @@ export class FilterProposals implements OnInit {
       .join(' · ');
   }
 
+  /** "Rule" for a policy rule, "Policy" for a policy default or merged policies, else "Pattern". */
+  origin(p: FilterProposalDto): string {
+    if (p.ruleId) return 'Rule';
+    return p.source === 'policy' ? 'Policy' : 'Pattern';
+  }
+
+  partialHint(p: FilterProposalDto): string {
+    return ['This filter covers only part of the policy.', p.note].filter((s) => !!s).join(' ');
+  }
+
+  /**
+   * Policy proposals can share a sender address, so a shared one adds the origin, the rule or
+   * topic name and its position among that address's proposals to stay unique.
+   */
+  previewLabel(p: FilterProposalDto): string {
+    const label = `Preview a filter for ${p.senderAddress}`;
+    const same = this.items().filter((o) => o.senderAddress === p.senderAddress);
+    if (same.length < 2) return label;
+    const name = p.displayName ?? p.pattern.topicLabel;
+    const what = [this.origin(p).toLowerCase(), name].filter((s) => !!s).join(' ');
+    return `${label}, ${what}, ${same.indexOf(p) + 1} of ${same.length}`;
+  }
+
   open(p: FilterProposalDto): void {
-    this.openDialog(p.senderAddress, p.suggested);
+    this.openDialog(this.fallbackFrom(p), p.suggested);
+  }
+
+  /** A policy proposal keeps its own criteria: a list policy's address is a List-Id, never `from`. */
+  private fallbackFrom(p: FilterProposalDto): string {
+    return p.source === 'policy' ? '' : p.senderAddress;
   }
 
   /**
@@ -185,7 +239,7 @@ export class FilterProposals implements OnInit {
     const match = this.items().find((p) => p.senderAddress.toLowerCase() === address.toLowerCase());
     this.proposeHandled.emit();
     if (match) {
-      this.openDialog(match.senderAddress, match.suggested);
+      this.openDialog(this.fallbackFrom(match), match.suggested);
       return;
     }
     this.review

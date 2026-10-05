@@ -46,7 +46,12 @@ const listOf = (filters: FilterDto[]): FilterListDto => ({
   filters,
 });
 
-const proposal = (address: string, count = 10): FilterProposalDto => ({
+const proposal = (
+  address: string,
+  count = 10,
+  over: Partial<FilterProposalDto> = {},
+): FilterProposalDto => ({
+  key: `sender:${address}`,
   senderAddress: address,
   displayName: 'Synthetic sender',
   messageCount: count,
@@ -64,7 +69,33 @@ const proposal = (address: string, count = 10): FilterProposalDto => ({
     criteria: { ...filterDto().criteria, from: address },
     action: { addLabelNames: ['Topic/Alpha'], skipInbox: false, markRead: false },
   },
+  ...over,
 });
+
+/** Two rules of one mixed policy: the same sender address, different keys and filters. */
+const ruleProposals = (): FilterProposalDto[] => [
+  proposal('mixed@example.com', 0, {
+    key: 'rule:r-1',
+    source: 'policy',
+    policyId: 'p-1',
+    ruleId: 'r-1',
+    displayName: 'Receipts',
+    note: 'Label only: the policy keeps this mail in the inbox.',
+  }),
+  proposal('mixed@example.com', 0, {
+    key: 'rule:r-2',
+    source: 'policy',
+    policyId: 'p-1',
+    ruleId: 'r-2',
+    displayName: 'Offers',
+    partial: true,
+    note: 'A rule condition has no Gmail equivalent.',
+    suggested: {
+      criteria: { ...filterDto().criteria, from: 'mixed@example.com', subject: 'offer' },
+      action: { addLabelNames: ['Topic/Offers'], skipInbox: true, markRead: false },
+    },
+  }),
+];
 
 const paged = (items: FilterProposalDto[], total = items.length, page = 1) =>
   ({ items, page, pageSize: 20, total }) satisfies PagedDto<FilterProposalDto>;
@@ -214,6 +245,75 @@ describe('FiltersTab', () => {
     await settle();
     expect(all('proposal')).toHaveLength(0);
     expect(api.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders policy rule proposals that share a sender and previews the chosen one', async () => {
+    const rules = ruleProposals();
+    const { q, all, settle } = await render(
+      undefined,
+      paged([...rules, proposal('a@example.com')]),
+    );
+    expect(all('proposal')).toHaveLength(3);
+    expect(all('proposal-origin').map((e) => e.textContent!.trim())).toEqual([
+      'Rule',
+      'Rule',
+      'Pattern',
+    ]);
+    expect(all('proposal-note').map((e) => e.textContent!.trim())).toEqual([
+      'Label only: the policy keeps this mail in the inbox.',
+      'A rule condition has no Gmail equivalent.',
+    ]);
+    const partial = all('proposal-partial');
+    expect(partial).toHaveLength(1);
+    expect(partial[0].textContent!.trim()).toBe('Partial');
+    expect(partial[0].getAttribute('aria-label')).toBe(
+      'This filter covers only part of the policy. A rule condition has no Gmail equivalent.',
+    );
+    const previews = all('proposal-preview');
+    expect(previews.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Preview a filter for mixed@example.com, rule Receipts, 1 of 2',
+      'Preview a filter for mixed@example.com, rule Offers, 2 of 2',
+      'Preview a filter for a@example.com',
+    ]);
+    previews[1].click();
+    await settle();
+    dialog('preview-create')!.click();
+    await settle();
+    expect(api.create).toHaveBeenCalledWith(rules[1].suggested);
+    expect(q('proposals-more')).toBeNull();
+  });
+
+  it('labels a policy default proposal "Policy"', async () => {
+    const { all } = await render(
+      undefined,
+      paged([
+        proposal('list@example.com', 0, { key: 'policy:p-2', source: 'policy', policyId: 'p-2' }),
+      ]),
+    );
+    expect(all('proposal-origin')[0].textContent!.trim()).toBe('Policy');
+    expect(all('proposal-note')).toHaveLength(0);
+  });
+
+  it('previews a list policy proposal with its own criteria, not from:<list-id>', async () => {
+    const list = proposal('list.example.com', 0, {
+      key: 'policy:p-3',
+      source: 'policy',
+      policyId: 'p-3',
+      listId: 'list.example.com',
+      suggested: {
+        criteria: { ...filterDto().criteria, from: null, query: 'list:list.example.com' },
+        action: { addLabelNames: ['Topic/Lists'], skipInbox: true, markRead: false },
+      },
+    });
+    const { q, settle } = await render(undefined, paged([list]));
+    q('proposal-preview')!.click();
+    await settle();
+    expect((dialog('preview-from') as HTMLInputElement).value).toBe('');
+    expect(api.preview.mock.calls.at(-1)![0].criteria.from).toBeFalsy();
+    dialog('preview-create')!.click();
+    await settle();
+    expect(api.create.mock.calls[0][0].criteria.from).toBeFalsy();
+    expect(api.create.mock.calls[0][0].criteria.query).toBe('list:list.example.com');
   });
 
   it('loads more proposals', async () => {
