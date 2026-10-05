@@ -426,10 +426,16 @@ function serverErrorValidator(control: AbstractControl): ValidationErrors | null
   return null;
 }
 
+/** Controls the page never shows: an error on one could neither be seen nor cleared. */
+const HIDDEN_CONTROLS = new Set(['id']);
+
+/** The form-level text for an error on a rule's hidden id: the rules changed since this page loaded. */
+export const STALE_RULES_ERROR = 'The rules changed elsewhere; reload to continue.';
+
 /**
  * Puts each ProblemDetails field error (`topicLabel`, `rules[2].match`, …) on the form control it names,
- * or on its nearest named ancestor, until its value changes; returns the messages no control below the
- * form takes.
+ * or on its nearest named ancestor, until its value changes; returns the messages no visible control
+ * below the form takes.
  */
 export function applyServerErrors(form: PolicyForm, errors: Record<string, string[]>): string[] {
   const unplaced: string[] = [];
@@ -439,6 +445,11 @@ export function applyServerErrors(form: PolicyForm, errors: Record<string, strin
     while (path.length && !(control = form.get(path))) path = path.slice(0, -1);
     if (!control || control === form) {
       unplaced.push(messages.join(' '));
+      continue;
+    }
+    if (HIDDEN_CONTROLS.has(path[path.length - 1])) {
+      const rule = path[0] === 'rules' && path.length === 3 ? `Rule ${Number(path[1]) + 1}: ` : '';
+      unplaced.push(`${rule}${messages.join(' ')} ${STALE_RULES_ERROR}`);
       continue;
     }
     const held = SERVER_ERRORS.get(control);

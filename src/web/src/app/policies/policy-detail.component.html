@@ -123,6 +123,18 @@
           @for (e of formErrors(); track $index) {
             <p class="error m-0" role="alert" data-testid="form-error">{{ e }}</p>
           }
+          @if (stale()) {
+            <div>
+              <button
+                mat-stroked-button
+                type="button"
+                data-testid="reload"
+                (click)="load(id(), true)"
+              >
+                Reload (discards unsaved edits)
+              </button>
+            </div>
+          }
           @if (actionError(); as e) {
             <p class="m-0 flex items-center gap-2" role="alert" data-testid="action-error">
               <mat-icon aria-hidden="true">block</mat-icon>

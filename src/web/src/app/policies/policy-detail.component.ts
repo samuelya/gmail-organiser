@@ -30,6 +30,7 @@ import { SettingsService } from '../settings/settings.service';
 import { openApprovePolicy } from './approve-policy-dialog.component';
 import {
   applyServerErrors,
+  STALE_RULES_ERROR,
   approveSummary,
   ApprovePolicyResponse,
   editRequest,
@@ -103,6 +104,8 @@ export class PolicyDetail {
   readonly busy = signal(false);
   /** Field errors no control takes, and refusals such as the 422 reason. */
   readonly formErrors = signal<string[]>([]);
+  /** A form error says the rules changed since this page loaded: offer a reload. */
+  readonly stale = computed(() => this.formErrors().some((e) => e.endsWith(STALE_RULES_ERROR)));
   readonly actionError = signal<string | null>(null);
   /** The API said the saved changes reach the mail only after "Apply again". */
   readonly reapply = signal(false);

@@ -4,6 +4,7 @@ import { TestBed } from '@angular/core/testing';
 import { convertToParamMap } from '@angular/router';
 import {
   applyServerErrors,
+  STALE_RULES_ERROR,
   approveSummary,
   controlError,
   editRequest,
@@ -229,9 +230,10 @@ describe('policy form', () => {
     expect(controlError(form.controls.topicLabel)).toBe('Required unless the sender is mixed.');
     const r = form.controls.rules.at(0);
     expect(controlError(r.controls.match)).toBe('Set at least one match field.');
-    expect(controlError(r.controls.id)).toBe('Not a rule of this policy.');
+    expect(r.controls.id.errors).toBeNull();
     expect(controlError(form.controls.rules)).toBe('At most 12 rules.');
-    expect(rest).toEqual(['Unknown.']);
+    expect(rest).toEqual([`Rule 1: Not a rule of this policy. ${STALE_RULES_ERROR}`, 'Unknown.']);
+    expect(r.controls.id.valid).toBe(true);
   });
 
   it('summarises a match and what an approve applies to', () => {

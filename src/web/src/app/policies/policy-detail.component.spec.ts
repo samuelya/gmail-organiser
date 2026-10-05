@@ -278,4 +278,34 @@ describe('PolicyDetail', () => {
     expect(q('policy-action-error')!.textContent).toContain('cannot delete');
     expect(q('rule-label-error')!.textContent).toContain('Required.');
   });
+
+  it('shows an error on a rule id at form level, keeps Save usable and offers a reload', async () => {
+    const { q, all, stable } = await render();
+    api.edit.mockReturnValue(
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            status: 400,
+            error: { errors: { 'rules[0].id': ['Not a rule of this policy, or listed twice.'] } },
+          }),
+      ),
+    );
+    all('rule-down')[0].click();
+    await stable();
+    q('save')!.click();
+    await stable();
+
+    expect(q('form-error')!.textContent).toContain('Rule 1: Not a rule of this policy');
+    expect(q('form-error')!.textContent).toContain('reload');
+    q('save')!.click();
+    await stable();
+    expect(api.edit).toHaveBeenCalledTimes(2);
+
+    api.get.mockClear();
+    q('reload')!.click();
+    await stable();
+    expect(api.get).toHaveBeenCalledWith('p1');
+    expect(q('form-error')).toBeNull();
+    expect(q('reload')).toBeNull();
+  });
 });

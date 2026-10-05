@@ -189,7 +189,9 @@ export class PoliciesPage {
     this.load(this.query());
   }
 
+  /** Also fires when Back/Forward moves the bound index; then the URL already has the tab. */
   onTab(index: number): void {
+    if (this.statuses[index] === this.query().status) return;
     this.navigate({ status: this.statuses[index], page: 1 });
   }
 
