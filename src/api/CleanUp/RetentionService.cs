@@ -1,7 +1,6 @@
 using System.Text.Json;
 using GmailOrganiser.Data;
 using GmailOrganiser.Jobs;
-using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -20,8 +19,8 @@ public enum RetentionRunRefusal
 /// Starts and reports the <see cref="RetentionSweepJob"/> (#368). A run is due <see cref="Interval"/> after the newest
 /// sweep job row was created, whatever its outcome, so a restart catches up at most once.
 /// </summary>
-public sealed class RetentionService(
-    AppDbContext db, ISettingsStore settingsStore, LabelCatalog catalog, TransactionalGuard guard, IJobService jobs, TimeProvider time)
+public sealed partial class RetentionService(
+    AppDbContext db, ISettingsStore settingsStore, LabelCatalog catalog, IJobService jobs, TimeProvider time, ILogger<RetentionService> logger)
 {
     public static readonly TimeSpan Interval = TimeSpan.FromHours(24);
 
@@ -53,22 +52,42 @@ public sealed class RetentionService(
         return created ? (job, RetentionRunRefusal.None) : (job, RetentionRunRefusal.Running);
     }
 
-    /// <exception cref="Gmail.GmailNotConnectedException">The app is not connected to Gmail.</exception>
+    /// <summary>
+    /// <see cref="RetentionStatusDto.EligibleNow"/> is one count query (<see cref="RetentionQuery.Expired"/>), an upper
+    /// bound: protected, transactional and kept-by-policy mail is skipped only by the sweep. When the delete label can't be
+    /// looked up, mail already marked is counted too.
+    /// </summary>
     public async Task<RetentionStatusDto> StatusAsync(CancellationToken ct)
     {
         var settings = await settingsStore.GetAsync(ct);
         var last = await LastAsync(ct);
         var now = time.GetUtcNow();
-        var deleteLabelId = (await catalog.FindByNameAsync(settings.DeleteLabelName, ct))?.Id;
-        var (eligible, _) = await RetentionSweepJob.PlanAsync(db, guard, settings, deleteLabelId, now, ct);
+        var deleteLabelId = await DeleteLabelIdAsync(settings, ct);
+        var eligible = await RetentionQuery.Expired(db, settings, deleteLabelId, now).CountAsync(ct);
         var lastMarked = last?.Cursor is { } cursor ? JsonSerializer.Deserialize<RetentionCursor>(cursor, JobRow.Json)?.MessagesDone : null;
         return new RetentionStatusDto(
             settings.Retention.Enabled,
             last?.CreatedAt,
             lastMarked,
             settings.Retention.Enabled ? (last is null ? now : last.CreatedAt + Interval) : null,
-            eligible.Count);
+            eligible);
     }
+
+    private async Task<string?> DeleteLabelIdAsync(AppSettings settings, CancellationToken ct)
+    {
+        try
+        {
+            return (await catalog.FindByNameAsync(settings.DeleteLabelName, ct))?.Id;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            LogLabelLookupFailed(logger, ex);
+            return null;
+        }
+    }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Retention status: the delete label lookup failed; counting without it")]
+    private static partial void LogLabelLookupFailed(ILogger logger, Exception exception);
 
     private Task<JobRow?> LastAsync(CancellationToken ct) =>
         db.Jobs.AsNoTracking().Where(j => j.Type == RetentionSweepJob.JobType).OrderByDescending(j => j.CreatedAt).FirstOrDefaultAsync(ct);

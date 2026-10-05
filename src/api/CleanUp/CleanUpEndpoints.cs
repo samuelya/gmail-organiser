@@ -108,18 +108,9 @@ public static class CleanUpEndpoints
         }
     }
 
-    /// <summary>Whether retention is on, the last and next sweep, and how many messages one would mark now; 503 when Gmail is not connected.</summary>
-    private static async Task<Results<Ok<RetentionStatusDto>, ProblemHttpResult>> RetentionAsync(RetentionService retention, CancellationToken ct)
-    {
-        try
-        {
-            return TypedResults.Ok(await retention.StatusAsync(ct));
-        }
-        catch (GmailNotConnectedException ex)
-        {
-            return GmailProblems.NotConnected(ex);
-        }
-    }
+    /// <summary>Whether retention is on, the last and next sweep, and at most how many messages one would mark now.</summary>
+    private static async Task<Ok<RetentionStatusDto>> RetentionAsync(RetentionService retention, CancellationToken ct) =>
+        TypedResults.Ok(await retention.StatusAsync(ct));
 
     /// <summary>202 with the queued sweep; 409 while retention is off or a sweep is queued, running or paused.</summary>
     private static async Task<Results<Accepted<JobDto>, ProblemHttpResult>> RunRetentionAsync(RetentionService retention, CancellationToken ct) =>

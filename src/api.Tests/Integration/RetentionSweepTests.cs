@@ -153,7 +153,8 @@ public sealed class RetentionSweepTests : IClassFixture<ApiFactory>, IAsyncLifet
     public async Task Expired_mail_is_marked_and_archived_protected_and_kept_mail_is_not_and_undo_restores_it()
     {
         var before = h.Gmail.Inner.Messages.ToDictionary(m => m.Id, m => m.LabelIds.ToArray());
-        (await StatusAsync()).EligibleNow.ShouldBe(3);
+        // An upper bound: a01 (attachment), a04 (starred) and c00 (transactional) are skipped only by the sweep.
+        (await StatusAsync()).EligibleNow.ShouldBe(6);
 
         var response = await h.PostWithoutBodyAsync("/api/clean-up/retention/run");
         response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
@@ -177,7 +178,7 @@ public sealed class RetentionSweepTests : IClassFixture<ApiFactory>, IAsyncLifet
         h.Progress(job.Id).Last().Message.ShouldBe("Marked 3 of 3 messages; skipped 3 protected");
         var status = await StatusAsync();
         (status.Enabled, status.LastRunAt, status.LastMarked, status.NextDueAt, status.EligibleNow)
-            .ShouldBe((true, Now, 3, Now + RetentionService.Interval, 0));
+            .ShouldBe((true, Now, 3, Now + RetentionService.Interval, 3));
 
         await using (var db = postgres.CreateDbContext())
         {
@@ -198,6 +199,51 @@ public sealed class RetentionSweepTests : IClassFixture<ApiFactory>, IAsyncLifet
         {
             Labels(id).ShouldBe(labels, ignoreOrder: true);
         }
+    }
+
+    [Fact]
+    public async Task A_sweep_that_starts_after_retention_was_turned_off_marks_nothing()
+    {
+        var before = h.Gmail.Inner.Messages.ToDictionary(m => m.Id, m => m.LabelIds.ToArray());
+        (await h.PostWithoutBodyAsync("/api/clean-up/retention/run")).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await UpdateSettingsAsync(s => s with { Retention = s.Retention with { Enabled = false } });
+        await h.RunNextAsync();
+
+        foreach (var (id, labels) in before)
+        {
+            Labels(id).ShouldBe(labels, ignoreOrder: true);
+        }
+
+        await using var db = postgres.CreateDbContext();
+        (await db.ActionBatches.CountAsync(Ct)).ShouldBe(0);
+        (await db.Jobs.AsNoTracking().SingleAsync(j => j.Type == RetentionSweepJob.JobType, Ct)).Status.ShouldBe(JobStatus.Completed);
+    }
+
+    [Fact]
+    public async Task Mail_applied_before_its_senders_keep_policy_was_approved_is_not_swept()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "x00").ExecuteUpdateAsync(u => u.SetProperty(s => s.PolicyId, (Guid?)null), Ct);
+            // As a fetch sets it; the harness seeds rows without it.
+            await db.Messages.Where(m => m.Id == "x00").ExecuteUpdateAsync(u => u.SetProperty(m => m.CanonicalAddress, m => m.FromAddress), Ct);
+        }
+
+        var before = Labels("x00").ToArray();
+        (await h.PostWithoutBodyAsync("/api/clean-up/retention/run")).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+
+        Labels("x00").ShouldBe(before, ignoreOrder: true);
+        await using var check = postgres.CreateDbContext();
+        (await check.ActionLog.AsNoTracking().Select(l => l.MessageId).ToListAsync(Ct)).ShouldBe(["a00", "a07", "b00"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Status_still_answers_when_the_delete_label_lookup_fails()
+    {
+        h.Gmail.AfterListLabels = () => throw new InvalidOperationException("synthetic label list failure");
+        var status = await StatusAsync();
+        (status.Enabled, status.LastRunAt, status.EligibleNow).ShouldBe((true, null, 6));
     }
 
     [Fact]

@@ -36,8 +36,8 @@ public sealed record RetentionCursor(
 /// The retention sweep (#368, DESIGN §6.4): live applied mail, not in Trash and not delete-labelled, whose effective
 /// retention has passed gets the delete label and leaves the inbox; the portal never trashes. Retention is the
 /// suggestion's approved sub-rule's <c>RetentionDays</c>, else its approved policy's, else the mail type's days in
-/// <see cref="RetentionSettings"/>; an approved keep rule or policy, protected mail and transactional mail are never
-/// marked. Blocks of <see cref="BlockSize"/> ids in id order, split by whether <c>INBOX</c> is present so undo restores
+/// <see cref="RetentionSettings"/>; an approved keep rule or policy (the suggestion's, or the one matching the sender now),
+/// protected mail and transactional mail are never marked, and a run that starts with retention off marks nothing. Blocks of <see cref="BlockSize"/> ids in id order, split by whether <c>INBOX</c> is present so undo restores
 /// exactly, each through <see cref="ChunkSender"/> as in <see cref="Senders.SenderArchiveJob"/>. Marked mail drops out of
 /// the plan, so a resume never marks twice; <see cref="UndoActionsJob"/> reverts the run's batch.
 /// </summary>
@@ -77,7 +77,7 @@ public sealed class RetentionSweepJob(
         AppDbContext db, TransactionalGuard guard, AppSettings settings, string? deleteLabelId, DateTimeOffset now,
         CancellationToken ct, string[]? ids = null)
     {
-        var expired = await ExpiredAsync(db, settings, deleteLabelId, now, ids, ct);
+        var expired = await ExpiredAsync(db, guard, settings, deleteLabelId, now, ids, ct);
         var allowlist = await AllowlistLoader.LoadAsync(db, settings, [.. expired.Select(m => m.FromAddress).Distinct()], ct);
         var covered = expired.Where(m => !MessageProtection.IsProtected(m, allowlist, settings.Protection) && !guard.IsTransactional(m))
             .OrderBy(m => m.Id, StringComparer.Ordinal)
@@ -89,6 +89,12 @@ public sealed class RetentionSweepJob(
     {
         var cursor = ctx.ReadCursor<RetentionCursor>() ?? new RetentionCursor();
         var settings = await settingsStore.GetAsync(ct);
+        if (!settings.Retention.Enabled)
+        {
+            await StopAsync(ctx, cursor, ct);
+            return;
+        }
+
         if (cursor.BatchId is null)
         {
             var existing = (await catalog.FindByNameAsync(settings.DeleteLabelName, ct))?.Id;
@@ -182,6 +188,38 @@ public sealed class RetentionSweepJob(
             total = Done(cursor) + plan.Sum(c => c.MessageIds.Length);
         }
 
+        await CompleteAsync(ctx, cursor, total, ct);
+    }
+
+    /// <summary>
+    /// Retention was turned off after the run was queued: marks nothing more. A pending chunk is logged and may have
+    /// reached Gmail, so it is finished first, keeping the log and Gmail in step.
+    /// </summary>
+    private async Task StopAsync(JobContext ctx, RetentionCursor cursor, CancellationToken ct)
+    {
+        var total = Done(cursor);
+        if (cursor.Pending is { } pending)
+        {
+            (cursor, var signal, total) = await SendAsync(ctx, cursor, resent: true, total + pending.MessageIds.Length, ct);
+            if (signal != JobSignal.Continue)
+            {
+                return;
+            }
+        }
+
+        if (cursor.BatchId is null)
+        {
+            await ctx.CompleteAsync(cursor, Progress(cursor, total), _ => Task.CompletedTask, ct);
+            return;
+        }
+
+        await CompleteAsync(ctx, cursor, total, ct);
+    }
+
+    /// <summary>Completes the run and sets its batch's description to the count marked.</summary>
+    private async Task CompleteAsync(JobContext ctx, RetentionCursor cursor, int total, CancellationToken ct)
+    {
+        var batchId = cursor.BatchId!.Value;
         var deleteLabelName = (await settingsStore.GetAsync(ct)).DeleteLabelName;
         await ctx.CompleteAsync(cursor, Progress(cursor, total), t => db.ActionBatches.Where(b => b.Id == batchId)
             .ExecuteUpdateAsync(s => s.SetProperty(b => b.Description, Describe(cursor.MessagesDone, deleteLabelName)), t), ct);
@@ -199,56 +237,24 @@ public sealed class RetentionSweepJob(
         ([deleteLabelId], m.LabelIds.Contains(CleanUpQuery.InboxLabel, StringComparer.Ordinal) ? [CleanUpQuery.InboxLabel] : []);
 
     /// <summary>
-    /// Live applied messages, not in Trash and not delete-labelled, past their effective retention, with the fields
-    /// protection and the transactional guard read. An approved keep rule or policy means no retention.
+    /// <see cref="RetentionQuery.Expired"/>, less the messages the approved policy matching the sender now keeps: a keep
+    /// policy approved after the mail was applied still keeps it.
     /// </summary>
     private static async Task<List<MessageRow>> ExpiredAsync(
-        AppDbContext db, AppSettings settings, string? deleteLabelId, DateTimeOffset now, string[]? ids, CancellationToken ct)
+        AppDbContext db, TransactionalGuard guard, AppSettings settings, string? deleteLabelId, DateTimeOffset now, string[]? ids,
+        CancellationToken ct)
     {
-        var newest = now.AddDays(-RetentionSettings.MinDays);
-        var messages = db.Messages.Where(m => m.AnalysisStatus == AnalysisStatus.Applied && !m.DeletedInGmail
-            && !m.LabelIds.Contains(CleanUpQuery.TrashLabel) && m.InternalDate < newest);
-        if (deleteLabelId is not null)
-        {
-            messages = messages.Where(m => !m.LabelIds.Contains(deleteLabelId));
-        }
-
+        var messages = RetentionQuery.Expired(db, settings, deleteLabelId, now);
         if (ids is not null)
         {
             messages = messages.Where(m => ids.Contains(m.Id));
         }
 
-        var rows = await (
-            from m in messages
-            join s in db.Suggestions on m.Id equals s.MessageId
-            let rule = db.SenderPolicyRules.FirstOrDefault(r => r.Id == s.PolicyRuleId && r.Status == PolicyStatus.Approved)
-            let policy = db.SenderPolicies.FirstOrDefault(p => p.Id == s.PolicyId && p.Status == PolicyStatus.Approved)
-            select new
-            {
-                Message = new MessageRow
-                {
-                    Id = m.Id,
-                    FromAddress = m.FromAddress,
-                    Subject = m.Subject,
-                    Snippet = m.Snippet,
-                    InternalDate = m.InternalDate,
-                    LabelIds = m.LabelIds,
-                    HasAttachment = m.HasAttachment,
-                    ThreadReplied = m.ThreadReplied,
-                },
-                s.MailType,
-                RuleAction = rule == null ? (PolicyAction?)null : rule.Action,
-                RuleDays = rule == null ? null : rule.RetentionDays,
-                PolicyAction = policy == null ? (PolicyAction?)null : policy.Action,
-                PolicyDays = policy == null ? null : policy.RetentionDays,
-            })
-            .AsNoTracking()
-            .ToListAsync(ct);
-        return [.. rows
-            .Where(r => (r.RuleAction ?? r.PolicyAction) != PolicyAction.Keep
-                && (r.RuleDays ?? r.PolicyDays ?? (r.MailType is { } type ? settings.Retention.DaysFor(type) : null)) is { } days
-                && r.Message.InternalDate < now.AddDays(-days))
-            .Select(r => r.Message)];
+        var rows = await messages.AsNoTracking().ToListAsync(ct);
+        var policies = await PolicyLookup.LoadAsync(db, rows, ct);
+        var matcher = new PolicyMatcher(guard);
+        return [.. rows.Where(m => policies.For(m) is not { } policy
+            || matcher.Match(m, policy, m.CanonicalAddress)?.Action != PolicyAction.Keep)];
     }
 
     /// <summary>Records a label this run created on its batch, so undo can tell it apart.</summary>

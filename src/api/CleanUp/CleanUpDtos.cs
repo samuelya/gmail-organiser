@@ -10,7 +10,7 @@ public sealed record CleanupSummaryDto(int Messages, int Senders, int Protected)
 /// <param name="LastRunAt">When the newest sweep was queued; null when none ever was.</param>
 /// <param name="LastMarked">Messages that sweep marked so far; null when none ran.</param>
 /// <param name="NextDueAt">When the scheduler queues the next sweep (it checks hourly); null while retention is off.</param>
-/// <param name="EligibleNow">Messages a sweep would mark now.</param>
+/// <param name="EligibleNow">At most how many messages a sweep would mark now: protected, transactional and kept-by-policy mail is not subtracted.</param>
 public sealed record RetentionStatusDto(bool Enabled, DateTimeOffset? LastRunAt, int? LastMarked, DateTimeOffset? NextDueAt, int EligibleNow);
 
 /// <param name="Allowlisted">The address itself is allowlisted (#178).</param>
