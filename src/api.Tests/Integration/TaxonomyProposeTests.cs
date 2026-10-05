@@ -36,6 +36,7 @@ public sealed class TaxonomyProposeTests(ApiFactory factory, PostgresFixture pos
         {
             await db.LabelPlans.ExecuteDeleteAsync(Ct);
             await db.SenderPolicies.ExecuteDeleteAsync(Ct);
+            await db.ActionLog.ExecuteDeleteAsync(Ct);
             await db.ActionBatches.ExecuteDeleteAsync(Ct);
         }
 
