@@ -272,6 +272,7 @@ public sealed class PolicyApplyJob(
         row.Source = SuggestionSource.Policy;
         row.TopicLabel = match.TopicLabel;
         row.DocumentTypeLabel = match.DocumentTypeLabel;
+        row.MailType = match.MailType;
         row.NeedsAction = match.MailType == MailType.ActionBill;
         row.ToBeDeleted = delete && protectedReason is null;
         row.KeepInInbox = match.Action == PolicyAction.Keep;
@@ -282,7 +283,7 @@ public sealed class PolicyApplyJob(
         row.PolicyRuleId = match.Rule?.Id;
     }
 
-    private static object Outcome(SuggestionRow s) => (s.TopicLabel, s.DocumentTypeLabel, s.NeedsAction, s.ToBeDeleted,
+    private static object Outcome(SuggestionRow s) => (s.TopicLabel, s.DocumentTypeLabel, s.MailType, s.NeedsAction, s.ToBeDeleted,
         s.KeepInInbox, s.UnsubscribeSuggested, s.Confidence, s.Reason, s.PolicyRuleId);
 
     private static JobProgress Progress(PolicyApplyCursor c) => new(

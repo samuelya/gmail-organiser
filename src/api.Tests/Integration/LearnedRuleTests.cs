@@ -72,6 +72,7 @@ public sealed class LearnedRuleTests(ApiFactory factory, PostgresFixture postgre
                 Source = SuggestionSource.Llm,
                 TopicLabel = Topic,
                 ToBeDeleted = true,
+                MailType = MailType.Marketing,
                 Confidence = 0.99,
                 Reason = "Synthetic reason",
                 CreatedAt = Created,
@@ -96,6 +97,7 @@ public sealed class LearnedRuleTests(ApiFactory factory, PostgresFixture postgre
         rule.Match.Category.ShouldBe(MessageCategory.Updates);
         (rule.Status, rule.Action, rule.TopicLabel, rule.Position, rule.Reason)
             .ShouldBe((PolicyStatus.Proposed, PolicyAction.Delete, Topic, 1, LearnedRuleProposer.LearnedReason));
+        rule.MailType.ShouldBe(MailType.Marketing);
 
         var detail = (await (await h.GetAsync($"/api/policies/{policyId}")).Content.ReadFromJsonAsync<SenderPolicyDetailDto>(Ct)).ShouldNotBeNull();
         detail.Rules.Count.ShouldBe(2);

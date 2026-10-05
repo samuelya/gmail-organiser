@@ -137,6 +137,26 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
         (await CoverAsync(Parent)).ShouldNotBeNull().Suggestions.Single().DocumentTypeLabel.ShouldBe("Type/invoice");
     }
 
+    [Theory]
+    [InlineData(MailType.Receipt, MailType.Receipt, MailType.Receipt)]
+    [InlineData(MailType.Receipt, null, MailType.Receipt)]
+    [InlineData(MailType.Receipt, MailType.Notification, null)]
+    [InlineData(null, null, null)]
+    public async Task Memory_rows_carry_the_mail_type_the_approvals_agree_on(MailType? latest, MailType? older, MailType? expected)
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Decisions.AddRange(
+                Approval(-1, "Type/Invoice", Parent, latest), Approval(-2, "Type/Invoice", Parent, older),
+                Approval(-3, "Type/Invoice", Parent, older));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var suggestion = (await CoverAsync(Parent)).ShouldNotBeNull().Suggestions.Single();
+
+        (suggestion.TopicLabel, suggestion.MailType).ShouldBe(("Shopping", expected));
+    }
+
     [Fact]
     public async Task Similar_decision_hints_carry_the_type_label_and_whether_it_was_decided_under_the_parent()
     {
@@ -207,7 +227,7 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
         UpdatedAt = Now,
     };
 
-    private static DecisionRow Approval(int days, string? type, string? parent) => new()
+    private static DecisionRow Approval(int days, string? type, string? parent, MailType? mailType = null) => new()
     {
         Id = Guid.NewGuid(),
         MessageId = $"old-{Guid.NewGuid():N}",
@@ -218,6 +238,7 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
         DocumentTypeLabel = type,
         DocumentTypeDecided = parent is not null,
         DocumentTypeParent = parent,
+        MailType = mailType,
         Outcome = DecisionOutcome.Approved,
         Source = SuggestionSource.Llm,
         CreatedAt = Now.AddDays(days),

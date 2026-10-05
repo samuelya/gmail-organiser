@@ -4,16 +4,17 @@ using System.Text.RegularExpressions;
 namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>
-/// The analysis prompt template: the built-in embedded <c>analysis-v5.md</c> or the user's override from Settings.
+/// The analysis prompt template: the built-in embedded <c>analysis-v6.md</c> or the user's override from Settings.
 /// Placeholders are <c>{{name}}</c>; substitution is a single pass, so values (email text) never expand further.
 /// </summary>
 public sealed partial class PromptTemplate
 {
-    public const string BuiltInVersion = "analysis-v5";
+    public const string BuiltInVersion = "analysis-v6";
     public const string CustomVersion = "custom";
     public const string EmailsPlaceholder = "{{emails}}";
+    public const string MailTypesPlaceholder = "{{mailTypes}}";
 
-    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v5.md";
+    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v6.md";
 
     private PromptTemplate(string version, string text)
     {
@@ -24,6 +25,9 @@ public sealed partial class PromptTemplate
     public string Version { get; }
 
     public string Text { get; }
+
+    /// <summary>The template asks for a mail type (#365); a custom override without the placeholder stores none.</summary>
+    public bool AsksMailType => Text.Contains(MailTypesPlaceholder, StringComparison.Ordinal);
 
     public static PromptTemplate BuiltIn { get; } = new(BuiltInVersion, LoadBuiltIn());
 

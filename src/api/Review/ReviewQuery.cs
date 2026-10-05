@@ -260,7 +260,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         suggestedForClaude,
         s.DocumentTypeLabel,
         s.DocumentTypeIsNew,
-        alternative is null ? null : ToDto(alternative, m, current, labelNames));
+        alternative is null ? null : ToDto(alternative, m, current, labelNames),
+        s.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null);
     }
 
     /// <summary>

@@ -273,6 +273,8 @@ public sealed class AlternativeService(
         s.IsNewLabel = a.IsNewLabel;
         s.DocumentTypeLabel = a.DocumentTypeLabel;
         s.DocumentTypeIsNew = a.DocumentTypeIsNew;
+        s.MailType = a.MailType;
+        s.ProposedNewLabel = a.ProposedNewLabel;
         s.SetReplaced(a.Replaced(null));
         s.NeedsAction = a.NeedsAction;
         s.ToBeDeleted = a.ToBeDeleted;

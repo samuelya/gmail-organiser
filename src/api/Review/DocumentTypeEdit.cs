@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Data;
 
 namespace GmailOrganiser.Review;
 
@@ -9,6 +10,32 @@ public readonly record struct DocumentTypeChange(bool IsSet, string? Label)
     public static readonly DocumentTypeChange Clear = new(true, null);
 
     public static DocumentTypeChange To(string label) => new(true, label);
+}
+
+/// <summary>A change to a suggestion's mail type (#365): unchanged (default), cleared, or set to <see cref="Value"/>.</summary>
+public readonly record struct MailTypeChange(bool IsSet, MailType? Value)
+{
+    /// <summary>Null is unchanged, blank clears; anything else must name a <see cref="MailType"/> (an error under <c>mailType</c>).</summary>
+    public static MailTypeChange Validate(string? value, Dictionary<string, string[]> errors)
+    {
+        if (value is null)
+        {
+            return default;
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return new MailTypeChange(true, null);
+        }
+
+        if (SnakeCaseEnumConverter<MailType>.TryFromDb(value, out var type))
+        {
+            return new MailTypeChange(true, type);
+        }
+
+        errors["mailType"] = [$"Must be one of {SnakeCaseEnumConverter<MailType>.NamesList}."];
+        return default;
+    }
 }
 
 /// <summary>

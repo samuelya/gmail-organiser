@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Fetch;
 using Pgvector;
@@ -7,8 +8,10 @@ namespace GmailOrganiser.Memory;
 /// <summary>A consistent approved outcome for a group scope; <see cref="Approvals"/> distinct messages agree with it.</summary>
 /// <param name="DocumentTypeLabel">The latest approval's document-type label; null is none.</param>
 /// <param name="DocumentTypeDecided">The latest approval was decided under the document-type parent asked about.</param>
+/// <param name="MailType">The mail type the typed approvals agree on (#365); null when none has one or they differ.</param>
 public sealed record MemoryPattern(
-    string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Approvals, double Agreement, string? DocumentTypeLabel, bool DocumentTypeDecided);
+    string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Approvals, double Agreement, string? DocumentTypeLabel, bool DocumentTypeDecided,
+    MailType? MailType = null);
 
 /// <summary>Message vectors of one embedding model, by message id.</summary>
 public sealed record MessageVectors(string Model, IReadOnlyDictionary<string, Vector> ById);

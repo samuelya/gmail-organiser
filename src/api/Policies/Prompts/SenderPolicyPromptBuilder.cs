@@ -34,21 +34,6 @@ public static class SenderPolicyPromptBuilder
 
     private const string ResourceName = "GmailOrganiser.Policies.Prompts.sender-policy-v1.md";
 
-    /// <summary>One line per mail type, so the model reads the same meaning the review page shows.</summary>
-    private static readonly Dictionary<MailType, string> MailTypeDefinitions = new()
-    {
-        [MailType.Personal] = "mail from a person writing to the person",
-        [MailType.ActionBill] = "a bill or request the person must act on (pay, sign, reply, book)",
-        [MailType.Receipt] = "a receipt, order or payment confirmation",
-        [MailType.StatementDocument] = "a statement, contract, policy or other document worth keeping",
-        [MailType.AccountAlert] = "a notice about the person's account (changes, limits, renewals)",
-        [MailType.Notification] = "an automated update of short-lived interest (shipping, activity, reminders)",
-        [MailType.Newsletter] = "editorial content the person subscribed to",
-        [MailType.Marketing] = "advertising, offers and promotions",
-        [MailType.Social] = "social network activity",
-        [MailType.SecurityOtp] = "a one-time code, sign-in or security alert",
-    };
-
     // Enums let Ollama's constrained decoding rule out an unknown action, mail type or category.
     private static readonly JsonElement OutputSchema = JsonDocument.Parse($$"""
         {
@@ -115,7 +100,7 @@ public static class SenderPolicyPromptBuilder
         {
             ["profile"] = SenderProfileBuilder.ToPromptText(profile),
             ["labelTree"] = AnalysisPromptBuilder.RenderLabelTree(labelTree),
-            ["mailTypes"] = RenderMailTypes(),
+            ["mailTypes"] = MailTypes.PromptList(),
             ["actionLabel"] = AnalysisPromptBuilder.OneLine(settings.ActionLabelName),
             ["deleteLabel"] = AnalysisPromptBuilder.OneLine(settings.DeleteLabelName),
             ["documentTypes"] = AnalysisPromptBuilder.RenderDocumentTypes(settings.DocumentTypeParent, labelTree),
@@ -129,10 +114,7 @@ public static class SenderPolicyPromptBuilder
             PromptTemplate.Substitute(Template[lineStart..], values).Trim());
     }
 
-    private static string RenderMailTypes() => string.Join('\n', Enum.GetValues<MailType>()
-        .Select(t => $"- `{SnakeCaseEnumConverter<MailType>.ToDb(t)}`: {MailTypeDefinitions[t]}"));
-
-    private static string EnumSchema<TEnum>(bool nullable) where TEnum : struct, Enum
+    internal static string EnumSchema<TEnum>(bool nullable) where TEnum : struct, Enum
     {
         var names = Enum.GetValues<TEnum>().Select(v => JsonSerializer.Serialize(SnakeCaseEnumConverter<TEnum>.ToDb(v)));
         return nullable

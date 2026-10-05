@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Prompts;
 
 namespace GmailOrganiser.Tests.Unit.Analysis;
@@ -7,19 +8,20 @@ public sealed class SuggestionOutputParserTests
     private static readonly HashSet<string> Ids = ["m1", "m2"];
 
     private static string Item(string id, string label = "Topic/Sub", string confidence = "0.9", string extra = "") =>
-        $$"""{"id":"{{id}}","topicLabel":"{{label}}","isNewLabel":false,"needsAction":true,"toBeDeleted":false,"unsubscribeSuggested":false,"confidence":{{confidence}},"reason":"Synthetic reason"{{extra}}}""";
+        $$"""{"id":"{{id}}","topicLabel":"{{label}}","isNewLabel":false,"mailType":"notification","needsAction":true,"toBeDeleted":false,"unsubscribeSuggested":false,"confidence":{{confidence}},"reason":"Synthetic reason"{{extra}}}""";
 
     private static string Both => $"[{Item("m1")},{Item("m2")}]";
 
     [Fact]
     public void Valid_array_parses_every_email()
     {
-        var (valid, errors, filter) = SuggestionOutputParser.Parse(Both, Ids);
+        var (valid, errors, filter) = SuggestionOutputParser.Parse(
+            Both, Ids, context: new SuggestionParseContext(new LabelTreeIndex(["Topic/Sub"]), []));
 
         errors.ShouldBeEmpty();
         filter.ShouldBeNull();
         valid.Select(v => v.Id).ShouldBe(["m1", "m2"]);
-        valid[0].ShouldBe(new SuggestionOutput("m1", "Topic/Sub", false, true, false, false, 0.9, "Synthetic reason"));
+        valid[0].ShouldBe(new SuggestionOutput("m1", "Topic/Sub", false, true, false, false, 0.9, "Synthetic reason", MailType: MailType.Notification));
     }
 
     private static readonly Dictionary<string, IReadOnlyList<string>> Current = new()

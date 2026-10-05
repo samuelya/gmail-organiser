@@ -83,7 +83,7 @@ public sealed partial class ReviewService(
     /// </summary>
     public async Task<(ReviewResult Result, SuggestionDto? Suggestion, IReadOnlyList<string> Unknown)> EditAsync(
         Guid id, string topicLabel, bool needsAction, bool toBeDeleted, IReadOnlyList<string>? replaceLabels,
-        DocumentTypeChange documentType, CancellationToken ct)
+        DocumentTypeChange documentType, MailTypeChange mailType, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(topicLabel, ct);
         var (type, typeIsNew) = await DocumentTypeEdit.ResolveAsync(labels, documentType, ct);
@@ -120,6 +120,11 @@ public sealed partial class ReviewService(
             s.NeedsAction = needsAction;
             s.ToBeDeleted = toBeDeleted;
             DocumentTypeEdit.Apply(s, type, typeIsNew);
+            if (mailType.IsSet)
+            {
+                s.MailType = mailType.Value;
+            }
+
             if (replaceLabels is not null)
             {
                 s.SetReplaced([.. (replaced ?? []).Concat(ReplacedLabels.AppOf(s, settings)).DistinctBy(l => l.Id, StringComparer.Ordinal)]);

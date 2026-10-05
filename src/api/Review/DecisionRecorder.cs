@@ -59,6 +59,7 @@ public sealed partial class DecisionRecorder(
             DocumentTypeLabel = suggestion.DocumentTypeLabel,
             DocumentTypeDecided = parent is not null,
             DocumentTypeParent = parent,
+            MailType = suggestion.MailType,
             NeedsAction = suggestion.NeedsAction,
             ToBeDeleted = suggestion.ToBeDeleted,
             Outcome = outcome,

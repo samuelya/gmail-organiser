@@ -3,6 +3,7 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// <summary>One representative's validated LLM decision (an invalid output is passed as <c>null</c>).</summary>
 /// <param name="ReplaceLabels">Current labels the answer replaces; null is none.</param>
 /// <param name="DocumentTypeLabel">The document-type label; null is none.</param>
+/// <param name="MailType">The mail type (#365); null is none.</param>
 public sealed record RepresentativeOutput(
     string TopicLabel,
     bool NeedsAction,
@@ -10,7 +11,8 @@ public sealed record RepresentativeOutput(
     bool UnsubscribeSuggested,
     double Confidence,
     IReadOnlyList<string>? ReplaceLabels = null,
-    string? DocumentTypeLabel = null);
+    string? DocumentTypeLabel = null,
+    MailType? MailType = null);
 
 /// <summary>Whether a group's remaining members get a derived suggestion.</summary>
 public abstract record Derivation;
@@ -31,6 +33,9 @@ public sealed record Agreed(
     /// representative named none, so a derived member is assigned less rather than a type not every sample showed.
     /// </summary>
     public string? DocumentTypeLabel { get; init; }
+
+    /// <summary>The mail type the representatives agree on; null when any named none, like <see cref="DocumentTypeLabel"/>.</summary>
+    public MailType? MailType { get; init; }
 }
 
 /// <summary>Representatives disagree or one has no valid output: every remaining member goes to the LLM individually.</summary>
@@ -43,7 +48,8 @@ public sealed record Mixed : Derivation
 /// Epic #22 safety rule: derive only when every representative (at least two) has a valid output and all agree on
 /// all decision fields, the replaced labels (same set, ordinal) included. One invalid representative makes the group
 /// mixed rather than deriving from a partial sample. A missing document-type label is no opinion: representatives that
-/// name different types (case-insensitive) are mixed, and a group where only some name the type derives with none.
+/// name different types (case-insensitive) are mixed, and a group where only some name the type derives with none. The
+/// mail type follows the same rule (#365).
 /// </summary>
 public static class DerivationRule
 {
@@ -68,7 +74,9 @@ public static class DerivationRule
             && o.NeedsAction == first.NeedsAction
             && o.ToBeDeleted == first.ToBeDeleted
             && SameSet(o.ReplaceLabels, first.ReplaceLabels));
-        if (!agree || types.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+        var mailTypes = valid.Select(o => o.MailType).ToList();
+        if (!agree || types.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1
+            || mailTypes.OfType<MailType>().Distinct().Count() > 1)
         {
             return Mixed.Instance;
         }
@@ -78,6 +86,7 @@ public static class DerivationRule
         {
             ReplaceLabels = Set(first.ReplaceLabels),
             DocumentTypeLabel = types.Contains(null) ? null : types[0],
+            MailType = mailTypes.Contains(null) ? null : mailTypes[0],
         };
     }
 

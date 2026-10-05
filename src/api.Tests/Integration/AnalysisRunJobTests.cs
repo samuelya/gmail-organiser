@@ -47,7 +47,7 @@ public sealed class AnalysisRunJobTests(ApiFactory factory, PostgresFixture post
         (done.MessagesCovered, done.MessagesLlm, done.MessagesDerived).ShouldBe((20, 9, 11));
         done.SavedPercent.ShouldBe(1 - (3 / 20.0), 1e-9);
         done.Model.ShouldBe(AnalysisRunHarness.ChatModel);
-        done.PromptVersion.ShouldBe("analysis-v5");
+        done.PromptVersion.ShouldBe("analysis-v6");
         h.Chat.Calls.ShouldBe(3);
 
         await using var db = postgres.CreateDbContext();
@@ -409,7 +409,7 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
         {
             id,
             topicLabel = label(id, i),
-            isNewLabel = false,
+            mailType = id[0] switch { 'a' => "marketing", 'b' => "newsletter", 'c' => "action_bill", _ => "notification" },
             needsAction = false,
             toBeDeleted = false,
             unsubscribeSuggested = false,

@@ -10,7 +10,7 @@ public sealed class SuggestionOutputParserDocumentTypeTests
     private static readonly HashSet<string> Ids = ["m1"];
 
     private static string Item(string documentType, string label = "Topic/Sub") =>
-        $$"""[{"id":"m1","topicLabel":"{{label}}","isNewLabel":false,"needsAction":false,"toBeDeleted":false,"unsubscribeSuggested":false,"confidence":0.9,"reason":"Synthetic reason"{{documentType}}}]""";
+        $$"""[{"id":"m1","topicLabel":"{{label}}","isNewLabel":false,"mailType":"receipt","needsAction":false,"toBeDeleted":false,"unsubscribeSuggested":false,"confidence":0.9,"reason":"Synthetic reason"{{documentType}}}]""";
 
     [Theory]
     [InlineData("", Parent, null)]

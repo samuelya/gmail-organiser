@@ -20,6 +20,8 @@ public sealed class SuggestionAlternativeRow
     public bool IsNewLabel { get; set; }
     public string? DocumentTypeLabel { get; set; }
     public bool DocumentTypeIsNew { get; set; }
+    public MailType? MailType { get; set; }
+    public string? ProposedNewLabel { get; set; }
     public string[] ReplaceLabelIds { get; set; } = [];
     public string[] ReplaceLabels { get; set; } = [];
     public bool NeedsAction { get; set; }
@@ -51,6 +53,8 @@ public sealed class SuggestionAlternativeRow
         IsNewLabel = row.IsNewLabel,
         DocumentTypeLabel = row.DocumentTypeLabel,
         DocumentTypeIsNew = row.DocumentTypeIsNew,
+        MailType = row.MailType,
+        ProposedNewLabel = row.ProposedNewLabel,
         ReplaceLabelIds = row.ReplaceLabelIds,
         ReplaceLabels = row.ReplaceLabels,
         NeedsAction = row.NeedsAction,
@@ -75,6 +79,7 @@ public sealed class SuggestionAlternativeRow
             e.Property(r => r.Source).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionSource>());
             e.Property(r => r.TopicLabel).IsRequired();
             e.Property(r => r.Reason).IsRequired();
+            e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());
             e.Property(r => r.ReplaceLabelIds).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.ReplaceLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.FilterCriteria).HasColumnType("jsonb");

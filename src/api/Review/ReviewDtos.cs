@@ -53,6 +53,7 @@ public sealed record ReviewGroupDto(
 /// <param name="DocumentTypeLabel">The second label apply adds next to the topic label; null when none.</param>
 /// <param name="DocumentTypeIsNew">Gmail did not have <paramref name="DocumentTypeLabel"/> when it was suggested or edited.</param>
 /// <param name="Alternative">The compare run's answer stored next to it (#248); null when none.</param>
+/// <param name="MailType">The snake_case <c>MailType</c> (#365); null when none.</param>
 public sealed record SuggestionDto(
     Guid Id,
     string MessageId,
@@ -77,7 +78,8 @@ public sealed record SuggestionDto(
     bool SuggestedForClaude = false,
     string? DocumentTypeLabel = null,
     bool DocumentTypeIsNew = false,
-    SuggestionAlternativeDto? Alternative = null);
+    SuggestionAlternativeDto? Alternative = null,
+    string? MailType = null);
 
 /// <summary>A compare run's alternative to a suggestion, shown next to it; nothing changes until it is accepted.</summary>
 /// <param name="ReplaceLabels">As on <see cref="SuggestionDto.ReplaceLabels"/>, for the alternative's topic label.</param>
@@ -97,7 +99,8 @@ public sealed record SuggestionAlternativeDto(
     string? Model,
     DateTimeOffset CreatedAt,
     bool Mixed = false,
-    int Count = 1);
+    int Count = 1,
+    string? MailType = null);
 
 /// <summary>Suggestions by id and every suggestion of the named groups (any status); at least one of the two.</summary>
 public sealed record AlternativeDecisionRequest(Guid[]? SuggestionIds, GroupRef[]? Groups);
@@ -110,8 +113,10 @@ public sealed record LabelDto(string Id, string Name, string Type);
 /// <summary>Every field but <paramref name="ReplaceLabels"/> and <paramref name="DocumentTypeLabel"/> is required.</summary>
 /// <param name="ReplaceLabels">Current labels of the message to replace; null leaves them unchanged.</param>
 /// <param name="DocumentTypeLabel">Null leaves it unchanged, <c>""</c> clears it (<see cref="DocumentTypeEdit"/>).</param>
+/// <param name="MailType">A snake_case <c>MailType</c>; null leaves it unchanged, <c>""</c> clears it.</param>
 public sealed record EditSuggestionRequest(
-    string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, string[]? ReplaceLabels = null, string? DocumentTypeLabel = null);
+    string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, string[]? ReplaceLabels = null, string? DocumentTypeLabel = null,
+    string? MailType = null);
 
 /// <param name="TopicLabel">Approve only: the outcome the card shows; only members with exactly this outcome are approved.</param>
 /// <param name="ReplaceLabels">Approve only, optional: each approved member keeps only its own replaced labels named here; none are added.</param>

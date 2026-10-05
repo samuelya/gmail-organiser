@@ -163,13 +163,14 @@ public static class ReviewEndpoints
         var type = request.DocumentTypeLabel is null
             ? DocumentTypeChange.Unchanged
             : DocumentTypeEdit.Validate(request.DocumentTypeLabel, current.DocumentTypeParent, label, errors);
+        var mailType = MailTypeChange.Validate(request.MailType, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
         var (result, suggestion, unknown) = await review.EditAsync(
-            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type, ct);
+            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type, mailType, ct);
         return result == ReviewResult.InvalidReplaceLabels
             ? ReplaceLabelsUnknown("the email does not carry", unknown)
             : ToResult((result, suggestion));

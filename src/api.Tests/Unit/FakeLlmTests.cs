@@ -1,4 +1,5 @@
 using System.Text.Json;
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Llm.Fake;
@@ -27,7 +28,8 @@ public sealed class FakeLlmTests
 
     private static Dictionary<string, SuggestionOutput> Parse(IList<ChatMessage> prompt, params string[] ids)
     {
-        var parsed = SuggestionOutputParser.Parse(FakeAnalysisResponder.Answer([.. prompt]), ids.ToHashSet());
+        var context = new SuggestionParseContext(new LabelTreeIndex(["Social", "Topic/Sub"]), ["Action/Test", "Delete/Test"]);
+        var parsed = SuggestionOutputParser.Parse(FakeAnalysisResponder.Answer([.. prompt]), ids.ToHashSet(), context: context);
         parsed.Errors.ShouldBeEmpty();
         return parsed.Valid.ToDictionary(s => s.Id);
     }
@@ -46,14 +48,19 @@ public sealed class FakeLlmTests
             s => s.TopicLabel.ShouldBe("Promotions"),
             s => s.ToBeDeleted.ShouldBeTrue(),
             s => s.UnsubscribeSuggested.ShouldBeTrue(),
-            s => s.IsNewLabel.ShouldBeTrue());
+            s => s.IsNewLabel.ShouldBeTrue(),
+            s => s.ProposedNewLabel.ShouldBe("Promotions"),
+            s => s.MailType.ShouldBe(MailType.Marketing));
         byId["b1"].ShouldSatisfyAllConditions(
             s => s.TopicLabel.ShouldBe("Bills/Example"),
             s => s.NeedsAction.ShouldBeTrue(),
-            s => s.ToBeDeleted.ShouldBeFalse());
+            s => s.ToBeDeleted.ShouldBeFalse(),
+            s => s.MailType.ShouldBe(MailType.ActionBill));
         byId["s1"].ShouldSatisfyAllConditions(
             s => s.TopicLabel.ShouldBe("Social"),
             s => s.IsNewLabel.ShouldBeFalse(),
+            s => s.ProposedNewLabel.ShouldBeNull(),
+            s => s.MailType.ShouldBe(MailType.Social),
             s => s.Reason.ShouldBe("Fake answer for the social email"));
         byId.Values.ShouldAllBe(s => s.Confidence >= FakeAnalysisResponder.MinConfidence && s.Confidence <= FakeAnalysisResponder.MaxConfidence);
     }

@@ -17,8 +17,10 @@ namespace GmailOrganiser.Mcp;
 
 /// <summary>The local LLM's suggestion for a review item; <c>Source</c> is snake_case.</summary>
 /// <param name="DocumentTypeLabel">The document-type label next to the topic label; null when none.</param>
+/// <param name="MailType">The snake_case mail type (#365); null when none.</param>
 public sealed record LocalSuggestionDto(
-    string TopicLabel, string? DocumentTypeLabel, bool IsNewLabel, bool NeedsAction, bool ToBeDeleted, double Confidence, string Reason, string Source);
+    string TopicLabel, string? DocumentTypeLabel, bool IsNewLabel, bool NeedsAction, bool ToBeDeleted, double Confidence, string Reason, string Source,
+    string? MailType = null);
 
 /// <summary>
 /// A review item as <c>list_pending_reviews</c> lists it; <c>Local</c> is null when nothing is left to review, and for a
@@ -225,7 +227,7 @@ public sealed class ReviewItemBuilder(
 
     private sealed record Member(
         string MessageId, DateTimeOffset Date, SuggestionSource Source, string TopicLabel, string? DocumentTypeLabel, bool IsNewLabel,
-        bool NeedsAction, bool ToBeDeleted, double Confidence, string Reason, SuggestionStatus Status);
+        bool NeedsAction, bool ToBeDeleted, double Confidence, string Reason, SuggestionStatus Status, MailType? MailType);
 
     /// <summary>The target's suggestions: the pending ones when any are pending, else all of them; newest first.</summary>
     private async Task<List<Member>> MembersAsync(ExternalReviewRow row, CancellationToken ct)
@@ -243,7 +245,7 @@ public sealed class ReviewItemBuilder(
                 join m in db.Messages.AsNoTracking() on s.MessageId equals m.Id
                 orderby m.InternalDate descending, m.Id
                 select new Member(s.MessageId, m.InternalDate, s.Source, s.TopicLabel, s.DocumentTypeLabel, s.IsNewLabel, s.NeedsAction,
-                    s.ToBeDeleted, s.Confidence, s.Reason, s.Status))
+                    s.ToBeDeleted, s.Confidence, s.Reason, s.Status, s.MailType))
             .ToListAsync(ct);
         var pending = all.Where(m => m.Status == SuggestionStatus.Pending).ToList();
         return pending.Count > 0 ? pending : all;
@@ -271,7 +273,8 @@ public sealed class ReviewItemBuilder(
             ?? members[0];
         return new LocalSuggestionDto(
             pick.TopicLabel, pick.DocumentTypeLabel, pick.IsNewLabel, pick.NeedsAction, pick.ToBeDeleted, pick.Confidence, pick.Reason,
-            SnakeCaseEnumConverter<SuggestionSource>.ToDb(pick.Source));
+            SnakeCaseEnumConverter<SuggestionSource>.ToDb(pick.Source),
+            pick.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null);
     }
 
     private static PendingReviewDto ToItem(ExternalReviewRow row, string? display, IReadOnlyList<Member> members, LocalSuggestionDto? local) => new(
