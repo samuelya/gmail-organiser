@@ -13,6 +13,7 @@ public static class RulesExtensions
         services.AddScoped<FilterSnapshot>();
         services.AddScoped<FilterService>();
         services.AddScoped<FilterProposalQuery>();
+        services.AddScoped<PolicyFilterProposalQuery>();
         services.AddScoped<LabelPlanService>();
         services.AddScoped<FilterReviewService>();
         services.AddScoped<FilterReviewSummariser>();

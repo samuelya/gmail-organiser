@@ -2,6 +2,7 @@ using GmailOrganiser.Analysis;
 using GmailOrganiser.Common;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
@@ -10,29 +11,55 @@ using Microsoft.EntityFrameworkCore;
 namespace GmailOrganiser.Rules;
 
 /// <summary>
-/// Filters to propose from approved senders (DESIGN §6.5): one per sender the user approved an outcome for that no
-/// active filter covers yet, most messages first.
+/// Filters to propose (DESIGN §6.5): the policy proposals (<see cref="PolicyFilterProposalQuery"/>) first, then one per
+/// sender without an approved sender or domain policy that the user approved an outcome for and that no active filter
+/// covers yet, most messages first.
 /// </summary>
-public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService patterns, ISettingsStore settingsStore)
+public sealed class FilterProposalQuery(
+    AppDbContext db, SenderPatternService patterns, ISettingsStore settingsStore, PolicyFilterProposalQuery policyProposals)
 {
     public const int MaxPageSize = 100;
     public const int DefaultPageSize = 50;
 
-    public async Task<PagedDto<FilterProposalDto>> ListAsync(int page, int pageSize, CancellationToken ct)
+    /// <param name="source">A <see cref="FilterProposalSources"/> value.</param>
+    public async Task<PagedDto<FilterProposalDto>> ListAsync(string source, int page, int pageSize, CancellationToken ct)
+    {
+        IReadOnlyList<FilterProposalDto> fromPolicies = source == FilterProposalSources.Pattern ? [] : await policyProposals.ListAsync(ct);
+        var skip = (page - 1) * pageSize;
+        List<FilterProposalDto> items = [.. fromPolicies.Skip(skip).Take(pageSize)];
+        if (source == FilterProposalSources.Policy)
+        {
+            return new PagedDto<FilterProposalDto>(items, page, pageSize, fromPolicies.Count);
+        }
+
+        var (total, fromPatterns) = await PatternsAsync(Math.Max(0, skip - fromPolicies.Count), pageSize - items.Count, ct);
+        return new PagedDto<FilterProposalDto>([.. items, .. fromPatterns], page, pageSize, fromPolicies.Count + total);
+    }
+
+    private async Task<(int Total, List<FilterProposalDto> Items)> PatternsAsync(int skip, int take, CancellationToken ct)
     {
         // Pattern and Stage-0 suggestions don't make a pattern (SenderPatternService), so they don't make a proposal either.
+        // A sender an approved sender or domain policy decides gets its filter from the policy.
         var candidates = Uncovered(
             db.Senders.AsNoTracking().Where(s => db.Suggestions.Any(g => g.SenderAddress == s.Address
                 && g.Source != SuggestionSource.SenderPattern
                 && g.Source != SuggestionSource.Stage0
-                && (g.Status == SuggestionStatus.Approved || g.Status == SuggestionStatus.Applied))),
+                && (g.Status == SuggestionStatus.Approved || g.Status == SuggestionStatus.Applied))
+                && !db.SenderPolicies.Any(p => p.Status == PolicyStatus.Approved
+                    && ((p.Scope == PolicyScope.Sender && p.ScopeKey == s.CanonicalAddress)
+                        || (p.Scope == PolicyScope.Domain && p.ScopeKey == s.CanonicalDomain)))),
             await ActiveFromTermsAsync(db, ct));
         var total = await candidates.CountAsync(ct);
+        if (take <= 0)
+        {
+            return (total, []);
+        }
+
         var senders = await candidates
             .OrderByDescending(s => s.TotalCount)
             .ThenBy(s => s.Address)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
+            .Skip(skip)
+            .Take(take)
             .Select(s => new { s.Address, s.DisplayName, s.TotalCount })
             .ToListAsync(ct);
 
@@ -56,7 +83,7 @@ public sealed class FilterProposalQuery(AppDbContext db, SenderPatternService pa
                 Suggest(sender.Address, pattern, settings.DeleteLabelName, allowlist)));
         }
 
-        return new PagedDto<FilterProposalDto>(items, page, pageSize, total);
+        return (total, items);
     }
 
     /// <summary>

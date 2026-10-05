@@ -72,9 +72,37 @@ public sealed record FilterPreviewDto(
 
 public sealed record FilterSuggestionDto(FilterCriteriaDto Criteria, FilterActionRequest Action);
 
-/// <param name="ListId">The List-Id all the sender's stored messages share, if any.</param>
+/// <param name="SenderAddress">The sender (pattern), or the policy's canonical address, domain or List-Id (policy).</param>
+/// <param name="DisplayName">The sender's name, the policy's, or the rule's name for a rule proposal.</param>
+/// <param name="ListId">The List-Id all the sender's stored messages share, if any; the List-Id of a list policy.</param>
+/// <param name="Pattern">The approved pattern; for a policy proposal, its outcome (no approvals counted).</param>
+/// <param name="Source"><c>pattern</c> or <c>policy</c> (<see cref="FilterProposalSources"/>).</param>
+/// <param name="PolicyId">The policy, or the first of several merged ones; null for a pattern proposal.</param>
+/// <param name="RuleId">The rule; null for a policy default, a merged proposal or a pattern proposal.</param>
+/// <param name="Partial">A rule condition has no Gmail equivalent, so the filter matches more than the rule.</param>
+/// <param name="Note">Why the proposal is partial, merged or archives instead of marking for deletion.</param>
 public sealed record FilterProposalDto(
-    string SenderAddress, string? DisplayName, int MessageCount, string? ListId, SenderPatternDto Pattern, FilterSuggestionDto Suggested);
+    string SenderAddress,
+    string? DisplayName,
+    int MessageCount,
+    string? ListId,
+    SenderPatternDto Pattern,
+    FilterSuggestionDto Suggested,
+    string Source = FilterProposalSources.Pattern,
+    Guid? PolicyId = null,
+    Guid? RuleId = null,
+    bool Partial = false,
+    string? Note = null);
+
+/// <summary>The <c>source</c> of a filter proposal and the values of <c>GET /api/rules/filters/proposals?source=</c>.</summary>
+public static class FilterProposalSources
+{
+    public const string Pattern = "pattern";
+    public const string Policy = "policy";
+    public const string All = "all";
+
+    public static bool IsValid(string source) => source is Pattern or Policy or All;
+}
 
 /// <param name="FilterCount">Active filters the review checked.</param>
 /// <param name="Summary">The LLM summary (#215); null until summarised. A failed summary keeps the previous one.</param>
