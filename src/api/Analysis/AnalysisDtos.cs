@@ -105,6 +105,9 @@ public sealed record AnalysisRunDto(
 /// messages the labelled scope still covers.
 /// </summary>
 /// <param name="Alternatives">Suggestions with a compare-run alternative waiting to be accepted or discarded (#249).</param>
+/// <param name="PoliciesProposed">
+/// From <c>PoliciesProposed</c> to <c>PackRetries</c>: the analyse runs' counters summed, like <c>TotalLlmCalls</c> (#411).
+/// </param>
 public sealed record AnalysisSummaryDto(
     int NotAnalysed,
     int Analysed,
@@ -117,4 +120,12 @@ public sealed record AnalysisSummaryDto(
     long TotalMessagesCovered,
     double SavedPercent,
     int LabelledNotAnalysed,
-    int Alternatives);
+    int Alternatives,
+    long PoliciesProposed,
+    long PromptTokens,
+    long CompletionTokens,
+    double LlmSeconds,
+    long TriageCalls,
+    long EscalatedCalls,
+    long PackedMessages,
+    long PackRetries);

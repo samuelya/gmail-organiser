@@ -140,6 +140,43 @@ public sealed class AnalysisRunEndpointsTests(ApiFactory factory, PostgresFixtur
 
         var summary = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
 
-        summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0), 2, 0));
+        summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0), 2, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     }
+
+    [Fact]
+    public async Task Summary_sums_the_analyse_runs_cost_and_triage_counters_but_not_compare_runs()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.AnalysisRuns.AddRange(
+                Run(AnalysisRunKind.Analyse, 1, 1_000, 100, 1_500, 4, 1, 6, 1),
+                Run(AnalysisRunKind.Analyse, 2, 2_000, 200, 2_000, 3, 2, 0, 2),
+                Run(AnalysisRunKind.Compare, 50, 50_000, 5_000, 90_000, 50, 50, 50, 50));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var summary = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
+
+        (summary!.PoliciesProposed, summary.PromptTokens, summary.CompletionTokens, summary.LlmSeconds)
+            .ShouldBe((3L, 3_000L, 300L, 3.5));
+        (summary.TriageCalls, summary.EscalatedCalls, summary.PackedMessages, summary.PackRetries).ShouldBe((7L, 3L, 6L, 3L));
+    }
+
+    private static AnalysisRunRow Run(
+        AnalysisRunKind kind, int policies, long prompt, long completion, long ms, int triage, int escalated, int packed, int retries) => new()
+        {
+            Id = Guid.NewGuid(),
+            Kind = kind,
+            Scope = AnalysisScope.Inbox,
+            Status = AnalysisRunStatus.Completed,
+            PoliciesProposed = policies,
+            PromptTokens = prompt,
+            CompletionTokens = completion,
+            LlmMilliseconds = ms,
+            TriageCalls = triage,
+            EscalatedCalls = escalated,
+            PackedMessages = packed,
+            PackRetries = retries,
+            CreatedAt = DateTimeOffset.UnixEpoch,
+        };
 }

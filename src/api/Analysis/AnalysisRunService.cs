@@ -330,7 +330,19 @@ public sealed partial class AnalysisRunService(
         var totals = await db.AnalysisRuns.AsNoTracking()
             .Where(r => r.Kind == AnalysisRunKind.Analyse)
             .GroupBy(_ => 1)
-            .Select(g => new { LlmCalls = g.Sum(r => (long)r.LlmCalls), Covered = g.Sum(r => (long)r.MessagesCovered) })
+            .Select(g => new
+            {
+                LlmCalls = g.Sum(r => (long)r.LlmCalls),
+                Covered = g.Sum(r => (long)r.MessagesCovered),
+                Policies = g.Sum(r => (long)r.PoliciesProposed),
+                PromptTokens = g.Sum(r => r.PromptTokens),
+                CompletionTokens = g.Sum(r => r.CompletionTokens),
+                LlmMilliseconds = g.Sum(r => r.LlmMilliseconds),
+                Triage = g.Sum(r => (long)r.TriageCalls),
+                Escalated = g.Sum(r => (long)r.EscalatedCalls),
+                Packed = g.Sum(r => (long)r.PackedMessages),
+                PackRetries = g.Sum(r => (long)r.PackRetries),
+            })
             .FirstOrDefaultAsync(ct);
         var llmCalls = totals?.LlmCalls ?? 0;
         var covered = totals?.Covered ?? 0;
@@ -348,7 +360,15 @@ public sealed partial class AnalysisRunService(
             covered,
             SavedPercent(llmCalls, covered),
             labelled,
-            alternatives);
+            alternatives,
+            totals?.Policies ?? 0,
+            totals?.PromptTokens ?? 0,
+            totals?.CompletionTokens ?? 0,
+            (totals?.LlmMilliseconds ?? 0) / 1000.0,
+            totals?.Triage ?? 0,
+            totals?.Escalated ?? 0,
+            totals?.Packed ?? 0,
+            totals?.PackRetries ?? 0);
     }
 
     /// <summary><c>1 − llmCalls / max(1, covered)</c>; negative when retries cost more calls than emails covered.</summary>
