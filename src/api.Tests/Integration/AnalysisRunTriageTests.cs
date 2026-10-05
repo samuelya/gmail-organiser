@@ -80,21 +80,76 @@ public sealed class AnalysisRunTriageTests : IClassFixture<ApiFactory>, IAsyncLi
     }
 
     [Fact]
+    public async Task Errors_that_name_no_email_do_not_escalate()
+    {
+        await UseTriageAsync();
+        triage.Respond = (ids, _, _, _) => Task.FromResult(Answer([.. ids, "unknown-id"], 0.9, filter: "not an object"));
+
+        var done = await RunAsync();
+
+        (done.LlmCalls, done.TriageCalls, done.EscalatedCalls).ShouldBe((3, 3, 0));
+        h.Chat.Calls.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task Confident_triage_answer_fills_only_an_email_the_chat_model_left_out()
     {
         await UseTriageAsync();
-        // The first email of each prompt is confident; the chat model never answers it, so its retry is spent too.
+        // The first email of each prompt is confident; the chat model never answers it, and no retry is spent on it.
         triage.Respond = (ids, _, _, _) => Task.FromResult(Answer(ids, 0.5, first: 0.9));
         h.Chat.Respond = (ids, _, _, _) => Task.FromResult(AnalysisRunHarness.Agree([.. ids.Skip(1)]));
 
         var done = await RunAsync();
 
-        (done.TriageCalls, done.EscalatedCalls, done.LlmCalls, done.FailedMessages).ShouldBe((3, 3, 9, 0));
+        (done.TriageCalls, done.EscalatedCalls, done.LlmCalls, done.FailedMessages).ShouldBe((3, 3, 6, 0));
         var rows = await RowsAsync();
         var llm = rows.Where(s => s.Source == SuggestionSource.Llm).ToList();
         llm.Count(s => s.Model == TriageModel).ShouldBe(3);
         llm.Count(s => s.Model == ChatModel).ShouldBe(6);
         rows.Where(s => s.Source == SuggestionSource.Derived).ShouldAllBe(s => s.Model == ChatModel);
+    }
+
+    [Fact]
+    public async Task Low_confidence_triage_answers_and_filter_stand_in_when_the_chat_model_gives_nothing()
+    {
+        await UseTriageAsync();
+        triage.Respond = (ids, _, _, _) => Task.FromResult(Answer(ids, 0.6, filter: new { from = "news@example.com" }));
+        h.Chat.Respond = (_, _, _, _) => Task.FromResult("not json");
+
+        var done = await RunAsync();
+
+        (done.TriageCalls, done.EscalatedCalls, done.LlmCalls, done.FailedMessages).ShouldBe((3, 3, 9, 0));
+        var rows = await RowsAsync();
+        rows.Count.ShouldBe(20);
+        rows.ShouldAllBe(s => s.Model == TriageModel && s.FilterCriteria != null && s.FilterCriteria.Contains("news@example.com"));
+    }
+
+    [Fact]
+    public async Task A_triage_model_naming_the_chat_model_is_off()
+    {
+        await UseTriageAsync(ChatModel);
+
+        var done = await RunAsync();
+
+        (done.LlmCalls, done.TriageCalls, done.EscalatedCalls).ShouldBe((3, 0, 0));
+        triage.Calls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task A_compare_run_asks_the_chat_model_only()
+    {
+        var first = await RunAsync();
+        await UseTriageAsync();
+        triage.Respond = (ids, _, _, _) => Task.FromResult(Answer(ids, 0.9));
+
+        var response = await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, first.Id));
+        response.EnsureSuccessStatusCode();
+        var run = (await response.Content.ReadFromJsonAsync<AnalysisRunDto>(Ct)).ShouldNotBeNull();
+        await h.RunNextAsync();
+        var done = await h.GetRunAsync(run.Id);
+
+        (done.Status, done.LlmCalls, done.TriageCalls).ShouldBe(("completed", 3, 0));
+        triage.Calls.ShouldBe(0);
     }
 
     [Fact]
@@ -138,10 +193,10 @@ public sealed class AnalysisRunTriageTests : IClassFixture<ApiFactory>, IAsyncLi
             .ShouldContainKey("triageModel");
     }
 
-    private async Task UseTriageAsync()
+    private async Task UseTriageAsync(string model = TriageModel)
     {
         await using var scope = h.Services.CreateAsyncScope();
-        await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { TriageModel = TriageModel }, Ct);
+        await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(x => x with { TriageModel = model }, Ct);
     }
 
     private async Task<AnalysisRunDto> RunAsync()
@@ -169,20 +224,22 @@ public sealed class AnalysisRunTriageTests : IClassFixture<ApiFactory>, IAsyncLi
     private static List<string> Texts(IEnumerable<IReadOnlyList<ChatMessage>> requests) =>
         [.. requests.Select(r => string.Join('\n', r.Select(m => m.Text)))];
 
-    private static string Answer(IReadOnlyList<string> ids, double confidence, double? first = null) => JsonSerializer.Serialize(new
-    {
-        suggestions = ids.Select((id, i) => new
+    private static string Answer(IReadOnlyList<string> ids, double confidence, double? first = null, object? filter = null) =>
+        JsonSerializer.Serialize(new
         {
-            id,
-            topicLabel = AnalysisRunHarness.LabelFor(id),
-            isNewLabel = false,
-            needsAction = false,
-            toBeDeleted = false,
-            unsubscribeSuggested = false,
-            confidence = i == 0 && first is { } f ? f : confidence,
-            reason = "Synthetic reason",
-        }),
-    });
+            suggestions = ids.Select((id, i) => new
+            {
+                id,
+                topicLabel = AnalysisRunHarness.LabelFor(id),
+                isNewLabel = false,
+                needsAction = false,
+                toBeDeleted = false,
+                unsubscribeSuggested = false,
+                confidence = i == 0 && first is { } f ? f : confidence,
+                reason = "Synthetic reason",
+            }),
+            filterCriteria = filter,
+        });
 
     /// <summary>The chat model from <paramref name="inner"/>; an explicit model from <paramref name="byModel"/> when listed.</summary>
     private sealed class ByModelLlmFactory(ILlmClientFactory inner, IReadOnlyDictionary<string, IChatClient> byModel) : ILlmClientFactory

@@ -119,10 +119,17 @@ public sealed partial class AnalysisRunJob(
         var work = await PlanAsync(run, cursor, settings, labels, ct);
         cursor = work.Cursor;
         using var chat = await llm.CreateChatClientAsync(ct);
+        var compare = run.Kind == AnalysisRunKind.Compare;
+        // A compare run measures the prompt with the chat model, so no triage model answers for it; a triage model
+        // that names the chat model would only ask the same prompt twice.
+        if (compare || string.Equals(settings.TriageModel, model, StringComparison.OrdinalIgnoreCase))
+        {
+            settings = settings with { TriageModel = null };
+        }
+
         using var triage = settings.TriageModel is { } triageModel
             ? llm.CreateChatClient(OllamaHttp.Parse(settings.OllamaBaseUrl), triageModel)
             : null;
-        var compare = run.Kind == AnalysisRunKind.Compare;
         // A compare run's hints leave out decisions about every message it re-analyses, not just the current group's.
         var context = new RunContext(
             run, settings, builder, chat, triage, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
@@ -396,6 +403,10 @@ public sealed partial class AnalysisRunJob(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]
     private static partial void LogInvalidOutput(ILogger logger, int count, string errors);
+
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "Triage answer escalated to the chat model: {Missing} email(s) without a valid answer, {Below} below confidence {Threshold}; errors: {Errors}")]
+    private static partial void LogTriageEscalated(ILogger logger, int missing, int below, double threshold, string errors);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output ignored: {Notes}")]
     private static partial void LogDroppedOutput(ILogger logger, string notes);

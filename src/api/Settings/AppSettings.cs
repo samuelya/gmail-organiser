@@ -104,8 +104,9 @@ public sealed record AppSettings
     public int LlmNumCtx { get; init; } = DefaultLlmNumCtx;
 
     /// <summary>
-    /// A smaller chat model asked first (#375); <c>null</c> is off. Its answer is kept unless it fails to parse or a
-    /// confidence is below <see cref="TriageConfidenceThreshold"/>, then <see cref="ChatModel"/> answers the same prompt.
+    /// A smaller chat model asked first (#375); <c>null</c> is off, and so is the name of <see cref="ChatModel"/> or a
+    /// compare run. Its answer is kept when every email has a valid answer at or above
+    /// <see cref="TriageConfidenceThreshold"/>, else <see cref="ChatModel"/> answers the same prompt.
     /// </summary>
     public string? TriageModel { get; init; }
     public double TriageConfidenceThreshold { get; init; } = DefaultTriageConfidenceThreshold;
