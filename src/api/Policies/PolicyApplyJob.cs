@@ -255,7 +255,7 @@ public sealed class PolicyApplyJob(
         }
     }
 
-    private static void Fill(SuggestionRow row, MessageRow message, SenderPolicyRow policy, PolicyMatch match, string? protectedReason)
+    internal static void Fill(SuggestionRow row, MessageRow message, SenderPolicyRow policy, PolicyMatch match, string? protectedReason)
     {
         var delete = match.Action == PolicyAction.Delete;
         var reason = $"Policy: {match.Rule?.Name ?? "default"}";

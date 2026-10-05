@@ -37,6 +37,7 @@ namespace GmailOrganiser.Analysis;
 /// <param name="Senders">A top senders run's senders, frozen at the start (#357).</param>
 /// <param name="NextSenderIndex">The first of <paramref name="Senders"/> not stored yet (proposed, failed or skipped).</param>
 /// <param name="LastScopeKey">The scope key of the last stored sender; informational.</param>
+/// <param name="PolicyCovered">Candidates skipped because an approved sender policy decides them (#360); also in the skipped count.</param>
 public sealed record AnalysisRunCursor(
     Guid RunId,
     int GroupsDone = 0,
@@ -49,7 +50,8 @@ public sealed record AnalysisRunCursor(
     IReadOnlyList<string>? RetriedIds = null,
     IReadOnlyList<PolicyCandidate>? Senders = null,
     int NextSenderIndex = 0,
-    string? LastScopeKey = null);
+    string? LastScopeKey = null,
+    int PolicyCovered = 0);
 
 /// <summary>
 /// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining frozen candidates, then per group asks the model
@@ -68,6 +70,7 @@ public sealed partial class AnalysisRunJob(
     SenderStatsUpdater senderStats,
     SenderProfileBuilder profiles,
     SenderPolicyOutputParser policyParser,
+    PolicyMatcher policyMatcher,
     IAttachmentPolicy attachmentPolicy,
     AttachmentPromptSection attachments,
     IOptions<LlmOptions> llmOptions,
@@ -143,7 +146,7 @@ public sealed partial class AnalysisRunJob(
         // A compare run's hints leave out decisions about every message it re-analyses, not just the current group's.
         var context = new RunContext(
             run, settings, builder, chat, triage, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
-            compare ? [.. cursor.SuggestionIds!.Keys] : []);
+            compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies);
 
         var front = new Queue<MessageGroup>(work.Individual);
         var rest = new Queue<MessageGroup>(work.Groups);
@@ -204,12 +207,15 @@ public sealed partial class AnalysisRunJob(
     }
 
     private sealed record Plan(
-        IReadOnlyList<MessageGroup> Individual, IReadOnlyList<MessageGroup> Groups, Allowlist Allowlisted, AnalysisRunCursor Cursor);
+        IReadOnlyList<MessageGroup> Individual, IReadOnlyList<MessageGroup> Groups, Allowlist Allowlisted, AnalysisRunCursor Cursor,
+        PolicyLookup Policies);
 
     /// <summary>
     /// The frozen candidates still to cover, newest first: not failed, without a suggestion of this run (a compare
     /// run: not covered per its cursor) and still eligible. Candidates no longer eligible leave the cursor and count
-    /// as skipped (both stored with the next checkpoint). Members left over from a mixed group come first, one by one.
+    /// as skipped (both stored with the next checkpoint), and so do candidates of the inbox, all and labelled scopes an
+    /// approved sender policy decides (#360): a policy approved after the run started, or a mixed policy's matched rule.
+    /// Members left over from a mixed group come first, one by one.
     /// </summary>
     private async Task<Plan> PlanAsync(
         AnalysisRunRow run, AnalysisRunCursor cursor, AppSettings settings, PersonalLabels labels, CancellationToken ct)
@@ -230,6 +236,12 @@ public sealed partial class AnalysisRunJob(
             .OrderByDescending(m => m.InternalDate)
             .ThenBy(m => m.Id, StringComparer.Ordinal)
             .ToList();
+        var policies = compare ? PolicyLookup.Empty : await PolicyLookup.LoadAsync(db, candidates, ct);
+        var covered = 0;
+        if ((run.Scope is AnalysisScope.Inbox or AnalysisScope.All or AnalysisScope.Labelled) && !policies.IsEmpty)
+        {
+            covered = candidates.RemoveAll(m => policies.For(m) is { } policy && policyMatcher.Match(m, policy, m.CanonicalAddress) is not null);
+        }
 
         var dropped = open.Except(candidates.Select(m => m.Id), StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
         if (dropped.Count > 0)
@@ -237,6 +249,7 @@ public sealed partial class AnalysisRunJob(
             run.SkippedMessages += dropped.Count;
             cursor = cursor with
             {
+                PolicyCovered = cursor.PolicyCovered + covered,
                 CandidateIds = [.. frozen.Where(id => !dropped.Contains(id))],
                 IndividualIds = cursor.IndividualIds?.Where(id => !dropped.Contains(id)).ToList(),
             };
@@ -247,7 +260,7 @@ public sealed partial class AnalysisRunJob(
         var individual = (cursor.IndividualIds ?? []).ToHashSet(StringComparer.Ordinal);
         var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode };
         var groups = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, labels, ct);
-        return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], groups, allowlisted, cursor);
+        return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], groups, allowlisted, cursor, policies);
     }
 
     /// <summary>The mailbox's user label names, sorted, and the person's own labels; read once per run.</summary>
@@ -393,7 +406,8 @@ public sealed partial class AnalysisRunJob(
         new(run.MessagesCovered + run.FailedMessages, cursor.CandidateIds?.Count, $"{run.Groups} groups, {run.LlmCalls} LLM calls"
             + (run.AttachmentsConverted + run.AttachmentsSkipped == 0
                 ? ""
-                : $", {run.AttachmentsConverted} attachments converted, {run.AttachmentsSkipped} skipped"));
+                : $", {run.AttachmentsConverted} attachments converted, {run.AttachmentsSkipped} skipped")
+            + (cursor.PolicyCovered == 0 ? "" : $", {cursor.PolicyCovered} covered by policy"));
 
     private static string Shorten(string message) =>
         message.Length <= MaxErrorLength ? message : message[..(MaxErrorLength - 1)] + "…";
@@ -409,7 +423,8 @@ public sealed partial class AnalysisRunJob(
         PersonalLabels Labels,
         Allowlist Allowlisted,
         AttachmentPolicySnapshot Attachments,
-        IReadOnlyCollection<string> HintExclusions);
+        IReadOnlyCollection<string> HintExclusions,
+        PolicyLookup Policies);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]
     private static partial void LogInvalidOutput(ILogger logger, int count, string errors);

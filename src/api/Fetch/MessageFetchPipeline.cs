@@ -1,5 +1,6 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Senders;
 using Microsoft.EntityFrameworkCore;
 
@@ -23,10 +24,11 @@ public sealed record RefreshResult(int Stored, int Deleted);
 
 /// <summary>
 /// Query → chunk → upsert → sender stats. Shared by the mailbox fetch, sender fetches (<c>from:</c> queries) and
-/// the incremental fetch (history-touched ids). No LLM involvement.
+/// the incremental fetch (history-touched ids). No LLM involvement. Newly inserted messages an approved sender policy
+/// decides get its suggestion and an apply job (<see cref="PolicyCoverage"/>) in the chunk's transaction.
 /// </summary>
 public sealed partial class MessageFetchPipeline(
-    IGmailClient gmail, MessageUpserter upserter, SenderStatsUpdater senders, AppDbContext db, TimeProvider time,
+    IGmailClient gmail, MessageUpserter upserter, SenderStatsUpdater senders, PolicyCoverage coverage, AppDbContext db, TimeProvider time,
     ILogger<MessageFetchPipeline> logger)
 {
     private const int MaxChunkAttempts = 2;
@@ -191,16 +193,28 @@ public sealed partial class MessageFetchPipeline(
             await beforeWrite(ct);
         }
 
+        // One transaction: a replayed chunk either finds its rows new again or already covered, never half done.
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
+        var known = await db.Messages.Where(m => unique.Contains(m.Id)).Select(m => m.Id).ToHashSetAsync(StringComparer.Ordinal, ct);
         List<string> deleted = [];
         if (refresh)
         {
-            var known = await db.Messages.Where(m => unique.Contains(m.Id)).Select(m => m.Id).ToHashSetAsync(StringComparer.Ordinal, ct);
             deleted = await MarkDeletedCoreAsync([.. unique.Except(metadata.Select(m => m.Id), StringComparer.Ordinal)], ct);
             metadata = [.. metadata.Where(m => known.Contains(m.Id) || !m.LabelIds.Any(IsSpamOrTrash))];
         }
 
         var rows = await upserter.UpsertAsync(metadata, ct);
         await senders.UpdateAsync(rows.Select(r => r.FromAddress).Concat(deleted), ct);
+        var covered = await coverage.CoverAsync([.. rows.Where(r => !known.Contains(r.Id))], ct);
+        if (tx is not null)
+        {
+            await tx.CommitAsync(ct);
+        }
+
+        if (covered > 0)
+        {
+            coverage.Committed();
+        }
 
         // A long fetch shares one context; without this every chunk's SaveChanges re-scans all earlier chunks.
         db.ChangeTracker.Clear();

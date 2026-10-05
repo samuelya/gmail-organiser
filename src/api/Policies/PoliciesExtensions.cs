@@ -17,7 +17,7 @@ public sealed class PolicyOptions
 
 public static class PoliciesExtensions
 {
-    /// <summary>Registers the transactional guard, the policy matcher, the policy output parser, the sender profile builder, the policy review and the policy apply job.</summary>
+    /// <summary>Registers the transactional guard, the policy matcher, the policy output parser, the sender profile builder, the policy review, the fetch coverage and the policy apply job.</summary>
     public static IServiceCollection AddPolicies(this IServiceCollection services)
     {
         services.AddOptions<PolicyOptions>().BindConfiguration(PolicyOptions.SectionName);
@@ -27,6 +27,7 @@ public static class PoliciesExtensions
         services.AddScoped<SenderProfileBuilder>();
         services.AddScoped<PolicyQuery>();
         services.AddScoped<PolicyService>();
+        services.AddScoped<PolicyCoverage>();
         services.AddKeyedScoped<GmailOrganiser.Jobs.IJobHandler, PolicyApplyJob>(PolicyApplyJob.JobType);
         return services;
     }

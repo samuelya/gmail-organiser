@@ -1,6 +1,7 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Policies;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Analysis.Grouping;
@@ -14,7 +15,8 @@ public static class AnalysisCandidates
     /// Not-analysed, not-deleted messages in <paramref name="scope"/>; <see cref="AnalysisScope.Messages"/> takes the
     /// explicit ids that are not analysed, analysed (pending) or rejected (re-analysed, replacing the suggestion), and
     /// skips approved and applied ones. <see cref="AnalysisScope.Labelled"/> takes mail with a personal label (the app's
-    /// action and delete labels in <paramref name="appLabelIds"/> do not count). Read-only, untracked.
+    /// action and delete labels in <paramref name="appLabelIds"/> do not count). The inbox, all and labelled scopes leave
+    /// out mail an approved single-label sender policy decides (#360); the run's plan drops mixed policies' matches. Read-only, untracked.
     /// </summary>
     public static async Task<IReadOnlyList<MessageRow>> QueryAsync(
         AppDbContext db,
@@ -29,11 +31,11 @@ public static class AnalysisCandidates
         var query = db.Messages.AsNoTracking().Where(m => !m.DeletedInGmail);
         query = scope switch
         {
-            AnalysisScope.Inbox => NotAnalysed(query).Where(m => m.LabelIds.Contains(MailboxFetchJob.InboxLabelId)),
-            AnalysisScope.All => NotAnalysed(query),
+            AnalysisScope.Inbox => Uncovered(db, NotAnalysed(query).Where(m => m.LabelIds.Contains(MailboxFetchJob.InboxLabelId))),
+            AnalysisScope.All => Uncovered(db, NotAnalysed(query)),
             AnalysisScope.Sender => BySender(NotAnalysed(query), senderAddress),
             AnalysisScope.Messages => ExplicitIds(query, messageIds),
-            AnalysisScope.Labelled => Labelled(query, appLabelIds),
+            AnalysisScope.Labelled => Uncovered(db, Labelled(query, appLabelIds)),
             _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, null),
         };
 
@@ -89,6 +91,9 @@ public static class AnalysisCandidates
     /// </summary>
     public static bool IsCompareEligible(MessageRow m, IReadOnlySet<string> withSuggestion) =>
         !m.DeletedInGmail && withSuggestion.Contains(m.Id);
+
+    private static IQueryable<MessageRow> Uncovered(AppDbContext db, IQueryable<MessageRow> query) =>
+        PolicyLookup.WithoutSingleLabelPolicy(db, query);
 
     private static IQueryable<MessageRow> NotAnalysed(IQueryable<MessageRow> query) =>
         query.Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed);
