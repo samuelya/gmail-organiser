@@ -118,12 +118,18 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         return string.Join(' ', from) + "|" + string.Join(' ', tokens);
     }
 
-    /// <summary>The distinct, sorted <see cref="Normalised"/> parts of a criteria: its <c>from</c> terms and query tokens.</summary>
+    /// <summary>
+    /// The distinct, sorted <see cref="Normalised"/> parts of a criteria: its <c>from</c> terms and query tokens. The
+    /// <c>query</c> is tokenised as written, so each of a proposal's terms (<c>-from:a -from:b -has:attachment</c>) is its
+    /// own token; the other fields go through <see cref="FilterCriteriaMapping.ToQuery"/>, where a multi-word value is one
+    /// parenthesised token because that is one condition.
+    /// </summary>
     public static (IReadOnlyList<string> From, IReadOnlyList<string> Tokens) CriteriaTerms(GmailFilterCriteria criteria)
     {
         ArgumentNullException.ThrowIfNull(criteria);
         IReadOnlyList<string> from = criteria.From is { } f ? FilterCriteriaMapping.FromTerms(f) ?? [f.Trim().ToLowerInvariant()] : [];
-        var tokens = QueryToken().Matches(FilterCriteriaMapping.ToQuery(criteria with { From = null }))
+        var tokens = QueryToken().Matches(FilterCriteriaMapping.ToQuery(criteria with { From = null, Query = null }))
+            .Concat(QueryToken().Matches(criteria.Query ?? ""))
             .Select(m => m.Value.ToLowerInvariant())
             .Select(t => t.StartsWith("list:", StringComparison.Ordinal) || t.StartsWith("-list:", StringComparison.Ordinal) ? t.Replace("<", "").Replace(">", "") : t);
         return ([.. from.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)], [.. tokens.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)]);

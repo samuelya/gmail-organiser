@@ -5,13 +5,14 @@ using GmailOrganiser.Gmail;
 namespace GmailOrganiser.Rules.Review;
 
 /// <summary>
-/// The consolidation checks against the policy proposals (#374). A filter is within a proposal when the proposal matches
+/// The consolidation checks against the policy proposals (#374). A filter is within a proposal when the policy decides
 /// at least what the filter matches: each of the filter's <c>from</c> terms is one of the proposal's, or under one of its
-/// <c>@domain</c>s and not excluded by a <c>-from:</c>, and the filter has every other token of the proposal's query
-/// (compared after <see cref="PolicyFilterProposalQuery.CriteriaTerms"/>); only a filter whose raw criteria pass
-/// <see cref="PlainCriteria"/> is judged at all. A fix always creates the proposal as #373 built it, so
-/// it never adds the delete label, skips the inbox only where #373 allows and fits the length cap. A proposal whose label
-/// the mailbox doesn't have yet, or a filter only partly within one, gets no finding.
+/// <c>@domain</c>s and not excluded by a <c>-from:</c>, and the filter has every positive token of the proposal's query
+/// (compared after <see cref="PolicyFilterProposalQuery.CriteriaTerms"/>; see <see cref="Within"/> for the proposal's
+/// negated tokens); only a filter whose raw criteria pass <see cref="PlainCriteria"/> is judged at all. A fix always
+/// creates the proposal as #373 built it, so it never adds the delete label, skips the inbox only where #373 allows and
+/// fits the length cap; a relabel's text names the filter's other actions it drops. A proposal whose label the mailbox
+/// doesn't have yet, or a filter only partly within one, gets no finding.
 /// </summary>
 public static partial class FilterChecks
 {
@@ -73,6 +74,11 @@ public static partial class FilterChecks
                     text += " It only labels; the portal applies the policy's action.";
                 }
 
+                if (Dropped(f.Action, target.Action, userIds) is { IsEmpty: false } dropped)
+                {
+                    text += $" The policy's filter won't {Describe(dropped, names)}, as this one does; those actions are dropped.";
+                }
+
                 yield return new(
                     FilterFindingKind.PolicyConflict,
                     [f.Row.Id],
@@ -108,7 +114,13 @@ public static partial class FilterChecks
         return new PolicyTarget(proposal, spec.Criteria, action, ActionKey(action), from, tokens, FilterCriteriaMapping.ToQuery(spec.Criteria));
     }
 
-    /// <summary>Whether the proposal matches at least what a filter with these terms matches.</summary>
+    /// <summary>
+    /// Whether the policy decides at least what a filter with these terms matches. The proposal's positive tokens must all
+    /// be in the filter. A negated token carves out mail the portal decides by another route (a narrower policy's filter,
+    /// the list policy, an earlier rule of a mixed policy, or policy auto-apply for transactional mail), so it only
+    /// disqualifies a filter whose own conditions put all of its mail in that carve-out: the filter carries that very
+    /// token, or its sender is one a <c>-from:</c> excludes.
+    /// </summary>
     private static bool Within(IReadOnlyList<string> from, IReadOnlyList<string> tokens, PolicyTarget target)
     {
         var excluded = target.Tokens.Where(t => t.StartsWith("-from:", StringComparison.Ordinal) && t.Length > 6).Select(t => t[6..]).ToList();
@@ -117,8 +129,7 @@ public static partial class FilterChecks
             return false;
         }
 
-        // The filter's own from terms are checked against the proposal's exclusions above.
-        return target.Tokens.Where(t => from.Count == 0 || !t.StartsWith("-from:", StringComparison.Ordinal)).All(t => tokens.Contains(t, StringComparer.Ordinal));
+        return target.Tokens.All(t => t.StartsWith('-') ? !tokens.Contains(t[1..], StringComparer.Ordinal) : tokens.Contains(t, StringComparer.Ordinal));
     }
 
     private static bool Covers(IReadOnlyList<string> proposalFrom, List<string> excluded, string term) =>
@@ -142,6 +153,19 @@ public static partial class FilterChecks
         return filter.RemoveLabelIds.Contains(FilterSpec.Inbox, StringComparer.Ordinal) && !proposal.RemoveLabelIds.Contains(FilterSpec.Inbox, StringComparer.Ordinal)
             ? "skips the inbox"
             : null;
+    }
+
+    /// <summary>
+    /// The filter's actions the proposal lacks and <see cref="Against"/> didn't name: never Trash, Spam or the inbox, and
+    /// not the other user labels unless the finding is about Trash or Spam (star, mark read, never spam, ...).
+    /// </summary>
+    private static GmailFilterAction Dropped(GmailFilterAction filter, GmailFilterAction proposal, HashSet<string> userIds)
+    {
+        var hides = filter.AddLabelIds.Any(id => id is MailboxFetchJob.TrashLabelId or MailboxFetchJob.SpamLabelId);
+        return new(
+            [.. filter.AddLabelIds.Where(id => !proposal.AddLabelIds.Contains(id, StringComparer.Ordinal)
+                && id is not (MailboxFetchJob.TrashLabelId or MailboxFetchJob.SpamLabelId) && (hides || !userIds.Contains(id)))],
+            [.. filter.RemoveLabelIds.Where(id => !proposal.RemoveLabelIds.Contains(id, StringComparer.Ordinal) && id != FilterSpec.Inbox)]);
     }
 
     /// <summary>

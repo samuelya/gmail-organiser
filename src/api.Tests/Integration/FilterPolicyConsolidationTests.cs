@@ -23,6 +23,7 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
     : PolicyFilterProposalTestBase(factory, postgres), IClassFixture<ApiFactory>
 {
     private const string Deals = "deals@example.com";
+    private const string Bulk = "bulk@example.com";
 
     private FakeGmailClient Gmail => Host.Services.GetRequiredService<FakeGmailClient>();
 
@@ -106,6 +107,72 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
         Kinds(after).ShouldNotContain(FilterFindingKind.OverlapsPolicy);
         Kinds(after).Count(k => k == FilterFindingKind.PolicyConflict).ShouldBe(2);
         (await Gmail.ListFiltersAsync(Ct)).Count(f => f.Criteria.From == Deals).ShouldBe(1);
+    }
+
+    // The proposal of an exact-sender archive policy skips the inbox and carves out transactional mail (#373): a multi-term query.
+    [Fact]
+    public async Task A_trashing_filter_conflicts_with_a_skip_inbox_archive_policy_whose_filter_replaces_it()
+    {
+        var seed = await SeedExclusionsAsync();
+        var review = await CreateReviewAsync();
+
+        var finding = review.Findings.Single(f => f.Kind == FilterFindingKind.PolicyConflict && f.FilterIds[0] == seed.Bulk);
+        finding.PolicyId.ShouldBe(seed.Policies[Bulk]);
+        finding.Description.ShouldContain("never trashes");
+        finding.Fix.Create.ShouldNotBeNull().Criteria.Query.ShouldBe(Negation());
+        (await ApplyAsync(finding.Id, HttpStatusCode.OK)).Status.ShouldBe(FilterFindingStatus.Applied);
+
+        var gmail = await Gmail.ListFiltersAsync(Ct);
+        gmail.ShouldNotContain(f => f.Id == seed.Bulk);
+        var created = gmail.Where(f => f.Criteria.From == Bulk).ShouldHaveSingleItem();
+        created.Criteria.Query.ShouldBe(Negation());
+        created.Action.AddLabelIds.ShouldBe(["Label_1"]);
+        created.Action.RemoveLabelIds.ShouldBe(["INBOX"]);
+    }
+
+    [Fact]
+    public async Task A_domain_policy_excluding_two_senders_merges_another_senders_filter_and_leaves_an_excluded_one_to_its_own_policy()
+    {
+        var seed = await SeedExclusionsAsync();
+        var review = await CreateReviewAsync();
+
+        var overlap = Find(review, FilterFindingKind.OverlapsPolicy);
+        overlap.FilterIds.ShouldBe([seed.Other]);
+        overlap.PolicyId.ShouldBe(seed.Policies["example.org"]);
+        overlap.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe("@example.org");
+        overlap.Fix.Create.Criteria.Query.ShouldBe("-from:x@example.org -from:y@example.org");
+        var excluded = review.Findings.Single(f => f.FilterIds[0] == seed.Excluded);
+        excluded.Kind.ShouldBe(FilterFindingKind.PolicyConflict);
+        excluded.PolicyId.ShouldBe(seed.Policies["x@example.org"]);
+        excluded.Fix.Create.ShouldNotBeNull().Criteria.From.ShouldBe("x@example.org");
+    }
+
+    /// <summary>
+    /// An archive sender policy (skips the inbox, transactional mail carved out) and a domain policy over two sender
+    /// policies with another label; filters: the archive sender trashed, another domain sender and an excluded one labelled.
+    /// </summary>
+    private async Task<(string Bulk, string Other, string Excluded, Dictionary<string, Guid> Policies)> SeedExclusionsAsync()
+    {
+        var policies = new[]
+        {
+            Policy(PolicyScope.Sender, Bulk, PolicyAction.Archive, FakeLabelStore.SeedUserLabelNames[0]),
+            Policy(PolicyScope.Domain, "example.org", PolicyAction.Keep, FakeLabelStore.SeedUserLabelNames[0]),
+            Policy(PolicyScope.Sender, "x@example.org", PolicyAction.Keep, FakeLabelStore.SeedUserLabelNames[2]),
+            Policy(PolicyScope.Sender, "y@example.org", PolicyAction.Keep, FakeLabelStore.SeedUserLabelNames[2]),
+        };
+        await using (var db = Postgres.CreateDbContext())
+        {
+            await db.FilterReviews.ExecuteDeleteAsync(Ct);
+            db.Senders.AddRange(new[] { Bulk, "x@example.org", "y@example.org", "other@example.org" }.Select(a => Sender(a, a)));
+            db.SenderPolicies.AddRange(policies);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var label = new GmailFilterAction(["Label_1"], []);
+        var bulk = await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: Bulk), new GmailFilterAction(["TRASH"], []), Ct);
+        var other = await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: "other@example.org"), label, Ct);
+        var excluded = await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: "x@example.org"), label, Ct);
+        return (bulk.Id, other.Id, excluded.Id, policies.ToDictionary(p => p.ScopeKey, p => p.Id));
     }
 
     /// <summary>The policies, their senders and the two extra Gmail filters; returns the filter ids and the policy ids by key.</summary>
