@@ -114,6 +114,7 @@ public sealed class LearnedRuleProposer(AppDbContext db, ISettingsStore settings
             Match = match,
             TopicLabel = suggestion.TopicLabel,
             DocumentTypeLabel = suggestion.DocumentTypeLabel,
+            MailType = suggestion.MailType,
             Action = suggestion.ToBeDeleted ? PolicyAction.Delete : suggestion.NeedsAction ? PolicyAction.Keep : PolicyAction.Archive,
             Status = PolicyStatus.Proposed,
             Source = PolicyRuleSource.Learned,

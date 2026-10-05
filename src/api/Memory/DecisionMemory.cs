@@ -148,7 +148,7 @@ public sealed partial class DecisionMemory(
     /// at least <paramref name="minApprovals"/> of them, all with the same outcome, and no rejection in the scope since the latest.
     /// Only approvals decided under <paramref name="documentTypeParent"/> vote on the document-type label (case-insensitive,
     /// null is none), so approvals from before the feature or under an earlier parent never contradict the first one under
-    /// this parent.
+    /// this parent. The mail type is the one the approvals that have one agree on (#365), none when they differ.
     /// </summary>
     public async Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
         IReadOnlyCollection<string> scopeKeys, int minApprovals, string? documentTypeParent, CancellationToken ct)
@@ -164,7 +164,7 @@ public sealed partial class DecisionMemory(
             .Where(d => d.ScopeKey != null && keys.Contains(d.ScopeKey))
             .Where(d => d.Outcome == DecisionOutcome.Rejected
                 || (d.Source != SuggestionSource.SenderPattern && (d.Source == SuggestionSource.Llm || d.Edited)))
-            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel, d.DocumentTypeParent, d.CreatedAt })
+            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel, d.DocumentTypeParent, d.MailType, d.CreatedAt })
             .ToListAsync(ct);
         foreach (var scope in rows.GroupBy(r => r.ScopeKey, StringComparer.Ordinal))
         {
@@ -186,9 +186,10 @@ public sealed partial class DecisionMemory(
                 && (!DecidedUnder(a.DocumentTypeParent, documentTypeParent) || SameType(a.DocumentTypeLabel, typed!.DocumentTypeLabel)));
             if (consistent && !scope.Any(r => r.Outcome == DecisionOutcome.Rejected && r.CreatedAt > latest.CreatedAt))
             {
+                var mailTypes = approvals.Where(a => a.MailType is not null).Select(a => a.MailType).Distinct().ToList();
                 patterns[scope.Key] = new MemoryPattern(
                     latest.TopicLabel, latest.NeedsAction, latest.ToBeDeleted, approvals.Count, 1.0, latest.DocumentTypeLabel,
-                    DecidedUnder(latest.DocumentTypeParent, documentTypeParent));
+                    DecidedUnder(latest.DocumentTypeParent, documentTypeParent), mailTypes.Count == 1 ? mailTypes[0] : null);
             }
         }
 

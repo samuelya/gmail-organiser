@@ -90,6 +90,6 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
         var reason = $"Matches {pattern.Approvals} approved decisions for this sender";
         return new ShortCircuitResult([.. covered.Select(m => new SuggestionOutput(
             m.Id, pattern.TopicLabel, isNewLabel, pattern.NeedsAction, pattern.ToBeDeleted, UnsubscribeSuggested: false,
-            confidence, reason, type))]);
+            confidence, reason, type, pattern.MailType))]);
     }
 }
