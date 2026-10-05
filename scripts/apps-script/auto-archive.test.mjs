@@ -12,16 +12,18 @@ const DAY = 24 * 60 * 60 * 1000;
 /**
  * In-memory GmailApp: understands exactly the search operators the script emits and throws on anything else.
  * Labels and ages are per message, and a thread matches when one message matches every term, as in Gmail.
- * Shorthand `{ labels, ageDays, lastAgeDays }` is one message, plus a reply with the same labels when
- * `lastAgeDays` is set. `label:` accepts only plain tokens (letters, digits, `_`, `/`, `-`) and matches a label
+ * Shorthand `{ labels, ageDays, lastAgeDays, starred, important }` is one message, plus a reply with the same
+ * labels when `lastAgeDays` is set. `label:` accepts only plain tokens (letters, digits, `_`, `/`, `-`) and matches a label
  * whose name equals the token once each `-` is read as a space or a `-`, case-insensitively.
- * `archiveLag` = number of searches that still list a thread after it was archived.
+ * `archiveLag` = number of searches that still list a thread after it was archived. `ops` records archive and
+ * label calls in order; `label.addToThreads` adds the label to every message of the thread, as in Gmail.
  */
 class FakeGmailApp {
   constructor(threads, labels = [], { now = NOW, archiveLag = 0 } = {}) {
     this.threads = threads.map((t, i) => {
-      const { labels = [], ageDays = 0, lastAgeDays, messages, ...rest } = t;
-      const fallback = [{ labels, ageDays }, ...(lastAgeDays === undefined ? [] : [{ labels, ageDays: lastAgeDays }])];
+      const { labels = [], ageDays = 0, lastAgeDays, starred = false, important = false, messages, ...rest } = t;
+      const fallback = [{ labels, ageDays, starred, important },
+        ...(lastAgeDays === undefined ? [] : [{ labels, ageDays: lastAgeDays }])];
       return { id: `t${i}`, inbox: true, ...rest, messages: messages ?? fallback };
     });
     this.labels = new Set(labels);
@@ -30,10 +32,19 @@ class FakeGmailApp {
     this.pending = [];
     this.queries = [];
     this.archiveCalls = [];
+    this.ops = [];
   }
 
   getUserLabelByName(name) {
-    return this.labels.has(name) ? { getName: () => name } : null;
+    if (!this.labels.has(name)) return null;
+    return {
+      getName: () => name,
+      addToThreads: (threads) => {
+        assert.ok(threads.length <= 100, 'addToThreads takes at most 100 threads');
+        this.ops.push(`label ${threads.length}`);
+        threads.forEach(({ thread }) => thread.messages.forEach((m) => { m.labels = [...new Set([...m.labels, name])]; }));
+      },
+    };
   }
 
   search(query, start, max) {
@@ -48,6 +59,8 @@ class FakeGmailApp {
         getFirstMessageSubject: () => thread.subject ?? '',
         getLastMessageDate: () => new Date(this.now - Math.min(...thread.messages.map((m) => m.ageDays)) * DAY),
         getLabels: () => [...new Set(thread.messages.flatMap((m) => m.labels))].map((name) => ({ getName: () => name })),
+        hasStarredMessages: () => thread.messages.some((m) => m.starred),
+        isImportant: () => thread.messages.some((m) => m.important),
         thread,
       }));
   }
@@ -55,6 +68,7 @@ class FakeGmailApp {
   moveThreadsToArchive(threads) {
     assert.ok(threads.length <= 100, 'moveThreadsToArchive takes at most 100 threads');
     this.archiveCalls.push(threads.length);
+    this.ops.push(`archive ${threads.length}`);
     threads.forEach(({ thread }) => {
       if (this.archiveLag > 0) this.pending.push({ thread, lag: this.archiveLag });
       else thread.inbox = false;
@@ -66,10 +80,16 @@ class FakeGmailApp {
     return this.threads.filter((t) => t.inbox && !this.pending.some((p) => p.thread === t)).map((t) => t.id);
   }
 
+  idsWithLabel(name) {
+    return this.threads.filter((t) => t.messages.some((m) => m.labels.includes(name))).map((t) => t.id);
+  }
+
   #predicate(token) {
     let match;
     if (token === 'in:inbox') return (t) => t.inbox;
     if (token === 'has:userlabels') return (t, m) => m.labels.length > 0;
+    if (token === '-is:starred') return (t, m) => !m.starred;
+    if (token === '-is:important') return (t, m) => !m.important;
     if ((match = /^older_than:(\d+)d$/.exec(token))) return (t, m) => m.ageDays > Number(match[1]);
     if ((match = /^(-?)label:([A-Za-z0-9_/][A-Za-z0-9_/-]*)$/.exec(token))) {
       const [, negate, name] = match;
@@ -101,7 +121,7 @@ function load(gmail = new FakeGmailApp([])) {
   const context = vm.createContext({ GmailApp: gmail, Logger: { log: (m) => logs.push(String(m)) }, ScriptApp: scriptApp, console });
   const api = vm.runInContext(`${source}
 ;({ CONFIG, runAutoArchive, installDailyTrigger, removeTriggers, archiveByLabelRules_, archiveActionDone_,
-    buildLabelRuleQuery_, buildActionDoneQuery_, labelQueryName_ })`, context);
+    applyRetentionRules_, buildLabelRuleQuery_, buildActionDoneQuery_, buildRetentionQuery_, labelQueryName_ })`, context);
   return { ...api, gmail, logs, triggers };
 }
 
@@ -111,6 +131,8 @@ const config = (overrides = {}) => ({
   actionLabel: 'Action/ToDo',
   actionDoneArchive: true,
   keepInInboxLabels: [],
+  retentionRules: [],
+  toBeDeletedLabel: 'To-Be-Deleted',
   pageSize: 100,
   maxRuntimeSeconds: 280,
   dryRun: false,
@@ -123,7 +145,9 @@ const quiet = () => {};
 test('CONFIG ships with the frozen keys and safe defaults', () => {
   const { CONFIG } = load();
   assert.deepEqual(Object.keys(CONFIG), ['scriptVersion', 'labelRules', 'actionLabel', 'actionDoneArchive',
-    'keepInInboxLabels', 'pageSize', 'maxRuntimeSeconds', 'dryRun']);
+    'keepInInboxLabels', 'retentionRules', 'toBeDeletedLabel', 'pageSize', 'maxRuntimeSeconds', 'dryRun']);
+  assert.equal(CONFIG.scriptVersion, 2);
+  assert.equal(CONFIG.retentionRules.length, 0);
   assert.equal(CONFIG.dryRun, true);
   assert.equal(CONFIG.maxRuntimeSeconds, 280);
 });
@@ -358,6 +382,109 @@ test('a lagging index that catches up mid-pass does not skip unarchived threads'
   const result = archiveByLabelRules_(config({ labelRules: [{ label: 'Example/A', days: 1 }] }), fixedClock, gmail, quiet, NOW);
   assert.equal(result.archived, 200);
   assert.deepEqual(gmail.inboxIds(), []);
+});
+
+const TBD = 'To-Be-Deleted';
+
+test('retention query covers all mail with the label and excludes marked, starred and important messages', () => {
+  const { buildRetentionQuery_ } = load();
+  assert.equal(buildRetentionQuery_({ label: 'Example/Old Receipts', days: 365 }, TBD),
+    'label:Example/Old-Receipts older_than:365d -label:To-Be-Deleted -is:starred -is:important');
+});
+
+test('retention archives and marks old threads in or out of the inbox, paging over more than 500', () => {
+  const threads = [
+    ...Array.from({ length: 560 }, (_, i) => ({ labels: ['Example/Receipts'], ageDays: 400, inbox: i % 2 === 0 })),
+    { labels: ['Example/Receipts'], ageDays: 10 }, // t560 too young
+    { labels: ['Example/Receipts'], ageDays: 400, starred: true }, // t561 starred
+    { labels: ['Example/Receipts'], ageDays: 400, important: true }, // t562 important
+    { labels: ['Example/Receipts', TBD], ageDays: 400 }, // t563 already marked
+    { messages: [{ labels: ['Example/Receipts'], ageDays: 400 }, { labels: [], ageDays: 390, starred: true }] }, // t564 starred reply
+    { messages: [{ labels: ['Example/Receipts'], ageDays: 400 }, { labels: [TBD], ageDays: 390 }] }, // t565 marked reply
+    { labels: ['Example/Receipts'], ageDays: 400, lastAgeDays: 2 }, // t566 recent reply
+    { labels: ['Example/Other'], ageDays: 400 }, // t567 other label
+  ];
+  const gmail = new FakeGmailApp(threads, ['Example/Receipts', TBD]);
+  const { applyRetentionRules_ } = load(gmail);
+  const logs = [];
+
+  const result = applyRetentionRules_(config({ retentionRules: [{ label: 'Example/Receipts', days: 365 }], pageSize: 500 }),
+    fixedClock, gmail, (m) => logs.push(m), NOW);
+
+  assert.equal(result.marked, 560);
+  assert.equal(result.stopped, false);
+  const ids = (from, to) => Array.from({ length: to - from }, (_, i) => `t${from + i}`);
+  assert.deepEqual(gmail.idsWithLabel(TBD), [...ids(0, 560), 't563', 't565']);
+  assert.deepEqual(gmail.inboxIds(), ids(560, 568));
+  assert.deepEqual(gmail.ops, ['archive 100', 'label 100', 'archive 100', 'label 100', 'archive 100', 'label 100',
+    'archive 100', 'label 100', 'archive 100', 'label 100', 'archive 60', 'label 60']);
+  assert.ok(gmail.queries.every((q) => !q.query.includes('in:inbox')));
+  assert.ok(logs.some((m) => m.includes('Marked for deletion 560 thread(s)') && m.includes('1 left: recent reply') &&
+    m.includes('2 left: starred, important or already marked')), logs.join('\n'));
+});
+
+test('retention dry run only logs', () => {
+  const gmail = new FakeGmailApp(Array.from({ length: 3 }, () => ({ labels: ['Example/Receipts'], ageDays: 400 })),
+    ['Example/Receipts', TBD]);
+  const { applyRetentionRules_ } = load(gmail);
+  const logs = [];
+  const result = applyRetentionRules_(config({ retentionRules: [{ label: 'Example/Receipts', days: 30 }], dryRun: true }),
+    fixedClock, gmail, (m) => logs.push(m), NOW);
+  assert.equal(result.marked, 3);
+  assert.deepEqual(gmail.ops, []);
+  assert.deepEqual(gmail.idsWithLabel(TBD), []);
+  assert.ok(logs.some((m) => m.includes('Would mark for deletion 3 thread(s)')));
+});
+
+test('retention is skipped when the To-Be-Deleted label is missing or unsearchable, and skips bad rules', () => {
+  const threads = [{ labels: ['Example/Receipts'], ageDays: 400 }];
+  for (const [labels, toBeDeletedLabel] of [[['Example/Receipts'], TBD], [['Example/Receipts', 'Bin (x)'], 'Bin (x)'], [['Example/Receipts'], ' ']]) {
+    const gmail = new FakeGmailApp(threads, labels);
+    const { applyRetentionRules_ } = load(gmail);
+    const logs = [];
+    const result = applyRetentionRules_(config({ retentionRules: [{ label: 'Example/Receipts', days: 1 }], toBeDeletedLabel }),
+      fixedClock, gmail, (m) => logs.push(m), NOW);
+    assert.equal(result.marked, 0);
+    assert.equal(gmail.queries.length, 0);
+    assert.ok(logs.some((m) => m.startsWith('Warning') && m.includes('retention skipped')), toBeDeletedLabel);
+  }
+
+  const gmail = new FakeGmailApp(threads, ['Example/Receipts', TBD]);
+  const { applyRetentionRules_ } = load(gmail);
+  const logs = [];
+  const rules = [{ label: 'Example/Gone', days: 1 }, { label: 'Example/(x)', days: 1 }, { label: 'Example/Receipts', days: 0 }];
+  applyRetentionRules_(config({ retentionRules: rules }), fixedClock, gmail, (m) => logs.push(m), NOW);
+  assert.equal(gmail.queries.length, 0);
+  assert.equal(logs.filter((m) => m.startsWith('Warning')).length, 3);
+});
+
+test('a run that stops between archiving and labelling is marked by the next run', () => {
+  const gmail = new FakeGmailApp([{ labels: ['Example/Receipts'], ageDays: 400 }], ['Example/Receipts', TBD]);
+  const { applyRetentionRules_ } = load(gmail);
+  const cfg = config({ retentionRules: [{ label: 'Example/Receipts', days: 30 }] });
+  const real = gmail.getUserLabelByName.bind(gmail);
+  gmail.getUserLabelByName = (name) => (name === TBD ? { addToThreads: () => { throw new Error('quota'); } } : real(name));
+  assert.throws(() => applyRetentionRules_(cfg, fixedClock, gmail, quiet, NOW), /quota/);
+  assert.deepEqual(gmail.inboxIds(), []);
+  assert.deepEqual(gmail.idsWithLabel(TBD), []);
+
+  gmail.getUserLabelByName = real;
+  assert.equal(applyRetentionRules_(cfg, fixedClock, gmail, quiet, NOW).marked, 1);
+  assert.deepEqual(gmail.idsWithLabel(TBD), ['t0']);
+});
+
+test('runAutoArchive runs retention after archiving and reports it', () => {
+  const threads = [
+    { labels: ['Example/News'], ageDays: 40 }, // t0 archived by the label rule, then marked
+    { labels: ['Example/Receipts'], ageDays: 400, inbox: false }, // t1 marked
+  ];
+  const gmail = new FakeGmailApp(threads, ['Example/News', 'Example/Receipts', TBD, 'Action/ToDo'], { now: Date.now() });
+  const { CONFIG, runAutoArchive, logs } = load(gmail);
+  Object.assign(CONFIG, { dryRun: false, actionDoneArchive: false, labelRules: [{ label: 'Example/News', days: 30 }],
+    retentionRules: [{ label: 'Example/News', days: 35 }, { label: 'Example/Receipts', days: 365 }] });
+  runAutoArchive();
+  assert.deepEqual(gmail.idsWithLabel(TBD), ['t0', 't1']);
+  assert.ok(logs.at(-1).startsWith('Done: archived 1 thread(s); marked 2 for deletion.'), logs.at(-1));
 });
 
 test('installDailyTrigger replaces existing triggers instead of doubling up', () => {
