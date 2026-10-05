@@ -200,7 +200,8 @@ export class LabelsTab {
       const active = this.jobs
         .activeJobs()
         .find((j) => j.type === TAXONOMY_PROPOSE_JOB && !this.finishedJobIds.has(j.id));
-      if (active && !untracked(this.proposeJobId)) untracked(() => this.proposeJobId.set(active.id));
+      if (active && !untracked(this.proposeJobId))
+        untracked(() => this.proposeJobId.set(active.id));
     });
     // The proposal ended: a completed one stored a new draft, which opens in the tree. A job that
     // ended while the hub was disconnected drops out of the jobs service: the reload shows the result.

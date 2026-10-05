@@ -56,6 +56,13 @@
   </fieldset>
 
   <fieldset class="flex flex-col gap-2">
+    <legend class="mb-1">Taxonomy proposal</legend>
+    @for (f of taxonomyFields; track f.key) {
+      <ng-container *ngTemplateOutlet="numberField; context: { $implicit: f }" />
+    }
+  </fieldset>
+
+  <fieldset class="flex flex-col gap-2">
     <legend class="mb-1">Memory</legend>
     <mat-slide-toggle
       formControlName="analysisMemoryShortCircuit"

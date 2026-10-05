@@ -67,7 +67,12 @@ export const LABEL_PLAN_APPLY_JOB = 'label_plan_apply';
 export const TAXONOMY_PROPOSE_JOB = 'taxonomy_propose';
 
 /** The kinds in the order the list and the apply dialog show them. */
-export const PLAN_KINDS: readonly LabelPlanItemKind[] = ['create', 'empty', 'near_duplicate', 'nest'];
+export const PLAN_KINDS: readonly LabelPlanItemKind[] = [
+  'create',
+  'empty',
+  'near_duplicate',
+  'nest',
+];
 
 export const KIND_TITLES: Readonly<Record<LabelPlanItemKind, string>> = {
   create: 'Taxonomy labels',

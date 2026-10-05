@@ -96,8 +96,9 @@ import {
       }
       @if (taxonomy() && i.kind === 'near_duplicate') {
         <p class="warn m-0 flex items-center gap-1 text-sm" data-testid="plan-item-near-duplicate">
-          <mat-icon aria-hidden="true">warning</mat-icon>Nearly duplicates
-          "{{ i.targetLabelName ?? i.targetLabelId }}": its senders go there instead of a new label.
+          <mat-icon aria-hidden="true">warning</mat-icon>Nearly duplicates "{{
+            i.targetLabelName ?? i.targetLabelId
+          }}": its senders go there instead of a new label.
         </p>
       }
       @if (i.description) {
@@ -114,7 +115,9 @@ import {
             (click)="showSenders.set(!showSenders())"
             data-testid="plan-item-senders-toggle"
           >
-            <mat-icon aria-hidden="true">{{ showSenders() ? 'expand_less' : 'expand_more' }}</mat-icon
+            <mat-icon aria-hidden="true">{{
+              showSenders() ? 'expand_less' : 'expand_more'
+            }}</mat-icon
             >{{ senders.length | number }} {{ senders.length === 1 ? 'sender' : 'senders' }}
           </button>
           @if (showSenders()) {
