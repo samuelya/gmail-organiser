@@ -6,6 +6,7 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// <summary>
 /// A unit of LLM work: <see cref="RepresentativeIds"/> go to the model, the other members may get a derived suggestion.
 /// <see cref="Members"/> are newest first; <see cref="Individual"/> groups are single messages that are never derived.
+/// <see cref="Packed"/> groups are one-off senders sharing one snippet-only prompt (<see cref="SingletonPacker"/>).
 /// </summary>
 public sealed record MessageGroup(
     string Key,
@@ -13,7 +14,8 @@ public sealed record MessageGroup(
     string Display,
     IReadOnlyList<MessageRow> Members,
     IReadOnlyList<string> RepresentativeIds,
-    bool Individual);
+    bool Individual,
+    bool Packed = false);
 
 public sealed record GroupingSettings(
     AnalysisGroupingMode Mode,

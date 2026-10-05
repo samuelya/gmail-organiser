@@ -390,5 +390,7 @@ public sealed partial class AnalysisRunService(
         run.EscalatedCalls,
         stalled,
         run.PoliciesProposed,
-        newLabels);
+        newLabels,
+        run.PackedMessages,
+        run.PackRetries);
 }

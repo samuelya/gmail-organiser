@@ -23,7 +23,10 @@ namespace GmailOrganiser.Analysis;
 /// <param name="FailedIds">
 /// Members whose model output stayed invalid; the job skips them. A user resume of the run retries each once (#378).
 /// </param>
-/// <param name="IndividualIds">Remaining members of a mixed group; a resume analyses them one by one, never derived.</param>
+/// <param name="IndividualIds">
+/// Remaining members of a mixed group, and pack members to ask again with the body (#376); a resume analyses them one
+/// by one, never derived or packed.
+/// </param>
 /// <param name="CandidateIds">
 /// The run's candidates, frozen at the start; a resume covers exactly these (minus stored, failed and no longer
 /// eligible ones), so mail fetched meanwhile never shifts the window.
@@ -223,7 +226,7 @@ public sealed partial class AnalysisRunJob(
     /// as skipped (both stored with the next checkpoint), and so do candidates of the inbox, all and labelled scopes a
     /// policy has decided since the run started: those with a <see cref="SuggestionSource.Policy"/> suggestion (#360).
     /// A candidate an approved policy covers without such a suggestion is still analysed.
-    /// Members left over from a mixed group come first, one by one.
+    /// Members left over from a mixed group or a pack come first, one by one; they are never packed again.
     /// </summary>
     private async Task<Plan> PlanAsync(
         AnalysisRunRow run, AnalysisRunCursor cursor, AppSettings settings, PersonalLabels labels, CancellationToken ct)
@@ -270,6 +273,12 @@ public sealed partial class AnalysisRunJob(
         var individual = (cursor.IndividualIds ?? []).ToHashSet(StringComparer.Ordinal);
         var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode };
         var groups = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, labels, ct);
+        // One-off senders share snippet-only prompts (#376); a compare run measures the prompt on full bodies.
+        if (!compare)
+        {
+            groups = SingletonPacker.Pack(groups, run.Id, settings.AnalysisPackSize, allowlisted, settings.Protection);
+        }
+
         return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], groups, allowlisted, cursor, policies);
     }
 
@@ -319,6 +328,8 @@ public sealed partial class AnalysisRunJob(
         run.NearContextLimit += outcome.Usage.NearContextLimit;
         run.TriageCalls += outcome.TriageCalls;
         run.EscalatedCalls += outcome.EscalatedCalls;
+        run.PackedMessages += outcome.PackedMessages;
+        run.PackRetries += outcome.PackRetries;
 
         // A unique violation means another writer committed a suggestion for a member after the re-check: the retry's
         // re-check then skips it as decided meanwhile (or replaces it if undecided); it never fails the run.

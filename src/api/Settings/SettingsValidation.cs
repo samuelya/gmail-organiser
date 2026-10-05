@@ -34,6 +34,10 @@ public static class SettingsValidation
     public const double MaxAnalysisDerivedConfidencePenalty = 0.5;
     public const double MinAnalysisClusterDistance = 0.02;
     public const double MaxAnalysisClusterDistance = 0.6;
+    public const int MinAnalysisPackSize = 1;
+    public const int MaxAnalysisPackSize = 30;
+    public const double MinAnalysisPackRetryThreshold = 0;
+    public const double MaxAnalysisPackRetryThreshold = 1;
     public const int MinAnalysisMemoryMinApprovals = 1;
     public const int MaxAnalysisMemoryMinApprovals = 20;
     public const double MinBulkApproveThreshold = 0.5;
@@ -113,6 +117,8 @@ public static class SettingsValidation
         CheckRange(errors, "analysisDerivedConfidencePenalty", request.AnalysisDerivedConfidencePenalty,
             MinAnalysisDerivedConfidencePenalty, MaxAnalysisDerivedConfidencePenalty);
         CheckRange(errors, "analysisClusterDistance", request.AnalysisClusterDistance, MinAnalysisClusterDistance, MaxAnalysisClusterDistance);
+        CheckRange(errors, "analysisPackSize", request.AnalysisPackSize, MinAnalysisPackSize, MaxAnalysisPackSize);
+        CheckRange(errors, "analysisPackRetryThreshold", request.AnalysisPackRetryThreshold, MinAnalysisPackRetryThreshold, MaxAnalysisPackRetryThreshold);
         CheckRange(errors, "analysisMemoryMinApprovals", request.AnalysisMemoryMinApprovals,
             MinAnalysisMemoryMinApprovals, MaxAnalysisMemoryMinApprovals);
         CheckRange(errors, "bulkApproveThreshold", request.BulkApproveThreshold, MinBulkApproveThreshold, MaxBulkApproveThreshold);
