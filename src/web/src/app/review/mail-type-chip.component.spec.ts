@@ -2,12 +2,10 @@ import { ComponentRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { startMailType } from './edit-suggestion-dialog.component';
 import { commonMailType, MailTypeChip, mailTypeHue } from './mail-type-chip.component';
-import { filterByMailType, mailTypesParam, parseMailTypes } from './mail-type-filter';
-import { editRequest, ReviewGroupDto, SuggestionDto } from './review.models';
+import { mailTypesParam, parseMailTypes } from './mail-type-filter';
+import { editRequest, SuggestionDto } from './review.models';
 
 const member = (mailType: string | null, id = 'a') => ({ id, mailType }) as SuggestionDto;
-const card = (...types: (string | null)[]) =>
-  ({ members: types.map((t, i) => member(t, String(i))) }) as ReviewGroupDto;
 
 describe('MailTypeChip', () => {
   function render(type: string | null) {
@@ -53,13 +51,6 @@ describe('mail-type filter', () => {
     expect(mailTypesParam(['newsletter', 'receipt'])).toBe('receipt,newsletter');
     expect(mailTypesParam([])).toBeNull();
     expect(mailTypesParam(['bogus'])).toBeNull();
-  });
-
-  it('keeps the groups with a listed member of a selected type', () => {
-    const groups = [card('receipt'), card('newsletter', 'receipt'), card(null), card('social')];
-    expect(filterByMailType(groups, [])).toBe(groups);
-    expect(filterByMailType(groups, ['receipt'])).toEqual([groups[0], groups[1]]);
-    expect(filterByMailType(groups, ['social', 'newsletter'])).toEqual([groups[1], groups[3]]);
   });
 });
 

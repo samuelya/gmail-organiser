@@ -39,13 +39,14 @@ import { CardReanalyse } from './card-reanalyse';
 import { bulkApproveData, openBulkApprove } from './bulk-approve-dialog.component';
 import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
-import { MailTypeFilter } from './mail-type-filter';
+import { listedKey, MailTypeFilter } from './mail-type-filter';
 import {
   applyRestRequest,
   canApplyRest,
   DEFAULT_FLAG_LABELS,
   GROUP_PAGE_SIZE,
   GroupDecisionResponse,
+  keptSelection,
   outcomeOf,
   patchClaudeReview,
   patternSummary,
@@ -179,16 +180,20 @@ export class ReviewPage {
       reanalysed: this.reanalysed(),
       search: this.search(),
       page: this.senderPage(),
+      mailTypes: this.mailTypes.selected(),
+      listed: listedKey(this.status(), this.reanalysed(), this.mailTypes.selected()),
       version: this.version(),
     }));
     toObservable(sendersKey)
       .pipe(
         tap(() => this.sendersLoading.set(true)),
         switchMap((k) =>
-          this.review.listSenders(k.status, k.search, k.page, SENDER_PAGE_SIZE, k.reanalysed).pipe(
-            orNull(),
-            map((page) => ({ listed: `${k.status}|${k.reanalysed}`, page })),
-          ),
+          this.review
+            .listSenders(k.status, k.search, k.page, SENDER_PAGE_SIZE, k.reanalysed, k.mailTypes)
+            .pipe(
+              orNull(),
+              map((page) => ({ listed: k.listed, page })),
+            ),
         ),
         takeUntilDestroyed(this.destroyRef),
       )
@@ -197,7 +202,7 @@ export class ReviewPage {
         this.sendersFailed.set(!page);
         this.senders.set(page);
         if (!page) return;
-        // A tab or "Re-analysed" change moves to the new list's first sender unless the selected one is in it.
+        // A tab, "Re-analysed" or mail-type change moves to the new list's first sender unless the selected one is in it.
         const selected = this.selected();
         const changed = listed !== this.listedFilter();
         this.listedFilter.set(listed);
@@ -207,10 +212,11 @@ export class ReviewPage {
 
     // Waits for the list of the current tab and filter, so a sender it hides is never requested (404).
     const detailKey = computed(() => ({
-      listed: this.listedFilter() === `${this.status()}|${this.reanalysed()}`,
+      listed: this.listedFilter() === sendersKey().listed,
       address: this.selected(),
       status: this.status(),
       reanalysed: this.reanalysed(),
+      mailTypes: this.mailTypes.selected(),
       page: this.groupPage(),
       version: this.version(),
     }));
@@ -221,7 +227,7 @@ export class ReviewPage {
         switchMap((k) =>
           k.address
             ? this.review
-                .sender(k.address, k.status, k.page, GROUP_PAGE_SIZE, k.reanalysed)
+                .sender(k.address, k.status, k.page, GROUP_PAGE_SIZE, k.reanalysed, k.mailTypes)
                 .pipe(orNull())
             : of(null),
         ),
@@ -230,7 +236,9 @@ export class ReviewPage {
       .subscribe((detail) => {
         this.detailLoading.set(false);
         this.detail.set(detail);
-        this.pruneSelection(detail);
+        // Ticks only survive on members still listed: an applied or moved member drops out.
+        const kept = keptSelection(this.selection(), detail?.groups ?? []);
+        if (kept) this.selection.set(kept);
       });
 
     const patternKey = computed(() => ({ address: this.selected(), version: this.version() }));
@@ -265,11 +273,6 @@ export class ReviewPage {
     effect(() => {
       if (this.jobs.reconnects() > 0) untracked(() => this.refresh());
     });
-    // Hidden members don't stay ticked: the selection actions would act on rows the user can't see.
-    effect(() => {
-      this.mailTypes.selected();
-      untracked(() => this.pruneSelection(this.detail()));
-    });
   }
 
   onStatus(status: ReviewStatus): void {
@@ -280,6 +283,13 @@ export class ReviewPage {
 
   onReanalysed(on: boolean): void {
     this.reanalysed.set(on);
+    this.senderPage.set(1);
+    this.resetDetail();
+  }
+
+  /** A mail-type change lists a different set of senders: back to page 1 with nothing ticked. */
+  onMailTypes(types: readonly string[]): void {
+    this.mailTypes.set(types);
     this.senderPage.set(1);
     this.resetDetail();
   }
@@ -340,11 +350,11 @@ export class ReviewPage {
   editGroup(group: ReviewGroupDto): void {
     const address = this.selected();
     if (!address) return;
-    this.afterEdit(this.editDialog.editGroup(address, group));
+    this.refreshAfter(this.editDialog.editGroup(address, group));
   }
 
   editMember(m: SuggestionDto): void {
-    this.afterEdit(this.editDialog.editMember(m));
+    this.refreshAfter(this.editDialog.editMember(m));
   }
 
   /** Patched in place; an accepted verdict changed suggestions, so everything is re-fetched. */
@@ -386,14 +396,9 @@ export class ReviewPage {
   }
 
   bulkApprove(): void {
-    const listsAll = this.status() === 'pending' && !this.reanalysed();
-    const data = bulkApproveData(this.settings(), this.selected(), this.detail(), listsAll);
-    openBulkApprove(this.dialog, data)
-      .pipe(
-        filter((changed) => changed),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe(() => this.refresh());
+    this.refreshAfter(
+      openBulkApprove(this.dialog, bulkApproveData(this.settings(), this.selected())),
+    );
   }
 
   /** Applies the selected sender's approved suggestions; the API answers 409 when none is. */
@@ -444,7 +449,8 @@ export class ReviewPage {
     this.snackBar.open(message, 'Dismiss', { duration: r.skipped.length ? 10_000 : 4000 });
   }
 
-  private afterEdit(saved: Observable<boolean>): void {
+  /** Re-fetches once a dialog says it changed something. */
+  private refreshAfter(saved: Observable<boolean>): void {
     saved
       .pipe(
         filter((s) => s),
@@ -472,12 +478,6 @@ export class ReviewPage {
 
   private refresh(): void {
     this.version.update((v) => v + 1);
-  }
-
-  /** Ticks only survive on members still shown: an applied, moved or filtered-out member drops out. */
-  private pruneSelection(detail: ReviewSenderDetailDto | null): void {
-    const kept = this.mailTypes.kept(this.selection(), detail?.groups ?? []);
-    if (kept) this.selection.set(kept);
   }
 
   private resetDetail(): void {

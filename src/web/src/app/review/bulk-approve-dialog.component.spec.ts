@@ -9,19 +9,16 @@ import {
   newLabelExclusionText,
   openBulkApprove,
 } from './bulk-approve-dialog.component';
-import { ReviewSenderDetailDto, SuggestionDto } from './review.models';
 import { ReviewService } from './review.service';
 
 describe('BulkApproveDialog', () => {
   afterEach(() => document.querySelector('.cdk-overlay-container')?.replaceChildren());
 
-  function open(
-    senderAddress: string | null,
-    newLabelPending: readonly SuggestionDto[] | null = [],
-    taxonomyLocked = false,
-  ) {
+  function open(senderAddress: string | null, taxonomyLocked = false, excludedNewLabel = 0) {
     const api = {
-      bulkApprove: vi.fn(() => of({ approved: 5, skippedProtected: 2, skippedIds: ['x', 'y'] })),
+      bulkApprove: vi.fn(() =>
+        of({ approved: 5, skippedProtected: 2, skippedIds: ['x', 'y'], excludedNewLabel }),
+      ),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -37,7 +34,6 @@ describe('BulkApproveDialog', () => {
         step: 0.01,
         senderAddress,
         taxonomyLocked,
-        newLabelPending,
       }),
     );
     return { api, closed };
@@ -83,86 +79,59 @@ describe('BulkApproveDialog', () => {
     expect(document.querySelector('[data-testid="bulk-new-label-excluded"]')).toBeNull();
   });
 
-  const pending = (confidence: number, source: SuggestionDto['source'] = 'llm') =>
-    ({ newLabelPending: true, status: 'pending', confidence, source }) as SuggestionDto;
+  const excluded = () =>
+    document.querySelector('[data-testid="bulk-new-label-excluded"]')?.textContent ?? null;
 
-  it('gives a count only for this sender with every suggestion known, before and after approving', () => {
-    open('news@example.com', [pending(0.9), pending(0.95), pending(0.99)], true);
+  it('says new labels are excluded before approving, then shows the count the API excluded', () => {
+    open('news@example.com', true, 3);
     settle();
-    const excluded = () => q('[data-testid="bulk-new-label-excluded"]').textContent!;
-    // All senders: B's and C's new-label suggestions are unknown, so no number.
     expect(excluded()).toContain(NEW_LABEL_EXCLUDED);
     expect(excluded()).not.toMatch(/\d/);
-    q<HTMLInputElement>('[data-testid="bulk-sender-only"] input').click();
-    settle();
-    expect(excluded()).toContain('3 suggestions with new labels are excluded');
     q<HTMLButtonElement>('[data-testid="bulk-submit"]').click();
     settle();
-    expect(excluded()).toContain('3 suggestions with new labels are excluded');
+    expect(excluded()).toContain(
+      '3 suggestions with new labels were excluded while the taxonomy is locked.',
+    );
   });
 
-  it('shows no number when the sender may have suggestions on other pages', () => {
-    open('news@example.com', null, true);
+  it('shows no excluded line after approving when the API excluded none', () => {
+    open('news@example.com', true, 0);
     settle();
-    q<HTMLInputElement>('[data-testid="bulk-sender-only"] input').click();
+    q<HTMLButtonElement>('[data-testid="bulk-submit"]').click();
     settle();
-    expect(q('[data-testid="bulk-new-label-excluded"]').textContent).toContain(NEW_LABEL_EXCLUDED);
+    expect(q('[data-testid="bulk-result"]')).toBeTruthy();
+    expect(excluded()).toBeNull();
   });
 
   it('says nothing about new labels while the taxonomy is unlocked', () => {
-    open('news@example.com', [pending(0.9)], false);
+    open('news@example.com', false);
     settle();
-    expect(document.querySelector('[data-testid="bulk-new-label-excluded"]')).toBeNull();
+    expect(excluded()).toBeNull();
   });
 
-  it('counts like the request: threshold and derived/memory sources', () => {
-    const data = bulkApproveData(
-      { bulkApproveThreshold: 0.85, taxonomyLocked: true },
-      'news@example.com',
-      null,
-      true,
-    );
-    const known = {
-      ...data,
-      newLabelPending: [pending(0.8), pending(0.9), pending(0.95, 'derived')],
-    };
-    const form = { threshold: 0.85, includeDerived: false, senderOnly: true };
-    expect(exclusionFor(known, form)).toBe(newLabelExclusionText(1));
-    expect(exclusionFor(known, { ...form, includeDerived: true })).toBe(newLabelExclusionText(2));
-    expect(exclusionFor(known, { ...form, threshold: 0.99 })).toBeNull();
-    expect(exclusionFor(known, { ...form, senderOnly: false })).toBe(NEW_LABEL_EXCLUDED);
+  it('takes the line from the response only', () => {
+    const data = bulkApproveData({ bulkApproveThreshold: 0.85, taxonomyLocked: true }, null);
+    const response = { approved: 1, skippedProtected: 0, skippedIds: [], excludedNewLabel: 2 };
+    expect(exclusionFor(data, null)).toBe(NEW_LABEL_EXCLUDED);
+    expect(exclusionFor(data, response)).toBe(newLabelExclusionText(2));
+    expect(exclusionFor(data, { ...response, excludedNewLabel: 0 })).toBeNull();
+    expect(exclusionFor({ ...data, taxonomyLocked: false }, null)).toBeNull();
   });
 
   it('words the exclusion for one and for none', () => {
     expect(newLabelExclusionText(0)).toBeNull();
     expect(newLabelExclusionText(1)).toBe(
-      '1 suggestion with a new label is excluded while the taxonomy is locked.',
+      '1 suggestion with a new label was excluded while the taxonomy is locked.',
     );
   });
 
-  it('knows every new-label suggestion only for one unfiltered page without truncated groups', () => {
-    const member = (newLabelPending: boolean) =>
-      ({ newLabelPending, status: 'pending' }) as SuggestionDto;
-    const detail = (totalGroups: number, truncated = false) =>
-      ({
-        groups: [
-          { members: [member(true), member(false)], truncated },
-          { members: [member(true)], truncated: false },
-        ],
-        totalGroups,
-      }) as ReviewSenderDetailDto;
-    const data = bulkApproveData(null, 'news@example.com', detail(2), true);
-    expect(data.newLabelPending).toHaveLength(2);
+  it('takes the threshold and lock from settings', () => {
+    const data = bulkApproveData(null, 'news@example.com');
     expect(data.threshold).toBe(data.max);
     expect(data.taxonomyLocked).toBe(false);
-    expect(bulkApproveData(null, 'news@example.com', detail(40), true).newLabelPending).toBeNull();
-    expect(
-      bulkApproveData(null, 'news@example.com', detail(2, true), true).newLabelPending,
-    ).toBeNull();
-    expect(bulkApproveData(null, 'news@example.com', detail(2), false).newLabelPending).toBeNull();
-    expect(bulkApproveData({ bulkApproveThreshold: 0.9 }, null, null, true)).toMatchObject({
+    expect(bulkApproveData({ bulkApproveThreshold: 0.9 }, null)).toMatchObject({
       threshold: 0.9,
-      newLabelPending: null,
+      senderAddress: null,
     });
   });
 });

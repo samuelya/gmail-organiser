@@ -43,7 +43,7 @@
         [reanalysed]="reanalysed()"
         [alternatives]="alternatives()"
         [mailTypes]="mailTypes.selected()"
-        (mailTypesChange)="mailTypes.set($event)"
+        (mailTypesChange)="onMailTypes($event)"
         (statusChange)="onStatus($event)"
         (reanalysedChange)="onReanalysed($event)"
         (searchChange)="onSearch($event)"
@@ -121,7 +121,7 @@
         </mat-card-content>
       </mat-card>
 
-      @for (g of mailTypes.shown(d.groups); track g.groupKey ?? g.members[0]?.id) {
+      @for (g of d.groups; track g.groupKey ?? g.members[0]?.id) {
         <app-group-card
           [group]="g"
           [senderAddress]="d.sender.address"
@@ -148,15 +148,10 @@
         />
       } @empty {
         <p class="muted m-0" data-testid="detail-empty">
-          {{ mailTypes.emptyText(status(), reanalysed(), d.totalGroups > d.pageSize) }}
+          {{ mailTypes.emptyText(status(), reanalysed()) }}
         </p>
       }
       @if (d.totalGroups > d.pageSize) {
-        @if (mailTypes.selected().length) {
-          <p class="muted m-0" data-testid="mail-type-page-note">
-            The mail-type filter narrows this page; the pages count all of this sender's groups.
-          </p>
-        }
         <mat-paginator
           [length]="d.totalGroups"
           [pageIndex]="d.page - 1"
@@ -166,6 +161,11 @@
           aria-label="Group pages"
         />
       }
+    } @else if (selected() && mailTypes.selected().length && !detailLoading()) {
+      <!-- The detail answers 404 when the sender has nothing of the selected mail types. -->
+      <p class="muted m-0" data-testid="detail-empty">
+        {{ mailTypes.emptyText(status(), reanalysed()) }}
+      </p>
     } @else if (!detailLoading()) {
       <p class="muted m-0" data-testid="detail-none">Select a sender to review its suggestions.</p>
     }
