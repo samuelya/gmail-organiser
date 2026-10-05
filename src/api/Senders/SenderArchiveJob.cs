@@ -35,7 +35,7 @@ public sealed record SenderArchiveCursor(
 /// <see cref="SenderArchiveCursor.LastId"/>. A pending chunk is resent on resume (removing <c>INBOX</c> again is a no-op); <see cref="UndoActionsJob"/>
 /// reverts the batch from its log. Each chunk's threads are checked for a reply first, as apply does. A sender that turns
 /// human, replied-to or allowlisted midway ends the job as completed, the reason in its message, so History can undo
-/// what was archived.
+/// what was archived; counts that drift below the noisy thresholds midway (#417) do not.
 /// </summary>
 public sealed class SenderArchiveJob(
     AppDbContext db,
@@ -203,11 +203,14 @@ public sealed class SenderArchiveJob(
             {
                 var settings = await settingsStore.GetAsync(t);
 
-                // A reply or a stats rebuild since the start can make a sender human: no further chunk is archived.
+                // A reply or a stats rebuild since the start can make a sender human, and a new address of it without stats
+                // may be one: no further chunk is archived. The noisy thresholds were checked at the start only; counts that
+                // drift (a gone message) don't stop the job.
                 var senders = await NoisySenderQuery.Stage0SendersAsync(db, settings.Protection.AllowlistedDomains, cursor.CanonicalAddresses, t);
-                if (Stage0Service.Refusal(cursor.CanonicalAddresses, senders) is { } refusal)
+                if (cursor.CanonicalAddresses.FirstOrDefault(a => senders.TryGetValue(a, out var s) && (s.Excluded || s.StatsMissing)) is { } human)
                 {
-                    throw new SenderRefusedException($"stopped: {refusal} The rest is not archived; what was can be undone from History.");
+                    throw new SenderRefusedException(
+                        $"stopped: {human} is a human, replied-to or allowlisted sender, or has an address without stats. The rest is not archived; what was can be undone from History.");
                 }
 
                 var allowlist = await AllowlistLoader.LoadAsync(db, settings, [.. messages.Select(m => m.FromAddress).Distinct()], t);

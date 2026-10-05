@@ -375,6 +375,67 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
     }
 
     [Fact]
+    public async Task Archive_completes_early_when_an_address_of_the_sender_without_stats_appears()
+    {
+        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 3;
+        h.Gmail.BeforeBatchModify = async (_, _) =>
+        {
+            await using var db = postgres.CreateDbContext();
+            if (!await db.Senders.AnyAsync(s => s.Address == "shop+new@example.com", Ct))
+            {
+                db.Senders.Add(new SenderRow
+                {
+                    Address = "shop+new@example.com",
+                    Domain = "example.com",
+                    CanonicalAddress = Shop,
+                    CanonicalDomain = "example.com",
+                    TotalCount = 1,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                });
+                await db.SaveChangesAsync(Ct);
+            }
+        };
+        var job = await StartArchiveAsync(Shop);
+
+        await h.RunNextAsync();
+
+        h.Gmail.BatchModifyCalls.Count.ShouldBe(1);
+        h.Progress(job.Id).Last().Message.ShouldNotBeNull().ShouldContain("stopped");
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Jobs.SingleAsync(j => j.Id == job.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+            (await db.ActionLog.CountAsync(Ct)).ShouldBe(3);
+            var batch = await db.ActionBatches.AsNoTracking().SingleAsync(Ct);
+            h.Gmail.BeforeBatchModify = null;
+            (await h.PostAsync($"/api/history/{batch.Id}/undo", new { })).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        }
+
+        await h.RunNextAsync();
+        await using var after = postgres.CreateDbContext();
+        (await after.Messages.CountAsync(m => m.FromAddress == Shop && m.LabelIds.Contains("INBOX"), Ct)).ShouldBe(10);
+    }
+
+    [Fact]
+    public async Task Archive_goes_on_when_a_gone_message_drops_the_sender_below_the_noisy_thresholds()
+    {
+        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 3;
+        h.Gmail.BeforeBatchModify = (_, ids) => ids.Contains("a00")
+            ? throw GmailRetryPolicy.CreateApiException(HttpStatusCode.NotFound, "notFound")
+            : Task.CompletedTask;
+        var job = await StartArchiveAsync(Shop);
+
+        await h.RunNextAsync();
+
+        string[] archived = ["a02", "a04", "a05", "a06", "a07", "a08", "a09"];
+        archived.ShouldAllBe(id => !Labels(id).Contains("INBOX"));
+        h.Progress(job.Id).Last().Message.ShouldNotBeNull().ShouldNotContain("stopped");
+        await using var db = postgres.CreateDbContext();
+        (await db.Senders.SingleAsync(s => s.Address == Shop, Ct)).TotalCount.ShouldBeLessThan(NoisySenderQuery.DefaultMinMessages);
+        (await db.Jobs.SingleAsync(j => j.Id == job.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+        (await db.ActionLog.Select(l => l.MessageId).ToListAsync(Ct)).ShouldBe(archived, ignoreOrder: true);
+    }
+
+    [Fact]
     public async Task Archive_with_nothing_unprotected_in_the_inbox_is_422()
     {
         await using (var db = postgres.CreateDbContext())
