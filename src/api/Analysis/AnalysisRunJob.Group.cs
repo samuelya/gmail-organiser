@@ -15,7 +15,8 @@ namespace GmailOrganiser.Analysis;
 /// What one group produced: rows to store, members that failed, members to analyse one by one, the attachments of
 /// the prompt's emails converted or skipped, and the tokens and time its model calls spent. <see cref="LlmCalls"/>
 /// counts every call, <see cref="TriageCalls"/> the triage model's and <see cref="EscalatedCalls"/> those repeated
-/// with the chat model.
+/// with the chat model. <see cref="PackedMessages"/> went to a pack's prompt, <see cref="PackRetries"/> of them go to
+/// the model again one by one; <see cref="Fallbacks"/> holds their low-confidence pack answers.
 /// </summary>
 internal sealed record GroupOutcome(
     IReadOnlyList<SuggestionRow> Suggestions,
@@ -27,7 +28,10 @@ internal sealed record GroupOutcome(
     int AttachmentsSkipped = 0,
     LlmUsage Usage = default,
     int TriageCalls = 0,
-    int EscalatedCalls = 0);
+    int EscalatedCalls = 0,
+    int PackedMessages = 0,
+    int PackRetries = 0,
+    IReadOnlyDictionary<string, PackFallback>? Fallbacks = null);
 
 /// <summary>
 /// The valid answers about a group's representatives, the ids the triage model answered (the chat model answered the
@@ -64,16 +68,28 @@ public sealed partial class AnalysisRunJob
     /// <summary>
     /// Looks ahead over the next groups not yet prepared (at most <see cref="MemoryLookaheadGroups"/>): the memory
     /// short-circuit for all of them in one lookup, then the vectors of the model-bound representatives in one call.
+    /// A pack's members are looked up one by one; its result holds the members memory covers (null: none).
     /// </summary>
     private async Task PrepareAsync(
         RunContext context, IEnumerable<MessageGroup> upcoming, Dictionary<MessageGroup, PreparedGroup> prepared, CancellationToken ct)
     {
         var batch = upcoming.Where(g => !prepared.ContainsKey(g)).Take(MemoryLookaheadGroups).ToList();
+        var lookups = batch.SelectMany(g => g.Packed ? g.Members.Select(AnalysisGrouper.Single) : [g]).ToList();
         // A compare run shows what the current prompt does, so memory never answers for the model.
-        var covered = context.Run.Kind == AnalysisRunKind.Compare
-            ? new ShortCircuitResult?[batch.Count]
-            : await shortCircuit.TryAsync(batch, new ShortCircuitContext(context.Settings, context.Allowlisted, context.LabelIndex, context.Labels, context.Run.DocumentTypeParent), ct);
-        var representatives = batch.Where((_, i) => covered[i] is null).SelectMany(Representatives).ToList();
+        var found = context.Run.Kind == AnalysisRunKind.Compare
+            ? new ShortCircuitResult?[lookups.Count]
+            : await shortCircuit.TryAsync(lookups, MemoryContext(context), ct);
+        var covered = new ShortCircuitResult?[batch.Count];
+        for (int i = 0, at = 0; i < batch.Count; at += batch[i].Packed ? batch[i].Members.Count : 1, i++)
+        {
+            covered[i] = batch[i].Packed ? PackCovered(found.Skip(at).Take(batch[i].Members.Count)) : found[at];
+        }
+
+        var representatives = batch
+            .SelectMany((g, i) => g.Packed
+                ? PackModelBound(context, g, covered[i])
+                : covered[i] is null ? Representatives(g) : [])
+            .ToList();
         var vectors = representatives.Count == 0 ? null : await memory.EmbedMessagesAsync(representatives, ct);
         for (var i = 0; i < batch.Count; i++)
         {
@@ -90,6 +106,11 @@ public sealed partial class AnalysisRunJob
     /// </summary>
     private async Task<GroupOutcome> AnalyseGroupAsync(RunContext context, MessageGroup group, PreparedGroup ready, CancellationToken ct)
     {
+        if (group.Packed)
+        {
+            return await AnalysePackAsync(context, group, ready, ct);
+        }
+
         if (ready.Covered is { } covered)
         {
             return FromMemory(context, group, covered);

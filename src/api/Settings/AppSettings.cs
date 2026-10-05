@@ -58,6 +58,13 @@ public sealed record AppSettings
     /// <summary>Maximum cosine distance between embeddings in one <see cref="AnalysisGroupingMode.Auto"/> cluster.</summary>
     public double AnalysisClusterDistance { get; init; } = DefaultAnalysisClusterDistance;
 
+    /// <summary>
+    /// One-off senders per snippet-only prompt (#376); 1 is off. Answers below <see cref="AnalysisPackRetryThreshold"/>
+    /// are asked again one by one with the body.
+    /// </summary>
+    public int AnalysisPackSize { get; init; } = DefaultAnalysisPackSize;
+    public double AnalysisPackRetryThreshold { get; init; } = DefaultAnalysisPackRetryThreshold;
+
     /// <summary>Skip the LLM when memory has <see cref="AnalysisMemoryMinApprovals"/> matching approvals.</summary>
     public bool AnalysisMemoryShortCircuit { get; init; } = true;
     public int AnalysisMemoryMinApprovals { get; init; } = DefaultAnalysisMemoryMinApprovals;
@@ -147,6 +154,8 @@ public sealed record AppSettings
     public const int DefaultAnalysisMinGroupSize = 3;
     public const double DefaultAnalysisDerivedConfidencePenalty = 0.10;
     public const double DefaultAnalysisClusterDistance = 0.15;
+    public const int DefaultAnalysisPackSize = 16;
+    public const double DefaultAnalysisPackRetryThreshold = 0.60;
     public const int DefaultAnalysisMemoryMinApprovals = 3;
     public const double DefaultBulkApproveThreshold = 0.80;
     public const ClaudeReviewerMode DefaultClaudeReviewerMode = ClaudeReviewerMode.Off;

@@ -23,7 +23,10 @@ namespace GmailOrganiser.Analysis;
 /// <param name="FailedIds">
 /// Members whose model output stayed invalid; the job skips them. A user resume of the run retries each once (#378).
 /// </param>
-/// <param name="IndividualIds">Remaining members of a mixed group; a resume analyses them one by one, never derived.</param>
+/// <param name="IndividualIds">
+/// Remaining members of a mixed group, and pack members to ask again with the body (#376); a resume analyses them one
+/// by one, never derived or packed.
+/// </param>
 /// <param name="CandidateIds">
 /// The run's candidates, frozen at the start; a resume covers exactly these (minus stored, failed and no longer
 /// eligible ones), so mail fetched meanwhile never shifts the window.
@@ -38,6 +41,9 @@ namespace GmailOrganiser.Analysis;
 /// <param name="NextSenderIndex">The first of <paramref name="Senders"/> not stored yet (proposed, failed or skipped).</param>
 /// <param name="LastScopeKey">The scope key of the last stored sender; informational.</param>
 /// <param name="PolicyCovered">Candidates skipped because an approved sender policy decides them (#360); also in the skipped count.</param>
+/// <param name="PackFallbacks">
+/// Low-confidence pack answers of members in <paramref name="IndividualIds"/> (#376): stored when asking alone gives none.
+/// </param>
 public sealed record AnalysisRunCursor(
     Guid RunId,
     int GroupsDone = 0,
@@ -51,7 +57,8 @@ public sealed record AnalysisRunCursor(
     IReadOnlyList<PolicyCandidate>? Senders = null,
     int NextSenderIndex = 0,
     string? LastScopeKey = null,
-    int PolicyCovered = 0);
+    int PolicyCovered = 0,
+    IReadOnlyDictionary<string, PackFallback>? PackFallbacks = null);
 
 /// <summary>
 /// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining frozen candidates, then per group asks the model
@@ -155,12 +162,14 @@ public sealed partial class AnalysisRunJob(
             run, settings, builder, chat, triage, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
             compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies, ApprovedLabelSet.From(settings, admitted));
 
+        var prepared = new Dictionary<MessageGroup, PreparedGroup>(ReferenceEqualityComparer.Instance);
+        // One-off senders share snippet-only prompts (#376); a compare run measures the prompt on full bodies.
         var front = new Queue<MessageGroup>(work.Individual);
-        var rest = new Queue<MessageGroup>(work.Groups);
+        var rest = new Queue<MessageGroup>(compare ? work.Groups : await PackAsync(context, work.Groups, prepared, ct));
         var individualIds = new HashSet<string>(cursor.IndividualIds ?? [], StringComparer.Ordinal);
         var failedIds = new List<string>(cursor.FailedIds ?? []);
         var coveredIds = new List<string>(cursor.CoveredIds ?? []);
-        var prepared = new Dictionary<MessageGroup, PreparedGroup>(ReferenceEqualityComparer.Instance);
+        var fallbacks = new Dictionary<string, PackFallback>(cursor.PackFallbacks ?? new Dictionary<string, PackFallback>(), StringComparer.Ordinal);
         while (front.TryDequeue(out var group) || rest.TryDequeue(out group))
         {
             if (!prepared.Remove(group, out var ready))
@@ -169,7 +178,12 @@ public sealed partial class AnalysisRunJob(
                 prepared.Remove(group, out ready);
             }
 
-            var outcome = await AnalyseGroupAsync(context, group, ready!, ct);
+            var outcome = WithPackFallback(context, group, await AnalyseGroupAsync(context, group, ready!, ct), fallbacks);
+            foreach (var (id, fallback) in outcome.Fallbacks ?? new Dictionary<string, PackFallback>())
+            {
+                fallbacks[id] = fallback;
+            }
+
             foreach (var single in outcome.Individual)
             {
                 front.Enqueue(single);
@@ -177,6 +191,11 @@ public sealed partial class AnalysisRunJob(
             }
 
             individualIds.ExceptWith(group.Members.Select(m => m.Id).Except(outcome.Individual.Select(g => g.Members[0].Id)));
+            foreach (var done in fallbacks.Keys.Where(id => !individualIds.Contains(id)).ToList())
+            {
+                fallbacks.Remove(done);
+            }
+
             failedIds.AddRange(outcome.FailedIds);
             if (compare)
             {
@@ -190,6 +209,7 @@ public sealed partial class AnalysisRunJob(
                 FailedIds = [.. failedIds],
                 IndividualIds = [.. individualIds],
                 CoveredIds = compare ? [.. coveredIds] : null,
+                PackFallbacks = fallbacks.Count == 0 ? null : new Dictionary<string, PackFallback>(fallbacks, StringComparer.Ordinal),
             };
 
             var signal = await StoreAsync(ctx, run, group, outcome, cursor, ct);
@@ -223,7 +243,7 @@ public sealed partial class AnalysisRunJob(
     /// as skipped (both stored with the next checkpoint), and so do candidates of the inbox, all and labelled scopes a
     /// policy has decided since the run started: those with a <see cref="SuggestionSource.Policy"/> suggestion (#360).
     /// A candidate an approved policy covers without such a suggestion is still analysed.
-    /// Members left over from a mixed group come first, one by one.
+    /// Members left over from a mixed group or a pack come first, one by one; they are never packed again.
     /// </summary>
     private async Task<Plan> PlanAsync(
         AnalysisRunRow run, AnalysisRunCursor cursor, AppSettings settings, PersonalLabels labels, CancellationToken ct)
@@ -319,6 +339,8 @@ public sealed partial class AnalysisRunJob(
         run.NearContextLimit += outcome.Usage.NearContextLimit;
         run.TriageCalls += outcome.TriageCalls;
         run.EscalatedCalls += outcome.EscalatedCalls;
+        run.PackedMessages += outcome.PackedMessages;
+        run.PackRetries += outcome.PackRetries;
 
         // A unique violation means another writer committed a suggestion for a member after the re-check: the retry's
         // re-check then skips it as decided meanwhile (or replaces it if undecided); it never fails the run.

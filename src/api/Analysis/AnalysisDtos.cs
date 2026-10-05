@@ -9,7 +9,8 @@ public sealed record AnalysisPreviewRequest(string? Scope, string? SenderAddress
 
 /// <summary>
 /// What a run with these settings would cost, without any model call. <c>skipped</c>: ids of a messages scope that
-/// are approved, applied, deleted or unknown and so are not analysed (0 for the other scopes).
+/// are approved, applied, deleted or unknown and so are not analysed (0 for the other scopes). <c>packs</c>: shared
+/// snippet-only prompts for one-off senders (#376), one call each before retries.
 /// </summary>
 public sealed record GroupingPreviewDto(
     int Messages,
@@ -20,7 +21,8 @@ public sealed record GroupingPreviewDto(
     int EstimatedFromMemory,
     bool EmbeddingsAvailable,
     IReadOnlyList<GroupPreviewDto> LargestGroups,
-    IReadOnlyList<PolicyCandidateDto>? Senders = null);
+    IReadOnlyList<PolicyCandidateDto>? Senders = null,
+    int Packs = 0);
 
 /// <summary>A sender a <c>top_senders</c> run would propose a policy for; <c>scope</c> is <c>sender</c> or <c>list</c>.</summary>
 public sealed record PolicyCandidateDto(string Scope, string ScopeKey, string? DisplayName, int Count);
@@ -94,7 +96,9 @@ public sealed record AnalysisRunDto(
     int EscalatedCalls,
     bool IsStalled,
     int PoliciesProposed,
-    int NewLabelsProposed);
+    int NewLabelsProposed,
+    int PackedMessages,
+    int PackRetries);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed

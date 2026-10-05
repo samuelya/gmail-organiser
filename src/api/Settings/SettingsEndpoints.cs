@@ -90,6 +90,8 @@ public static class SettingsEndpoints
         AnalysisMinGroupSize = request.AnalysisMinGroupSize ?? s.AnalysisMinGroupSize,
         AnalysisDerivedConfidencePenalty = request.AnalysisDerivedConfidencePenalty ?? s.AnalysisDerivedConfidencePenalty,
         AnalysisClusterDistance = request.AnalysisClusterDistance ?? s.AnalysisClusterDistance,
+        AnalysisPackSize = request.AnalysisPackSize ?? s.AnalysisPackSize,
+        AnalysisPackRetryThreshold = request.AnalysisPackRetryThreshold ?? s.AnalysisPackRetryThreshold,
         AnalysisMemoryShortCircuit = request.AnalysisMemoryShortCircuit ?? s.AnalysisMemoryShortCircuit,
         AnalysisMemoryMinApprovals = request.AnalysisMemoryMinApprovals ?? s.AnalysisMemoryMinApprovals,
         BulkApproveThreshold = request.BulkApproveThreshold ?? s.BulkApproveThreshold,

@@ -66,7 +66,8 @@ public static partial class AnalysisPreviewEndpoint
         // The run's own memory lookup, in one query for all groups: a covered group costs one call per member memory
         // left out (protected mail), and derives nothing. The label tree does not change the counts; the names by id do.
         var covered = await shortCircuit.TryAsync(groups, new ShortCircuitContext(settings, allowlisted, LabelTreeIndex.Empty, labels, settings.DocumentTypeParent), ct);
-        var modelGroups = groups.Where((_, i) => covered[i] is null).ToList();
+        var modelGroups = SingletonPacker.Pack(
+            [.. groups.Where((_, i) => covered[i] is null)], Guid.Empty, settings.AnalysisPackSize, allowlisted, settings.Protection);
         var fromMemory = covered.Sum(c => c?.Suggestions.Count ?? 0);
 
         return TypedResults.Ok(new GroupingPreviewDto(
@@ -81,7 +82,8 @@ public static partial class AnalysisPreviewEndpoint
                 .OrderByDescending(g => g.Members.Count)
                 .Take(LargestGroupsShown)
                 .Select(g => new GroupPreviewDto(g.Key, g.SenderAddress, g.Display, g.Members.Count, g.RepresentativeIds.Count))
-                .ToList()));
+                .ToList(),
+            Packs: modelGroups.Count(g => g.Packed)));
     }
 
     /// <summary>

@@ -81,6 +81,13 @@ public sealed class AnalysisRunRow
     public int TriageCalls { get; set; }
     public int EscalatedCalls { get; set; }
 
+    /// <summary>
+    /// Emails sent to the model in a pack of one-off senders (#376); <see cref="PackRetries"/> of them were asked again
+    /// one by one with the body.
+    /// </summary>
+    public int PackedMessages { get; set; }
+    public int PackRetries { get; set; }
+
     /// <summary>Sender policies a <see cref="AnalysisScope.TopSenders"/> run proposed (#357).</summary>
     public int PoliciesProposed { get; set; }
     public string? Model { get; set; }
