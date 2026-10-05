@@ -294,6 +294,28 @@ describe('FiltersTab', () => {
     expect(all('proposal-note')).toHaveLength(0);
   });
 
+  it('previews a list policy proposal with its own criteria, not from:<list-id>', async () => {
+    const list = proposal('list.example.com', 0, {
+      key: 'policy:p-3',
+      source: 'policy',
+      policyId: 'p-3',
+      listId: 'list.example.com',
+      suggested: {
+        criteria: { ...filterDto().criteria, from: null, query: 'list:list.example.com' },
+        action: { addLabelNames: ['Topic/Lists'], skipInbox: true, markRead: false },
+      },
+    });
+    const { q, settle } = await render(undefined, paged([list]));
+    q('proposal-preview')!.click();
+    await settle();
+    expect((dialog('preview-from') as HTMLInputElement).value).toBe('');
+    expect(api.preview.mock.calls.at(-1)![0].criteria.from).toBeFalsy();
+    dialog('preview-create')!.click();
+    await settle();
+    expect(api.create.mock.calls[0][0].criteria.from).toBeFalsy();
+    expect(api.create.mock.calls[0][0].criteria.query).toBe('list:list.example.com');
+  });
+
   it('loads more proposals', async () => {
     const { q, all, settle } = await render(undefined, paged([proposal('a@example.com')], 2));
     api.proposals.mockReturnValue(of(paged([proposal('b@example.com')], 2, 2)));

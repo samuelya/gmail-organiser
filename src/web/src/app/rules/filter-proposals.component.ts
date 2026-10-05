@@ -220,7 +220,12 @@ export class FilterProposals implements OnInit {
   }
 
   open(p: FilterProposalDto): void {
-    this.openDialog(p.senderAddress, p.suggested);
+    this.openDialog(this.fallbackFrom(p), p.suggested);
+  }
+
+  /** A policy proposal keeps its own criteria: a list policy's address is a List-Id, never `from`. */
+  private fallbackFrom(p: FilterProposalDto): string {
+    return p.source === 'policy' ? '' : p.senderAddress;
   }
 
   /**
@@ -234,7 +239,7 @@ export class FilterProposals implements OnInit {
     const match = this.items().find((p) => p.senderAddress.toLowerCase() === address.toLowerCase());
     this.proposeHandled.emit();
     if (match) {
-      this.openDialog(match.senderAddress, match.suggested);
+      this.openDialog(this.fallbackFrom(match), match.suggested);
       return;
     }
     this.review
