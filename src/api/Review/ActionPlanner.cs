@@ -40,7 +40,12 @@ public static class ActionPlanner
         IReadOnlySet<string>? removable = null)
     {
         var protectedReason = MessageProtection.Reason(message, allowlist, settings.Protection);
-        if (suggestion.Source == SuggestionSource.Stage0 && protectedReason is not null)
+        // An unedited Stage-0 delete card (or one still filed under the delete label) has nothing else to add: a
+        // protected message stays put. An edited card with a real topic follows the normal path below.
+        var stage0Delete = suggestion.Source == SuggestionSource.Stage0
+            && ((suggestion.ToBeDeleted && !suggestion.Edited)
+                || string.Equals(suggestion.TopicLabel, settings.DeleteLabelName, StringComparison.OrdinalIgnoreCase));
+        if (stage0Delete && protectedReason is not null)
         {
             return new ActionPlan([], [], $"protected: {protectedReason}");
         }

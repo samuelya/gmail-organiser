@@ -94,6 +94,21 @@ public sealed class ActionPlannerTests
     }
 
     [Fact]
+    public void An_edited_stage0_card_with_a_real_topic_follows_the_normal_protected_path()
+    {
+        var suggestion = Suggestion();
+        suggestion.Source = SuggestionSource.Stage0;
+        suggestion.Edited = true;
+        var message = Message("INBOX");
+        message.HasAttachment = true;
+
+        var plan = Plan(suggestion, message);
+
+        plan.Add.ShouldBe(["L1"]);
+        plan.Remove.ShouldBe(["INBOX"]);
+    }
+
+    [Fact]
     public void Labels_already_in_place_are_dropped_and_user_flags_are_never_touched()
     {
         var plan = Plan(Suggestion(), Message("L1", "STARRED", "UNREAD"));

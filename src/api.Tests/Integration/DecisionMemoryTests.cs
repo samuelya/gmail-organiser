@@ -106,6 +106,36 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres) : IAsyncLifeti
     }
 
     [Fact]
+    public async Task Only_an_edited_stage0_decision_is_recorded()
+    {
+        var rule = Message("m1", Shop, "Weekly offer 7", null);
+        var edited = Message("m2", Shop, "Weekly offer 8", null);
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.Messages.AddRange(rule, edited);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            var recorder = new DecisionRecorder(db, new RecordingEmbeddingQueue(), new FakeTimeProvider(Now), NullLogger<DecisionRecorder>.Instance);
+            var unedited = Suggestion(rule, "Synthetic Delete");
+            unedited.Source = SuggestionSource.Stage0;
+            unedited.ToBeDeleted = true;
+            var keep = Suggestion(edited, "Shopping");
+            keep.Source = SuggestionSource.Stage0;
+            keep.Edited = true;
+            await recorder.RecordAsync(unedited, rule, DecisionOutcome.Approved, Ct);
+            await recorder.RecordAsync(keep, edited, DecisionOutcome.Approved, Ct);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await using var check = postgres.CreateDbContext();
+        var row = await check.Decisions.AsNoTracking().SingleAsync(Ct);
+        (row.MessageId, row.TopicLabel, row.Source, row.Edited).ShouldBe(("m2", "Shopping", SuggestionSource.Stage0, true));
+    }
+
+    [Fact]
     public async Task Embedding_failure_or_no_model_leaves_the_row_without_a_vector_until_a_later_pass()
     {
         await using (var db = postgres.CreateDbContext())
