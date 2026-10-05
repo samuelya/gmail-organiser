@@ -1,6 +1,7 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Claude;
 using GmailOrganiser.CleanUp.Unsubscribe;
+using GmailOrganiser.Dashboard;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
@@ -49,6 +50,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<FilterFindingRow> FilterFindings => Set<FilterFindingRow>();
     public DbSet<SenderPolicyRow> SenderPolicies => Set<SenderPolicyRow>();
     public DbSet<SenderPolicyRuleRow> SenderPolicyRules => Set<SenderPolicyRuleRow>();
+    public DbSet<MetricSnapshotRow> MetricSnapshots => Set<MetricSnapshotRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -163,6 +165,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         FilterReviewRow.Configure(modelBuilder);
         SenderPolicyRow.Configure(modelBuilder);
         SenderPolicyRuleRow.Configure(modelBuilder);
+        MetricSnapshotRow.Configure(modelBuilder);
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>
