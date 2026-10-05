@@ -19,6 +19,7 @@ export const routes: Routes = [
           { path: 'senders', loadChildren: () => import('./senders/senders.routes') },
           { path: 'analyse', loadChildren: () => import('./analyse/analyse.routes') },
           { path: 'review', loadChildren: () => import('./review/review.routes') },
+          { path: 'policies', loadChildren: () => import('./policies/policies.routes') },
           { path: 'clean-up', loadChildren: () => import('./clean-up/clean-up.routes') },
           { path: 'rules', loadChildren: () => import('./rules/rules.routes') },
           { path: 'history', loadChildren: () => import('./history/history.routes') },

@@ -16,6 +16,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: 'senders/noisy', label: 'Noisy senders', icon: 'campaign', nested: true },
   { path: 'analyse', label: 'Analyse', icon: 'psychology' },
   { path: 'review', label: 'Review', icon: 'fact_check' },
+  { path: 'policies', label: 'Policies', icon: 'policy' },
   { path: 'clean-up', label: 'Clean-up', icon: 'cleaning_services' },
   { path: 'rules', label: 'Rules', icon: 'filter_alt' },
   { path: 'history', label: 'History', icon: 'history' },
