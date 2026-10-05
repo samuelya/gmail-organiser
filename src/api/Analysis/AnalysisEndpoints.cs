@@ -24,6 +24,7 @@ public static class AnalysisEndpoints
         group.MapGet("/runs", ListAsync);
         group.MapGet("/runs/{id:guid}", GetAsync);
         group.MapPost("/runs/{id:guid}/cancel", CancelAsync);
+        group.MapPost("/runs/{id:guid}/resume", ResumeAsync).RequireAccountMatch();
         group.MapPost("/compare-runs", StartCompareAsync).RequireAccountMatch();
         group.MapPost("/re-analyse", ReanalyseAsync).RequireAccountMatch();
         group.MapGet("/summary", async (AnalysisRunService runs, CancellationToken ct) => TypedResults.Ok(await runs.SummaryAsync(ct)));
@@ -88,9 +89,12 @@ public static class AnalysisEndpoints
             TypedResults.ValidationProblem(new Dictionary<string, string[]> { [field] = [message] });
     }
 
-    /// <summary>Newest first; <c>active</c> filters queued/running (true) or finished (false) runs.</summary>
+    /// <summary>
+    /// Newest first; <c>active</c> filters queued/running (true) or finished (false) runs, <c>status</c>
+    /// (<c>queued | running | completed | failed | cancelled</c>) one status.
+    /// </summary>
     private static async Task<Results<Ok<IReadOnlyList<AnalysisRunDto>>, ValidationProblem>> ListAsync(
-        AnalysisRunService runs, CancellationToken ct, bool? active = null, int limit = DefaultListLimit)
+        AnalysisRunService runs, CancellationToken ct, bool? active = null, string? status = null, int limit = DefaultListLimit)
     {
         if (limit is < 1 or > AnalysisRunService.MaxListLimit)
         {
@@ -100,7 +104,25 @@ public static class AnalysisEndpoints
             });
         }
 
-        return TypedResults.Ok(await runs.ListAsync(active, limit, ct));
+        AnalysisRunStatus? parsed = null;
+        if (status is not null)
+        {
+            var match = Enum.GetValues<AnalysisRunStatus>()
+                .Where(v => string.Equals(SnakeCaseEnumConverter<AnalysisRunStatus>.ToDb(v), status.Trim(), StringComparison.OrdinalIgnoreCase))
+                .Cast<AnalysisRunStatus?>()
+                .FirstOrDefault();
+            if (match is null)
+            {
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["status"] = ["Must be one of queued, running, completed, failed, cancelled."],
+                });
+            }
+
+            parsed = match;
+        }
+
+        return TypedResults.Ok(await runs.ListAsync(active, parsed, limit, ct));
     }
 
     private static async Task<Results<Ok<AnalysisRunDto>, NotFound>> GetAsync(Guid id, AnalysisRunService runs, CancellationToken ct) =>
@@ -117,6 +139,25 @@ public static class AnalysisEndpoints
             JobActionResult.NotFound => TypedResults.NotFound(),
             _ => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict, title: "Run finished", detail: "The run has already finished."),
+        };
+    }
+
+    /// <summary>
+    /// 202 with the new job of a failed or stalled run, continuing from its cursor and retrying its failed messages once;
+    /// 404; 409 when the run is running, completed or cancelled, or no chat model is selected.
+    /// </summary>
+    private static async Task<Results<Accepted<JobDto>, NotFound, ProblemHttpResult>> ResumeAsync(
+        Guid id, AnalysisRunService runs, CancellationToken ct)
+    {
+        var (result, job) = await runs.ResumeAsync(id, ct);
+        return result switch
+        {
+            ResumeRunResult.Ok => TypedResults.Accepted($"/api/jobs/{job!.Id}", job),
+            ResumeRunResult.NotFound => TypedResults.NotFound(),
+            _ => TypedResults.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Run not resumable",
+                detail: "Only a failed or stalled run can be resumed."),
         };
     }
 

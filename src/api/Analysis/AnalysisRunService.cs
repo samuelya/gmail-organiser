@@ -30,14 +30,18 @@ public enum CompareRunResult
     TooMany,
 }
 
-/// <summary>Creates, lists and cancels analysis runs and resets messages for re-analysis. Endpoints validate first.</summary>
-public sealed class AnalysisRunService(
+/// <summary>
+/// Creates, lists, cancels, recovers and resumes analysis runs and resets messages for re-analysis. Endpoints validate
+/// first.
+/// </summary>
+public sealed partial class AnalysisRunService(
     AppDbContext db,
     IJobService jobs,
     ISettingsStore settingsStore,
     SenderStatsUpdater senderStats,
     LabelCatalog labelCatalog,
-    TimeProvider time)
+    TimeProvider time,
+    ILogger<AnalysisRunService> logger) : IJobStartupRecovery
 {
     public const int MaxListLimit = 200;
 
@@ -178,9 +182,9 @@ public sealed class AnalysisRunService(
         await tx.CommitAsync(ct);
     }
 
-    public async Task<IReadOnlyList<AnalysisRunDto>> ListAsync(bool? active, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<AnalysisRunDto>> ListAsync(bool? active, AnalysisRunStatus? status, int limit, CancellationToken ct)
     {
-        await SyncEndedJobsAsync(ct);
+        await SyncEndedJobsAsync(includeMissing: false, ct);
         var query = db.AnalysisRuns.AsNoTracking();
         if (active is { } a)
         {
@@ -189,15 +193,43 @@ public sealed class AnalysisRunService(
                 : query.Where(r => r.Status != AnalysisRunStatus.Queued && r.Status != AnalysisRunStatus.Running);
         }
 
-        var rows = await query.OrderByDescending(r => r.CreatedAt).Take(Math.Clamp(limit, 1, MaxListLimit)).ToListAsync(ct);
-        return [.. rows.Select(ToDto)];
+        if (status is { } s)
+        {
+            query = query.Where(r => r.Status == s);
+        }
+
+        var rows = await WithStalled(query)
+            .OrderByDescending(x => x.Run.CreatedAt)
+            .Take(Math.Clamp(limit, 1, MaxListLimit))
+            .ToListAsync(ct);
+        return [.. rows.Select(x => ToDto(x.Run, x.Stalled))];
     }
 
     public async Task<AnalysisRunDto?> GetAsync(Guid id, CancellationToken ct)
     {
-        await SyncEndedJobsAsync(ct);
-        return await db.AnalysisRuns.AsNoTracking().SingleOrDefaultAsync(r => r.Id == id, ct) is { } run ? ToDto(run) : null;
+        await SyncEndedJobsAsync(includeMissing: false, ct);
+        return await WithStalled(db.AnalysisRuns.AsNoTracking().Where(r => r.Id == id)).SingleOrDefaultAsync(ct) is { } x
+            ? ToDto(x.Run, x.Stalled)
+            : null;
     }
+
+    private sealed class RunWithStall
+    {
+        public required AnalysisRunRow Run { get; init; }
+        public bool Stalled { get; init; }
+    }
+
+    /// <summary>Pairs each run with whether it is queued or running while no active job is behind it.</summary>
+    private IQueryable<RunWithStall> WithStalled(IQueryable<AnalysisRunRow> runs) =>
+        from run in runs
+        join job in db.Jobs.AsNoTracking() on run.JobId equals job.Id into jobs
+        from job in jobs.DefaultIfEmpty()
+        select new RunWithStall
+        {
+            Run = run,
+            Stalled = (run.Status == AnalysisRunStatus.Queued || run.Status == AnalysisRunStatus.Running)
+                && (job == null || !JobRow.Active.Contains(job.Status)),
+        };
 
     /// <summary>
     /// Asks the run's job to stop after its current group; a queued or paused run ends at once. Allowed only while the
@@ -226,38 +258,6 @@ public sealed class AnalysisRunService(
 
         // A queued or paused job is cancelled at once and no handler will end the run; GetAsync syncs it.
         return (result, await GetAsync(id, ct));
-    }
-
-    /// <summary>
-    /// Ends the runs whose job ended without the handler recording it (refused by the guard, cancelled while queued or
-    /// paused, failed while recording) with the job's end state, so the stored status, the <c>active</c> filter and
-    /// the DTO agree.
-    /// </summary>
-    private async Task SyncEndedJobsAsync(CancellationToken ct)
-    {
-        var stale = await (
-                from run in db.AnalysisRuns.AsNoTracking()
-                join job in db.Jobs.AsNoTracking() on run.JobId equals job.Id
-                where (run.Status == AnalysisRunStatus.Queued || run.Status == AnalysisRunStatus.Running)
-                    && JobRow.Finished.Contains(job.Status)
-                select new { run.Id, job.Status, job.Error, job.FinishedAt })
-            .ToListAsync(ct);
-        foreach (var x in stale)
-        {
-            var status = x.Status switch
-            {
-                JobStatus.Completed => AnalysisRunStatus.Completed,
-                JobStatus.Cancelled => AnalysisRunStatus.Cancelled,
-                _ => AnalysisRunStatus.Failed,
-            };
-            var finishedAt = x.FinishedAt ?? time.GetUtcNow();
-            await db.AnalysisRuns
-                .Where(r => r.Id == x.Id && (r.Status == AnalysisRunStatus.Queued || r.Status == AnalysisRunStatus.Running))
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(r => r.Status, status)
-                    .SetProperty(r => r.Error, r => r.Error ?? x.Error)
-                    .SetProperty(r => r.FinishedAt, finishedAt), ct);
-        }
     }
 
     /// <summary>
@@ -341,7 +341,7 @@ public sealed class AnalysisRunService(
     /// <summary><c>1 − llmCalls / max(1, covered)</c>; negative when retries cost more calls than emails covered.</summary>
     public static double SavedPercent(long llmCalls, long covered) => 1 - ((double)llmCalls / Math.Max(1, covered));
 
-    private static AnalysisRunDto ToDto(AnalysisRunRow run) => new(
+    private static AnalysisRunDto ToDto(AnalysisRunRow run, bool stalled = false) => new(
         run.Id,
         run.JobId,
         SnakeCaseEnumConverter<AnalysisRunKind>.ToDb(run.Kind),
@@ -372,5 +372,6 @@ public sealed class AnalysisRunService(
         run.CompletionTokens,
         run.LlmMilliseconds,
         run.LlmMilliseconds / 1000.0,
-        run.NearContextLimit);
+        run.NearContextLimit,
+        stalled);
 }

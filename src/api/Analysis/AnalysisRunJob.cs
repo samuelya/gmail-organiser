@@ -18,7 +18,9 @@ namespace GmailOrganiser.Analysis;
 
 /// <param name="GroupsDone">Units of work stored so far (groups, and members of mixed groups analysed one by one).</param>
 /// <param name="LastGroupKey">The key of the last stored unit; informational.</param>
-/// <param name="FailedIds">Members whose model output stayed invalid; a resume skips them instead of retrying.</param>
+/// <param name="FailedIds">
+/// Members whose model output stayed invalid; the job skips them. A user resume of the run retries each once (#378).
+/// </param>
 /// <param name="IndividualIds">Remaining members of a mixed group; a resume analyses them one by one, never derived.</param>
 /// <param name="CandidateIds">
 /// The run's candidates, frozen at the start; a resume covers exactly these (minus stored, failed and no longer
@@ -29,6 +31,7 @@ namespace GmailOrganiser.Analysis;
 /// A compare run's stored candidates (alternative written, or suggestion gone and skipped); a resume skips them even
 /// when another run replaced or a cascade removed their alternatives meanwhile.
 /// </param>
+/// <param name="RetriedIds">Failed members a user resume already retried; a later resume keeps them failed.</param>
 public sealed record AnalysisRunCursor(
     Guid RunId,
     int GroupsDone = 0,
@@ -37,7 +40,8 @@ public sealed record AnalysisRunCursor(
     IReadOnlyList<string>? IndividualIds = null,
     IReadOnlyList<string>? CandidateIds = null,
     IReadOnlyDictionary<string, Guid>? SuggestionIds = null,
-    IReadOnlyList<string>? CoveredIds = null);
+    IReadOnlyList<string>? CoveredIds = null,
+    IReadOnlyList<string>? RetriedIds = null);
 
 /// <summary>
 /// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining frozen candidates, then per group asks the model

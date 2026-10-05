@@ -64,7 +64,8 @@ public sealed partial class JobRunner(
 
     /// <summary>
     /// Ends the run of every <c>running</c> job, since the process that ran it is gone. A cancel or pause
-    /// requested before the restart is honoured; any other job goes back to <c>queued</c>.
+    /// requested before the restart is honoured; any other job goes back to <c>queued</c>. Then runs each
+    /// <see cref="IJobStartupRecovery"/>.
     /// </summary>
     public async Task<int> RecoverAsync(CancellationToken ct)
     {
@@ -76,6 +77,18 @@ public sealed partial class JobRunner(
         if (count > 0)
         {
             LogRecovered(logger, count);
+        }
+
+        foreach (var recovery in scope.ServiceProvider.GetServices<IJobStartupRecovery>())
+        {
+            try
+            {
+                await recovery.RecoverAsync(ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                LogStartupRecoveryFailed(logger, recovery.GetType().Name, ex);
+            }
         }
 
         return count;
@@ -259,6 +272,9 @@ public sealed partial class JobRunner(
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Re-queued {Count} job(s) interrupted by the previous shutdown")]
     private static partial void LogRecovered(ILogger logger, int count);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Start-up recovery {Recovery} failed")]
+    private static partial void LogStartupRecoveryFailed(ILogger logger, string recovery, Exception exception);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "Job starting")]
     private static partial void LogStarting(ILogger logger);
