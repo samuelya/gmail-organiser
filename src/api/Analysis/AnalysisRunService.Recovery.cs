@@ -82,14 +82,15 @@ public sealed partial class AnalysisRunService
     public async Task<(ResumeRunResult Result, JobDto? Job)> ResumeAsync(Guid id, CancellationToken ct)
     {
         await SyncEndedJobsAsync(includeMissing: false, ct);
-        var found = await WithStalled(db.AnalysisRuns.Where(r => r.Id == id)).SingleOrDefaultAsync(ct);
-        if (found is null)
+        var run = await db.AnalysisRuns.SingleOrDefaultAsync(r => r.Id == id, ct);
+        if (run is null)
         {
             return (ResumeRunResult.NotFound, null);
         }
 
-        var run = found.Run;
-        if (run.Status != AnalysisRunStatus.Failed && !found.Stalled)
+        // Tracked above; the stalled check reads the job through an untracked join.
+        var stalled = await WithStalled(db.AnalysisRuns.AsNoTracking().Where(r => r.Id == id)).Select(x => x.Stalled).SingleAsync(ct);
+        if (run.Status != AnalysisRunStatus.Failed && !stalled)
         {
             return (ResumeRunResult.Conflict, null);
         }
