@@ -264,8 +264,17 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         s.DocumentTypeIsNew,
         alternative is null ? null : ToDto(alternative, m, current, labelNames),
         s.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
-        taxonomyLocked && s.IsNewLabel && s.Status == SuggestionStatus.Pending);
+        taxonomyLocked && s.Status == SuggestionStatus.Pending && IsStillNew(s, labelNames));
     }
+
+    /// <summary>
+    /// Whether the suggestion's new topic label is still missing from Gmail: <see cref="SuggestionRow.IsNewLabel"/> is
+    /// set at analysis and never updated, so a label created since no longer counts. Without the label list
+    /// (<paramref name="labelNames"/> null) the stored flag stands.
+    /// </summary>
+    public static bool IsStillNew(SuggestionRow s, IReadOnlyDictionary<string, string>? labelNames) =>
+        s.IsNewLabel
+        && (labelNames is null || !labelNames.Values.Any(n => string.Equals(n.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>
     /// The names of the replaced labels apply would remove now: those the message still carries, never the topic label,

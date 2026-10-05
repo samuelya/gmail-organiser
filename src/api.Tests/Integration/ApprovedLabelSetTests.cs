@@ -91,6 +91,23 @@ public sealed class ApprovedLabelSetTests(ApiFactory factory, PostgresFixture po
         (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk)).Approved.ShouldBe(14);
     }
 
+    [Fact]
+    public async Task A_new_label_created_in_Gmail_since_analysis_counts_as_existing()
+    {
+        await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+        var bulk = new BulkApproveRequest(SettingsValidation.MinBulkApproveThreshold, IncludeDerived: true, AnalysisRunHarness.Shop);
+        var label = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem().TopicLabel;
+
+        await h.Gmail.Inner.CreateLabelAsync(label.ToUpperInvariant(), Ct);
+        h.Services.GetRequiredService<LabelCatalog>().Invalidate();
+
+        var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem();
+        group.NewLabelPending.ShouldBeFalse();
+        group.Members.ShouldAllBe(m => m.IsNewLabel && !m.NewLabelPending);
+        (await PostAsync<BulkApproveResponse>("/api/review/bulk-approve", bulk)).Approved.ShouldBe(10);
+    }
+
     private async Task SettingsAsync(Func<AppSettings, AppSettings> change)
     {
         await using var scope = h.Services.CreateAsyncScope();
