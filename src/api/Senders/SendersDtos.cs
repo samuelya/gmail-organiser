@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using GmailOrganiser.Jobs;
 
 namespace GmailOrganiser.Senders;
@@ -46,19 +44,12 @@ public sealed record NoisySenderDto(
     int UnreadCount,
     double UnreadRatio,
     int ListUnsubscribeCount,
-    [property: JsonConverter(typeof(SenderKindJsonConverter))] SenderKind Kind,
+    SenderKind Kind,
     DateTimeOffset? FirstSeenAt,
     DateTimeOffset? LastSeenAt,
-    SenderCategoryMix CategoryMix,
+    SenderCategoryMixDto CategoryMix,
     DateTimeOffset? UnsubscribedAt,
     bool HasApprovedPolicy);
-
-/// <summary>Message counts per Gmail category tab.</summary>
-public sealed record SenderCategoryMix(int Primary, int Promotions, int Social, int Updates, int Forums);
-
-/// <summary>Serialises <see cref="SenderKind"/> as its snake_case name, as stored in <c>senders.kind</c>.</summary>
-public sealed class SenderKindJsonConverter()
-    : JsonStringEnumConverter<SenderKind>(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false);
 
 /// <param name="Allowlisted">Required; nullable only so a missing value is a 400 rather than <c>false</c>.</param>
 public sealed record AllowlistRequest(bool? Allowlisted);

@@ -75,7 +75,7 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
                 g.TotalCount, g.UnreadCount, (double)g.UnreadCount / g.TotalCount, g.ListUnsubscribeCount,
                 g.Mixed > 0 ? SenderKind.Mixed : g.Bulk > 0 ? SenderKind.Bulk : SenderKind.Unknown,
                 g.FirstSeenAt, g.LastSeenAt,
-                new SenderCategoryMix(g.PrimaryCount, g.PromotionsCount, g.SocialCount, g.UpdatesCount, g.ForumsCount),
+                new SenderCategoryMixDto(g.PrimaryCount, g.PromotionsCount, g.SocialCount, g.UpdatesCount, g.ForumsCount),
                 g.UnsubscribedAt, HasApprovedPolicy: false)),
             Page, PageSize, total);
     }

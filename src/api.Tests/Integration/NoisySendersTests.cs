@@ -95,7 +95,7 @@ public sealed class NoisySendersTests(ApiFactory factory, PostgresFixture postgr
         relay.UnreadCount.ShouldBe(15);
         relay.UnreadRatio.ShouldBe(1);
         relay.ListUnsubscribeCount.ShouldBe(15);
-        relay.CategoryMix.ShouldBe(new SenderCategoryMix(0, 15, 0, 0, 0));
+        relay.CategoryMix.ShouldBe(new SenderCategoryMixDto(0, 15, 0, 0, 0));
         relay.Kind.ShouldBe(SenderKind.Mixed);
         relay.FirstSeenAt.ShouldBe(Now.AddDays(-31));
         relay.LastSeenAt.ShouldBe(Now.AddDays(-1));
