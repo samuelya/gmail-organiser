@@ -81,6 +81,19 @@ public sealed class ActionPlannerTests
     }
 
     [Fact]
+    public void A_protected_stage0_suggestion_changes_nothing_so_the_mail_stays_in_the_inbox()
+    {
+        var suggestion = Suggestion(topic: "Synthetic Delete", toBeDeleted: true);
+        suggestion.Source = SuggestionSource.Stage0;
+
+        var plan = Plan(suggestion, Message("INBOX", "STARRED"));
+
+        plan.Add.ShouldBeEmpty();
+        plan.Remove.ShouldBeEmpty();
+        plan.Note.ShouldBe("protected: starred");
+    }
+
+    [Fact]
     public void Labels_already_in_place_are_dropped_and_user_flags_are_never_touched()
     {
         var plan = Plan(Suggestion(), Message("L1", "STARRED", "UNREAD"));

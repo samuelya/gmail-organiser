@@ -82,15 +82,20 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
 
     /// <summary>
     /// The Stage-0 view of <paramref name="canonical"/> (#349): one entry per known canonical address, with whether a raw
-    /// row of it is human, replied to or allowlisted (by address or domain), as the noisy list excludes them, and whether a
-    /// raw row has no stats yet (its kind and replies are unknown, so it may be a human).
+    /// row of it is human, replied to or allowlisted (by address or domain), as the noisy list excludes them, whether a
+    /// raw row has no stats yet (its kind and replies are unknown, so it may be a human), and whether it meets the default
+    /// noisy thresholds with a bulk raw row, so the Stage-0 reason holds.
     /// </summary>
     public static async Task<Dictionary<string, Stage0Sender>> Stage0SendersAsync(
         AppDbContext db, IReadOnlyList<string> allowlistedDomains, IReadOnlyList<string> canonical, CancellationToken ct)
     {
         var senders = db.Senders.AsNoTracking().Where(s => canonical.Contains(s.CanonicalAddress));
+        var (min, ratio) = (DefaultMinMessages, DefaultMinUnreadRatio);
         var rows = await Grouped(senders, allowlistedDomains)
-            .Select(g => new Stage0Sender(g.CanonicalAddress, g.Excluded > 0, g.StatsRows < g.Rows, g.TotalCount, g.UnreadCount))
+            .Select(g => new Stage0Sender(
+                g.CanonicalAddress, g.Excluded > 0, g.StatsRows < g.Rows,
+                g.TotalCount >= min && (double)g.UnreadCount / (g.TotalCount == 0 ? 1 : g.TotalCount) >= ratio && g.Bulk > 0,
+                g.TotalCount, g.UnreadCount))
             .ToListAsync(ct);
         return rows.ToDictionary(r => r.CanonicalAddress, StringComparer.Ordinal);
     }
@@ -198,4 +203,6 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
 /// <summary>A canonical sender as Stage-0 proposals and the sender archive check it; counts as on the noisy list.</summary>
 /// <param name="Excluded">A raw row of it is human, replied to or allowlisted: Stage 0 never targets it.</param>
 /// <param name="StatsMissing">A raw row of it has no stats yet: Stage 0 refuses it until a stats rebuild.</param>
-public sealed record Stage0Sender(string CanonicalAddress, bool Excluded, bool StatsMissing, int TotalCount, int UnreadCount);
+/// <param name="Noisy">At least <see cref="NoisySenderQuery.DefaultMinMessages"/> messages, at least
+/// <see cref="NoisySenderQuery.DefaultMinUnreadRatio"/> unread and a raw row classed bulk: Stage 0 refuses it otherwise.</param>
+public sealed record Stage0Sender(string CanonicalAddress, bool Excluded, bool StatsMissing, bool Noisy, int TotalCount, int UnreadCount);

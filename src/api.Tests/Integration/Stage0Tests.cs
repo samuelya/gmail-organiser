@@ -29,6 +29,7 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
     private const string Billing = AnalysisRunHarness.Billing;
 
     private readonly AnalysisRunHarness h = new(factory, postgres);
+    private string deleteLabelId = "";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -46,7 +47,7 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
             await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(s => s with { DeleteLabelName = DeleteLabel }, Ct);
         }
 
-        var deleteLabelId = (await h.Gmail.Inner.CreateLabelAsync(DeleteLabel, Ct)).Id;
+        deleteLabelId = (await h.Gmail.Inner.CreateLabelAsync(DeleteLabel, Ct)).Id;
         h.Gmail.Inner.SetLabels("a03", ["INBOX", "CATEGORY_UPDATES", deleteLabelId]);
         await using (var db = postgres.CreateDbContext())
         {
@@ -62,7 +63,8 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
             await db.Senders.ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.CanonicalAddress, r => r.Address)
                 .SetProperty(r => r.CanonicalDomain, r => r.Domain)
-                .SetProperty(r => r.UnreadCount, r => r.TotalCount - 1)
+                .SetProperty(r => r.TotalCount, 10)
+                .SetProperty(r => r.UnreadCount, 9)
                 .SetProperty(r => r.Kind, SenderKind.Bulk)
                 .SetProperty(r => r.StatsAt, now), Ct);
             await db.Senders.Where(s => s.Address == Billing).ExecuteUpdateAsync(s => s.SetProperty(r => r.Kind, SenderKind.Human), Ct);
@@ -106,31 +108,43 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
     }
 
     [Fact]
-    public async Task An_unsubscribe_only_proposal_has_no_label_and_apply_leaves_the_mail_where_it_is()
+    public async Task A_message_protected_before_apply_stays_in_the_inbox_and_no_decision_is_recorded()
     {
-        var before = h.Gmail.Inner.Messages.ToDictionary(m => m.Id, m => m.LabelIds.ToArray());
-
-        var response = await h.PostAsync("/api/senders/noisy/proposals", new Stage0ProposalsRequest([Shop], false, true));
-
-        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await h.PostAsync("/api/senders/noisy/proposals", new Stage0ProposalsRequest([Shop], true, null))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await BulkApproveAsync(new BulkApproveRequest(null, IncludeDerived: true, SenderAddress: Shop))).Approved.ShouldBe(7);
+        h.Gmail.Inner.SetLabels("a00", ["INBOX", "STARRED"]);
         await using (var db = postgres.CreateDbContext())
         {
-            (await db.Suggestions.AsNoTracking().ToListAsync(Ct)).ShouldAllBe(s => s.TopicLabel == "" && !s.IsNewLabel && !s.ToBeDeleted && s.UnsubscribeSuggested);
+            await db.Messages.Where(m => m.Id == "a00").ExecuteUpdateAsync(s => s.SetProperty(m => m.LabelIds, new[] { "INBOX", "STARRED" }), Ct);
         }
 
-        (await BulkApproveAsync(new BulkApproveRequest(null, IncludeDerived: true, SenderAddress: Shop))).Approved.ShouldBe(7);
-        var apply = await h.PostAsync("/api/review/apply", new ApplyRequest(Shop));
-        apply.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        (await h.PostAsync("/api/review/apply", new ApplyRequest(Shop))).StatusCode.ShouldBe(HttpStatusCode.Accepted);
         await h.RunNextAsync();
 
-        h.Gmail.BatchModifyCalls.ShouldBeEmpty();
-        foreach (var (id, labels) in before)
+        Labels("a00").ShouldBe(["INBOX", "STARRED"], ignoreOrder: true);
+        Labels("a02").ShouldNotContain("INBOX");
+        Labels("a02").ShouldContain(deleteLabelId);
+        await using var after = postgres.CreateDbContext();
+        (await after.Decisions.CountAsync(Ct)).ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("/api/senders/noisy/proposals", 5, SenderKind.Bulk)]
+    [InlineData("/api/senders/archive", 5, SenderKind.Bulk)]
+    [InlineData("/api/senders/noisy/proposals", 10, SenderKind.Unknown)]
+    [InlineData("/api/senders/archive", 10, SenderKind.Unknown)]
+    public async Task A_sender_below_the_noisy_thresholds_or_without_bulk_headers_is_422(string path, int unread, SenderKind kind)
+    {
+        await using (var db = postgres.CreateDbContext())
         {
-            Labels(id).ShouldBe(labels, ignoreOrder: true);
+            await db.Senders.Where(s => s.Address == News)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.UnreadCount, unread).SetProperty(r => r.Kind, kind), Ct);
         }
 
-        await using var after = postgres.CreateDbContext();
-        (await after.Suggestions.CountAsync(s => s.Status == SuggestionStatus.Applied, Ct)).ShouldBe(7);
+        var response = await h.PostAsync(path, new Stage0ProposalsRequest([News], true, false));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.UnprocessableEntity);
+        (await response.Content.ReadFromJsonAsync<ProblemDetails>(Ct)).ShouldNotBeNull().Detail.ShouldNotBeNull().ShouldContain(News);
     }
 
     [Theory]
@@ -177,7 +191,7 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
     [Theory]
     [InlineData("{\"canonicalAddresses\":[],\"toBeDeleted\":true,\"unsubscribe\":true}")]
     [InlineData("{\"canonicalAddresses\":[\"not-an-address\"],\"toBeDeleted\":true,\"unsubscribe\":true}")]
-    [InlineData("{\"canonicalAddresses\":[\"shop@example.com\"],\"toBeDeleted\":false,\"unsubscribe\":false}")]
+    [InlineData("{\"canonicalAddresses\":[\"shop@example.com\"],\"toBeDeleted\":false,\"unsubscribe\":true}")]
     [InlineData("{\"canonicalAddresses\":[\"shop@example.com\"]}")]
     public async Task A_bad_proposals_request_is_400(string body)
     {
@@ -269,7 +283,25 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
     }
 
     [Fact]
-    public async Task Archive_stops_before_the_next_chunk_when_the_sender_turns_human()
+    public async Task Archive_skips_mail_in_a_thread_the_user_replied_to_in_gmail()
+    {
+        h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 3;
+        // Only Gmail knows the reply: the stored row has no SENT and no thread result yet.
+        h.Gmail.Inner.SetLabels("a07", ["INBOX", "SENT"]);
+        var job = await StartArchiveAsync(Shop);
+
+        await h.RunNextAsync();
+
+        Labels("a07").ShouldContain("INBOX");
+        h.Gmail.BatchModifyCalls.Select(c => c.Count).ShouldBe([3, 3, 1]);
+        h.Progress(job.Id).Last().Message.ShouldBe("Archived 7 of 7 messages; skipped 2 protected");
+        await using var db = postgres.CreateDbContext();
+        (await db.Messages.SingleAsync(m => m.Id == "a07", Ct)).ThreadReplied.ShouldBe(true);
+        (await db.ActionLog.Select(l => l.MessageId).ToListAsync(Ct)).ShouldNotContain("a07");
+    }
+
+    [Fact]
+    public async Task Archive_completes_early_when_the_sender_turns_human_and_history_can_undo_it()
     {
         h.Services.GetRequiredService<IOptions<GmailOptions>>().Value.BatchModifyMaxIds = 3;
         h.Gmail.BeforeBatchModify = async (call, _) =>
@@ -282,12 +314,20 @@ public sealed class Stage0Tests(ApiFactory factory, PostgresFixture postgres) : 
         await h.RunNextAsync();
 
         h.Gmail.BatchModifyCalls.Count.ShouldBe(1);
-        await using var db = postgres.CreateDbContext();
-        var failed = await db.Jobs.SingleAsync(j => j.Id == job.Id, Ct);
-        failed.Status.ShouldBe(JobStatus.Failed);
-        failed.Error.ShouldNotBeNull().ShouldContain(Shop);
-        (await db.ActionLog.CountAsync(Ct)).ShouldBe(3);
-        (await db.Messages.CountAsync(m => m.FromAddress == Shop && m.LabelIds.Contains("INBOX"), Ct)).ShouldBe(7);
+        h.Progress(job.Id).Last().Message.ShouldNotBeNull().ShouldContain(Shop);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Jobs.SingleAsync(j => j.Id == job.Id, Ct)).Status.ShouldBe(JobStatus.Completed);
+            (await db.ActionLog.CountAsync(Ct)).ShouldBe(3);
+            (await db.Messages.CountAsync(m => m.FromAddress == Shop && m.LabelIds.Contains("INBOX"), Ct)).ShouldBe(7);
+            var batch = await db.ActionBatches.AsNoTracking().SingleAsync(Ct);
+            h.Gmail.BeforeBatchModify = null;
+            (await h.PostAsync($"/api/history/{batch.Id}/undo", new { })).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        }
+
+        await h.RunNextAsync();
+        await using var after = postgres.CreateDbContext();
+        (await after.Messages.CountAsync(m => m.FromAddress == Shop && m.LabelIds.Contains("INBOX"), Ct)).ShouldBe(10);
     }
 
     [Fact]

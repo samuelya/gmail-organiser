@@ -53,12 +53,6 @@ public sealed class SuggestionRow
     public bool UnsubscribeSuggested { get; set; }
 
     /// <summary>
-    /// An unsubscribe-only Stage-0 proposal (no <see cref="TopicLabel"/>; an edit that sets one ends it): it records the
-    /// intent alone, so apply adds no label and leaves the mail where it is. Not mapped.
-    /// </summary>
-    public bool KeepsMail => Source == SuggestionSource.Stage0 && TopicLabel.Length == 0;
-
-    /// <summary>
     /// Ids of the message's personal labels the suggestion replaces (labelled phase, DESIGN §6.3); apply removes those
     /// the message still carries, so a label renamed in Gmail is still removed. Empty for memory and sender-pattern
     /// suggestions. Written through <see cref="SetReplaced"/> only.

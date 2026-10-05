@@ -35,13 +35,16 @@ public sealed record SenderArchiveCursor(
 /// chunk is two transactions around the Gmail call: the first locks and re-checks the messages, writes the undo log and
 /// checkpoints the chunk as pending; the second stores the labels, advances <see cref="SenderArchiveCursor.LastId"/> and
 /// clears it. A pending chunk is resent on resume (removing <c>INBOX</c> again is a no-op); <see cref="UndoActionsJob"/>
-/// reverts the batch from its log.
+/// reverts the batch from its log. Each chunk's threads are checked for a reply first, as apply does. A sender that turns
+/// human, replied-to or allowlisted midway ends the job as completed, the reason in its message, so History can undo
+/// what was archived.
 /// </summary>
 public sealed partial class SenderArchiveJob(
     AppDbContext db,
     IGmailClient gmail,
     ISettingsStore settingsStore,
     SenderStatsUpdater senders,
+    RepliedThreadChecker repliedThreads,
     IOptions<GmailOptions> gmailOptions,
     TimeProvider time,
     ILogger<SenderArchiveJob> logger) : IJobHandler, IJobCancelHook
@@ -113,7 +116,21 @@ public sealed partial class SenderArchiveJob(
             var replan = false;
             foreach (var chunk in plan)
             {
-                if (await PrepareAsync(ctx, cursor, chunk, total, ct) is not { } prepared)
+                await CheckThreadsAsync(chunk, ct);
+                SenderArchiveCursor? prepared;
+                try
+                {
+                    prepared = await PrepareAsync(ctx, cursor, chunk, total, ct);
+                }
+                catch (SenderRefusedException ex)
+                {
+                    // Completed, not failed: History refuses to undo a batch whose job is still failed.
+                    db.ChangeTracker.Clear();
+                    await ctx.CompleteAsync(cursor, Progress(cursor, total, ex.Message), _ => Task.CompletedTask, ct);
+                    return;
+                }
+
+                if (prepared is null)
                 {
                     replan = true;
                     break;
@@ -144,6 +161,21 @@ public sealed partial class SenderArchiveJob(
 
     /// <summary>Nothing to follow up: what was sent is logged and undoable from History.</summary>
     public Task CancelledAsync(string? cursor, CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>
+    /// Asks Gmail whether the user replied in the chunk's threads (stored on the rows); a replied one makes
+    /// <see cref="PrepareAsync"/> replan without it. Outside the chunk's transaction: it calls Gmail.
+    /// </summary>
+    private async Task CheckThreadsAsync(string[] ids, CancellationToken ct)
+    {
+        if (!(await settingsStore.GetAsync(ct)).Protection.RepliedThreads)
+        {
+            return;
+        }
+
+        var messages = await db.Messages.AsNoTracking().Where(m => ids.Contains(m.Id) && m.ThreadReplied != true).ToListAsync(ct);
+        await repliedThreads.CheckAsync(messages, ct);
+    }
 
     /// <summary>Chunks of the covered ids after <see cref="SenderArchiveCursor.LastId"/> and not pending or skipped.</summary>
     private async Task<List<string[]>> ChunksAsync(SenderArchiveCursor cursor, CancellationToken ct)
@@ -179,7 +211,7 @@ public sealed partial class SenderArchiveJob(
                 var senders = await NoisySenderQuery.Stage0SendersAsync(db, settings.Protection.AllowlistedDomains, cursor.CanonicalAddresses, t);
                 if (Stage0Service.Refusal(cursor.CanonicalAddresses, senders) is { } refusal)
                 {
-                    throw new JobRefusedException($"{refusal} The rest is not archived; what was can be undone from History.");
+                    throw new SenderRefusedException($"stopped: {refusal} The rest is not archived; what was can be undone from History.");
                 }
 
                 var allowlist = await AllowlistLoader.LoadAsync(db, settings, [.. messages.Select(m => m.FromAddress).Distinct()], t);
@@ -311,8 +343,8 @@ public sealed partial class SenderArchiveJob(
 
     private static int Done(SenderArchiveCursor cursor) => cursor.MessagesDone + cursor.Gone;
 
-    /// <summary>Messages archived of the total, and every skip with its reason (protected first).</summary>
-    private JobProgress Progress(SenderArchiveCursor cursor, int total)
+    /// <summary>Messages archived of the total, every skip with its reason (protected first), and why it stopped early.</summary>
+    private JobProgress Progress(SenderArchiveCursor cursor, int total, string? stopped = null)
     {
         var reasons = new List<string>();
         if (skippedProtected > 0)
@@ -331,11 +363,14 @@ public sealed partial class SenderArchiveJob(
         }
 
         return new(Done(cursor), total,
-            $"Archived {cursor.MessagesDone} of {total} messages{(reasons.Count > 0 ? $"; skipped {string.Join(", ", reasons)}" : "")}");
+            $"Archived {cursor.MessagesDone} of {total} messages{(reasons.Count > 0 ? $"; skipped {string.Join(", ", reasons)}" : "")}"
+            + (stopped is null ? "" : $"; {stopped}"));
     }
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Gmail refused a sender archive chunk of {Count} messages before changing any; the chunk was reverted.")]
     private static partial void LogChunkReverted(ILogger logger, int count, Exception exception);
 
     private sealed class PlanChangedException : Exception;
+
+    private sealed class SenderRefusedException(string message) : Exception(message);
 }

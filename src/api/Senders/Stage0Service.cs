@@ -26,12 +26,13 @@ public sealed class Stage0Service(
     public const string GroupKeyPrefix = "stage0:";
 
     /// <summary>
-    /// One pending <see cref="SuggestionSource.Stage0"/> suggestion per live, unprotected, not yet suggested message of the
-    /// senders that is not delete-labelled; nothing when a sender is refused.
+    /// One pending <see cref="SuggestionSource.Stage0"/> To-Be-Deleted suggestion per live, unprotected, not yet suggested
+    /// message of the senders that is not delete-labelled, <paramref name="unsubscribe"/> an extra flag; nothing when a
+    /// sender is refused.
     /// </summary>
     /// <exception cref="Gmail.GmailNotConnectedException">The app is not connected to Gmail.</exception>
     public async Task<Stage0Result<Stage0ProposalsResponse>> ProposeAsync(
-        string[] canonical, bool toBeDeleted, bool unsubscribe, CancellationToken ct)
+        string[] canonical, bool unsubscribe, CancellationToken ct)
     {
         var settings = await settingsStore.GetAsync(ct);
         var senders = await NoisySenderQuery.Stage0SendersAsync(db, settings.Protection.AllowlistedDomains, canonical, ct);
@@ -90,10 +91,9 @@ public sealed class Stage0Service(
                 SenderAddress = message.FromAddress,
                 GroupKey = GroupKeyPrefix + message.CanonicalAddress,
                 Source = SuggestionSource.Stage0,
-                // Unsubscribe only records the intent: no label, and the mail stays where it is (SuggestionRow.KeepsMail).
-                TopicLabel = toBeDeleted ? settings.DeleteLabelName : "",
-                IsNewLabel = toBeDeleted && deleteLabel is null,
-                ToBeDeleted = toBeDeleted,
+                TopicLabel = settings.DeleteLabelName,
+                IsNewLabel = deleteLabel is null,
+                ToBeDeleted = true,
                 UnsubscribeSuggested = unsubscribe,
                 Confidence = 1.0,
                 Reason = Reason(sender),
@@ -185,6 +185,12 @@ public sealed class Stage0Service(
             if (sender.StatsMissing)
             {
                 return $"{address} has no sender stats yet; rebuild the sender stats first.";
+            }
+
+            if (!sender.Noisy)
+            {
+                return $"{address} is not a noisy bulk sender (at least {NoisySenderQuery.DefaultMinMessages} messages, "
+                    + $"{(int)(NoisySenderQuery.DefaultMinUnreadRatio * 100)}% unread, bulk headers); Stage 0 never targets it.";
             }
         }
 

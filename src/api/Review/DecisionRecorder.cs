@@ -12,6 +12,7 @@ namespace GmailOrganiser.Review;
 /// the status change and then calls <see cref="Committed"/>, which wakes the background embedding: the request never
 /// waits on the model. Rows are otherwise only updated with their vector. The document type is decided under the
 /// parent of the suggestion's run (its snapshot, not the current Settings), read once per run per recorder (one request).
+/// Stage-0 suggestions are rule-made, not the user's per-message teaching, and are never recorded (#349).
 /// </summary>
 public sealed partial class DecisionRecorder(
     AppDbContext db, IDecisionEmbeddingQueue embedding, TimeProvider time, ILogger<DecisionRecorder> logger)
@@ -21,6 +22,11 @@ public sealed partial class DecisionRecorder(
 
     public async ValueTask RecordAsync(SuggestionRow suggestion, MessageRow message, DecisionOutcome outcome, CancellationToken ct)
     {
+        if (suggestion.Source == SuggestionSource.Stage0)
+        {
+            return;
+        }
+
         var parent = await RunParentAsync(suggestion.RunId, ct);
         var now = time.GetUtcNow();
         var row = new DecisionRow

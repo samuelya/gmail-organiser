@@ -178,20 +178,17 @@ public static class SendersEndpoints
     }
 
     /// <summary>
-    /// Creates pending Stage-0 suggestions for the senders' mail (#349); 422 naming a human, replied-to, allowlisted or
-    /// unknown sender (nothing created), 409 when an analysis stored a suggestion meanwhile, 503 without Gmail.
+    /// Creates pending Stage-0 suggestions for the senders' mail (#349); 422 naming a human, replied-to, allowlisted,
+    /// not noisy or unknown sender (nothing created), 409 when an analysis stored a suggestion meanwhile, 503 without Gmail.
     /// </summary>
     private static async Task<Results<Ok<Stage0ProposalsResponse>, ValidationProblem, ProblemHttpResult>> ProposeAsync(
         Stage0ProposalsRequest request, Stage0Service stage0, CancellationToken ct)
     {
         var canonical = ParseSenders(request.CanonicalAddresses, out var errors);
-        if (request.ToBeDeleted is null || request.Unsubscribe is null)
+        // A Stage-0 proposal always marks To-Be-Deleted; unsubscribe without deletion is the per-sender Unsubscribe (#350).
+        if (request.ToBeDeleted != true)
         {
-            errors["toBeDeleted"] = ["toBeDeleted and unsubscribe are required: true or false."];
-        }
-        else if (request.ToBeDeleted == false && request.Unsubscribe == false)
-        {
-            errors["toBeDeleted"] = ["Propose at least one of toBeDeleted or unsubscribe."];
+            errors["toBeDeleted"] = ["Must be true: a Stage-0 proposal always marks the mail To-Be-Deleted."];
         }
 
         if (canonical is null || errors.Count > 0)
@@ -201,7 +198,7 @@ public static class SendersEndpoints
 
         try
         {
-            return ToResult(await stage0.ProposeAsync(canonical, request.ToBeDeleted!.Value, request.Unsubscribe!.Value, ct), r => TypedResults.Ok(r));
+            return ToResult(await stage0.ProposeAsync(canonical, request.Unsubscribe ?? false, ct), r => TypedResults.Ok(r));
         }
         catch (GmailNotConnectedException ex)
         {

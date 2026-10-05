@@ -55,8 +55,8 @@ public sealed record NoisySenderDto(
 public sealed record AllowlistRequest(bool? Allowlisted);
 
 /// <param name="CanonicalAddresses">1–100 canonical sender addresses.</param>
-/// <param name="ToBeDeleted">Required; nullable only so a missing value is a 400.</param>
-/// <param name="Unsubscribe">Required; nullable only so a missing value is a 400.</param>
+/// <param name="ToBeDeleted">Required and true: every Stage-0 proposal marks To-Be-Deleted; nullable so a missing value is a 400.</param>
+/// <param name="Unsubscribe">Optional extra flag, false when missing.</param>
 public sealed record Stage0ProposalsRequest(string[]? CanonicalAddresses, bool? ToBeDeleted, bool? Unsubscribe);
 
 /// <param name="Created">Pending Stage-0 suggestions created.</param>
