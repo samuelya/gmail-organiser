@@ -244,7 +244,13 @@ public sealed class EmbeddingIndexTests(PostgresFixture postgres, ITestOutputHel
 
     private static MessageRow Query() => new()
     {
-        Id = "q1", ThreadId = "t-q1", FromAddress = "query@example.com", Subject = "Synthetic", InternalDate = Now, FetchedAt = Now, UpdatedAt = Now,
+        Id = "q1",
+        ThreadId = "t-q1",
+        FromAddress = "query@example.com",
+        Subject = "Synthetic",
+        InternalDate = Now,
+        FetchedAt = Now,
+        UpdatedAt = Now,
     };
 
     /// <summary>A unit vector close to <paramref name="centre"/>'s, so clusters fall within the memory's distance limit.</summary>
