@@ -23,6 +23,13 @@ const sender = (over: Partial<SenderDto> = {}): SenderDto => ({
   allowlistedByDomain: false,
   activeFetchJob: null,
   unsubscribedAt: null,
+  canonicalAddress: over.address ?? 'news@example.com',
+  canonicalDomain: 'example.com',
+  isRelay: false,
+  kind: 'bulk',
+  unreadCount: 0,
+  repliedCount: 0,
+  firstSeenAt: null,
   ...over,
 });
 

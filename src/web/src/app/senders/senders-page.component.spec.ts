@@ -43,6 +43,13 @@ const sender = (over: Partial<SenderDto> = {}): SenderDto => ({
   allowlistedByDomain: false,
   activeFetchJob: null,
   unsubscribedAt: null,
+  canonicalAddress: over.address ?? 'news@example.com',
+  canonicalDomain: 'example.com',
+  isRelay: false,
+  kind: 'bulk',
+  unreadCount: 0,
+  repliedCount: 0,
+  firstSeenAt: null,
   ...over,
 });
 
@@ -121,6 +128,7 @@ describe('SendersPage', () => {
       pageSize: 50,
       sort: 'address',
       dir: 'asc',
+      kinds: [],
     });
     const row = el.querySelector('[data-testid="sender-row"]')!;
     expect(row.textContent).toContain('Example News');

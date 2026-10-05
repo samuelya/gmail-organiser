@@ -13,7 +13,6 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import {
-  AbstractControl,
   FormControl,
   FormGroup,
   FormGroupDirective,
@@ -53,20 +52,23 @@ import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
 import { coveringDomain } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
+import { SENDER_KIND_OPTIONS, SenderKindChip } from './sender-kind-chip.component';
 import { SenderProgress } from './sender-progress.component';
 import {
-  analysedPercent,
   cleanSearch,
   DEFAULT_SENDER_QUERY,
-  hasControlChars,
   lastPage,
   MAX_SEARCH_LENGTH,
+  fetchTargetValidator,
   normaliseFetchTarget,
   PAGE_SIZES,
   parseSenderQuery,
   relativeTime,
+  searchValidator,
   SENDER_FETCH_JOB,
   SenderDto,
+  SenderKind,
+  senderRow,
   SenderQuery,
   senderQueryParams,
   SenderSort,
@@ -101,6 +103,7 @@ interface PendingAction {
     PageHeader,
     ReactiveFormsModule,
     RouterLink,
+    SenderKindChip,
     SenderProgress,
   ],
   templateUrl: './senders-page.component.html',
@@ -131,7 +134,11 @@ export class SendersPage {
   /** Drops a pending debounced search: the URL changed or the box was cleared. */
   private readonly searchReset = new Subject<void>();
 
-  readonly columns = ['sender', 'domain', 'total', 'analysed', 'lastSeen', 'actions'];
+  readonly columns = [
+    ...['sender', 'kind', 'domain', 'total', 'unread', 'replied'],
+    ...['analysed', 'firstSeen', 'lastSeen', 'actions'],
+  ];
+  readonly kinds = SENDER_KIND_OPTIONS;
   readonly pageSizes = PAGE_SIZES;
   private readonly loadedSettings = toSignal(
     this.settings.getSettings().pipe(catchError(() => of(null))),
@@ -177,9 +184,7 @@ export class SendersPage {
   private readonly finishes = signal(0);
 
   /** One stable object per sender; only a new page replaces them, so job ticks don't re-render rows. */
-  readonly rows = computed(() =>
-    (this.result()?.items ?? []).map((sender) => ({ sender, percent: analysedPercent(sender) })),
-  );
+  readonly rows = computed(() => (this.result()?.items ?? []).map(senderRow));
   readonly trackRow = (_: number, row: { sender: SenderDto }) => row.sender.address;
 
   /** The live state of each row's fetch job, by address; absent once it finished. */
@@ -297,6 +302,10 @@ export class SendersPage {
       dir: cleared ? d.dir : sort.direction || d.dir,
       page: 1,
     });
+  }
+
+  onKinds(kinds: SenderKind[]): void {
+    this.navigate({ kinds, page: 1 });
   }
 
   clearSearch(): void {
@@ -473,17 +482,6 @@ export class SendersPage {
       replaceUrl,
     });
   }
-}
-
-/** API-side rules for a sender fetch target; blank (spaces only, too) is `required`. */
-function fetchTargetValidator(control: AbstractControl<string>) {
-  if (!control.value.trim()) return { required: true };
-  return normaliseFetchTarget(control.value) ? null : { target: true };
-}
-
-/** The API rejects control characters in a search, e.g. a tab pasted from a spreadsheet. */
-function searchValidator(control: AbstractControl<string>) {
-  return hasControlChars(control.value) ? { controlChars: true } : null;
 }
 
 function without<T>(set: ReadonlySet<T>, value: T): ReadonlySet<T> {
