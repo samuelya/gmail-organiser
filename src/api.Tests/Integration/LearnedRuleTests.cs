@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Claude;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
@@ -214,6 +215,91 @@ public sealed class LearnedRuleTests(ApiFactory factory, PostgresFixture postgre
         }
 
         (await LearnedAsync()).Select(r => r.PolicyId).Order().ShouldBe(new[] { listPolicy, listPolicy, domainPolicy, domainPolicy }.Order());
+    }
+
+    [Fact]
+    public async Task A_claude_group_accept_over_one_chunk_and_an_overlapping_bulk_approve_both_succeed()
+    {
+        // More than one chunk in the group: the low ids at 0.5, a tail above the bulk threshold that the bulk approve locks.
+        const string groupKey = "synthetic-group";
+        const int members = ReviewService.ChunkSize + 200;
+        var review = Guid.NewGuid();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.ExternalReviews.ExecuteDeleteAsync(Ct);
+            await db.Suggestions.ExecuteDeleteAsync(Ct);
+            for (var i = 1; i <= members; i++)
+            {
+                var message = new MessageRow
+                {
+                    Id = $"g{i:D5}",
+                    ThreadId = $"g{i:D5}",
+                    FromAddress = AnalysisRunHarness.Shop,
+                    CanonicalAddress = AnalysisRunHarness.Shop,
+                    CanonicalDomain = "example.com",
+                    Subject = $"Weekly offer {i}",
+                    InternalDate = Created,
+                    LabelIds = ["INBOX"],
+                    Category = MessageCategory.Updates,
+                    FetchedAt = Created,
+                    UpdatedAt = Created,
+                };
+                var suggestion = new SuggestionRow
+                {
+                    Id = new Guid($"00000000-0000-0000-0000-{i:D12}"),
+                    MessageId = message.Id,
+                    SenderAddress = AnalysisRunHarness.Shop,
+                    GroupKey = groupKey,
+                    Source = SuggestionSource.Llm,
+                    TopicLabel = Topic,
+                    Confidence = i <= ReviewService.ChunkSize ? 0.5 : 0.99,
+                    Reason = "Synthetic reason",
+                    CreatedAt = Created,
+                };
+                suggestion.SetStatus(SuggestionStatus.Pending, message, Created);
+                db.Messages.Add(message);
+                db.Suggestions.Add(suggestion);
+            }
+
+            db.ExternalReviews.Add(new ExternalReviewRow
+            {
+                Id = review,
+                TargetType = ExternalReviewTarget.Group,
+                SenderAddress = AnalysisRunHarness.Shop,
+                GroupKey = groupKey,
+                Status = ExternalReviewStatus.Reviewed,
+                Verdict = ReviewVerdict.Agree,
+                VerdictTopicLabel = Topic,
+                VerdictNeedsAction = false,
+                VerdictToBeDeleted = false,
+                CreatedAt = Created,
+            });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        // The accept queues on the held policy first, then the bulk approve behind it (#426): without one lock order the
+        // accept holds the policy and waits for the tail the bulk approve holds while it waits for the policy.
+        HttpResponseMessage accepted, bulk;
+        await using (var holder = postgres.CreateDbContext())
+        {
+            await using var tx = await holder.Database.BeginTransactionAsync(Ct);
+            await holder.Database.SqlQuery<Guid>($"SELECT id AS \"Value\" FROM sender_policies WHERE id = {policyId} FOR UPDATE").ToListAsync(Ct);
+            var accept = h.PostAsync($"/api/claude/reviews/{review}/accept", new { });
+            await h.WaitForLockWaitAsync();
+            var approve = h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(0.95));
+            await h.WaitForLockWaitAsync(2);
+            await tx.CommitAsync(Ct);
+            (accepted, bulk) = (await accept, await approve);
+        }
+
+        accepted.StatusCode.ShouldBe(HttpStatusCode.OK, await accepted.Content.ReadAsStringAsync(Ct));
+        bulk.StatusCode.ShouldBe(HttpStatusCode.OK, await bulk.Content.ReadAsStringAsync(Ct));
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Suggestions.CountAsync(s => s.Status == SuggestionStatus.Approved, Ct)).ShouldBe(members);
+        }
+
+        (await LearnedAsync()).ShouldHaveSingleItem();
     }
 
     private static SenderPolicyRow Policy(Guid id, PolicyScope scope, string scopeKey) => new()
