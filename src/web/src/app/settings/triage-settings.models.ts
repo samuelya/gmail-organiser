@@ -61,6 +61,33 @@ export function blockedLabelError(name: string): string | null {
   return null;
 }
 
+/** The triage fields of `SettingsDto` (#375); `triageModel: null` is off. */
+export interface TriageModelSettings {
+  triageModel: string | null;
+  triageConfidenceThreshold: number;
+}
+
+/** The pack fields of `SettingsDto` (#376); a pack size of 1 is off. */
+export interface PackSettings {
+  analysisPackSize: number;
+  analysisPackRetryThreshold: number;
+}
+
+/** The triage and pack part of `UpdateSettingsRequest`; `triageModel: ''` clears the model. */
+export type TriageUpdate = Partial<
+  { triageModel: string; triageConfidenceThreshold: number } & PackSettings
+>;
+
+/** The API's `SettingsValidation` limits for the triage and pack fields. */
+export const TRIAGE_CONFIDENCE_THRESHOLD: Range = { min: 0, max: 1, step: 0.01, integer: false };
+export const PACK_SIZE: Range = { min: 1, max: 30, step: 1, integer: true };
+export const PACK_RETRY_THRESHOLD: Range = { min: 0, max: 1, step: 0.01, integer: false };
+
+/** "70 %" for a 0–1 threshold. */
+export function percent(value: number | null): string {
+  return value === null ? '' : `${Math.round(value * 100)} %`;
+}
+
 /** `min`/`max` accept 2.5; the API's integer fields would reject it. */
 export function wholeNumber(control: AbstractControl<number | null>): ValidationErrors | null {
   return control.value === null || Number.isInteger(control.value) ? null : { integer: true };

@@ -40,10 +40,12 @@ import { AttachmentSettingsSection } from './attachment-settings.component';
 import { ClaudeSettingsSection } from './claude-settings.component';
 import { DataSettingsSection } from './data-settings.component';
 import { LabelsSettingsSection } from './labels-settings.component';
+import { PackSettingsSection } from './pack-settings.component';
 import { ProtectionSettingsSection } from './protection-settings.component';
 import { AppsScriptSettingsSection } from './apps-script-settings.component';
 import { RetentionSettingsSection } from './retention-settings.component';
 import { TaxonomySettingsSection } from './taxonomy-settings.component';
+import { TriageModelSettingsSection } from './triage-model-settings.component';
 import {
   AnalysisSettings,
   AnalysisSettingsUpdate,
@@ -85,6 +87,8 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     AppsScriptSettingsSection,
     RetentionSettingsSection,
     TaxonomySettingsSection,
+    TriageModelSettingsSection,
+    PackSettingsSection,
     LabelsSettingsSection,
     DataSettingsSection,
   ],

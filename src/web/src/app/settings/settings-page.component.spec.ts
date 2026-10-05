@@ -289,9 +289,10 @@ describe('SettingsPage', () => {
     save.flush(settings({ ollamaBaseUrl: URL_NEW }));
     await fixture.whenStable();
 
-    const list = http.expectOne((r) => r.url === '/api/llm/models');
-    expect(list.request.params.get('baseUrl')).toBe(URL_NEW);
-    list.flush(models);
+    // The models step and the triage model each list against the new URL.
+    const lists = http.match((r) => r.url === '/api/llm/models');
+    expect(lists.map((l) => l.request.params.get('baseUrl'))).toEqual([URL_NEW, URL_NEW]);
+    lists.forEach((l) => l.flush(models));
     await flushLoads(fixture);
 
     expect(snackOpen).toHaveBeenCalledWith('Ollama URL saved', undefined, { duration: 3000 });
