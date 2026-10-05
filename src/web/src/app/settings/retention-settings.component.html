@@ -1,0 +1,254 @@
+<div class="flex max-w-2xl flex-col gap-6">
+  <section class="flex flex-col gap-2" aria-labelledby="retention-sweep-title">
+    <h3 id="retention-sweep-title" class="m-0">Retention sweep</h3>
+    <mat-slide-toggle
+      [formControl]="enabled"
+      aria-describedby="retention-enabled-help"
+      data-testid="retention-enabled"
+    >
+      Mark old mail for deletion
+    </mat-slide-toggle>
+    <p class="help" id="retention-enabled-help">
+      Applied mail older than its type's days gets the delete label and leaves the inbox. Nothing is
+      trashed until you delete it in Clean-up. A sender policy's own days win.
+    </p>
+
+    @if (types().length) {
+      <table class="w-full border-collapse" data-testid="retention-days">
+        <thead>
+          <tr>
+            <th scope="col" class="py-1 pr-2">Mail type</th>
+            <th scope="col" class="w-44 py-1">Days to keep</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (type of types(); track type) {
+            <tr data-testid="retention-row">
+              <td class="py-1 pr-2" [id]="'retention-type-' + type">{{ typeLabel(type) }}</td>
+              <td class="py-1">
+                <mat-form-field class="w-full" subscriptSizing="dynamic">
+                  <input
+                    matInput
+                    type="number"
+                    placeholder="Keep"
+                    [formControl]="days.controls[type]"
+                    [min]="range.min"
+                    [max]="range.max"
+                    [step]="range.step"
+                    [attr.aria-labelledby]="'retention-type-' + type"
+                    [attr.data-testid]="'retention-days-' + type"
+                  />
+                  @if (dayError(type); as error) {
+                    <mat-error [attr.data-testid]="'retention-error-' + type">{{
+                      error
+                    }}</mat-error>
+                  }
+                </mat-form-field>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+      <p class="help">Empty keeps that type for good.</p>
+    }
+  </section>
+
+  <section class="flex flex-col gap-2" aria-labelledby="retention-status-title">
+    <div class="flex flex-wrap items-center gap-2">
+      <h3 id="retention-status-title" class="m-0 flex-1">Status</h3>
+      <button
+        mat-stroked-button
+        type="button"
+        (click)="run()"
+        [disabled]="!savedEnabled() || running() || starting()"
+        data-testid="retention-run"
+      >
+        <mat-icon aria-hidden="true">play_arrow</mat-icon>
+        Run now
+      </button>
+    </div>
+    @if (!savedEnabled() && loaded()) {
+      <p class="help" data-testid="retention-off">Turn retention on to run a sweep.</p>
+    }
+    @if (runMessage(); as message) {
+      <p class="help" role="status" data-testid="retention-run-message">{{ message }}</p>
+    }
+    @if (running()) {
+      <div class="flex flex-col gap-1" data-testid="retention-progress">
+        <span class="help" role="status">
+          {{ job()?.progress?.message || 'Retention sweep running…' }}
+        </span>
+        <mat-progress-bar
+          [mode]="percent() === null ? 'indeterminate' : 'determinate'"
+          [value]="percent() ?? 0"
+          aria-label="Retention sweep progress"
+        />
+      </div>
+    }
+    @if (status(); as s) {
+      <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1" data-testid="retention-status">
+        <dt class="help">Last run</dt>
+        <dd class="m-0" data-testid="retention-last-run">
+          @if (s.lastRunAt) {
+            {{ s.lastRunAt | date: 'medium' }}
+            @if (s.lastMarked !== null) {
+              · {{ s.lastMarked | number }} marked
+            }
+          } @else {
+            Never
+          }
+        </dd>
+        <dt class="help">Next due</dt>
+        <dd class="m-0" data-testid="retention-next-due">
+          {{ s.nextDueAt ? (s.nextDueAt | date: 'medium') : 'Off' }}
+        </dd>
+        <dt class="help">Eligible now</dt>
+        <dd class="m-0" data-testid="retention-eligible">
+          up to {{ s.eligibleNow | number }}
+          <span class="help block"
+            >Protected, transactional and kept mail is skipped when it runs.</span
+          >
+        </dd>
+      </dl>
+    } @else if (statusFailed()) {
+      <p class="help" role="alert">
+        The status could not be loaded.
+        <button
+          mat-button
+          type="button"
+          (click)="loadStatus()"
+          data-testid="retention-status-retry"
+        >
+          Retry
+        </button>
+      </p>
+    }
+  </section>
+
+  @if (rulesAvailable()) {
+    <section class="flex flex-col gap-2" aria-labelledby="retention-rules-title">
+      <h3 id="retention-rules-title" class="m-0">Apps Script retention rules</h3>
+      <p class="help">
+        The script archives threads with the label once their last message is older than the days,
+        and adds the delete label. They go into the Apps Script configuration block.
+      </p>
+
+      @if (rules.length) {
+        <table class="w-full border-collapse" data-testid="retention-rules">
+          <thead>
+            <tr>
+              <th scope="col" class="py-1 pr-2">Label</th>
+              <th scope="col" class="w-36 py-1 pr-2">Days</th>
+              <th scope="col" class="w-12 py-1"><span class="sr-only">Remove</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (rule of rules.controls; track rule; let i = $index) {
+              <tr data-testid="retention-rule-row">
+                <td class="max-w-0 truncate py-1 pr-2" [title]="rule.controls.label.value">
+                  {{ rule.controls.label.value }}
+                </td>
+                <td class="py-1 pr-2">
+                  <mat-form-field class="w-full" subscriptSizing="dynamic">
+                    <mat-label>Days</mat-label>
+                    <input
+                      matInput
+                      type="number"
+                      [formControl]="rule.controls.days"
+                      [min]="ruleDays.min"
+                      [max]="ruleDays.max"
+                      [step]="ruleDays.step"
+                      [attr.aria-label]="'Days for ' + rule.controls.label.value"
+                      data-testid="retention-rule-days"
+                    />
+                    @if (rule.controls.days.invalid) {
+                      <mat-error>{{ ruleDays.min }} to {{ ruleDays.max }} whole days.</mat-error>
+                    }
+                  </mat-form-field>
+                </td>
+                <td class="py-1">
+                  <button
+                    mat-icon-button
+                    type="button"
+                    (click)="removeRule(i)"
+                    [attr.aria-label]="'Remove the retention rule for ' + rule.controls.label.value"
+                    data-testid="retention-rule-remove"
+                  >
+                    <mat-icon aria-hidden="true">remove_circle_outline</mat-icon>
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      } @else {
+        <p class="help" data-testid="retention-rules-empty">No retention rules yet.</p>
+      }
+
+      @if (ruleErrors().length) {
+        <ul class="error m-0 pl-5" role="alert" data-testid="retention-rule-errors">
+          @for (message of ruleErrors(); track $index) {
+            <li>{{ message }}</li>
+          }
+        </ul>
+      }
+
+      <form
+        class="flex flex-wrap items-start gap-2"
+        [formGroup]="newRule"
+        (ngSubmit)="addRule()"
+        novalidate
+      >
+        <mat-form-field class="min-w-48 flex-1" subscriptSizing="dynamic">
+          <mat-label>Label</mat-label>
+          <input
+            matInput
+            autocomplete="off"
+            formControlName="label"
+            [matAutocomplete]="labelList"
+            (focus)="loadLabels()"
+            data-testid="retention-rule-label"
+          />
+          <mat-autocomplete #labelList="matAutocomplete">
+            @for (label of labelOptions(); track label) {
+              <mat-option [value]="label">{{ label }}</mat-option>
+            }
+          </mat-autocomplete>
+          @if (newRule.controls.label.hasError('duplicate')) {
+            <mat-error data-testid="retention-rule-label-error"
+              >That label already has a retention rule.</mat-error
+            >
+          } @else if (newRule.controls.label.hasError('scriptLabel')) {
+            <mat-error data-testid="retention-rule-label-error">{{
+              newRule.controls.label.getError('scriptLabel')
+            }}</mat-error>
+          }
+        </mat-form-field>
+        <mat-form-field class="w-32" subscriptSizing="dynamic">
+          <mat-label>Days</mat-label>
+          <input
+            matInput
+            type="number"
+            formControlName="days"
+            [min]="ruleDays.min"
+            [max]="ruleDays.max"
+            [step]="ruleDays.step"
+            data-testid="retention-rule-new-days"
+          />
+          @if (newRule.controls.days.invalid) {
+            <mat-error>{{ ruleDays.min }} to {{ ruleDays.max }} whole days.</mat-error>
+          }
+        </mat-form-field>
+        <button
+          mat-stroked-button
+          type="submit"
+          class="mt-2"
+          [disabled]="!loaded() || rules.length >= maxRules"
+          data-testid="retention-rule-add"
+        >
+          Add rule
+        </button>
+      </form>
+    </section>
+  }
+</div>

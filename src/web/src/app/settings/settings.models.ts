@@ -1,6 +1,7 @@
 import { AbstractControl, ValidationErrors } from '@angular/forms';
 import { AppSettings } from '../setup/setup.service';
 import { labelPathError } from '../review/labels.service';
+import type { RetentionSettingsDto, TaxonomySettings } from './triage-settings.models';
 
 /** `AnalysisGroupingMode` as the API serialises it. */
 export type AnalysisGroupingMode = 'off' | 'sender_subject' | 'auto';
@@ -40,7 +41,9 @@ export type SettingsDto = AppSettings &
   ClaudeSettingsDto &
   ProtectionSettingsDto &
   AppsScriptSettingsDto &
-  LabelSettings;
+  LabelSettings &
+  Partial<TaxonomySettings> &
+  Partial<RetentionSettingsDto>;
 
 /**
  * The analysis part of `UpdateSettingsRequest`: only changed fields are sent; an empty prompt
@@ -369,6 +372,8 @@ export interface AppsScriptSettings {
   keepInInboxLabels: string[];
   /** The script only logs what it would archive. */
   dryRun: boolean;
+  /** Archive and mark for deletion (#369); omitted in a save, the saved list stays. */
+  retentionRules?: ArchiveRule[];
 }
 
 /** The Apps Script field of `SettingsDto`; absent on an older API. */

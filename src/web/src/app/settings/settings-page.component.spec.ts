@@ -1,10 +1,12 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { JobsService } from '../core/jobs.service';
 import { LlmModels } from '../core/llm.service';
 import {
   GOOGLE_CONNECT_URL,
@@ -93,6 +95,14 @@ const appsScriptConfig = {
   generatedAt: '2026-01-01T00:00:00Z',
 };
 
+const retentionStatus = {
+  enabled: false,
+  lastRunAt: null,
+  lastMarked: null,
+  nextDueAt: null,
+  eligibleNow: 0,
+};
+
 describe('SettingsPage', () => {
   let http: HttpTestingController;
   let connected: boolean;
@@ -113,6 +123,7 @@ describe('SettingsPage', () => {
         else if (path === '/api/llm/models') req.flush(models);
         else if (path === '/api/analysis/prompt/default') req.flush(defaultPrompt);
         else if (path === '/api/rules/apps-script/config') req.flush(appsScriptConfig);
+        else if (path === '/api/clean-up/retention') req.flush(retentionStatus);
         else if (path === '/healthz') req.flush({ status: 'ok', version: VERSION });
         else throw new Error(`unexpected GET ${path}`);
       }
@@ -151,6 +162,10 @@ describe('SettingsPage', () => {
         provideHttpClient(),
         provideHttpClientTesting(),
         { provide: MatSnackBar, useValue: { open: snackOpen } },
+        {
+          provide: JobsService,
+          useValue: { activeJobs: signal([]), reconnects: signal(0), job: () => undefined },
+        },
         // The dialog reports its result after the close animation.
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
@@ -176,7 +191,9 @@ describe('SettingsPage', () => {
       'Fetch',
       'Labels',
       'Analysis',
+      'Taxonomy',
       'Apps Script',
+      'Retention',
       'Data',
     ]);
     expect(q('section-labels')!.querySelector('app-labels-settings')).not.toBeNull();
