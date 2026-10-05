@@ -1,0 +1,200 @@
+@let d = detail();
+<app-page-header [title]="d ? d.policy.displayName || d.policy.scopeKey : 'Policy'">
+  <a mat-button actions routerLink="/policies" data-testid="back">
+    <mat-icon aria-hidden="true">arrow_back</mat-icon>
+    Policies
+  </a>
+</app-page-header>
+
+@if (loadError(); as error) {
+  <p class="m-0 flex items-center gap-2" role="alert" data-testid="load-error">
+    <mat-icon aria-hidden="true">error</mat-icon>
+    <span class="flex-1">{{ error }}</span>
+    <button mat-button type="button" (click)="load()">Retry</button>
+  </p>
+}
+
+@if (trackedJobId()) {
+  <mat-card appearance="outlined" class="mb-4" data-testid="job-progress">
+    <mat-card-content class="flex flex-col gap-2">
+      <span role="status" data-testid="job-message">
+        {{ job()?.progress?.message || 'Applying the policy…' }}
+      </span>
+      <mat-progress-bar
+        [mode]="percent() === null ? 'indeterminate' : 'determinate'"
+        [value]="percent() ?? 0"
+        aria-label="Apply progress"
+      />
+    </mat-card-content>
+  </mat-card>
+}
+
+@if (d) {
+  @let p = d.policy;
+  <div class="flex flex-col gap-4">
+    <mat-card appearance="outlined" data-testid="profile">
+      <mat-card-content class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-center gap-2" aria-label="Sender profile">
+          <span class="stat" data-testid="stat-scope">{{ p.scope }}: {{ p.scopeKey }}</span>
+          <span class="stat">{{ p.messageCount | number }} messages</span>
+          <span class="stat">{{ p.kind }}</span>
+          <span class="stat">{{ p.unreadRatio | percent }} unread</span>
+          <span class="stat">{{ p.confidence | percent }} confidence</span>
+          <span class="stat" data-testid="stat-status"
+            >{{ p.status }}{{ p.edited ? ' · edited' : '' }}</span
+          >
+          @if (p.model) {
+            <span class="stat">{{ p.model }}</span>
+          }
+        </div>
+        @if (p.reason) {
+          <p class="m-0" data-testid="reason">{{ p.reason }}</p>
+        }
+        @if (d.profileTemplates.length) {
+          <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-sm" aria-label="Subject templates">
+              <thead>
+                <tr>
+                  <th scope="col">Template</th>
+                  <th scope="col">Messages</th>
+                  <th scope="col">Example</th>
+                  <th scope="col">Signals</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (t of d.profileTemplates; track t.template) {
+                  <tr data-testid="template-row">
+                    <td>{{ t.template }}</td>
+                    <td>{{ t.count | number }}</td>
+                    <td>{{ t.exampleSubject }}</td>
+                    <td class="muted">
+                      {{ t.unreadRatio | percent }} unread
+                      @if (t.listIdPresent) {
+                        · List-Id
+                      }
+                      @if (t.listUnsubscribePresent) {
+                        · unsubscribe link
+                      }
+                      @if (t.attachmentRatio > 0) {
+                        · {{ t.attachmentRatio | percent }} attachments
+                      }
+                      @if (t.precedence) {
+                        · precedence {{ t.precedence }}
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </mat-card-content>
+    </mat-card>
+
+    @if (form(); as f) {
+      <mat-card appearance="outlined">
+        <mat-card-content class="flex flex-col gap-4">
+          <app-policy-form
+            [form]="f"
+            [labels]="labelNames()"
+            [documentTypes]="documentTypes()"
+            [documentTypeParent]="documentTypeParent()"
+          />
+          <app-policy-rules-table
+            [form]="f"
+            [saved]="d.rules"
+            [labels]="labelNames()"
+            [documentTypes]="documentTypes()"
+            [decisionsDisabled]="dirty() || busy()"
+            [readonly]="p.status === 'rejected'"
+            (decide)="decideRule($event)"
+          />
+          <p class="muted m-0 text-sm" data-testid="counts">
+            Of {{ d.sampledMessages | number }} messages: {{ d.defaultCount | number }} by the
+            policy's own outcome · {{ d.unmatchedCount | number }} unmatched, left for analysis ·
+            {{ d.guardedCount | number }} guarded from deletion.
+            @if (d.sampled) {
+              <span data-testid="sampled"
+                >Sampled: the newest {{ d.sampledMessages | number }} only.</span
+              >
+            }
+          </p>
+
+          @for (e of formErrors(); track $index) {
+            <p class="error m-0" role="alert" data-testid="form-error">{{ e }}</p>
+          }
+          @if (actionError(); as e) {
+            <p class="m-0 flex items-center gap-2" role="alert" data-testid="action-error">
+              <mat-icon aria-hidden="true">block</mat-icon>
+              <span class="flex-1">{{ e }}</span>
+              <button mat-button type="button" (click)="actionError.set(null)">Dismiss</button>
+            </p>
+          }
+
+          <div class="flex flex-wrap items-center gap-2" role="toolbar" aria-label="Policy actions">
+            @if (p.status !== 'rejected') {
+              <button
+                mat-flat-button
+                type="button"
+                [disabled]="busy() || !dirty()"
+                (click)="save()"
+                data-testid="save"
+              >
+                Save
+              </button>
+              <button
+                mat-button
+                type="button"
+                [disabled]="busy() || !dirty()"
+                (click)="discard()"
+                data-testid="discard"
+              >
+                Discard changes
+              </button>
+            }
+            <span class="flex-1"></span>
+            @if (p.status === 'proposed') {
+              <button
+                mat-flat-button
+                type="button"
+                [disabled]="busy() || dirty() || !!trackedJobId()"
+                (click)="approve()"
+                data-testid="approve"
+              >
+                <mat-icon aria-hidden="true">check</mat-icon>
+                Approve
+              </button>
+              <button
+                mat-stroked-button
+                type="button"
+                [disabled]="busy()"
+                (click)="reject()"
+                data-testid="reject"
+              >
+                <mat-icon aria-hidden="true">block</mat-icon>
+                Reject
+              </button>
+            }
+            @if (p.status === 'approved' && reapply()) {
+              <button
+                mat-flat-button
+                type="button"
+                [disabled]="busy() || dirty() || !!trackedJobId()"
+                (click)="applyAgain()"
+                data-testid="apply-again"
+              >
+                <mat-icon aria-hidden="true">replay</mat-icon>
+                Apply again
+              </button>
+            }
+          </div>
+          @if (dirty() && p.status === 'proposed') {
+            <p class="muted m-0 text-sm">Save or discard your changes before approving.</p>
+          }
+        </mat-card-content>
+      </mat-card>
+    }
+  </div>
+} @else if (!loadError()) {
+  <mat-progress-bar mode="indeterminate" aria-label="Loading policy" />
+}
