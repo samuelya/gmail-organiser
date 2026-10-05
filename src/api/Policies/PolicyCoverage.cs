@@ -44,6 +44,43 @@ public sealed class PolicyLookup
         return new PolicyLookup(rows.ToDictionary(p => (p.Scope, p.ScopeKey)));
     }
 
+    /// <summary>
+    /// The approved policy covering each raw From address in <paramref name="addresses"/> that has one (#425): over the
+    /// address's messages, a sender policy on a canonical (relay-decoded) address first, then a List-Id's, then a domain's.
+    /// </summary>
+    public static async Task<Dictionary<string, Guid>> ForSendersAsync(
+        AppDbContext db, IReadOnlyCollection<string> addresses, CancellationToken ct)
+    {
+        var keys = await db.Messages.AsNoTracking()
+            .Where(m => addresses.Contains(m.FromAddress))
+            .Select(m => new { m.FromAddress, m.CanonicalAddress, m.CanonicalDomain, m.ListId })
+            .Distinct()
+            .ToListAsync(ct);
+        var messages = keys.ConvertAll(k => new MessageRow
+        {
+            FromAddress = k.FromAddress,
+            CanonicalAddress = k.CanonicalAddress,
+            CanonicalDomain = k.CanonicalDomain,
+            ListId = k.ListId,
+        });
+        var lookup = await LoadAsync(db, messages, ct);
+        return messages
+            .Select(m => (m.FromAddress, Policy: lookup.For(m)))
+            .Where(x => x.Policy is not null)
+            .GroupBy(x => x.FromAddress, StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.Policy!).OrderBy(p => Precedence(p.Scope)).ThenBy(p => p.Id).First().Id,
+                StringComparer.Ordinal);
+    }
+
+    private static int Precedence(PolicyScope scope) => scope switch
+    {
+        PolicyScope.Sender => 0,
+        PolicyScope.List => 1,
+        _ => 2,
+    };
+
     /// <summary>The policy that decides <paramref name="m"/>, or null.</summary>
     public SenderPolicyRow? For(MessageRow m) =>
         policies.GetValueOrDefault((PolicyScope.Sender, m.CanonicalAddress))

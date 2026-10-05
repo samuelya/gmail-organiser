@@ -40,6 +40,8 @@ export interface ReviewSenderDto {
   rejected: number;
   applied: number;
   totalMessages: number;
+  /** The approved policy covering the sender (canonical sender, then List-Id, then domain); null when none. */
+  policyId: string | null;
 }
 
 export interface SuggestionDto {
