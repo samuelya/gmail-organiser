@@ -386,12 +386,6 @@ test('a lagging index that catches up mid-pass does not skip unarchived threads'
 
 const TBD = 'To-Be-Deleted';
 
-test('retention query covers all mail with the label and excludes marked, starred and important messages', () => {
-  const { buildRetentionQuery_ } = load();
-  assert.equal(buildRetentionQuery_({ label: 'Example/Old Receipts', days: 365 }, TBD),
-    'label:Example/Old-Receipts older_than:365d -label:To-Be-Deleted -is:starred -is:important');
-});
-
 test('retention archives and marks old threads in or out of the inbox, paging over more than 500', () => {
   const threads = [
     ...Array.from({ length: 560 }, (_, i) => ({ labels: ['Example/Receipts'], ageDays: 400, inbox: i % 2 === 0 })),
@@ -405,8 +399,10 @@ test('retention archives and marks old threads in or out of the inbox, paging ov
     { labels: ['Example/Other'], ageDays: 400 }, // t567 other label
   ];
   const gmail = new FakeGmailApp(threads, ['Example/Receipts', TBD]);
-  const { applyRetentionRules_ } = load(gmail);
+  const { applyRetentionRules_, buildRetentionQuery_ } = load(gmail);
   const logs = [];
+  assert.equal(buildRetentionQuery_({ label: 'Example/Old Receipts', days: 365 }, TBD),
+    'label:Example/Old-Receipts older_than:365d -label:To-Be-Deleted -is:starred -is:important');
 
   const result = applyRetentionRules_(config({ retentionRules: [{ label: 'Example/Receipts', days: 365 }], pageSize: 500 }),
     fixedClock, gmail, (m) => logs.push(m), NOW);
@@ -424,13 +420,11 @@ test('retention archives and marks old threads in or out of the inbox, paging ov
 });
 
 test('retention dry run only logs', () => {
-  const gmail = new FakeGmailApp(Array.from({ length: 3 }, () => ({ labels: ['Example/Receipts'], ageDays: 400 })),
-    ['Example/Receipts', TBD]);
+  const gmail = new FakeGmailApp(Array.from({ length: 3 }, () => ({ labels: ['Example/Receipts'], ageDays: 400 })), ['Example/Receipts', TBD]);
   const { applyRetentionRules_ } = load(gmail);
   const logs = [];
-  const result = applyRetentionRules_(config({ retentionRules: [{ label: 'Example/Receipts', days: 30 }], dryRun: true }),
-    fixedClock, gmail, (m) => logs.push(m), NOW);
-  assert.equal(result.marked, 3);
+  const cfg = config({ retentionRules: [{ label: 'Example/Receipts', days: 30 }], dryRun: true });
+  assert.equal(applyRetentionRules_(cfg, fixedClock, gmail, (m) => logs.push(m), NOW).marked, 3);
   assert.deepEqual(gmail.ops, []);
   assert.deepEqual(gmail.idsWithLabel(TBD), []);
   assert.ok(logs.some((m) => m.includes('Would mark for deletion 3 thread(s)')));

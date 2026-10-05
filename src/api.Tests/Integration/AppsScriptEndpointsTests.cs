@@ -60,13 +60,19 @@ public sealed class AppsScriptEndpointsTests(ApiFactory factory, PostgresFixture
     [Fact]
     public async Task Config_renders_the_saved_rules_and_action_label()
     {
-        await PutJsonAsync("""{"actionLabelName":"Synthetic/Act","appsScript":{"rules":[{"label":"Synthetic/News","days":30}],"dryRun":false}}""");
+        await PutJsonAsync("""
+            {"actionLabelName":"Synthetic/Act","deleteLabelName":"Synthetic/Bin","appsScript":{"rules":[{"label":"Synthetic/News","days":30}],
+             "retentionRules":[{"label":" Synthetic/Receipts ","days":365}],"dryRun":false}}
+            """);
+        (await GetAsync()).AppsScript.RetentionRules.ShouldBe([new RetentionRule("Synthetic/Receipts", 365)]);
 
         var dto = (await factory.CreateClient().GetFromJsonAsync<AppsScriptConfigDto>("/api/rules/apps-script/config", Ct)).ShouldNotBeNull();
 
-        dto.ScriptVersion.ShouldBe(1);
+        dto.ScriptVersion.ShouldBe(2);
         dto.Config.ShouldContain("""{ label: "Synthetic/News", days: 30 },""");
         dto.Config.ShouldContain("""actionLabel: "Synthetic/Act",""");
+        dto.Config.ShouldContain("""{ label: "Synthetic/Receipts", days: 365 },""");
+        dto.Config.ShouldContain("""toBeDeletedLabel: "Synthetic/Bin",""");
         dto.Config.ShouldContain("dryRun: false,");
         dto.GeneratedAt.ShouldNotBe(default);
     }

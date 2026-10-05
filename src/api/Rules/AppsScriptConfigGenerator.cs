@@ -12,7 +12,7 @@ namespace GmailOrganiser.Rules;
 /// </summary>
 public static class AppsScriptConfigGenerator
 {
-    public const int ScriptVersion = 1;
+    public const int ScriptVersion = 2;
     public const int PageSize = 100;
     public const int MaxRuntimeSeconds = 280;
 
@@ -30,6 +30,9 @@ public static class AppsScriptConfigGenerator
         text.Append(CultureInfo.InvariantCulture, $"  actionLabel: {Quote(settings.ActionLabelName)},\n");
         text.Append(CultureInfo.InvariantCulture, $"  actionDoneArchive: {Bool(script.ActionDoneArchive)},\n");
         AppendList(text, "keepInInboxLabels", script.KeepInInboxLabels.Select(Quote));
+        AppendList(text, "retentionRules", script.RetentionRules.Select(r =>
+            string.Create(CultureInfo.InvariantCulture, $"{{ label: {Quote(r.Label)}, days: {r.Days} }}")));
+        text.Append(CultureInfo.InvariantCulture, $"  toBeDeletedLabel: {Quote(settings.DeleteLabelName)},\n");
         text.Append(CultureInfo.InvariantCulture, $"  pageSize: {PageSize},\n");
         text.Append(CultureInfo.InvariantCulture, $"  maxRuntimeSeconds: {MaxRuntimeSeconds},\n");
         text.Append(CultureInfo.InvariantCulture, $"  dryRun: {Bool(script.DryRun)},\n");

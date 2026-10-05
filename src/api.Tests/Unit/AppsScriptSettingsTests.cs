@@ -16,6 +16,7 @@ public sealed class AppsScriptSettingsTests
 
         settings.Rules.ShouldBeEmpty();
         settings.KeepInInboxLabels.ShouldBeEmpty();
+        settings.RetentionRules.ShouldBeEmpty();
         settings.ActionDoneArchive.ShouldBeTrue();
         settings.DryRun.ShouldBeTrue();
     }
@@ -133,15 +134,48 @@ public sealed class AppsScriptSettingsTests
     }
 
     [Fact]
+    public void Retention_rules_are_validated_like_archive_rules()
+    {
+        Validate(new AppsScriptSettings { RetentionRules = [new("Synthetic/Receipts", 365), new("Synthetic/News", 3650)] }).ShouldBeEmpty();
+
+        var errors = Validate(new AppsScriptSettings
+        {
+            RetentionRules = [null!, new("Synthetic (x)", 7), new("Synthetic News", 0), new("Synthetic-News", 30)],
+        });
+
+        errors.Keys.ShouldBe(["appsScript.retentionRules[0]", "appsScript.retentionRules[1].label", "appsScript.retentionRules[2].days",
+            "appsScript.retentionRules[3].label"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void Retention_rules_have_their_own_cap_and_may_share_labels_with_archive_rules()
+    {
+        var rules = Enumerable.Range(0, SettingsValidation.MaxAppsScriptRules + 1).Select(i => new RetentionRule($"Synthetic/L{i}", 7)).ToList();
+
+        Validate(new AppsScriptSettings { RetentionRules = rules }).Keys.ShouldBe(["appsScript.retentionRules"]);
+        Validate(new AppsScriptSettings { Rules = [new("Synthetic/News", 30)], RetentionRules = [new("Synthetic/News", 365)] }).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Normalise_trims_retention_labels_and_turns_a_missing_list_into_an_empty_one()
+    {
+        SettingsValidation.NormaliseAppsScript(new AppsScriptSettings { RetentionRules = [new(" Synthetic/Receipts ", 365)] })
+            .RetentionRules.ShouldBe([new RetentionRule("Synthetic/Receipts", 365)]);
+        SettingsValidation.NormaliseAppsScript(new AppsScriptSettings { RetentionRules = null! }).RetentionRules.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Generates_the_block_for_default_settings()
     {
         AppsScriptConfigGenerator.Generate(new AppSettings()).ShouldBe("""
             const CONFIG = {
-              scriptVersion: 1,
+              scriptVersion: 2,
               labelRules: [],
               actionLabel: "Action/ToDo",
               actionDoneArchive: true,
               keepInInboxLabels: [],
+              retentionRules: [],
+              toBeDeletedLabel: "To-Be-Deleted",
               pageSize: 100,
               maxRuntimeSeconds: 280,
               dryRun: true,
@@ -151,23 +185,25 @@ public sealed class AppsScriptSettingsTests
     }
 
     [Fact]
-    public void Generates_the_block_for_populated_settings_with_the_current_action_label()
+    public void Generates_the_block_for_populated_settings_with_the_current_action_and_delete_labels()
     {
         var settings = new AppSettings
         {
             ActionLabelName = "Synthetic/Act",
+            DeleteLabelName = "Synthetic/Bin",
             AppsScript = new AppsScriptSettings
             {
                 Rules = [new("Synthetic/News", 30), new("Synthetic Café", 7)],
                 ActionDoneArchive = false,
                 KeepInInboxLabels = ["Synthetic/Keep", "Synthetic/Pinned"],
+                RetentionRules = [new("Synthetic/Receipts", 365)],
                 DryRun = false,
             },
         };
 
         AppsScriptConfigGenerator.Generate(settings).ShouldBe("""
             const CONFIG = {
-              scriptVersion: 1,
+              scriptVersion: 2,
               labelRules: [
                 { label: "Synthetic/News", days: 30 },
                 { label: "Synthetic Café", days: 7 },
@@ -178,6 +214,10 @@ public sealed class AppsScriptSettingsTests
                 "Synthetic/Keep",
                 "Synthetic/Pinned",
               ],
+              retentionRules: [
+                { label: "Synthetic/Receipts", days: 365 },
+              ],
+              toBeDeletedLabel: "Synthetic/Bin",
               pageSize: 100,
               maxRuntimeSeconds: 280,
               dryRun: false,
