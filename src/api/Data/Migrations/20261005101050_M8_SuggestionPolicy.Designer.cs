@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261005091626_M8_SuggestionPolicy")]
+    [Migration("20261005101050_M8_SuggestionPolicy")]
     partial class M8_SuggestionPolicy
     {
         /// <inheritdoc />
@@ -130,6 +130,10 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<int>("NearContextLimit")
                         .HasColumnType("integer")
                         .HasColumnName("near_context_limit");
+
+                    b.Property<int>("PoliciesProposed")
+                        .HasColumnType("integer")
+                        .HasColumnName("policies_proposed");
 
                     b.Property<long>("PromptTokens")
                         .HasColumnType("bigint")
