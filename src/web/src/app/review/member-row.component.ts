@@ -12,6 +12,7 @@ import { AlternativeCompare } from './alternative-compare.component';
 import { memberValues } from './alternative.models';
 import { ClaudeVerdict } from './claude-verdict.component';
 import { LabelChangeChip } from './label-change-chip.component';
+import { MailTypeChip } from './mail-type-chip.component';
 import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.models';
 
 /** One suggestion inside a group card: preview, source, confidence and per-member decisions. */
@@ -22,6 +23,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
     ClaudeVerdict,
     DatePipe,
     LabelChangeChip,
+    MailTypeChip,
     MatButtonModule,
     MatCheckboxModule,
     MatIconModule,
@@ -67,8 +69,14 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
               >Claude?</span
             >
           }
+          <app-mail-type-chip [type]="s.mailType" />
           @if (s.topicLabel) {
             <span class="badge">{{ s.topicLabel }}</span>
+          }
+          @if (s.newLabelPending) {
+            <span class="new-pending" data-testid="member-new-label-pending"
+              >new label — approve individually</span
+            >
           }
           @if (s.documentTypeLabel) {
             <span class="badge" data-testid="document-type"
@@ -203,6 +211,12 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
     }
     .skipped {
       color: var(--mat-sys-error);
+    }
+    .new-pending {
+      border: 1px solid var(--mat-sys-tertiary);
+      color: var(--mat-sys-tertiary);
+      border-radius: 0.5rem;
+      padding: 0 0.375rem;
     }
     .new {
       margin-left: 0.25rem;

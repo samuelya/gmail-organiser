@@ -25,7 +25,6 @@ import { openConfirm } from '../core/confirm-dialog';
 import { JobsService } from '../core/jobs.service';
 import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
-import { ANALYSIS_LIMITS } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
 import {
   AlternativeDecision,
@@ -37,9 +36,10 @@ import {
 } from './alternative.models';
 import { ApplyTracker } from './apply-tracker';
 import { CardReanalyse } from './card-reanalyse';
-import { openBulkApprove } from './bulk-approve-dialog.component';
+import { bulkApproveData, openBulkApprove } from './bulk-approve-dialog.component';
 import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
+import { MailTypeFilter } from './mail-type-filter';
 import {
   applyRestRequest,
   canApplyRest,
@@ -84,7 +84,7 @@ import { SenderList } from './sender-list.component';
     SelectionActions,
     SenderList,
   ],
-  providers: [ApplyTracker, CardReanalyse],
+  providers: [ApplyTracker, CardReanalyse, MailTypeFilter],
   templateUrl: './review-page.component.html',
   styles: `
     .muted {
@@ -164,6 +164,8 @@ export class ReviewPage {
   readonly apply = inject(ApplyTracker);
   /** Per-member and per-card "Re-analyse": the run's ids, until it ends. */
   readonly reanalyse = inject(CardReanalyse);
+  /** The mail-type filter in the query string. */
+  readonly mailTypes = inject(MailTypeFilter);
 
   readonly approvedCount = computed(() => this.detail()?.sender.approved ?? 0);
   readonly restPattern = computed(() => {
@@ -262,6 +264,11 @@ export class ReviewPage {
     // Updates may have been missed while disconnected.
     effect(() => {
       if (this.jobs.reconnects() > 0) untracked(() => this.refresh());
+    });
+    // Hidden members don't stay ticked: the selection actions would act on rows the user can't see.
+    effect(() => {
+      this.mailTypes.selected();
+      untracked(() => this.pruneSelection(this.detail()));
     });
   }
 
@@ -379,14 +386,9 @@ export class ReviewPage {
   }
 
   bulkApprove(): void {
-    const limits = ANALYSIS_LIMITS.bulkApproveThreshold;
-    openBulkApprove(this.dialog, {
-      threshold: this.settings()?.bulkApproveThreshold ?? limits.max,
-      min: limits.min,
-      max: limits.max,
-      step: limits.step,
-      senderAddress: this.selected(),
-    })
+    const listsAll = this.status() === 'pending' && !this.reanalysed();
+    const data = bulkApproveData(this.settings(), this.selected(), this.detail(), listsAll);
+    openBulkApprove(this.dialog, data)
       .pipe(
         filter((changed) => changed),
         takeUntilDestroyed(this.destroyRef),
@@ -472,13 +474,10 @@ export class ReviewPage {
     this.version.update((v) => v + 1);
   }
 
-  /** Ticks only survive a reload on members still shown: an applied or moved member drops out. */
+  /** Ticks only survive on members still shown: an applied, moved or filtered-out member drops out. */
   private pruneSelection(detail: ReviewSenderDetailDto | null): void {
-    const current = this.selection();
-    if (current.size === 0) return;
-    const shown = new Set(detail?.groups.flatMap((g) => g.members.map((m) => m.id)) ?? []);
-    const kept = [...current].filter((id) => shown.has(id));
-    if (kept.length !== current.size) this.selection.set(new Set(kept));
+    const kept = this.mailTypes.kept(this.selection(), detail?.groups ?? []);
+    if (kept) this.selection.set(kept);
   }
 
   private resetDetail(): void {

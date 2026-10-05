@@ -15,10 +15,12 @@ import { MatInputModule } from '@angular/material/input';
 import { MatListModule } from '@angular/material/list';
 import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { debounceTime, distinctUntilChanged, filter, map } from 'rxjs';
 import { PagedDto } from '../core/paging.models';
 import { cleanSearch, MAX_SEARCH_LENGTH } from '../senders/senders.models';
+import { MAIL_TYPES, mailTypeLabel } from './mail-type-chip.component';
 import { REVIEW_STATUSES, ReviewSenderDto, ReviewStatus } from './review.models';
 
 export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
@@ -34,6 +36,7 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
     MatListModule,
     MatPaginatorModule,
     MatProgressBarModule,
+    MatSelectModule,
     MatSlideToggleModule,
     ReactiveFormsModule,
   ],
@@ -65,6 +68,20 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
         @if (search.hasError('maxlength')) {
           <mat-error>At most {{ maxSearch }} characters.</mat-error>
         }
+      </mat-form-field>
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>Mail type</mat-label>
+        <mat-select
+          multiple
+          [value]="mailTypes()"
+          (selectionChange)="mailTypesChange.emit($event.value)"
+          data-testid="mail-type-filter"
+        >
+          @for (t of allMailTypes; track t) {
+            <mat-option [value]="t">{{ mailTypeLabel(t) }}</mat-option>
+          }
+        </mat-select>
+        <mat-hint>Narrows the selected sender's groups.</mat-hint>
       </mat-form-field>
       @if (loading()) {
         <mat-progress-bar mode="indeterminate" aria-label="Loading senders" />
@@ -136,6 +153,9 @@ export class SenderList {
   readonly reanalysed = input(false);
   /** How many suggestions have one, from the summary. */
   readonly alternatives = input<number | null>(null);
+  /** The selected mail types; none shows every type. */
+  readonly mailTypes = input<readonly string[]>([]);
+  readonly mailTypesChange = output<string[]>();
   readonly reanalysedChange = output<boolean>();
   readonly statusChange = output<ReviewStatus>();
   readonly searchChange = output<string>();
@@ -143,6 +163,8 @@ export class SenderList {
   readonly selectSender = output<string>();
 
   readonly statuses = REVIEW_STATUSES;
+  readonly allMailTypes = MAIL_TYPES;
+  readonly mailTypeLabel = mailTypeLabel;
   readonly maxSearch = MAX_SEARCH_LENGTH;
   readonly search = new FormControl('', {
     nonNullable: true,

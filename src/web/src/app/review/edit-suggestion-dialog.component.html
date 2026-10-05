@@ -97,6 +97,21 @@
       </mat-form-field>
     }
 
+    <mat-form-field class="w-full">
+      <mat-label>Mail type</mat-label>
+      <mat-select formControlName="mailType" placeholder="Mixed" data-testid="edit-mail-type">
+        <mat-option value="">None</mat-option>
+        @for (t of mailTypeOptions; track t) {
+          <mat-option [value]="t">{{ mailTypeLabel(t) }}</mat-option>
+        }
+      </mat-select>
+      @if (form.controls.mailType.errors?.['server']; as e) {
+        <mat-error data-testid="edit-mail-type-error">{{ e }}</mat-error>
+      } @else if (startMailType.mixed) {
+        <mat-hint>The emails differ; each keeps its own unless you pick one.</mat-hint>
+      }
+    </mat-form-field>
+
     @if (data.currentLabels.length) {
       <fieldset class="m-0 flex flex-col border-0 p-0" data-testid="edit-current-labels">
         <legend class="text-sm font-medium">Current labels</legend>
