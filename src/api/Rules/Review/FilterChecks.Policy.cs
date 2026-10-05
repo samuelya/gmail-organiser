@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 
@@ -31,9 +32,10 @@ public static partial class FilterChecks
         }
 
         var overlaps = new List<(PolicyTarget Target, List<Parsed> Members)>();
-        // A from that isn't single addresses and domains (a name, an OR with a name, a group) may match mail no proposal does.
+        // A from that isn't only plain addresses and @domains (a name, a negation, a group, a wildcard) may match mail no
+        // proposal does.
         foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0
-            && (f.Criteria.From is not { } from || FilterCriteriaMapping.FromTerms(from) is not null)))
+            && (f.Criteria.From is not { } from || FilterCriteriaMapping.FromTerms(from) is { } terms && terms.All(PlainFrom().IsMatch))))
         {
             var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(f.Criteria);
             var within = targets.Where(t => Within(from, tokens, t)).ToList();
@@ -87,7 +89,7 @@ public static partial class FilterChecks
                 FilterFindingKind.OverlapsPolicy,
                 [.. members.Select(f => f.Row.Id)],
                 $"{Quote(members)} {(members.Count == 1 ? "is" : "are")} within the filter the policy for '{target.Proposal.SenderAddress}' "
-                + $"proposes ('{target.Query}'), which also {Describe(target.Action, names)}; that one filter can replace "
+                + $"proposes ('{target.Query}'), which would also {Describe(target.Action, names)}; that one filter can replace "
                 + $"{(members.Count == 1 ? "it" : "them")}.",
                 new FilterFix(FilterFixKind.Merge, [.. members.Select(f => f.Row.Id)], new(target.Criteria, target.Action), target.Proposal.PolicyId));
         }
@@ -111,8 +113,9 @@ public static partial class FilterChecks
     /// <summary>Whether the proposal matches at least what a filter with these terms matches.</summary>
     private static bool Within(IReadOnlyList<string> from, IReadOnlyList<string> tokens, PolicyTarget target)
     {
-        // An OR, bare or in a group, or a {…} group in the filter's query widens it, so its tokens no longer only narrow.
-        if (tokens.Any(t => t == "or" || t.Contains(" or ", StringComparison.Ordinal) || t.Contains('{', StringComparison.Ordinal))
+        // An OR, bare or in a group, a {…} group, a nested group or a doubled negation in the filter's query may widen it,
+        // so its tokens no longer only narrow.
+        if (tokens.Any(t => t == "or" || t.Contains(" or ", StringComparison.Ordinal) || !PlainToken().IsMatch(t))
             || from.Any(t => t.Length == 0))
         {
             return false;
@@ -150,6 +153,17 @@ public static partial class FilterChecks
             ? "skips the inbox"
             : null;
     }
+
+    /// <summary>A lower-cased address or <c>@domain</c> with nothing Gmail reads as an operator.</summary>
+    [GeneratedRegex(@"^(?:[a-z0-9_%+'][a-z0-9._%+'-]*)?@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$", RegexOptions.CultureInvariant)]
+    private static partial Regex PlainFrom();
+
+    /// <summary>
+    /// A query token that is one condition: an optional <c>-</c>, an optional <c>operator:</c>, then a quoted phrase, a
+    /// group without nested groups, or a word that doesn't start with <c>-</c>.
+    /// </summary>
+    [GeneratedRegex(@"^-?(?:[a-z_]+:)?(?:""[^""]*""|\((?:""[^""]*""|[^(){}""])*\)|[^\s(){}""\-][^\s(){}""]*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex PlainToken();
 
     private sealed record PolicyTarget(
         FilterProposalDto Proposal, GmailFilterCriteria Criteria, GmailFilterAction Action, string ActionKey,

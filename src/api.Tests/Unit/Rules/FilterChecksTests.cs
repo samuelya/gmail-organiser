@@ -263,6 +263,31 @@ public sealed class FilterChecksTests
             .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
     }
 
+    [Theory]
+    [InlineData("-own@example.com", null)]
+    [InlineData("one@example.com OR -two@example.com", null)]
+    [InlineData("-@news.example.com", null)]
+    [InlineData("to:one@example.com", null)]
+    [InlineData("one@example.com", "--from:own@example.com")]
+    [InlineData("one@example.com", "-from:own@example.com -(a (b))")]
+    public void A_filter_with_a_negation_or_operator_in_its_from_or_query_is_never_within_a_proposal(string from, string? query)
+    {
+        var proposal = new FilterProposalDto(
+            "example.com", null, 1, null, new SenderPatternDto("Synthetic/Shop", false, false, 0, 1, 0, null),
+            new FilterSuggestionDto(
+                new FilterCriteriaDto("@example.com", null, null, "-from:own@example.com", null, null, null, null, null),
+                new FilterActionRequest(["Synthetic/Shop"], false, false)),
+            "policy:1", FilterProposalSources.Policy, Guid.NewGuid());
+        FilterRow[] rows =
+        [
+            Row("same", new(From: from, Query: query), new(["Label_1"], [])),
+            Row("other", new(From: from, Query: query), new(["Label_2"], [])),
+        ];
+
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
+    }
+
     private static IReadOnlyList<FilterFindingDraft> Run(IEnumerable<FilterRow> rows) => FilterChecks.Run(rows, Labels, NotEvaluable, 365);
 
     private static FilterRow Row(string id, GmailFilterCriteria criteria, GmailFilterAction action, int seenDaysLater = 0) => new()
