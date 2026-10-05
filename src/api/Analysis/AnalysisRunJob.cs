@@ -7,6 +7,8 @@ using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Policies;
+using GmailOrganiser.Policies.Prompts;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +34,9 @@ namespace GmailOrganiser.Analysis;
 /// when another run replaced or a cascade removed their alternatives meanwhile.
 /// </param>
 /// <param name="RetriedIds">Failed members a user resume already retried; a later resume keeps them failed.</param>
+/// <param name="Senders">A top senders run's senders, frozen at the start (#357).</param>
+/// <param name="NextSenderIndex">The first of <paramref name="Senders"/> not stored yet (proposed, failed or skipped).</param>
+/// <param name="LastScopeKey">The scope key of the last stored sender; informational.</param>
 public sealed record AnalysisRunCursor(
     Guid RunId,
     int GroupsDone = 0,
@@ -41,7 +46,10 @@ public sealed record AnalysisRunCursor(
     IReadOnlyList<string>? CandidateIds = null,
     IReadOnlyDictionary<string, Guid>? SuggestionIds = null,
     IReadOnlyList<string>? CoveredIds = null,
-    IReadOnlyList<string>? RetriedIds = null);
+    IReadOnlyList<string>? RetriedIds = null,
+    IReadOnlyList<PolicyCandidate>? Senders = null,
+    int NextSenderIndex = 0,
+    string? LastScopeKey = null);
 
 /// <summary>
 /// One analysis run (DESIGN §6.2, epic #22): groups the run's remaining frozen candidates, then per group asks the model
@@ -58,6 +66,8 @@ public sealed partial class AnalysisRunJob(
     IAnalysisShortCircuit shortCircuit,
     IDecisionMemory memory,
     SenderStatsUpdater senderStats,
+    SenderProfileBuilder profiles,
+    SenderPolicyOutputParser policyParser,
     IAttachmentPolicy attachmentPolicy,
     AttachmentPromptSection attachments,
     IOptions<LlmOptions> llmOptions,
@@ -85,7 +95,7 @@ public sealed partial class AnalysisRunJob(
 
         try
         {
-            await RunCoreAsync(ctx, run, cursor, ct);
+            await (run.Scope == AnalysisScope.TopSenders ? RunPoliciesAsync(ctx, run, cursor, ct) : RunCoreAsync(ctx, run, cursor, ct));
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {

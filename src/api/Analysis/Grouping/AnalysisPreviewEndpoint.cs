@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -15,6 +16,7 @@ public static partial class AnalysisPreviewEndpoint
 
     // Gmail message ids are short hex strings; the bound leaves room without accepting arbitrary text.
     public const int MaxMessageIdLength = 64;
+    public const string UnknownSender = "No such sender; fetch its mail first.";
 
     public static IServiceCollection AddAnalysisGrouping(this IServiceCollection services)
     {
@@ -32,7 +34,7 @@ public static partial class AnalysisPreviewEndpoint
     /// <summary>Candidates and grouping for a scope and count, without any model call; 400 on an invalid request.</summary>
     private static async Task<Results<Ok<GroupingPreviewDto>, ValidationProblem>> PreviewAsync(
         AnalysisPreviewRequest request, AppDbContext db, ISettingsStore settingsStore, AnalysisGrouper grouper,
-        IAnalysisShortCircuit shortCircuit, LabelCatalog labelCatalog, CancellationToken ct)
+        IAnalysisShortCircuit shortCircuit, LabelCatalog labelCatalog, SenderProfileBuilder profiles, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         var settings = await settingsStore.GetAsync(ct);
@@ -40,6 +42,11 @@ public static partial class AnalysisPreviewEndpoint
         if (errors.Count > 0 || scope is not { } s)
         {
             return TypedResults.ValidationProblem(errors);
+        }
+
+        if (s == AnalysisScope.TopSenders)
+        {
+            return await PreviewSendersAsync(request.SenderAddress, count, settings, db, profiles, ct);
         }
 
         // Label names are only needed for the labelled scope, groups split by labels or the memory check of labelled
@@ -78,6 +85,33 @@ public static partial class AnalysisPreviewEndpoint
     }
 
     /// <summary>
+    /// The senders a top senders run would walk, one model call each; an unknown <paramref name="senderAddress"/> is a 400.
+    /// </summary>
+    private static async Task<Results<Ok<GroupingPreviewDto>, ValidationProblem>> PreviewSendersAsync(
+        string? senderAddress, int count, AppSettings settings, AppDbContext db, SenderProfileBuilder profiles, CancellationToken ct)
+    {
+        string? canonical = null;
+        if (senderAddress is not null
+            && (canonical = await profiles.ResolveSenderAsync(senderAddress.Trim().ToLowerInvariant(), ct)) is null)
+        {
+            return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["senderAddress"] = [UnknownSender] });
+        }
+
+        var senders = await PolicyCandidates.QueryAsync(db, canonical, count, settings.AnalysisMinGroupSize, ct);
+        return TypedResults.Ok(new GroupingPreviewDto(
+            Messages: senders.Sum(c => c.Messages),
+            Skipped: 0,
+            Groups: senders.Count,
+            EstimatedLlmCalls: senders.Count,
+            EstimatedDerived: 0,
+            EstimatedFromMemory: 0,
+            EmbeddingsAvailable: !string.IsNullOrWhiteSpace(settings.EmbeddingModel),
+            LargestGroups: [],
+            Senders: [.. senders.Select(c => new PolicyCandidateDto(
+                SnakeCaseEnumConverter<PolicyScope>.ToDb(c.Scope), c.ScopeKey, c.DisplayName, c.Messages))]));
+    }
+
+    /// <summary>
     /// Validates a run's selection (shared by the preview and the run start) into <paramref name="errors"/>. The messages
     /// scope covers exactly its ids, so its count is the number of ids; a count would silently drop some.
     /// </summary>
@@ -88,8 +122,17 @@ public static partial class AnalysisPreviewEndpoint
         var scope = ParseScope(scopeValue, errors);
         var count = scope == AnalysisScope.Messages && messageIds is { Length: > 0 } ids
             ? ids.Distinct(StringComparer.Ordinal).Count()
-            : requestedCount ?? settings.AnalysisDefaultCount;
-        if (scope != AnalysisScope.Messages
+            : requestedCount ?? (scope == AnalysisScope.TopSenders
+                ? Math.Min(settings.AnalysisDefaultCount, PolicyCandidates.MaxSenders)
+                : settings.AnalysisDefaultCount);
+        if (scope == AnalysisScope.TopSenders)
+        {
+            if (count is < PolicyCandidates.MinSenders or > PolicyCandidates.MaxSenders)
+            {
+                errors["count"] = [$"Senders: must be between {PolicyCandidates.MinSenders} and {PolicyCandidates.MaxSenders}."];
+            }
+        }
+        else if (scope != AnalysisScope.Messages
             && count is < SettingsValidation.MinAnalysisDefaultCount or > SettingsValidation.MaxAnalysisDefaultCount)
         {
             errors["count"] = [$"Must be between {SettingsValidation.MinAnalysisDefaultCount} and {SettingsValidation.MaxAnalysisDefaultCount}."];
@@ -99,6 +142,12 @@ public static partial class AnalysisPreviewEndpoint
             && (string.IsNullOrWhiteSpace(senderAddress) || senderAddress.Length > MaxSenderAddressLength))
         {
             errors["senderAddress"] = [$"Required for the sender scope, at most {MaxSenderAddressLength} characters."];
+        }
+
+        if (scope == AnalysisScope.TopSenders && senderAddress is not null
+            && (string.IsNullOrWhiteSpace(senderAddress) || senderAddress.Length > MaxSenderAddressLength))
+        {
+            errors["senderAddress"] = [$"Optional for the top senders scope; when given, at most {MaxSenderAddressLength} characters."];
         }
 
         if (scope == AnalysisScope.Messages && !AreValidMessageIds(messageIds))

@@ -3,6 +3,7 @@ using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
@@ -33,7 +34,8 @@ public static class AnalysisEndpoints
 
     /// <summary>202 with the queued run; 400 on an invalid request; 409 when no chat model is selected.</summary>
     private static async Task<Results<Accepted<AnalysisRunDto>, ValidationProblem>> StartAsync(
-        StartAnalysisRunRequest request, AnalysisRunService runs, ISettingsStore settingsStore, AppDbContext db, CancellationToken ct)
+        StartAnalysisRunRequest request, AnalysisRunService runs, ISettingsStore settingsStore, AppDbContext db,
+        SenderProfileBuilder profiles, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         var settings = await settingsStore.GetAsync(ct);
@@ -45,7 +47,18 @@ public static class AnalysisEndpoints
             var address = request.SenderAddress!.Trim().ToLowerInvariant();
             if (!await db.Senders.AnyAsync(s => s.Address == address, ct))
             {
-                errors["senderAddress"] = ["No such sender; fetch its mail first."];
+                errors["senderAddress"] = [AnalysisPreviewEndpoint.UnknownSender];
+            }
+        }
+
+        var senderAddress = request.SenderAddress;
+        if (scope == AnalysisScope.TopSenders && senderAddress is not null && !errors.ContainsKey("senderAddress"))
+        {
+            // The run stores the canonical address, so "Propose policy" works from a raw relay address too.
+            senderAddress = await profiles.ResolveSenderAsync(senderAddress.Trim().ToLowerInvariant(), ct);
+            if (senderAddress is null)
+            {
+                errors["senderAddress"] = [AnalysisPreviewEndpoint.UnknownSender];
             }
         }
 
@@ -54,7 +67,7 @@ public static class AnalysisEndpoints
             return TypedResults.ValidationProblem(errors);
         }
 
-        var run = await runs.StartAsync(s, request.SenderAddress, request.MessageIds, count, groupingMode, ct);
+        var run = await runs.StartAsync(s, senderAddress, request.MessageIds, count, groupingMode, ct);
         return TypedResults.Accepted($"/api/analysis/runs/{run.Id}", run);
     }
 

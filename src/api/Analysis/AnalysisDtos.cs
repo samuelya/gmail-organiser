@@ -1,6 +1,10 @@
 namespace GmailOrganiser.Analysis;
 
-/// <summary><c>scope</c> is <c>inbox | all | sender | messages</c>; <c>count</c> defaults to the AnalysisDefaultCount setting.</summary>
+/// <summary>
+/// <c>scope</c> is <c>inbox | all | sender | messages | labelled | top_senders</c>; <c>count</c> defaults to the
+/// AnalysisDefaultCount setting (senders, at most 100, for <c>top_senders</c>, whose optional <c>senderAddress</c>
+/// targets one sender).
+/// </summary>
 public sealed record AnalysisPreviewRequest(string? Scope, string? SenderAddress, int? Count, string[]? MessageIds);
 
 /// <summary>
@@ -15,12 +19,17 @@ public sealed record GroupingPreviewDto(
     int EstimatedDerived,
     int EstimatedFromMemory,
     bool EmbeddingsAvailable,
-    IReadOnlyList<GroupPreviewDto> LargestGroups);
+    IReadOnlyList<GroupPreviewDto> LargestGroups,
+    IReadOnlyList<PolicyCandidateDto>? Senders = null);
+
+/// <summary>A sender a <c>top_senders</c> run would propose a policy for; <c>scope</c> is <c>sender</c> or <c>list</c>.</summary>
+public sealed record PolicyCandidateDto(string Scope, string ScopeKey, string? DisplayName, int Count);
 
 public sealed record GroupPreviewDto(string Key, string SenderAddress, string Display, int Size, int Representatives);
 
 /// <summary>
-/// <c>scope</c> as for the preview; <c>count</c> 1–1000 (ignored for the messages scope, which covers its ids);
+/// <c>scope</c> as for the preview; <c>count</c> 1–1000 (ignored for the messages scope, which covers its ids; senders,
+/// 1–100, for <c>top_senders</c>, where <c>senderAddress</c>, raw or canonical, optionally targets one sender);
 /// <c>groupingMode</c> (<c>off | sender_subject | auto</c>) overrides the setting for this run.
 /// </summary>
 public sealed record StartAnalysisRunRequest(
@@ -45,6 +54,8 @@ public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
 /// <c>llmMilliseconds</c> (<c>llmSeconds</c>) are summed over the model calls; <c>nearContextLimit</c> counts calls whose
 /// prompt filled at least 90 % of <c>num_ctx</c> (#353). <c>isStalled</c>: queued or running, but no queued, running or
 /// paused job is behind it (start-up recovery marks such runs failed; <c>POST /runs/{id}/resume</c> continues them, #378).
+/// A <c>top_senders</c> run counts one group and one call per sender, <c>policiesProposed</c> the policies it stored,
+/// <c>messagesCovered</c> their senders' messages and <c>failedMessages</c> the senders whose output was invalid (#357).
 /// </summary>
 public sealed record AnalysisRunDto(
     Guid Id,
@@ -80,7 +91,8 @@ public sealed record AnalysisRunDto(
     int NearContextLimit,
     int TriageCalls,
     int EscalatedCalls,
-    bool IsStalled);
+    bool IsStalled,
+    int PoliciesProposed);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed
