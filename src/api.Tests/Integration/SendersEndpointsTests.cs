@@ -162,6 +162,7 @@ public sealed class SendersEndpointsTests(ApiFactory factory, PostgresFixture po
     [InlineData("pageSize=201")]
     [InlineData("sort=size")]
     [InlineData("dir=up")]
+    [InlineData("kind=human&kind=robot")]
     public async Task Invalid_query_is_a_400_validation_problem(string query)
     {
         var response = await factory.CreateClient().GetAsync($"/api/senders?{query}", Ct);
@@ -170,6 +171,80 @@ public sealed class SendersEndpointsTests(ApiFactory factory, PostgresFixture po
         var problem = await response.Content.ReadFromJsonAsync<ValidationProblemDetails>(Ct);
         problem.ShouldNotBeNull().Errors.Count.ShouldBe(1);
     }
+
+    [Fact]
+    public async Task Kind_filter_is_repeatable_and_returns_the_stage_0_stats()
+    {
+        await AddStatsSendersAsync();
+
+        var page = await GetAsync("/api/senders?kind=human&kind=BULK&sort=address&dir=asc&pageSize=200");
+
+        page.Items.Select(s => s.Address).ShouldBe(["a@ratio.example.com", "c@ratio.example.com"]);
+        var human = page.Items[0];
+        human.Kind.ShouldBe(SenderKind.Human);
+        human.CanonicalAddress.ShouldBe("a@ratio.example.com");
+        human.IsRelay.ShouldBeFalse();
+        human.UnreadCount.ShouldBe(1);
+        human.RepliedCount.ShouldBe(2);
+        human.ListUnsubscribeCount.ShouldBe(3);
+        human.FirstSeenAt.ShouldBe(Newest.AddDays(-30));
+        human.CategoryMix.ShouldBe(new SenderCategoryMixDto(4, 3, 2, 1, 0));
+        page.Items[1].Kind.ShouldBe(SenderKind.Bulk);
+        page.Items[1].IsRelay.ShouldBeTrue();
+        page.Items[1].CanonicalDomain.ShouldBe("relayed.example.com");
+
+        var raw = await factory.CreateClient().GetStringAsync("/api/senders?kind=mixed", Ct);
+        raw.ShouldContain("\"kind\":\"mixed\"");
+        (await GetAsync("/api/senders?kind=unknown&search=ratio.example.com")).Items.Select(s => s.Address)
+            .ShouldBe(["d@ratio.example.com"]);
+    }
+
+    [Theory]
+    [InlineData("desc", new[] { "b", "c", "a", "d" })]
+    [InlineData("asc", new[] { "a", "c", "b", "d" })]
+    public async Task Unread_sort_orders_by_unread_ratio_with_empty_senders_last(string dir, string[] expected)
+    {
+        await AddStatsSendersAsync();
+
+        var page = await GetAsync($"/api/senders?sort=unread&dir={dir}&search=ratio.example.com");
+
+        page.Items.Select(s => s.Address.Split('@')[0]).ShouldBe(expected);
+    }
+
+    /// <summary>Ratios a 1/10, b 9/10, c 5/10, d no messages; kinds human, mixed, bulk (relay), unknown.</summary>
+    private async Task AddStatsSendersAsync()
+    {
+        await using var db = postgres.CreateDbContext();
+        db.Senders.AddRange(
+            StatsSender("a", 10, 1, SenderKind.Human),
+            StatsSender("b", 10, 9, SenderKind.Mixed),
+            StatsSender("c", 10, 5, SenderKind.Bulk),
+            StatsSender("d", 0, 0, SenderKind.Unknown));
+        var relay = db.ChangeTracker.Entries<SenderRow>().Single(e => e.Entity.Address.StartsWith('c')).Entity;
+        relay.CanonicalAddress = "news@relayed.example.com";
+        relay.CanonicalDomain = "relayed.example.com";
+        relay.IsRelay = true;
+        await db.SaveChangesAsync(Ct);
+    }
+
+    private static SenderRow StatsSender(string local, int total, int unread, SenderKind kind) => new()
+    {
+        Address = $"{local}@ratio.example.com",
+        Domain = "ratio.example.com",
+        CanonicalAddress = $"{local}@ratio.example.com",
+        CanonicalDomain = "ratio.example.com",
+        TotalCount = total,
+        UnreadCount = unread,
+        RepliedCount = 2,
+        ListUnsubscribeCount = 3,
+        PrimaryCount = 4,
+        PromotionsCount = 3,
+        SocialCount = 2,
+        UpdatesCount = 1,
+        FirstSeenAt = Newest.AddDays(-30),
+        Kind = kind,
+        UpdatedAt = Newest,
+    };
 
     [Fact]
     public async Task Search_over_200_characters_is_a_400()
