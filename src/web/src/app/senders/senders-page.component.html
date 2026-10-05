@@ -285,6 +285,16 @@
                 >
                   <mat-icon aria-hidden="true">psychology</mat-icon>
                 </a>
+                <a
+                  mat-icon-button
+                  routerLink="/senders/noisy"
+                  [queryParams]="{ search: row.sender.canonicalDomain }"
+                  matTooltip="Noisy senders"
+                  [attr.aria-label]="'Noisy senders at ' + row.sender.canonicalDomain"
+                  data-testid="noisy-senders"
+                >
+                  <mat-icon aria-hidden="true">campaign</mat-icon>
+                </a>
                 <button
                   mat-icon-button
                   type="button"
