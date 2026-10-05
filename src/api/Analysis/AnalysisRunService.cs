@@ -184,7 +184,7 @@ public sealed partial class AnalysisRunService(
 
     public async Task<IReadOnlyList<AnalysisRunDto>> ListAsync(bool? active, AnalysisRunStatus? status, int limit, CancellationToken ct)
     {
-        await SyncEndedJobsAsync(includeMissing: false, ct);
+        await SyncEndedJobsAsync(ct);
         var query = db.AnalysisRuns.AsNoTracking();
         if (active is { } a)
         {
@@ -207,7 +207,7 @@ public sealed partial class AnalysisRunService(
 
     public async Task<AnalysisRunDto?> GetAsync(Guid id, CancellationToken ct)
     {
-        await SyncEndedJobsAsync(includeMissing: false, ct);
+        await SyncEndedJobsAsync(ct);
         return await WithStalled(db.AnalysisRuns.AsNoTracking().Where(r => r.Id == id)).SingleOrDefaultAsync(ct) is { } x
             ? ToDto(x.Run, x.Stalled)
             : null;

@@ -18,6 +18,13 @@ public sealed class SnakeCaseEnumConverter<TEnum>() : ValueConverter<TEnum, stri
 
     public static string ToDb(TEnum value) => Names[value];
 
+    /// <summary>The snake_case names in declaration order, comma-separated, for validation messages.</summary>
+    public static readonly string NamesList = string.Join(", ", Enum.GetValues<TEnum>().Select(ToDb));
+
+    /// <summary>Parses user input: the snake_case name, trimmed, case-insensitive.</summary>
+    public static bool TryFromDb(string value, out TEnum parsed) =>
+        Values.TryGetValue(value.Trim().ToLowerInvariant(), out parsed);
+
     public static TEnum FromDb(string value) =>
         Values.TryGetValue(value, out var parsed)
             ? parsed

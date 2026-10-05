@@ -79,7 +79,19 @@ public sealed partial class JobRunner(
             LogRecovered(logger, count);
         }
 
-        foreach (var recovery in scope.ServiceProvider.GetServices<IJobStartupRecovery>())
+        // Resolving builds each recovery's dependencies; a failure there must not keep the runner from claiming either.
+        IJobStartupRecovery[] recoveries;
+        try
+        {
+            recoveries = [.. scope.ServiceProvider.GetServices<IJobStartupRecovery>()];
+        }
+        catch (Exception ex)
+        {
+            LogStartupRecoveryFailed(logger, nameof(IJobStartupRecovery), ex);
+            recoveries = [];
+        }
+
+        foreach (var recovery in recoveries)
         {
             try
             {

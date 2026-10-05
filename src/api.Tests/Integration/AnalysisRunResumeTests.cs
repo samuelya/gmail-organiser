@@ -21,7 +21,7 @@ public sealed class AnalysisRunResumeTests(ApiFactory factory, PostgresFixture p
     public ValueTask DisposeAsync() => h.DisposeAsync();
 
     [Fact]
-    public async Task A_run_whose_job_row_is_gone_is_stalled_until_startup_recovery_fails_it()
+    public async Task A_run_whose_job_row_is_gone_is_failed_by_startup_recovery()
     {
         var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
         await using (var db = postgres.CreateDbContext())
@@ -29,10 +29,11 @@ public sealed class AnalysisRunResumeTests(ApiFactory factory, PostgresFixture p
             await db.Jobs.Where(j => j.Id == run.JobId).ExecuteDeleteAsync(Ct);
         }
 
-        var stalled = await h.GetRunAsync(run.Id);
-        (stalled.Status, stalled.IsStalled).ShouldBe(("queued", true));
-
         (await h.Runner.RecoverAsync(Ct)).ShouldBe(0);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.AnalysisRuns.SingleAsync(r => r.Id == run.Id, Ct)).Status.ShouldBe(AnalysisRunStatus.Failed);
+        }
 
         var failed = await h.GetRunAsync(run.Id);
         (failed.Status, failed.IsStalled, failed.Error).ShouldBe(("failed", false, AnalysisRunService.JobEndedError));
@@ -58,14 +59,18 @@ public sealed class AnalysisRunResumeTests(ApiFactory factory, PostgresFixture p
         h.Chat.Respond = (ids, _, _, _) => Task.FromResult(AnalysisRunHarness.Agree(ids));
         var job = await ResumeAsync(run.Id);
         var resumed = await h.GetRunAsync(run.Id);
-        (resumed.Status, resumed.Error, resumed.JobId, resumed.IsStalled).ShouldBe(("running", (string?)null, job.Id, false));
+        (resumed.Status, resumed.Error, resumed.JobId, resumed.IsStalled).ShouldBe(("queued", (string?)null, job.Id, false));
 
         await h.RunNextAsync();
 
         var done = await h.GetRunAsync(run.Id);
-        (done.Status, done.MessagesCovered, done.FailedMessages).ShouldBe(("completed", 20, 0));
+        (done.Status, done.MessagesCovered, done.FailedMessages, done.SkippedMessages).ShouldBe(("completed", 20, 0, 0));
         await using var check = postgres.CreateDbContext();
         (await check.Suggestions.CountAsync(s => s.RunId == run.Id, Ct)).ShouldBe(20);
+
+        // The rebuilt cursor keeps the covered messages, so progress ends at its total instead of past it.
+        var progress = (await check.Jobs.AsNoTracking().SingleAsync(j => j.Id == job.Id, Ct)).ToDto().Progress.ShouldNotBeNull();
+        (progress.Done, progress.Total).ShouldBe((20L, 20L));
     }
 
     [Fact]
@@ -82,8 +87,8 @@ public sealed class AnalysisRunResumeTests(ApiFactory factory, PostgresFixture p
         (failed.Status, failed.MessagesCovered, failed.FailedMessages).ShouldBe(("failed", 10, 6));
         failed.Error.ShouldNotBeNull();
 
-        // First resume: news is retried (still invalid), billing breaks again.
-        await ResumeAsync(run.Id);
+        // First resume: news is retried (still invalid), billing breaks again. The run keeps its one job.
+        (await ResumeAsync(run.Id)).Id.ShouldBe(failed.JobId!.Value);
         await h.RunNextAsync();
         var again = await h.GetRunAsync(run.Id);
         (again.Status, again.MessagesCovered, again.FailedMessages).ShouldBe(("failed", 10, 6));
@@ -96,6 +101,7 @@ public sealed class AnalysisRunResumeTests(ApiFactory factory, PostgresFixture p
 
         var done = await h.GetRunAsync(run.Id);
         (done.Status, done.MessagesCovered, done.FailedMessages).ShouldBe(("completed", 14, 6));
+        job.Id.ShouldBe(failed.JobId!.Value);
         h.Chat.Requests.Skip(before).ShouldAllBe(r => r.All(m => !m.Text.Contains("Synthetic body of b")));
         await using var db = postgres.CreateDbContext();
         var cursor = JsonSerializer.Deserialize<AnalysisRunCursor>(
@@ -132,6 +138,26 @@ public sealed class AnalysisRunResumeTests(ApiFactory factory, PostgresFixture p
         (await h.PostWithoutBodyAsync($"/api/analysis/runs/{run.Id}/resume")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await h.PostWithoutBodyAsync($"/api/analysis/runs/{Guid.NewGuid()}/resume")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
         (await h.GetAsync("/api/analysis/runs?status=paused")).StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Resume_is_refused_while_the_runs_job_is_active_again_and_changes_nothing()
+    {
+        h.Chat.Respond = (ids, _, _, _) =>
+            ids.Any(id => id.StartsWith('c'))
+                ? throw new InvalidOperationException("Synthetic model outage")
+                : Task.FromResult(ids.Any(id => id.StartsWith('b')) ? "Sorry, I cannot help with that." : AnalysisRunHarness.Agree(ids));
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+        var failed = await h.GetRunAsync(run.Id);
+        (await h.PostWithoutBodyAsync($"/api/jobs/{failed.JobId}/resume")).IsSuccessStatusCode.ShouldBeTrue();
+
+        (await h.PostWithoutBodyAsync($"/api/analysis/runs/{run.Id}/resume")).StatusCode.ShouldBe(HttpStatusCode.Conflict);
+
+        var after = await h.GetRunAsync(run.Id);
+        (after.FailedMessages, after.JobId).ShouldBe((6, failed.JobId));
+        await using var db = postgres.CreateDbContext();
+        (await db.Jobs.CountAsync(j => j.DedupKey == run.Id.ToString(), Ct)).ShouldBe(1);
     }
 
     private async Task<JobDto> ResumeAsync(Guid runId)

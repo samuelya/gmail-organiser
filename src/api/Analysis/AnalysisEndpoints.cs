@@ -107,15 +107,11 @@ public static class AnalysisEndpoints
         AnalysisRunStatus? parsed = null;
         if (status is not null)
         {
-            var match = Enum.GetValues<AnalysisRunStatus>()
-                .Where(v => string.Equals(SnakeCaseEnumConverter<AnalysisRunStatus>.ToDb(v), status.Trim(), StringComparison.OrdinalIgnoreCase))
-                .Cast<AnalysisRunStatus?>()
-                .FirstOrDefault();
-            if (match is null)
+            if (!SnakeCaseEnumConverter<AnalysisRunStatus>.TryFromDb(status, out var match))
             {
                 return TypedResults.ValidationProblem(new Dictionary<string, string[]>
                 {
-                    ["status"] = ["Must be one of queued, running, completed, failed, cancelled."],
+                    ["status"] = [$"Must be one of {SnakeCaseEnumConverter<AnalysisRunStatus>.NamesList}."],
                 });
             }
 
@@ -207,15 +203,12 @@ public static class AnalysisEndpoints
             return null;
         }
 
-        foreach (var mode in Enum.GetValues<AnalysisGroupingMode>())
+        if (SnakeCaseEnumConverter<AnalysisGroupingMode>.TryFromDb(value, out var mode))
         {
-            if (string.Equals(SnakeCaseEnumConverter<AnalysisGroupingMode>.ToDb(mode), value.Trim(), StringComparison.OrdinalIgnoreCase))
-            {
-                return mode;
-            }
+            return mode;
         }
 
-        errors["groupingMode"] = [$"Must be one of {string.Join(", ", Enum.GetValues<AnalysisGroupingMode>().Select(SnakeCaseEnumConverter<AnalysisGroupingMode>.ToDb))}."];
+        errors["groupingMode"] = [$"Must be one of {SnakeCaseEnumConverter<AnalysisGroupingMode>.NamesList}."];
         return null;
     }
 }
