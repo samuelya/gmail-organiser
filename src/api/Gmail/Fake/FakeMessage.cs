@@ -24,7 +24,9 @@ public sealed record FakeMessage(
     IReadOnlyList<FakeAttachment>? Attachments = null,
     string? BodyText = null,
     string? BodyHtml = null,
-    string? ListUnsubscribePost = null)
+    string? ListUnsubscribePost = null,
+    string? Precedence = null,
+    string? AutoSubmitted = null)
 {
     public IReadOnlyList<FakeAttachment> Attachments { get; init; } = Attachments ?? [];
 

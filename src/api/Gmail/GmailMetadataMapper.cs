@@ -14,7 +14,10 @@ public sealed record SenderAddress(string Address, string? DisplayName)
 public static class GmailMetadataMapper
 {
     /// <summary>The headers requested with <c>format=metadata</c>.</summary>
-    public static readonly IReadOnlyList<string> MetadataHeaders = ["From", "To", "Subject", "Date", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post"];
+    public static readonly IReadOnlyList<string> MetadataHeaders = ["From", "To", "Subject", "Date", "List-Id", "List-Unsubscribe", "List-Unsubscribe-Post", "Precedence", "Auto-Submitted"];
+
+    /// <summary>Longest stored value of a free-text bulk header (<c>Precedence</c>, <c>Auto-Submitted</c>).</summary>
+    public const int BulkHeaderMaxLength = 64;
 
     /// <summary>
     /// <c>HasAttachment</c> heuristic. <c>format=metadata</c> returns the top-level <c>payload.mimeType</c> and headers
@@ -42,6 +45,8 @@ public static class GmailMetadataMapper
             ListId: ParseListId(Header("List-Id")),
             ListUnsubscribe: Header("List-Unsubscribe"),
             ListUnsubscribePost: Header("List-Unsubscribe-Post"),
+            Precedence: NormaliseBulkHeader(Header("Precedence")),
+            AutoSubmitted: NormaliseBulkHeader(Header("Auto-Submitted")),
             Snippet: message.Snippet,
             SizeEstimate: message.SizeEstimate ?? 0,
             HasAttachment: string.Equals(message.Payload?.MimeType, AttachmentMimeType, StringComparison.OrdinalIgnoreCase));
@@ -80,5 +85,17 @@ public static class GmailMetadataMapper
         var open = value.LastIndexOf('<');
         var close = value.LastIndexOf('>');
         return open >= 0 && close > open ? value[(open + 1)..close].Trim() : value;
+    }
+
+    /// <summary>Trims, lower-cases and truncates a free-text header to <see cref="BulkHeaderMaxLength"/>; null when blank.</summary>
+    public static string? NormaliseBulkHeader(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim().ToLowerInvariant();
+        return trimmed.Length > BulkHeaderMaxLength ? trimmed[..BulkHeaderMaxLength].TrimEnd() : trimmed;
     }
 }

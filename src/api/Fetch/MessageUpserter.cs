@@ -140,6 +140,8 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
         row.HasAttachment = m.HasAttachment;
         row.ListId = m.ListId;
         row.ListUnsubscribe = m.ListUnsubscribe;
+        row.Precedence = m.Precedence;
+        row.AutoSubmitted = m.AutoSubmitted;
         // Mail in Trash is not live anywhere (stats, analysis, apply, patterns), however it got there; out of Trash it is again.
         row.DeletedInGmail = m.LabelIds.Contains(MailboxFetchJob.TrashLabelId, StringComparer.OrdinalIgnoreCase);
     }

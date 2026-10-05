@@ -44,7 +44,9 @@ public sealed class GmailMetadataMapperTests
             ("SUBJECT", "Hello"),
             ("List-Id", "News <news.example.com>"),
             ("List-Unsubscribe", "<https://example.com/u/1>"),
-            ("List-Unsubscribe-Post", "List-Unsubscribe=One-Click"));
+            ("List-Unsubscribe-Post", "List-Unsubscribe=One-Click"),
+            ("precedence", " Bulk "),
+            ("AUTO-SUBMITTED", "Auto-Generated"));
 
         var metadata = GmailMetadataMapper.Map(message);
 
@@ -59,6 +61,8 @@ public sealed class GmailMetadataMapperTests
         metadata.ListId.ShouldBe("news.example.com");
         metadata.ListUnsubscribe.ShouldBe("<https://example.com/u/1>");
         metadata.ListUnsubscribePost.ShouldBe("List-Unsubscribe=One-Click");
+        metadata.Precedence.ShouldBe("bulk");
+        metadata.AutoSubmitted.ShouldBe("auto-generated");
         metadata.Snippet.ShouldBe("Synthetic snippet");
         metadata.SizeEstimate.ShouldBe(4096);
         metadata.HasAttachment.ShouldBeFalse();
@@ -75,6 +79,31 @@ public sealed class GmailMetadataMapperTests
         metadata.ListId.ShouldBeNull();
         metadata.ListUnsubscribe.ShouldBeNull();
         metadata.ListUnsubscribePost.ShouldBeNull();
+        metadata.Precedence.ShouldBeNull();
+        metadata.AutoSubmitted.ShouldBeNull();
+    }
+
+    [Fact]
+    public void MetadataHeaders_request_the_bulk_headers()
+    {
+        GmailMetadataMapper.MetadataHeaders.ShouldContain("Precedence");
+        GmailMetadataMapper.MetadataHeaders.ShouldContain("Auto-Submitted");
+    }
+
+    [Theory]
+    [InlineData("  List ", "list")]
+    [InlineData("auto-replied; owner-email=\"user@example.com\"", "auto-replied; owner-email=\"user@example.com\"")]
+    [InlineData("   ", null)]
+    [InlineData(null, null)]
+    public void NormaliseBulkHeader_trims_and_lower_cases(string? header, string? expected) =>
+        GmailMetadataMapper.NormaliseBulkHeader(header).ShouldBe(expected);
+
+    [Fact]
+    public void NormaliseBulkHeader_truncates_to_64_chars()
+    {
+        var stored = GmailMetadataMapper.NormaliseBulkHeader("  " + new string('X', 100));
+
+        stored.ShouldBe(new string('x', GmailMetadataMapper.BulkHeaderMaxLength));
     }
 
     [Theory]

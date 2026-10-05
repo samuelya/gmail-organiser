@@ -3,7 +3,8 @@ namespace GmailOrganiser.Gmail.Fake;
 /// <summary>
 /// A deterministic synthetic mailbox: 60 messages from 8 <c>example.com</c> senders over the last months. Newer mail is
 /// in the Inbox, older mail is archived; list senders carry <c>List-Id</c>/<c>List-Unsubscribe</c> (the newsletter
-/// supports RFC 8058 one-click, the shop only a link, the forum only <c>mailto:</c>), and the billing,
+/// supports RFC 8058 one-click, the shop only a link, the forum only <c>mailto:</c>) and the bulk headers
+/// <c>Precedence</c>/<c>Auto-Submitted</c>, which personal mail never has, and the billing,
 /// travel and statement senders attach generated PDFs. Every third message has an html-only body, the next a text-only
 /// one, the next both. Alice's lunch message (#3) has a thread of its own; the last message is the user's reply
 /// (<c>SENT</c>) in it, so that thread, and only Alice's conversation, is replied. Two archived offers arrive through
@@ -34,7 +35,9 @@ public static class FakeMailboxSeed
         string? ListId = null,
         int AttachmentsPerMessage = 0,
         string AttachmentTitle = "",
-        UnsubscribeKind Unsubscribe = UnsubscribeKind.None);
+        UnsubscribeKind Unsubscribe = UnsubscribeKind.None,
+        string? Precedence = null,
+        string? AutoSubmitted = null);
 
     private enum UnsubscribeKind
     {
@@ -48,11 +51,11 @@ public static class FakeMailboxSeed
 
     private static readonly Sender[] Senders =
     [
-        new("Weekly News <news@example.com>", "This week's digest", ["CATEGORY_PROMOTIONS"], "Weekly News <weekly.news.example.com>", Unsubscribe: UnsubscribeKind.OneClick),
-        new("\"Shop Offers\" <Offers@Shop.Example.com>", "Special offer inside", ["CATEGORY_PROMOTIONS"], "shop-offers.example.com", Unsubscribe: UnsubscribeKind.Link),
+        new("Weekly News <news@example.com>", "This week's digest", ["CATEGORY_PROMOTIONS"], "Weekly News <weekly.news.example.com>", Unsubscribe: UnsubscribeKind.OneClick, Precedence: "bulk", AutoSubmitted: "auto-generated"),
+        new("\"Shop Offers\" <Offers@Shop.Example.com>", "Special offer inside", ["CATEGORY_PROMOTIONS"], "shop-offers.example.com", Unsubscribe: UnsubscribeKind.Link, Precedence: "Bulk", AutoSubmitted: "Auto-Generated"),
         new("Alice Example <alice@example.com>", "Lunch next week?", ["UNREAD", "CATEGORY_PERSONAL"]),
         new("Billing <billing@example.com>", "Your invoice is ready", ["CATEGORY_UPDATES"], AttachmentsPerMessage: 1, AttachmentTitle: "Invoice"),
-        new("Community Forum <forum@lists.example.com>", "New replies to your topic", ["CATEGORY_FORUMS"], "Forum <forum.lists.example.com>", Unsubscribe: UnsubscribeKind.Mailto),
+        new("Community Forum <forum@lists.example.com>", "New replies to your topic", ["CATEGORY_FORUMS"], "Forum <forum.lists.example.com>", Unsubscribe: UnsubscribeKind.Mailto, Precedence: "list", AutoSubmitted: "auto-generated"),
         new("bob@example.com", "Notes from the meeting", []),
         new("Travel Desk <bookings@travel.example.com>", "Your trip itinerary", ["CATEGORY_UPDATES"], AttachmentsPerMessage: 2, AttachmentTitle: "Itinerary"),
         new("\"Example Bank\" <statements@bank.example.com>", "Your monthly statement", [], AttachmentsPerMessage: 1, AttachmentTitle: "Statement"),
@@ -95,7 +98,9 @@ public static class FakeMailboxSeed
                 Attachments: attachments,
                 BodyText: i % 3 == 0 ? null : $"Hello,\n\nSynthetic body {number} from {sender.Subject.ToLowerInvariant()}. Grüße, Ünïcode ✓\n",
                 BodyHtml: i % 3 == 1 ? null : $"<html><body><p>Synthetic body {number}: <b>{sender.Subject}</b>. Grüße ✓</p></body></html>",
-                ListUnsubscribePost: sender.Unsubscribe == UnsubscribeKind.OneClick ? OneClickPost : null));
+                ListUnsubscribePost: sender.Unsubscribe == UnsubscribeKind.OneClick ? OneClickPost : null,
+                Precedence: sender.Precedence,
+                AutoSubmitted: sender.AutoSubmitted));
         }
 
         messages.Add(new FakeMessage(

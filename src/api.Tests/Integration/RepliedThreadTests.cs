@@ -204,7 +204,7 @@ public sealed class RepliedThreadTests(ApiFactory factory, PostgresFixture postg
     };
 
     private static GmailMessageMetadata Metadata(string id, string threadId, params string[] labels) =>
-        new(id, threadId, "1", DateTimeOffset.UtcNow, labels, "user@example.com", null, "Synthetic", null, null, null, null, 100, false);
+        new(id, threadId, "1", DateTimeOffset.UtcNow, labels, "user@example.com", null, "Synthetic", null, null, null, null, null, null, 100, false);
 
     private async Task ApproveAsync(params (string Id, bool ToBeDeleted)[] rows)
     {
