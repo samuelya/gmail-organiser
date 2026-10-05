@@ -195,7 +195,8 @@ public sealed class DecisionMemoryDocumentTypeTests(PostgresFixture postgres) : 
     }
 
     private DecisionMemory Memory(AppDbContext db) =>
-        new(db, new FakeLlmClientFactory(embed: new FakeEmbeddingGenerator()), settings, NullLogger<DecisionMemory>.Instance);
+        new(db, new FakeLlmClientFactory(embed: new FakeEmbeddingGenerator()), settings, new EmbeddingIndexMaintainer(db, NullLogger<EmbeddingIndexMaintainer>.Instance),
+            NullLogger<DecisionMemory>.Instance);
 
     private static MessageRow Message(string id) => new()
     {

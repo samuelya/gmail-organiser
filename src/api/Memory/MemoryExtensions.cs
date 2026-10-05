@@ -10,6 +10,7 @@ public static class MemoryExtensions
     /// </summary>
     public static IServiceCollection AddMemory(this IServiceCollection services)
     {
+        services.AddScoped<EmbeddingIndexMaintainer>();
         services.AddScoped<IDecisionMemory, DecisionMemory>();
         services.AddScoped<IAnalysisShortCircuit, MemoryShortCircuit>();
         services.AddSingleton<DecisionEmbeddingQueue>();

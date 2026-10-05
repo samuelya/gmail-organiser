@@ -285,7 +285,8 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
         await db.SaveChangesAsync(Ct);
         var factory = new LlmClientFactory(
             new StubHttpClientFactory(new StubOllamaHandler()), settings, Options.Create(new LlmOptions { UseFake = true }));
-        var memory = new DecisionMemory(db, factory, settings, NullLogger<DecisionMemory>.Instance);
+        var memory = new DecisionMemory(db, factory, settings, new EmbeddingIndexMaintainer(db, NullLogger<EmbeddingIndexMaintainer>.Instance),
+            NullLogger<DecisionMemory>.Instance);
         var decision = Decision(Shop, "Shopping", DecisionOutcome.Approved, Now);
 
         await memory.EmbedAsync([decision], Ct);
@@ -459,7 +460,8 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres, ITestOutputHel
     }
 
     private DecisionMemory Memory(AppDbContext db) =>
-        new(db, new FakeLlmClientFactory(embed: embeddings), settings, NullLogger<DecisionMemory>.Instance);
+        new(db, new FakeLlmClientFactory(embed: embeddings), settings, new EmbeddingIndexMaintainer(db, NullLogger<EmbeddingIndexMaintainer>.Instance),
+            NullLogger<DecisionMemory>.Instance);
 
     private DecisionEmbeddingService EmbeddingService(TimeProvider? clock = null)
     {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Analysis.Prompts;
@@ -13,11 +14,13 @@ using Pgvector.EntityFrameworkCore;
 namespace GmailOrganiser.Memory;
 
 /// <summary>
-/// Decision memory over <c>decisions</c>. Similarity is an exact cosine scan over the rows of the configured embedding
-/// model (the column is untyped, so no vector index); rows of another model are ignored until re-embedded.
+/// Decision memory over <c>decisions</c>. Similarity is a cosine search over the rows of the configured embedding model
+/// and the query vector's dimension, served by the HNSW index <see cref="EmbeddingIndexMaintainer"/> keeps for that
+/// dimension (a scan until it exists); rows of another model are ignored until re-embedded.
 /// </summary>
 public sealed partial class DecisionMemory(
-    AppDbContext db, ILlmClientFactory llm, ISettingsStore settingsStore, ILogger<DecisionMemory> logger) : IDecisionMemory
+    AppDbContext db, ILlmClientFactory llm, ISettingsStore settingsStore, EmbeddingIndexMaintainer indexes, ILogger<DecisionMemory> logger)
+    : IDecisionMemory
 {
     public const int DefaultSimilarCount = 5;
     public const double MaxDistance = 0.35;
@@ -58,7 +61,21 @@ public sealed partial class DecisionMemory(
             decisions[i].Embedding = embedded.Vectors[i];
             decisions[i].EmbeddingModel = embedded.Model;
         }
+
+        await indexes.EnsureAsync(embedded.Vectors[0].Memory.Length, ct);
     }
+
+    /// <summary>
+    /// The nearest decisions of model <c>{0}</c> to vector <c>{1}</c>, at most <c>{2}</c>, leaving out message IDs <c>{3}</c>
+    /// when <paramref name="excluding"/>. The predicate and ORDER BY match the partial expression index for
+    /// <paramref name="dimension"/>, so the planner can use it; the cast only sees rows of that dimension.
+    /// </summary>
+    public static string NearestSql(int dimension, bool excluding) => string.Create(CultureInfo.InvariantCulture, $$"""
+        SELECT * FROM decisions
+        WHERE embedding_model = {0} AND vector_dims(embedding) = {{dimension}}{{(excluding ? " AND (message_id IS NULL OR NOT message_id = ANY({3}))" : "")}}
+        ORDER BY embedding::vector({{dimension}}) <=> {1}
+        LIMIT {2}
+        """);
 
     public async Task<bool> CanEmbedAsync(CancellationToken ct) => await EmbedTextsAsync([ProbeText], ct) is not null;
 
@@ -217,27 +234,17 @@ public sealed partial class DecisionMemory(
     }
 
     /// <summary>
-    /// Top <paramref name="k"/> decisions of the same model within <see cref="MaxDistance"/>. A vector of another
-    /// dimension under the same model name (a re-pulled model) makes the scan fail: logged, treated as no hits.
+    /// Top <paramref name="k"/> decisions of the same model and dimension within <see cref="MaxDistance"/>. The distance
+    /// limit applies after the LIMIT (same result: the rows come nearest first), so the index serves the ORDER BY.
     /// </summary>
     private async Task<List<(DecisionRow Decision, double Similarity)>> NearestAsync(
         string model, Vector vector, int k, string[] excluded, CancellationToken ct)
     {
-        try
-        {
-            var rows = await WithoutMessages(db.Decisions.AsNoTracking().Where(d => d.EmbeddingModel == model && d.Embedding != null), excluded)
-                .Select(d => new { Decision = d, Distance = d.Embedding!.CosineDistance(vector) })
-                .Where(x => x.Distance <= MaxDistance)
-                .OrderBy(x => x.Distance)
-                .Take(k)
-                .ToListAsync(ct);
-            return [.. rows.Select(r => (r.Decision, 1 - r.Distance))];
-        }
-        catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.DataException)
-        {
-            LogEmbeddingFailed(logger, 1, "vector dimension mismatch");
-            return [];
-        }
+        object[] parameters = excluded.Length == 0 ? [model, vector, k] : [model, vector, k, excluded];
+        var rows = await db.Decisions.FromSqlRaw(NearestSql(vector.Memory.Length, excluded.Length > 0), parameters).AsNoTracking()
+            .Select(d => new { Decision = d, Distance = d.Embedding!.CosineDistance(vector) })
+            .ToListAsync(ct);
+        return [.. rows.Where(r => r.Distance <= MaxDistance).OrderBy(r => r.Distance).Select(r => (r.Decision, 1 - r.Distance))];
     }
 
     /// <summary>The latest decisions for the sender (similarity 1) or, failing that, its normalised mailing list.</summary>
