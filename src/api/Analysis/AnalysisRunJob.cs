@@ -70,7 +70,6 @@ public sealed partial class AnalysisRunJob(
     SenderStatsUpdater senderStats,
     SenderProfileBuilder profiles,
     SenderPolicyOutputParser policyParser,
-    PolicyMatcher policyMatcher,
     IAttachmentPolicy attachmentPolicy,
     AttachmentPromptSection attachments,
     IOptions<LlmOptions> llmOptions,
@@ -213,8 +212,9 @@ public sealed partial class AnalysisRunJob(
     /// <summary>
     /// The frozen candidates still to cover, newest first: not failed, without a suggestion of this run (a compare
     /// run: not covered per its cursor) and still eligible. Candidates no longer eligible leave the cursor and count
-    /// as skipped (both stored with the next checkpoint), and so do candidates of the inbox, all and labelled scopes an
-    /// approved sender policy decides (#360): a policy approved after the run started, or a mixed policy's matched rule.
+    /// as skipped (both stored with the next checkpoint), and so do candidates of the inbox, all and labelled scopes a
+    /// policy has decided since the run started: those with a <see cref="SuggestionSource.Policy"/> suggestion (#360).
+    /// A candidate an approved policy covers without such a suggestion is still analysed.
     /// Members left over from a mixed group come first, one by one.
     /// </summary>
     private async Task<Plan> PlanAsync(
@@ -229,6 +229,13 @@ public sealed partial class AnalysisRunJob(
         var open = frozen.Except(failed, StringComparer.Ordinal).Except(stored, StringComparer.Ordinal).ToArray();
         var rows = await db.Messages.AsNoTracking().Where(m => open.Contains(m.Id)).ToListAsync(ct);
         var current = compare ? await CurrentSuggestionsAsync(cursor, ct) : null;
+        var policyDecided = run.Scope is AnalysisScope.Inbox or AnalysisScope.All or AnalysisScope.Labelled && !compare
+            ? await db.Suggestions.AsNoTracking()
+                .Where(s => open.Contains(s.MessageId) && s.Source == SuggestionSource.Policy)
+                .Select(s => s.MessageId)
+                .ToHashSetAsync(StringComparer.Ordinal, ct)
+            : [];
+        var covered = rows.RemoveAll(m => policyDecided.Contains(m.Id));
         var candidates = rows
             .Where(m => current is null
                 ? AnalysisCandidates.IsEligible(run.Scope, m, labels)
@@ -237,11 +244,6 @@ public sealed partial class AnalysisRunJob(
             .ThenBy(m => m.Id, StringComparer.Ordinal)
             .ToList();
         var policies = compare ? PolicyLookup.Empty : await PolicyLookup.LoadAsync(db, candidates, ct);
-        var covered = 0;
-        if ((run.Scope is AnalysisScope.Inbox or AnalysisScope.All or AnalysisScope.Labelled) && !policies.IsEmpty)
-        {
-            covered = candidates.RemoveAll(m => policies.For(m) is { } policy && policyMatcher.Match(m, policy, m.CanonicalAddress) is not null);
-        }
 
         var dropped = open.Except(candidates.Select(m => m.Id), StringComparer.Ordinal).ToHashSet(StringComparer.Ordinal);
         if (dropped.Count > 0)

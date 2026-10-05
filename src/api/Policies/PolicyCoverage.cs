@@ -55,22 +55,6 @@ public sealed class PolicyLookup
         [.. messages.Select(For).OfType<SenderPolicyRow>().DistinctBy(p => p.Id)
             .Select(p => new SenderPolicyHint(p.Scope.ToString().ToLowerInvariant(), p.ScopeKey, p.IsMixed, p.TopicLabel, p.MailType,
                 p.Action.ToString().ToLowerInvariant()))];
-
-    /// <summary>
-    /// <paramref name="query"/> without messages whose policy (same precedence as <see cref="For"/>) is approved and not
-    /// mixed: such a policy decides every message, so the LLM never needs to see it.
-    /// </summary>
-    public static IQueryable<MessageRow> WithoutSingleLabelPolicy(AppDbContext db, IQueryable<MessageRow> query)
-    {
-        var approved = db.SenderPolicies.Where(p => p.Status == PolicyStatus.Approved);
-        return query.Where(m => approved
-            .Where(p => (p.Scope == PolicyScope.Sender && p.ScopeKey == m.CanonicalAddress)
-                || (p.Scope == PolicyScope.List && m.ListId != null && p.ScopeKey == m.ListId.Trim().ToLower())
-                || (p.Scope == PolicyScope.Domain && p.ScopeKey == m.CanonicalDomain))
-            .OrderBy(p => p.Scope == PolicyScope.Sender ? 0 : p.Scope == PolicyScope.List ? 1 : 2)
-            .Select(p => (bool?)p.IsMixed)
-            .FirstOrDefault() != false);
-    }
 }
 
 /// <summary>
@@ -143,6 +127,14 @@ public sealed class PolicyCoverage(
             ActionKind.Apply, null, [.. rows.Select(r => r.Id)], $"Apply policies to {rows.Count} fetched message(s)", ct);
         return rows.Count;
     }
+
+    /// <summary>
+    /// <paramref name="query"/> without messages a policy has already decided: those with a
+    /// <see cref="SuggestionSource.Policy"/> suggestion. A message an approved policy covers but that has no such
+    /// suggestion yet (the setting is off, or the policy was approved while its fetch was still uncommitted) is analysed.
+    /// </summary>
+    public static IQueryable<MessageRow> WithoutPolicySuggestion(AppDbContext db, IQueryable<MessageRow> query) =>
+        query.Where(m => !db.Suggestions.Any(s => s.MessageId == m.Id && s.Source == SuggestionSource.Policy));
 
     /// <summary>Wakes the decision embedding; call after the caller's transaction commits.</summary>
     public void Committed() => decisions.Committed();

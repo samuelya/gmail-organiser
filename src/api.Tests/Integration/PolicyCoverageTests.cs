@@ -13,7 +13,7 @@ namespace GmailOrganiser.Tests.Integration;
 
 /// <summary>
 /// Policy coverage (#360) over the harness mailbox: fetched mail of an approved policy is suggested and applied
-/// without the LLM, and analysis runs skip covered mail.
+/// without the LLM, and analysis runs skip only mail a policy has already suggested for.
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class PolicyCoverageTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
@@ -42,7 +42,16 @@ public sealed class PolicyCoverageTests(ApiFactory factory, PostgresFixture post
         }
     }
 
-    public ValueTask DisposeAsync() => h.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        // Approved policies left behind would cover other test classes' fetched mail (shared database).
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.SenderPolicies.ExecuteDeleteAsync(CancellationToken.None);
+        }
+
+        await h.DisposeAsync();
+    }
 
     [Fact]
     public async Task Incremental_fetch_suggests_and_applies_new_mail_of_a_covered_sender()
@@ -107,9 +116,32 @@ public sealed class PolicyCoverageTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
-    public async Task Inbox_run_skips_covered_mail_counts_mixed_matches_and_hints_the_policy()
+    public async Task Setting_off_fetched_mail_of_a_covered_sender_is_analysed()
     {
-        // News is single-label: left out in SQL. Shop is mixed: "offer 1" matches a00 and a09, the rest go to the model.
+        await SeedPolicyAsync(AnalysisRunHarness.News, isMixed: false, PolicyAction.Archive);
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(s => s with { PolicyAutoApplyFetched = false }, Ct);
+        }
+
+        await FetchMailboxAsync();
+        h.Gmail.Inner.AddMessage(NewMessage("n1", AnalysisRunHarness.News));
+        await EnqueueAsync(IncrementalFetchJob.JobType);
+        await h.RunNextAsync();
+
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 100, null));
+        await h.RunNextAsync();
+
+        (await h.GetRunAsync(run.Id)).Status.ShouldBe("completed");
+        await using var db = postgres.CreateDbContext();
+        (await db.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "n1", Ct)).Source.ShouldNotBe(SuggestionSource.Policy);
+    }
+
+    [Fact]
+    public async Task Inbox_run_analyses_covered_mail_without_a_policy_suggestion_and_hints_the_policy()
+    {
+        // Approved policies alone exclude nothing (#360 review): only a policy suggestion does, and this mail has none.
         await SeedPolicyAsync(AnalysisRunHarness.News, isMixed: false, PolicyAction.Archive);
         await SeedPolicyAsync(AnalysisRunHarness.Shop, isMixed: true, PolicyAction.Keep, ("Deals", "offer 1"));
 
@@ -118,14 +150,14 @@ public sealed class PolicyCoverageTests(ApiFactory factory, PostgresFixture post
 
         var done = await h.GetRunAsync(run.Id);
         done.Status.ShouldBe("completed");
-        (done.MessagesCovered, done.SkippedMessages).ShouldBe((4 + 5 + 8, 2));
-        h.Progress(done.JobId.ShouldNotBeNull())[^1].Message.ShouldEndWith(", 2 covered by policy");
+        done.SkippedMessages.ShouldBe(0);
+        h.Progress(done.JobId.ShouldNotBeNull())[^1].Message.ShouldNotBeNull().ShouldNotContain("covered by policy");
         await using (var db = postgres.CreateDbContext())
         {
             var analysed = await db.Suggestions.AsNoTracking().Select(s => s.MessageId).ToListAsync(Ct);
-            analysed.ShouldNotContain(id => id.StartsWith('b'));
-            analysed.ShouldNotContain("a00");
-            analysed.ShouldNotContain("a09");
+            analysed.ShouldContain("b00");
+            analysed.ShouldContain("a00");
+            analysed.ShouldContain("a09");
         }
 
         var shopPrompt = h.Chat.Requests.Select(r => string.Join('\n', r.Select(m => m.Text)))

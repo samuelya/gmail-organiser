@@ -93,7 +93,7 @@ public static class AnalysisCandidates
         !m.DeletedInGmail && withSuggestion.Contains(m.Id);
 
     private static IQueryable<MessageRow> Uncovered(AppDbContext db, IQueryable<MessageRow> query) =>
-        PolicyLookup.WithoutSingleLabelPolicy(db, query);
+        PolicyCoverage.WithoutPolicySuggestion(db, query);
 
     private static IQueryable<MessageRow> NotAnalysed(IQueryable<MessageRow> query) =>
         query.Where(m => m.AnalysisStatus == AnalysisStatus.NotAnalysed);
