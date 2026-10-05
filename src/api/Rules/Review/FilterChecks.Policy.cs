@@ -109,8 +109,9 @@ public static partial class FilterChecks
     /// <summary>Whether the proposal matches at least what a filter with these terms matches.</summary>
     private static bool Within(IReadOnlyList<string> from, IReadOnlyList<string> tokens, PolicyTarget target)
     {
-        // An OR or a {…} group in the filter's query widens it, so its tokens no longer only narrow.
-        if (tokens.Any(t => t == "or" || t.StartsWith('{')) || from.Any(t => t.Length == 0))
+        // An OR, bare or in a group, or a {…} group in the filter's query widens it, so its tokens no longer only narrow.
+        if (tokens.Any(t => t == "or" || t.Contains(" or ", StringComparison.Ordinal) || t.Contains('{', StringComparison.Ordinal))
+            || from.Any(t => t.Length == 0))
         {
             return false;
         }

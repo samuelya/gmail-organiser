@@ -33,6 +33,21 @@ public sealed class RulesSummaryPromptBuilderTests
     }
 
     [Fact]
+    public void Policy_findings_are_listed_with_their_kind_and_fix()
+    {
+        var create = Filter("new", "from:a@example.com", "Synthetic/Shop");
+        var user = RulesSummaryPromptBuilder.Build(
+            [Filter("f1", "from:a@example.com", null)],
+            [
+                new SummaryFinding(FilterFindingKind.OverlapsPolicy, FilterFindingStatus.Open, ["f1"], "Within.", FilterFixKind.Merge, ["f1"], create),
+                new SummaryFinding(FilterFindingKind.PolicyConflict, FilterFindingStatus.Open, ["f1"], "Against.", FilterFixKind.Relabel, ["f1"], create),
+            ])[1].Text;
+
+        user.ShouldContain("- finding 1 | kind: overlaps_policy |");
+        user.ShouldContain("- finding 2 | kind: policy_conflict | status: open | filters: f1 | description: Against. | fix: relabel; creates a filter");
+    }
+
+    [Fact]
     public void Long_lists_are_cut_with_an_omitted_marker()
     {
         var filters = Enumerable.Range(0, RulesSummaryPromptBuilder.MaxFilters + 3)

@@ -1,5 +1,6 @@
 using System.Globalization;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Review;
 using GmailOrganiser.Rules;
 using GmailOrganiser.Rules.Review;
 
@@ -211,6 +212,36 @@ public sealed class FilterChecksTests
         FilterChecks.FromOnlyTerms(new(From: "one@example.com", Subject: "x")).ShouldBeNull();
         FilterChecks.FromOnlyTerms(new(From: "not an address")).ShouldBeNull();
         FilterChecks.FromOnlyTerms(new(Subject: "x")).ShouldBeNull();
+    }
+
+    [Fact]
+    public void A_filter_is_within_a_domain_proposal_only_for_senders_it_does_not_exclude_and_without_an_or_query()
+    {
+        var policy = Guid.NewGuid();
+        var proposal = new FilterProposalDto(
+            "example.com", null, 1, null, new SenderPatternDto("Synthetic/Shop", false, false, 0, 1, 0, null),
+            new FilterSuggestionDto(
+                new FilterCriteriaDto("@example.com", null, null, "-from:own@example.com", null, null, null, null, null),
+                new FilterActionRequest(["Synthetic/Shop"], false, false)),
+            "policy:1", FilterProposalSources.Policy, policy);
+        var label = new GmailFilterAction(["Label_1"], []);
+        FilterRow[] rows =
+        [
+            Row("in", new(From: "one@example.com"), label),
+            Row("sub", new(From: "two@news.example.com", Subject: "Weekly"), new(["Label_2"], [])),
+            Row("excluded", new(From: "own@example.com"), label),
+            Row("wider", new(From: "three@example.com", Query: "a OR b"), label),
+            Row("other", new(From: "one@example.org"), new(["Label_2"], [])),
+        ];
+
+        var findings = FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal])
+            .Where(f => f.Kind is FilterFindingKind.OverlapsPolicy or FilterFindingKind.PolicyConflict).ToList();
+
+        findings.Select(f => (f.Kind, string.Join(',', f.FilterIds), f.Fix.PolicyId))
+            .ShouldBe([(FilterFindingKind.PolicyConflict, "sub", policy), (FilterFindingKind.OverlapsPolicy, "in", policy)]);
+        findings.ShouldAllBe(f => f.Fix.Create!.Criteria.From == "@example.com" && f.Fix.Create.Action.AddLabelIds.SequenceEqual(new[] { "Label_1" }));
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal with { Suggested = proposal.Suggested with { Action = new(["Synthetic/Missing"], false, false) } }])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
     }
 
     private static IReadOnlyList<FilterFindingDraft> Run(IEnumerable<FilterRow> rows) => FilterChecks.Run(rows, Labels, NotEvaluable, 365);
