@@ -18,11 +18,12 @@ public sealed class ApplyService(AppDbContext db, IJobService jobs, TimeProvider
     /// As above, as a <paramref name="kind"/> batch described by <paramref name="description"/> (or the count). Joins
     /// the caller's transaction when there is one, so the suggestions it just created and their batch commit together.
     /// </summary>
+    /// <param name="policyId">Only the approved suggestions of this sender policy (#359).</param>
     public async Task<ActionBatchDto?> StartAsync(
-        ActionKind kind, string? senderAddress, Guid[]? suggestionIds, string? description, CancellationToken ct)
+        ActionKind kind, string? senderAddress, Guid[]? suggestionIds, string? description, CancellationToken ct, Guid? policyId = null)
     {
         var now = time.GetUtcNow();
-        var topics = await ApplyActionsJob.Eligible(db, now, senderAddress, suggestionIds).Select(s => s.TopicLabel).ToListAsync(ct);
+        var topics = await ApplyActionsJob.Eligible(db, now, senderAddress, suggestionIds, policyId).Select(s => s.TopicLabel).ToListAsync(ct);
         var count = topics.Count(LabelResolver.IsValid);
         if (count == 0)
         {
@@ -41,7 +42,7 @@ public sealed class ApplyService(AppDbContext db, IJobService jobs, TimeProvider
         await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         db.ActionBatches.Add(batch);
         await db.SaveChangesAsync(ct);
-        var cursor = new ApplyCursor(batch.Id, now, count, senderAddress, suggestionIds);
+        var cursor = new ApplyCursor(batch.Id, now, count, senderAddress, suggestionIds, PolicyId: policyId);
         var (job, _) = await jobs.EnqueueAsync(ApplyActionsJob.JobType, ApplyActionsJob.Queue, cursor, ct, batch.Id.ToString());
         batch.JobId = job.Id;
         await db.SaveChangesAsync(ct);

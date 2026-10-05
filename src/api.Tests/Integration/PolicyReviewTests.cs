@@ -244,7 +244,7 @@ public sealed class PolicyReviewTests(ApiFactory factory, PostgresFixture postgr
         var approved = await PostAsync<ApprovePolicyResponse>($"/api/policies/{ShopPolicy}/approve");
         approved.Policy.Status.ShouldBe("approved");
         approved.Policy.DecidedAt.ShouldNotBeNull();
-        approved.JobId.ShouldBeNull();
+        approved.JobId.ShouldNotBeNull();
         (await PostStatusAsync($"/api/policies/{ShopPolicy}/approve")).ShouldBe(HttpStatusCode.Conflict);
         (await PostStatusAsync($"/api/policies/{ShopPolicy}/reject")).ShouldBe(HttpStatusCode.Conflict);
 

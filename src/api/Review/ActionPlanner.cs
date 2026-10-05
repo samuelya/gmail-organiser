@@ -11,7 +11,7 @@ public sealed record ActionPlan(IReadOnlyList<string> Add, IReadOnlyList<string>
 /// <summary>
 /// Turns an approved suggestion into label changes (DESIGN §6.3 outcome table): topic and document-type label, plus
 /// the action label and staying in the inbox when it needs action, plus the delete label when deletable; everything
-/// else leaves the inbox.
+/// else leaves the inbox, unless it is to be kept there (a policy's keep).
 /// A protected message (§6.4) never gets the delete label, whichever way it was asked for. The replaced labels
 /// (labelled phase, or an applied outcome an accepted alternative replaces) are removed when the message carries them:
 /// user labels only, never one the plan adds. A protected Stage-0 suggestion (its topic is the delete label) changes
@@ -90,7 +90,8 @@ public static class ActionPlanner
         var replaced = suggestion.ReplaceLabelIds
             .Where(id => removable?.Contains(id) == true && GmailLabelIds.IsUser(id) && !add.Contains(id, StringComparer.Ordinal));
         List<string> remove = [.. replaced];
-        if (!suggestion.NeedsAction)
+        // Keep-in-inbox is a policy's keep outcome; a review edit to delete overrides it like any delete.
+        if (!suggestion.NeedsAction && (!suggestion.KeepInInbox || suggestion.ToBeDeleted))
         {
             remove.Add(InboxLabel);
         }

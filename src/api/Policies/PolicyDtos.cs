@@ -196,5 +196,5 @@ public sealed record EditPolicyRequest(
 /// <param name="Reapply">The policy was already approved: its changes reach the mail only when it is applied again (#359).</param>
 public sealed record EditPolicyResponse(SenderPolicyDetailDto Policy, bool Reapply);
 
-/// <param name="JobId">The apply job; null until #359.</param>
+/// <param name="JobId">The queued <see cref="PolicyApplyJob"/>.</param>
 public sealed record ApprovePolicyResponse(SenderPolicyDto Policy, Guid? JobId);

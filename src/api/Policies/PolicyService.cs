@@ -1,26 +1,30 @@
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Policies;
 
-/// <summary>The outcome of a policy change; the endpoint maps it to 200, 400, 404 or 409.</summary>
+/// <summary>The outcome of a policy change; the endpoint maps it to 200, 400, 404, 409 or 422.</summary>
 public enum PolicyChange
 {
     Done,
     Invalid,
     NotFound,
     Conflict,
+
+    /// <summary>The policy cannot apply: an outcome it can produce has no topic label (see <see cref="PolicyService.Unappliable"/>).</summary>
+    Unappliable,
 }
 
 /// <summary>
 /// The owner's decisions on sender policies (DESIGN §6.3): edit, approve, reject, per-rule decisions and delete. Changes
-/// only the database; an approved policy reaches Gmail through the apply job (#359).
+/// only the database; an approved policy reaches Gmail through the <see cref="PolicyApplyJob"/> (#359).
 /// </summary>
-public sealed class PolicyService(AppDbContext db, ISettingsStore settings, TimeProvider time)
+public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJobService jobs, TimeProvider time)
 {
     public const int MaxRuleNameLength = 200;
 
@@ -140,8 +144,75 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, Time
         return (PolicyChange.Done, [], policy.Status == PolicyStatus.Approved);
     }
 
-    /// <summary>A proposed policy becomes approved with every proposed rule; rejected rules stay rejected.</summary>
-    public Task<PolicyChange> ApproveAsync(Guid id, CancellationToken ct) => DecideAsync(id, PolicyStatus.Approved, ct);
+    /// <summary>
+    /// A proposed policy becomes approved with every proposed rule (rejected rules stay rejected), and its
+    /// <see cref="PolicyApplyJob"/> is queued in the same transaction; nothing changes when the approved policy could not apply.
+    /// </summary>
+    public async Task<(PolicyChange Change, Guid? JobId, string? Reason)> ApproveAsync(Guid id, CancellationToken ct)
+    {
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        var change = await DecideAsync(id, PolicyStatus.Approved, ct);
+        if (change != PolicyChange.Done)
+        {
+            return (change, null, null);
+        }
+
+        var policy = await db.SenderPolicies.Include(p => p.Rules).FirstAsync(p => p.Id == id, ct);
+        if (Unappliable(policy) is { } reason)
+        {
+            // Rolled back with the transaction: the policy stays proposed.
+            return (PolicyChange.Unappliable, null, reason);
+        }
+
+        var (job, _) = await EnqueueApplyAsync(id, ct);
+        await tx.CommitAsync(ct);
+        return (change, job.Id, null);
+    }
+
+    /// <summary>
+    /// Re-runs the <see cref="PolicyApplyJob"/> of an approved policy (after an edit); a conflict when the policy is
+    /// not approved or its job is already queued or running.
+    /// </summary>
+    public async Task<(PolicyChange Change, Guid? JobId, string? Reason)> ApplyAsync(Guid id, CancellationToken ct)
+    {
+        var policy = await db.SenderPolicies.AsNoTracking().Include(p => p.Rules).FirstOrDefaultAsync(p => p.Id == id, ct);
+        if (policy is null)
+        {
+            return (PolicyChange.NotFound, null, null);
+        }
+
+        if (policy.Status != PolicyStatus.Approved)
+        {
+            return (PolicyChange.Conflict, null, null);
+        }
+
+        if (Unappliable(policy) is { } reason)
+        {
+            return (PolicyChange.Unappliable, null, reason);
+        }
+
+        var (job, created) = await EnqueueApplyAsync(id, ct);
+        return created ? (PolicyChange.Done, job.Id, null) : (PolicyChange.Conflict, null, null);
+    }
+
+    /// <summary>
+    /// Why an approved policy cannot apply, or null when it can: every approved rule, and the default unless the sender
+    /// is mixed (only a non-mixed sender's default or transactional guard uses it), needs a topic label Gmail accepts,
+    /// because the apply labels every message it touches.
+    /// </summary>
+    public static string? Unappliable(SenderPolicyRow policy)
+    {
+        var rule = policy.Rules.Where(r => r.Status == PolicyStatus.Approved).OrderBy(r => r.Position)
+            .FirstOrDefault(r => !LabelResolver.IsValid(r.TopicLabel));
+        if (rule is not null)
+        {
+            return $"Rule '{rule.Name}' has no usable topic label; set one before applying.";
+        }
+
+        return !policy.IsMixed && !LabelResolver.IsValid(policy.TopicLabel ?? "")
+            ? "The policy's default has no usable topic label; set one before applying."
+            : null;
+    }
 
     /// <summary>A proposed policy becomes rejected; its rules are left as they are.</summary>
     public Task<PolicyChange> RejectAsync(Guid id, CancellationToken ct) => DecideAsync(id, PolicyStatus.Rejected, ct);
@@ -211,6 +282,9 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, Time
         await db.SaveChangesAsync(ct);
         return PolicyChange.Done;
     }
+
+    private Task<(JobDto Job, bool Created)> EnqueueApplyAsync(Guid id, CancellationToken ct) =>
+        jobs.EnqueueAsync(PolicyApplyJob.JobType, PolicyApplyJob.Queue, new PolicyApplyCursor(id), ct, id.ToString());
 
     /// <summary>A trimmed user label path, or null when blank; unknown labels are fine (created on apply).</summary>
     private static string? Label(string? value, string field, Dictionary<string, string[]> errors)

@@ -46,6 +46,20 @@ public sealed class ActionPlannerTests
         plan.Note.ShouldBeNull();
     }
 
+    [Fact]
+    public void Keep_in_inbox_keeps_the_inbox_unless_the_suggestion_was_edited_to_delete()
+    {
+        var keep = Suggestion();
+        keep.KeepInInbox = true;
+        Plan(keep, Message("INBOX")).Remove.ShouldBeEmpty();
+
+        var deleted = Suggestion(toBeDeleted: true);
+        deleted.KeepInInbox = true;
+        var plan = Plan(deleted, Message("INBOX"));
+        plan.Add.ShouldBe(["L1", "L3"]);
+        plan.Remove.ShouldBe(["INBOX"]);
+    }
+
     [Theory]
     [InlineData(false, "STARRED", "starred")]
     [InlineData(false, "IMPORTANT", "important")]
