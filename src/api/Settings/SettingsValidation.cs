@@ -187,10 +187,15 @@ public static class SettingsValidation
     public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
 
     /// <summary>Trims the label names of a validated block; a missing list becomes empty.</summary>
-    public static AppsScriptSettings NormaliseAppsScript(AppsScriptSettings value) => value with
+    public static AppsScriptSettings NormaliseAppsScript(UpdateAppsScriptSettingsRequest value, AppsScriptSettings saved) => new()
     {
         Rules = [.. (value.Rules ?? []).Select(r => r with { Label = r.Label.Trim() })],
+        ActionDoneArchive = value.ActionDoneArchive,
         KeepInInboxLabels = [.. (value.KeepInInboxLabels ?? []).Select(l => l.Trim())],
+        RetentionRules = value.RetentionRules is { } retention
+            ? [.. retention.Select(r => r with { Label = r.Label.Trim() })]
+            : saved.RetentionRules,
+        DryRun = value.DryRun,
     };
 
     /// <summary>The validated domains in their stored form (<see cref="CanonicalDomain"/>), dropping duplicates.</summary>
@@ -242,36 +247,12 @@ public static class SettingsValidation
     }
 
     // A rule's label need not exist in Gmail yet: the script skips missing labels.
-    private static void ValidateAppsScript(Dictionary<string, string[]> errors, AppsScriptSettings request)
+    private static void ValidateAppsScript(Dictionary<string, string[]> errors, UpdateAppsScriptSettingsRequest request)
     {
         // The JSON body can carry nulls the non-nullable annotations don't rule out.
-        var rules = request.Rules ?? [];
         var keep = request.KeepInInboxLabels ?? [];
-        if (rules.Count > MaxAppsScriptRules)
-        {
-            errors["appsScript.rules"] = [$"At most {MaxAppsScriptRules} rules."];
-        }
-        else
-        {
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (var i = 0; i < rules.Count; i++)
-            {
-                var field = $"appsScript.rules[{i}]";
-                if (rules[i] is not { } rule)
-                {
-                    errors[field] = ["Required."];
-                    continue;
-                }
-
-                // The script searches "A B" as "A-B", so the two would be one rule.
-                if (CheckScriptLabelName(errors, $"{field}.label", rule.Label ?? "") && !seen.Add(rule.Label!.Trim().Replace(' ', '-')))
-                {
-                    errors[$"{field}.label"] = ["Each label may have one rule."];
-                }
-
-                CheckRange(errors, $"{field}.days", rule.Days, MinArchiveRuleDays, MaxArchiveRuleDays);
-            }
-        }
+        ValidateScriptRules(errors, "appsScript.rules", request.Rules ?? [], r => (r.Label, r.Days));
+        ValidateScriptRules(errors, "appsScript.retentionRules", request.RetentionRules ?? [], r => (r.Label, r.Days));
 
         if (keep.Count > MaxKeepInInboxLabels)
         {
@@ -282,6 +263,37 @@ public static class SettingsValidation
         for (var i = 0; i < keep.Count; i++)
         {
             CheckScriptLabelName(errors, $"appsScript.keepInInboxLabels[{i}]", keep[i] ?? "");
+        }
+    }
+
+    private static void ValidateScriptRules<TRule>(
+        Dictionary<string, string[]> errors, string prefix, IReadOnlyList<TRule?> rules, Func<TRule, (string? Label, int Days)> parts)
+        where TRule : class
+    {
+        if (rules.Count > MaxAppsScriptRules)
+        {
+            errors[prefix] = [$"At most {MaxAppsScriptRules} rules."];
+            return;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < rules.Count; i++)
+        {
+            var field = $"{prefix}[{i}]";
+            if (rules[i] is not { } entry)
+            {
+                errors[field] = ["Required."];
+                continue;
+            }
+
+            var rule = parts(entry);
+            // The script searches "A B" as "A-B", so the two would be one rule.
+            if (CheckScriptLabelName(errors, $"{field}.label", rule.Label ?? "") && !seen.Add(rule.Label!.Trim().Replace(' ', '-')))
+            {
+                errors[$"{field}.label"] = ["Each label may have one rule."];
+            }
+
+            CheckRange(errors, $"{field}.days", rule.Days, MinArchiveRuleDays, MaxArchiveRuleDays);
         }
     }
 

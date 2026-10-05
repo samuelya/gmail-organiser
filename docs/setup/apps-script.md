@@ -39,7 +39,7 @@ No Google Cloud project is needed; this is separate from the portal's OAuth clie
 
    ```js
    const CONFIG = {
-     scriptVersion: 1,
+     scriptVersion: 2,
      labelRules: [
        { label: "Example/Newsletters", days: 30 },
      ],

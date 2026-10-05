@@ -52,10 +52,11 @@ public sealed class SenderAllowlist(AppDbContext db, TimeProvider time)
         {
             // One atomic upsert: a concurrent request or fetch chunk inserting the same address cannot make it fail.
             var domain = new SenderAddress(address, null).Domain;
+            var canonical = RelayAddressDecoder.Decode(address);
             await db.Database.ExecuteSqlAsync(
                 $"""
-                INSERT INTO senders (address, domain, display_name, total_count, analysed_count, applied_count, last_seen_at, allowlisted, updated_at)
-                VALUES ({address}, {domain}, NULL, 0, 0, 0, NULL, TRUE, {now})
+                INSERT INTO senders (address, domain, canonical_address, canonical_domain, is_relay, display_name, total_count, analysed_count, applied_count, last_seen_at, allowlisted, updated_at)
+                VALUES ({address}, {domain}, {canonical.CanonicalAddress}, {canonical.CanonicalDomain}, {canonical.IsRelay}, NULL, 0, 0, 0, NULL, TRUE, {now})
                 ON CONFLICT (address) DO UPDATE SET allowlisted = TRUE, updated_at = EXCLUDED.updated_at
                 """,
                 ct);

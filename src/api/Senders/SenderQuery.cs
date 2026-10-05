@@ -113,7 +113,10 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
             || j.Target.Equals(s.Domain, StringComparison.OrdinalIgnoreCase)).Job,
         s.UnsubscribedAt);
 
-    /// <summary>Senders whose address, domain or display name contains <paramref name="search"/> (all when null).</summary>
+    /// <summary>
+    /// Senders whose address, domain, canonical address or domain, or display name contains <paramref name="search"/>
+    /// (all when null).
+    /// </summary>
     public static IQueryable<SenderRow> Filter(IQueryable<SenderRow> senders, string? search)
     {
         if (search is null)
@@ -125,6 +128,8 @@ public sealed record SenderQuery(string? Search, int Page, int PageSize, SenderS
         return senders.Where(s =>
             EF.Functions.ILike(s.Address, pattern, LikeEscape.ToString())
             || EF.Functions.ILike(s.Domain, pattern, LikeEscape.ToString())
+            || EF.Functions.ILike(s.CanonicalAddress, pattern, LikeEscape.ToString())
+            || EF.Functions.ILike(s.CanonicalDomain, pattern, LikeEscape.ToString())
             || (s.DisplayName != null && EF.Functions.ILike(s.DisplayName, pattern, LikeEscape.ToString())));
     }
 

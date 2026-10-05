@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
+using GmailOrganiser.Senders;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 
@@ -51,7 +52,8 @@ public sealed class FakeGmailClientTests
         var client = new FakeGmailClient(new FakeTokenStore(TimeProvider.System), TimeProvider.System);
 
         client.Messages.Select(m => m.From).Distinct().Count().ShouldBeGreaterThan(1);
-        client.Messages.ShouldAllBe(m => GmailMetadataMapper.ParseFrom(m.From).Domain.EndsWith("example.com"));
+        // The relay addresses stand for an example.com sender.
+        client.Messages.ShouldAllBe(m => RelayAddressDecoder.Decode(GmailMetadataMapper.ParseFrom(m.From).Address).CanonicalDomain.EndsWith("example.com"));
         client.Messages.Select(m => m.Id).ShouldBeUnique();
     }
 
@@ -82,7 +84,7 @@ public sealed class FakeGmailClientTests
         var messages = FakeGmailClient.Seed(Now);
 
         messages.Count.ShouldBe(FakeMailboxSeed.MessageCount);
-        messages.Where(m => !m.LabelIds.Contains("SENT")).Select(m => GmailMetadataMapper.ParseFrom(m.From).Address).Distinct().Count().ShouldBe(8);
+        messages.Where(m => !m.LabelIds.Contains("SENT")).Select(m => GmailMetadataMapper.ParseFrom(m.From).Address).Distinct().Count().ShouldBe(8 + FakeMailboxSeed.RelayAddresses.Length);
         messages.Where(m => m.ThreadId == FakeMailboxSeed.RepliedThreadId).Select(m => m.LabelIds.Contains("SENT")).ShouldBe([false, true], ignoreOrder: true);
         messages.ShouldContain(m => m.LabelIds.SequenceEqual(new[] { "INBOX" }));
         messages.ShouldContain(m => !m.LabelIds.Contains("INBOX"));
@@ -170,7 +172,7 @@ public sealed class FakeGmailClientTests
     {
         var messages = FakeGmailClient.Seed(Now);
 
-        messages.Where(FakeGmailQuery.Parse("from:@example.com")).Count().ShouldBe(messages.Count);
+        messages.Where(FakeGmailQuery.Parse("from:@example.com")).Count().ShouldBe(messages.Count - FakeMailboxSeed.RelayAddresses.Length);
         messages.Where(FakeGmailQuery.Parse("from:@travel.example.com")).ShouldAllBe(m => m.From.Contains("travel.example.com"));
         messages.Where(FakeGmailQuery.Parse("has:attachment")).ShouldAllBe(m => m.HasAttachment);
         messages.Where(FakeGmailQuery.Parse("in:inbox")).ShouldAllBe(m => m.LabelIds.Contains("INBOX"));
