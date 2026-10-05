@@ -26,6 +26,8 @@ import { SettingsService } from '../settings/settings.service';
 import {
   activeRunView,
   AnalysisRunDto,
+  canResume,
+  modelCountersText,
   requestedText,
   runTarget,
   savingsText,
@@ -35,8 +37,9 @@ import {
 import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compare-run';
 
 /**
- * Active runs with live progress and Cancel, then the finished runs with their counters, savings, model usage and,
- * for top senders runs, the policies proposed.
+ * Active runs with live progress and Cancel (a stalled one with Resume), then the finished runs, optionally only the
+ * failed ones, with their counters, savings, model usage, error and Resume and, for top senders runs, the policies
+ * proposed.
  */
 @Component({
   selector: 'app-run-list',
@@ -60,27 +63,53 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
               {{ target(v.run) }} · {{ requested(v.run) }}
             </span>
             <mat-chip-set>
-              <mat-chip disableRipple data-testid="run-status">{{ label(v.status) }}</mat-chip>
+              @if (v.run.isStalled) {
+                <mat-chip
+                  disableRipple
+                  class="failed"
+                  matTooltip="No job is running this run any more. Resume continues it."
+                  data-testid="run-stalled"
+                >
+                  Stalled
+                </mat-chip>
+              } @else {
+                <mat-chip disableRipple data-testid="run-status">{{ label(v.status) }}</mat-chip>
+              }
             </mat-chip-set>
-            <button
-              mat-button
-              type="button"
-              (click)="cancelRun.emit(v.run)"
-              [disabled]="cancelling().has(v.run.id)"
-              [attr.aria-label]="'Cancel run ' + target(v.run)"
-              data-testid="cancel-run"
-            >
-              {{ cancelling().has(v.run.id) ? 'Cancelling…' : 'Cancel' }}
-            </button>
+            @if (v.run.isStalled) {
+              <button
+                mat-button
+                type="button"
+                (click)="resumeRun.emit(v.run)"
+                [disabled]="resuming().has(v.run.id)"
+                [attr.aria-label]="'Resume run ' + target(v.run)"
+                data-testid="resume-run"
+              >
+                {{ resuming().has(v.run.id) ? 'Resuming…' : 'Resume' }}
+              </button>
+            } @else {
+              <button
+                mat-button
+                type="button"
+                (click)="cancelRun.emit(v.run)"
+                [disabled]="cancelling().has(v.run.id)"
+                [attr.aria-label]="'Cancel run ' + target(v.run)"
+                data-testid="cancel-run"
+              >
+                {{ cancelling().has(v.run.id) ? 'Cancelling…' : 'Cancel' }}
+              </button>
+            }
           </div>
-          <mat-progress-bar
-            [mode]="v.percent === null ? 'indeterminate' : 'determinate'"
-            [value]="v.percent ?? 0"
-            [attr.aria-label]="'Progress of ' + target(v.run)"
-            data-testid="run-progress"
-          />
-          @if (v.progress?.message; as message) {
-            <span class="muted text-sm" data-testid="run-message">{{ message }}</span>
+          @if (!v.run.isStalled) {
+            <mat-progress-bar
+              [mode]="v.percent === null ? 'indeterminate' : 'determinate'"
+              [value]="v.percent ?? 0"
+              [attr.aria-label]="'Progress of ' + target(v.run)"
+              data-testid="run-progress"
+            />
+            @if (v.progress?.message; as message) {
+              <span class="muted text-sm" data-testid="run-message">{{ message }}</span>
+            }
           }
         </div>
       } @empty {
@@ -89,7 +118,18 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
     </section>
 
     <section class="mt-6 flex flex-col gap-3" aria-labelledby="runs-finished">
-      <h2 id="runs-finished" class="card-title">Recent runs</h2>
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 id="runs-finished" class="card-title flex-1">Recent runs</h2>
+        <mat-chip-listbox aria-label="Filter recent runs by status">
+          <mat-chip-option
+            [selected]="failedOnly()"
+            (selectionChange)="failedOnlyChange.emit($event.selected)"
+            data-testid="filter-failed"
+          >
+            Failed
+          </mat-chip-option>
+        </mat-chip-listbox>
+      </div>
       @for (run of finished(); track run.id) {
         <div class="run flex flex-col gap-1 pt-3" data-testid="finished-run">
           <div class="flex flex-wrap items-center gap-2">
@@ -99,6 +139,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
               <mat-chip
                 disableRipple
                 [class.failed]="run.status === 'failed'"
+                [matTooltip]="run.status === 'failed' ? (run.error ?? '') : ''"
                 data-testid="run-status"
               >
                 {{ label(run.status) }}
@@ -107,6 +148,18 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
           </div>
           <div class="flex flex-wrap items-center gap-2">
             <span class="min-w-0 flex-1" data-testid="run-savings">{{ savings(run) }}</span>
+            @if (resumable(run)) {
+              <button
+                mat-button
+                type="button"
+                (click)="resumeRun.emit(run)"
+                [disabled]="resuming().has(run.id)"
+                [attr.aria-label]="'Resume run ' + target(run)"
+                data-testid="resume-run"
+              >
+                {{ resuming().has(run.id) ? 'Resuming…' : 'Resume' }}
+              </button>
+            }
             @if (run.policiesProposed > 0) {
               <a
                 mat-button
@@ -160,6 +213,9 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
               </span>
             }
           </span>
+          @if (counters(run); as c) {
+            <span class="muted text-sm" data-testid="run-counters">{{ c }}</span>
+          }
           @if (usage(run); as u) {
             <span class="muted flex flex-wrap items-center gap-1 text-sm" data-testid="run-usage">
               {{ u }}
@@ -177,13 +233,32 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
             </span>
           }
           @if (run.error) {
-            <span class="error flex items-center gap-1 text-sm" role="note" data-testid="run-error">
-              <mat-icon aria-hidden="true">error</mat-icon>{{ run.error }}
-            </span>
+            <div class="error flex items-start gap-1 text-sm" role="note">
+              <mat-icon aria-hidden="true">error</mat-icon>
+              <span
+                class="min-w-0 flex-1 break-words"
+                [class.truncate]="!expanded().has(run.id)"
+                [id]="'run-error-' + run.id"
+                data-testid="run-error"
+                >{{ run.error }}</span
+              >
+              <button
+                mat-button
+                type="button"
+                (click)="toggleError(run.id)"
+                [attr.aria-expanded]="expanded().has(run.id)"
+                [attr.aria-controls]="'run-error-' + run.id"
+                data-testid="run-error-toggle"
+              >
+                {{ expanded().has(run.id) ? 'Less' : 'More' }}
+              </button>
+            </div>
           }
         </div>
       } @empty {
-        <p class="muted m-0" data-testid="no-finished-runs">No finished runs yet.</p>
+        <p class="muted m-0" data-testid="no-finished-runs">
+          {{ failedOnly() ? 'No failed runs.' : 'No finished runs yet.' }}
+        </p>
       }
     </section>
   `,
@@ -232,6 +307,15 @@ export class RunList {
   /** Run ids whose cancel request is in flight or waiting for the run to stop. */
   readonly cancelling = input<ReadonlySet<string>>(new Set());
   readonly cancelRun = output<AnalysisRunDto>();
+  /** Run ids whose resume request is in flight. */
+  readonly resuming = input<ReadonlySet<string>>(new Set());
+  /** "Resume" on a failed or stalled run. */
+  readonly resumeRun = output<AnalysisRunDto>();
+  /** The "Failed" filter chip: the page lists only failed finished runs. */
+  readonly failedOnly = input(false);
+  readonly failedOnlyChange = output<boolean>();
+  /** Run ids whose error line is expanded. */
+  readonly expanded = signal<ReadonlySet<string>>(new Set());
   /** An analysis run is queued or running: no re-analysis can start. */
   readonly runActive = input(false);
   /** "Re-analyse" on a finished run: the page confirms and starts a re-analysis of it. */
@@ -274,6 +358,22 @@ export class RunList {
         next: (r) => this.snackBar.open(sentMessage(r), 'Dismiss', { duration: 4000 }),
         error: () => undefined,
       });
+  }
+
+  toggleError(id: string): void {
+    this.expanded.update((e) => {
+      const next = new Set(e);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  resumable(run: AnalysisRunDto): boolean {
+    return canResume(run);
+  }
+
+  counters(run: AnalysisRunDto): string | null {
+    return modelCountersText(run);
   }
 
   target(run: AnalysisRunDto): string {

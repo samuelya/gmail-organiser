@@ -48,6 +48,11 @@ export const run = (over: Partial<AnalysisRunDto> = {}): AnalysisRunDto => ({
   llmSeconds: 0,
   nearContextLimit: 0,
   policiesProposed: 0,
+  triageCalls: 0,
+  escalatedCalls: 0,
+  isStalled: false,
+  packedMessages: 0,
+  packRetries: 0,
   ...over,
 });
 

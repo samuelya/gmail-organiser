@@ -84,6 +84,43 @@ export interface AnalysisRunDto {
   nearContextLimit: number;
   /** Sender policies a top senders run stored as proposed. */
   policiesProposed: number;
+  /** Calls to the triage model; `escalatedCalls` of them were repeated with the chat model. */
+  triageCalls: number;
+  escalatedCalls: number;
+  /** Queued or running, but no job is behind it any more: it can only be resumed. */
+  isStalled: boolean;
+  /** Emails sent in a pack of one-off senders; `packRetries` of them were asked again on their own. */
+  packedMessages: number;
+  packRetries: number;
+}
+
+/** The run's state badge: a stalled or failed run is the one the user can resume. */
+export type RunBadge = 'stalled' | 'failed';
+
+export function runBadge(run: Pick<AnalysisRunDto, 'status' | 'isStalled'>): RunBadge | null {
+  if (run.isStalled) return 'stalled';
+  return run.status === 'failed' ? 'failed' : null;
+}
+
+/** `POST /runs/{id}/resume` takes only a failed or stalled run. */
+export function canResume(run: Pick<AnalysisRunDto, 'status' | 'isStalled'>): boolean {
+  return runBadge(run) !== null;
+}
+
+/** Triage, escalated, packed and pack retry counts that are not zero, or `null` when all are. */
+export function modelCountersText(
+  run: Pick<AnalysisRunDto, 'triageCalls' | 'escalatedCalls' | 'packedMessages' | 'packRetries'>,
+): string | null {
+  const parts = [
+    [run.triageCalls, 'triage call', 'triage calls'],
+    [run.escalatedCalls, 'escalated', 'escalated'],
+    [run.packedMessages, 'packed', 'packed'],
+    [run.packRetries, 'pack retry', 'pack retries'],
+  ] as const;
+  const text = parts
+    .filter(([n]) => n > 0)
+    .map(([n, one, many]) => `${n.toLocaleString()} ${n === 1 ? one : many}`);
+  return text.length ? text.join(' · ') : null;
 }
 
 /** `AnalysisSummaryDto` from `GET /api/analysis/summary`. */
