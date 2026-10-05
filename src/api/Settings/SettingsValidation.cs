@@ -167,6 +167,11 @@ public static class SettingsValidation
             ValidateAppsScript(errors, appsScript);
         }
 
+        if (request.Retention is { } retention)
+        {
+            UpdateRetentionSettingsRequest.Validate(errors, retention);
+        }
+
         if (request.Protection?.AllowlistedDomains is { } domains)
         {
             ValidateAllowlistedDomains(errors, domains);

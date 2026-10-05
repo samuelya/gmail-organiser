@@ -44,7 +44,8 @@ public sealed record SettingsDto(
     int TaxonomyMaxLabels,
     bool TaxonomyLocked,
     int AnalysisMaxNewLabelsPerRun,
-    IReadOnlyList<string> AnalysisBlockedLabels)
+    IReadOnlyList<string> AnalysisBlockedLabels,
+    RetentionSettingsDto Retention)
 {
     /// <param name="claudeTokenSet">Whether <c>CLAUDE_CODE_OAUTH_TOKEN</c> is set; the token itself is never returned.</param>
     public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet) => new(
@@ -91,7 +92,8 @@ public sealed record SettingsDto(
         s.TaxonomyMaxLabels,
         s.TaxonomyLocked,
         s.AnalysisMaxNewLabelsPerRun,
-        s.AnalysisBlockedLabels);
+        s.AnalysisBlockedLabels,
+        RetentionSettingsDto.From(s.Retention));
 }
 
 /// <summary>Never carries the secret itself.</summary>
@@ -144,7 +146,8 @@ public sealed record UpdateSettingsRequest(
     int? TaxonomyMaxLabels = null,
     bool? TaxonomyLocked = null,
     int? AnalysisMaxNewLabelsPerRun = null,
-    IReadOnlyList<string?>? AnalysisBlockedLabels = null);
+    IReadOnlyList<string?>? AnalysisBlockedLabels = null,
+    UpdateRetentionSettingsRequest? Retention = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>

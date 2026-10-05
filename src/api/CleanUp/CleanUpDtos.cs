@@ -6,6 +6,13 @@ namespace GmailOrganiser.CleanUp;
 /// <param name="Protected">Of <paramref name="Messages"/>, those Delete skips unless asked to include them.</param>
 public sealed record CleanupSummaryDto(int Messages, int Senders, int Protected);
 
+/// <summary>The retention sweep (#368).</summary>
+/// <param name="LastRunAt">When the newest sweep was queued; null when none ever was.</param>
+/// <param name="LastMarked">Messages that sweep marked so far; null when none ran.</param>
+/// <param name="NextDueAt">When the scheduler queues the next sweep (it checks hourly); null while retention is off.</param>
+/// <param name="EligibleNow">At most how many messages a sweep would mark now: protected, transactional and kept-by-policy mail is not subtracted.</param>
+public sealed record RetentionStatusDto(bool Enabled, DateTimeOffset? LastRunAt, int? LastMarked, DateTimeOffset? NextDueAt, int EligibleNow);
+
 /// <param name="Allowlisted">The address itself is allowlisted (#178).</param>
 /// <param name="AllowlistedByDomain">The sender's domain, or a parent domain, is in <c>protection.allowlistedDomains</c> (#203).</param>
 public sealed record CleanupSenderDto(
