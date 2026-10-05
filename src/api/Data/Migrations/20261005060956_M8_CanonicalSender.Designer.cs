@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261005060629_M8_CanonicalSender")]
+    [Migration("20261005060956_M8_CanonicalSender")]
     partial class M8_CanonicalSender
     {
         /// <inheritdoc />
@@ -1426,6 +1426,18 @@ namespace GmailOrganiser.Data.Migrations
 
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "Address" }, "ix_senders_address_trgm"), "gin");
                     NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "Address" }, "ix_senders_address_trgm"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex(new[] { "CanonicalAddress" }, "ix_senders_canonical_address_trgm")
+                        .HasDatabaseName("ix_senders_canonical_address_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "CanonicalAddress" }, "ix_senders_canonical_address_trgm"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "CanonicalAddress" }, "ix_senders_canonical_address_trgm"), new[] { "gin_trgm_ops" });
+
+                    b.HasIndex(new[] { "CanonicalDomain" }, "ix_senders_canonical_domain_trgm")
+                        .HasDatabaseName("ix_senders_canonical_domain_trgm");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex(new[] { "CanonicalDomain" }, "ix_senders_canonical_domain_trgm"), "gin");
+                    NpgsqlIndexBuilderExtensions.HasOperators(b.HasIndex(new[] { "CanonicalDomain" }, "ix_senders_canonical_domain_trgm"), new[] { "gin_trgm_ops" });
 
                     b.HasIndex(new[] { "DisplayName" }, "ix_senders_display_name_trgm")
                         .HasDatabaseName("ix_senders_display_name_trgm");

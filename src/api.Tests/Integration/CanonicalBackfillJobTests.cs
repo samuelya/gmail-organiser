@@ -62,8 +62,8 @@ public sealed class CanonicalBackfillJobTests(ApiFactory factory, PostgresFixtur
         await RunNextAsync();
 
         await using var db = postgres.CreateDbContext();
-        var shop = await db.Senders.Where(s => s.CanonicalAddress == Shop).OrderBy(s => s.Address).ToListAsync(Ct);
-        shop.Select(s => s.Address).ShouldBe([.. FakeMailboxSeed.RelayAddresses.Append(Shop).Order(StringComparer.Ordinal)]);
+        var shop = await db.Senders.Where(s => s.CanonicalAddress == Shop).ToListAsync(Ct);
+        shop.Select(s => s.Address).ShouldBe(FakeMailboxSeed.RelayAddresses.Append(Shop), ignoreOrder: true);
         shop.ShouldAllBe(s => s.CanonicalDomain == "shop.example.com");
         shop.Count(s => s.IsRelay).ShouldBe(FakeMailboxSeed.RelayAddresses.Length);
         (await db.Messages.CountAsync(m => FakeMailboxSeed.RelayAddresses.Contains(m.FromAddress) && m.CanonicalAddress == Shop, Ct))

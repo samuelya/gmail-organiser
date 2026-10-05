@@ -55,9 +55,23 @@ namespace GmailOrganiser.Data.Migrations
                 column: "canonical_address");
 
             migrationBuilder.CreateIndex(
+                name: "ix_senders_canonical_address_trgm",
+                table: "senders",
+                column: "canonical_address")
+                .Annotation("Npgsql:IndexMethod", "gin")
+                .Annotation("Npgsql:IndexOperators", new[] { "gin_trgm_ops" });
+
+            migrationBuilder.CreateIndex(
                 name: "ix_senders_canonical_domain",
                 table: "senders",
                 column: "canonical_domain");
+
+            migrationBuilder.CreateIndex(
+                name: "ix_senders_canonical_domain_trgm",
+                table: "senders",
+                column: "canonical_domain")
+                .Annotation("Npgsql:IndexMethod", "gin")
+                .Annotation("Npgsql:IndexOperators", new[] { "gin_trgm_ops" });
 
             migrationBuilder.CreateIndex(
                 name: "ix_messages_canonical_address",
@@ -73,7 +87,15 @@ namespace GmailOrganiser.Data.Migrations
                 table: "senders");
 
             migrationBuilder.DropIndex(
+                name: "ix_senders_canonical_address_trgm",
+                table: "senders");
+
+            migrationBuilder.DropIndex(
                 name: "ix_senders_canonical_domain",
+                table: "senders");
+
+            migrationBuilder.DropIndex(
+                name: "ix_senders_canonical_domain_trgm",
                 table: "senders");
 
             migrationBuilder.DropIndex(

@@ -112,6 +112,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             // Trigram indexes for SenderQuery's ILIKE '%term%' search (a leading wildcard can't use a B-tree).
             e.HasIndex(r => r.Address, "ix_senders_address_trgm").HasDatabaseName("ix_senders_address_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
             e.HasIndex(r => r.Domain, "ix_senders_domain_trgm").HasDatabaseName("ix_senders_domain_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+            e.HasIndex(r => r.CanonicalAddress, "ix_senders_canonical_address_trgm").HasDatabaseName("ix_senders_canonical_address_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
+            e.HasIndex(r => r.CanonicalDomain, "ix_senders_canonical_domain_trgm").HasDatabaseName("ix_senders_canonical_domain_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
             e.HasIndex(r => r.DisplayName, "ix_senders_display_name_trgm").HasDatabaseName("ix_senders_display_name_trgm").HasMethod("gin").HasOperators("gin_trgm_ops");
         });
 
