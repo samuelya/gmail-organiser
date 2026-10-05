@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261005115312_M8_SuggestionMailType")]
+    [Migration("20261005121251_M8_SuggestionMailType")]
     partial class M8_SuggestionMailType
     {
         /// <inheritdoc />
@@ -611,6 +611,65 @@ namespace GmailOrganiser.Data.Migrations
                         .HasFilter("target_type = 'suggestion' AND (status IN ('queued', 'running') OR (status = 'reviewed' AND resolution = 'none'))");
 
                     b.ToTable("external_reviews", (string)null);
+                });
+
+            modelBuilder.Entity("GmailOrganiser.Dashboard.MetricSnapshotRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Analysed")
+                        .HasColumnType("integer")
+                        .HasColumnName("analysed");
+
+                    b.Property<int>("Applied")
+                        .HasColumnType("integer")
+                        .HasColumnName("applied");
+
+                    b.Property<int>("CoveredByFilter")
+                        .HasColumnType("integer")
+                        .HasColumnName("covered_by_filter");
+
+                    b.Property<int>("CoveredByPolicy")
+                        .HasColumnType("integer")
+                        .HasColumnName("covered_by_policy");
+
+                    b.Property<int>("InboxCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("inbox_count");
+
+                    b.Property<int>("InboxUnreadCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("inbox_unread_count");
+
+                    b.Property<long>("LlmMillisecondsTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("llm_milliseconds_total");
+
+                    b.Property<int>("MessagesTotal")
+                        .HasColumnType("integer")
+                        .HasColumnName("messages_total");
+
+                    b.Property<long>("PromptTokensTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("prompt_tokens_total");
+
+                    b.Property<DateTimeOffset>("TakenAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("taken_at");
+
+                    b.Property<int>("ToBeDeleted")
+                        .HasColumnType("integer")
+                        .HasColumnName("to_be_deleted");
+
+                    b.HasKey("Id")
+                        .HasName("pk_metric_snapshots");
+
+                    b.HasIndex("TakenAt")
+                        .HasDatabaseName("ix_metric_snapshots_taken_at");
+
+                    b.ToTable("metric_snapshots", (string)null);
                 });
 
             modelBuilder.Entity("GmailOrganiser.Fetch.FetchRunMessageRow", b =>
