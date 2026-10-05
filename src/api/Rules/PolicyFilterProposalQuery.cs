@@ -29,8 +29,8 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     private const string SkipsNote = "Skips the inbox: an exact sender policy that leaves the inbox; transactional mail (attachments, keywords) stays for the portal";
     private const string DeleteLabelNote = "Doesn't add the delete label: the portal marks mail for deletion, with its protections";
 
-    /// <summary>Every policy proposal, most messages first.</summary>
-    public async Task<IReadOnlyList<FilterProposalDto>> ListAsync(CancellationToken ct)
+    /// <summary>Every policy proposal, most messages first; <paramref name="includeCovered"/> (the filter review, #374) keeps those an active filter equals and merges only within a policy.</summary>
+    public async Task<IReadOnlyList<FilterProposalDto>> ListAsync(CancellationToken ct, bool includeCovered = false)
     {
         var policies = await db.SenderPolicies.AsNoTracking().Include(p => p.Rules)
             .Where(p => p.Status == PolicyStatus.Approved)
@@ -98,11 +98,12 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         }
 
         // An active filter covers a unit, or a merged proposal, only with the same criteria.
-        units.RemoveAll(u => active.Contains(Normalised(new GmailFilterCriteria(From: u.From.Count > 0 ? string.Join(" OR ", u.From) : null, Query: u.Query))));
+        bool Covered(string? from, string? query) => !includeCovered && active.Contains(Normalised(new GmailFilterCriteria(From: from, Query: query)));
+        units.RemoveAll(u => Covered(u.From.Count > 0 ? string.Join(" OR ", u.From) : null, u.Query));
         return
         [
-            .. Merge(units)
-                .Where(p => !active.Contains(Normalised(new GmailFilterCriteria(From: p.Suggested.Criteria.From, Query: p.Suggested.Criteria.Query))))
+            .. Merge(units, perPolicy: includeCovered)
+                .Where(p => !Covered(p.Suggested.Criteria.From, p.Suggested.Criteria.Query))
                 .OrderByDescending(p => p.MessageCount).ThenBy(p => p.SenderAddress, StringComparer.Ordinal),
         ];
     }
@@ -113,12 +114,25 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     /// </summary>
     private static string Normalised(GmailFilterCriteria criteria)
     {
+        var (from, tokens) = CriteriaTerms(criteria);
+        return string.Join(' ', from) + "|" + string.Join(' ', tokens);
+    }
+
+    /// <summary>
+    /// The distinct, sorted <see cref="Normalised"/> parts of a criteria: its <c>from</c> terms and query tokens. The
+    /// <c>query</c> is tokenised as written, so each of a proposal's terms (<c>-from:a -from:b -has:attachment</c>) is its
+    /// own token; the other fields go through <see cref="FilterCriteriaMapping.ToQuery"/>, where a multi-word value is one
+    /// parenthesised token because that is one condition.
+    /// </summary>
+    public static (IReadOnlyList<string> From, IReadOnlyList<string> Tokens) CriteriaTerms(GmailFilterCriteria criteria)
+    {
+        ArgumentNullException.ThrowIfNull(criteria);
         IReadOnlyList<string> from = criteria.From is { } f ? FilterCriteriaMapping.FromTerms(f) ?? [f.Trim().ToLowerInvariant()] : [];
-        var tokens = QueryToken().Matches(FilterCriteriaMapping.ToQuery(criteria with { From = null }))
+        var tokens = QueryToken().Matches(FilterCriteriaMapping.ToQuery(criteria with { From = null, Query = null }))
+            .Concat(QueryToken().Matches(criteria.Query ?? ""))
             .Select(m => m.Value.ToLowerInvariant())
             .Select(t => t.StartsWith("list:", StringComparison.Ordinal) || t.StartsWith("-list:", StringComparison.Ordinal) ? t.Replace("<", "").Replace(">", "") : t);
-        return string.Join(' ', from.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal))
-            + "|" + string.Join(' ', tokens.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));
+        return ([.. from.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)], [.. tokens.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)]);
     }
 
     /// <summary>
@@ -315,9 +329,10 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
 
     /// <summary>
     /// Units with the same query and action become one <c>from:(a OR b)</c> per run of terms that fits
-    /// <see cref="FilterCriteriaLimits"/>; a partial unit keeps its own filter so its note stays its own.
+    /// <see cref="FilterCriteriaLimits"/>; a partial unit keeps its own filter so its note stays its own. <paramref name="perPolicy"/>
+    /// merges only within a policy, so the filter review attributes each proposal to the one policy it covers (#374).
     /// </summary>
-    private static IEnumerable<FilterProposalDto> Merge(List<Unit> units)
+    private static IEnumerable<FilterProposalDto> Merge(List<Unit> units, bool perPolicy)
     {
         // A proposal's key is its first unit's policy or rule, numbered when that unit's terms span several chunks.
         var keys = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -330,7 +345,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
 
         foreach (var group in units.GroupBy(u => (
             u.Query, string.Join('\n', u.Action.AddLabelNames ?? []), u.Action.SkipInbox, u.Pattern.NeedsAction, u.From.Count == 0,
-            Own: u.Partial ? (u.Policy.Id, u.Rule?.Id) : default)))
+            Own: u.Partial ? (u.Policy.Id, u.Rule?.Id) : default, Policy: perPolicy ? u.Policy.Id : default)))
         {
             var members = group.ToList();
             if (members[0].From.Count == 0)

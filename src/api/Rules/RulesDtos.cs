@@ -124,6 +124,7 @@ public sealed record FilterReviewDto(
 /// <param name="Filters">The rows of <paramref name="FilterIds"/>, deleted ones included.</param>
 /// <param name="Error">Why the last apply stopped; the finding stays open.</param>
 /// <param name="ReviewId">The review that found it; another review's id marks a half-applied finding carried over.</param>
+/// <param name="PolicyId">The sender policy an <c>overlaps_policy</c> or <c>policy_conflict</c> finding refers to.</param>
 public sealed record FilterFindingDto(
     Guid Id,
     FilterFindingKind Kind,
@@ -134,7 +135,8 @@ public sealed record FilterFindingDto(
     FilterFindingStatus Status,
     DateTimeOffset? AppliedAt,
     string? Error,
-    Guid ReviewId);
+    Guid ReviewId,
+    Guid? PolicyId = null);
 
 /// <summary>Apply creates <paramref name="Create"/> (if any) first, then deletes <paramref name="DeleteFilterIds"/>.</summary>
 public sealed record FilterFixDto(FilterFixKind Kind, IReadOnlyList<string> DeleteFilterIds, FilterFixCreateDto? Create);

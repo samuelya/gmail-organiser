@@ -1,11 +1,12 @@
 using System.Globalization;
 using GmailOrganiser.Gmail;
+using GmailOrganiser.Review;
 using GmailOrganiser.Rules;
 using GmailOrganiser.Rules.Review;
 
 namespace GmailOrganiser.Tests.Unit.Rules;
 
-public sealed class FilterChecksTests
+public sealed partial class FilterChecksTests
 {
     private static readonly DateTimeOffset Seen = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
@@ -212,6 +213,156 @@ public sealed class FilterChecksTests
         FilterChecks.FromOnlyTerms(new(From: "not an address")).ShouldBeNull();
         FilterChecks.FromOnlyTerms(new(Subject: "x")).ShouldBeNull();
     }
+
+    [Fact]
+    public void A_filter_is_within_a_domain_proposal_only_for_senders_it_does_not_exclude_and_without_an_or_query()
+    {
+        var policy = Guid.NewGuid();
+        var proposal = new FilterProposalDto(
+            "example.com", null, 1, null, new SenderPatternDto("Synthetic/Shop", false, false, 0, 1, 0, null),
+            new FilterSuggestionDto(
+                new FilterCriteriaDto("@example.com", null, null, "-from:own@example.com", null, null, null, null, null),
+                new FilterActionRequest(["Synthetic/Shop"], false, false)),
+            "policy:1", FilterProposalSources.Policy, policy);
+        var label = new GmailFilterAction(["Label_1"], []);
+        FilterRow[] rows =
+        [
+            Row("in", new(From: "one@example.com"), label),
+            Row("sub", new(From: "two@news.example.com"), new(["Label_2"], [])),
+            Row("narrowed", new(From: "two@news.example.com", Subject: "Weekly"), new(["Label_2"], [])),
+            Row("excluded", new(From: "own@example.com"), label),
+            Row("wider", new(From: "three@example.com", Query: "a OR b"), label),
+            Row("other", new(From: "one@example.org"), new(["Label_2"], [])),
+        ];
+
+        var findings = FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal])
+            .Where(f => f.Kind is FilterFindingKind.OverlapsPolicy or FilterFindingKind.PolicyConflict).ToList();
+
+        findings.Select(f => (f.Kind, string.Join(',', f.FilterIds), f.Fix.PolicyId))
+            .ShouldBe([(FilterFindingKind.PolicyConflict, "sub", policy), (FilterFindingKind.OverlapsPolicy, "in", policy)]);
+        findings.ShouldAllBe(f => f.Fix.Create!.Criteria.From == "@example.com" && f.Fix.Create.Action.AddLabelIds.SequenceEqual(new[] { "Label_1" }));
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal with { Suggested = proposal.Suggested with { Action = new(["Synthetic/Missing"], false, false) } }])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
+    }
+
+    [Fact]
+    public void A_filter_whose_from_is_not_only_addresses_and_domains_is_never_within_a_proposal()
+    {
+        var proposal = new FilterProposalDto(
+            "example.com", null, 1, null, new SenderPatternDto("Synthetic/Shop", false, false, 0, 1, 0, null),
+            new FilterSuggestionDto(
+                new FilterCriteriaDto("@example.com", null, null, null, null, null, null, null, null),
+                new FilterActionRequest(["Synthetic/Shop"], false, false)),
+            "policy:1", FilterProposalSources.Policy, Guid.NewGuid());
+        FilterRow[] rows =
+        [
+            Row("named", new(From: "Synthetic Name OR two@example.com"), new(["Label_1"], [])),
+            Row("named-other", new(From: "Synthetic OR two@example.com"), new(["Label_2"], [])),
+        ];
+
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
+    }
+
+    [Theory]
+    [InlineData("-own@example.com", null)]
+    [InlineData("one@example.com OR -two@example.com", null)]
+    [InlineData("-@news.example.com", null)]
+    [InlineData("to:one@example.com", null)]
+    [InlineData("one@example.com", "--from:own@example.com")]
+    [InlineData("one@example.com", "-from:own@example.com -(a (b))")]
+    public void A_filter_with_a_negation_or_operator_in_its_from_or_query_is_never_within_a_proposal(string from, string? query)
+    {
+        var proposal = new FilterProposalDto(
+            "example.com", null, 1, null, new SenderPatternDto("Synthetic/Shop", false, false, 0, 1, 0, null),
+            new FilterSuggestionDto(
+                new FilterCriteriaDto("@example.com", null, null, "-from:own@example.com", null, null, null, null, null),
+                new FilterActionRequest(["Synthetic/Shop"], false, false)),
+            "policy:1", FilterProposalSources.Policy, Guid.NewGuid());
+        FilterRow[] rows =
+        [
+            Row("same", new(From: from, Query: query), new(["Label_1"], [])),
+            Row("other", new(From: from, Query: query), new(["Label_2"], [])),
+        ];
+
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
+    }
+
+    // Gmail joins a filter's fields into one search, so a query starting with OR widens the from (#451).
+    [Theory]
+    [InlineData("OR from:b@other.org")]
+    [InlineData("OR b")]
+    [InlineData("OR\tb")]
+    [InlineData("b OR")]
+    [InlineData("a OR b")]
+    [InlineData("a | b")]
+    [InlineData("{a b}")]
+    public void A_filter_whose_query_has_an_or_in_any_position_is_never_within_a_proposal(string query)
+    {
+        FilterRow[] rows =
+        [
+            Row("same", new(From: "a@example.com", Query: query), new(["Label_1"], [])),
+            Row("other", new(From: "a@example.com", Query: query), new(["Label_2"], [])),
+        ];
+
+        FilterChecks.Run(rows, Labels, NotEvaluable, 365, [DomainProposal()])
+            .ShouldNotContain(f => f.Kind == FilterFindingKind.OverlapsPolicy || f.Kind == FilterFindingKind.PolicyConflict);
+    }
+
+    // Eligible: plain from terms and only positive single conditions elsewhere. Ineligible: anything the grammar can't prove narrows.
+    [Theory]
+    [InlineData(true, "a@example.com", null)]
+    [InlineData(true, "A@Example.com OR @news.example.com", "invoice")]
+    [InlineData(true, "a@example.com", "list:<news.example.com> has:attachment")]
+    [InlineData(true, "a@example.com", "subject:Weekly filename:pdf", "me@example.com", "Weekly digest")]
+    [InlineData(true, "a@example.com", null, null, null, "subject:unsubscribe")]
+    [InlineData(true, "a+tag@example.com", "larger:10M older_than:7d")]
+    [InlineData(false, "a@example.com", "-from:x@example.com")]
+    [InlineData(false, "a@example.com", "\"a b\"")]
+    [InlineData(false, "a@example.com", "(a b)")]
+    [InlineData(false, "a@example.com", "a*")]
+    [InlineData(false, "a@example.com", "a AROUND 3 b")]
+    [InlineData(false, "a@example.com", "in:anywhere")]
+    [InlineData(false, "a@example.com", "list:<news.example.com> OR list:<other.example.com>")]
+    [InlineData(false, "a@example.com", null, "me@example.com OR you@other.org")]
+    [InlineData(false, "a@example.com", null, null, "OR b")]
+    [InlineData(false, "a@example.com", null, null, null, "OR b")]
+    [InlineData(false, "a@example.com", null, null, null, "{a b}")]
+    [InlineData(false, "Synthetic Name", null)]
+    [InlineData(false, "a@example.com", "or")]
+    public void Only_a_filter_whose_raw_criteria_are_plain_positive_conditions_is_within_a_proposal(
+        bool within, string from, string? query, string? to = null, string? subject = null, string? negated = null)
+    {
+        var row = Row("f", new(From: from, To: to, Subject: subject, Query: query, NegatedQuery: negated), new(["Label_1"], []));
+
+        var findings = FilterChecks.Run([row], Labels, NotEvaluable, 365, [DomainProposal()])
+            .Where(f => f.Kind is FilterFindingKind.OverlapsPolicy or FilterFindingKind.PolicyConflict).ToList();
+
+        findings.Select(f => f.Kind).ShouldBe(within ? [FilterFindingKind.OverlapsPolicy] : []);
+    }
+
+    [Fact]
+    public void Criteria_terms_keep_each_query_term_and_parenthesise_only_a_multi_word_field()
+    {
+        var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(
+            new(From: "B@example.com OR a@example.com", Subject: "Weekly digest", Query: "-from:x@example.com -has:attachment -\"two words\" list:<News.example.com>", NegatedQuery: "a b"));
+
+        from.ShouldBe(["a@example.com", "b@example.com"]);
+        tokens.ShouldBe(["-\"two words\"", "-(a b)", "-from:x@example.com", "-has:attachment", "list:news.example.com", "subject:(weekly digest)"]);
+    }
+
+    private static List<FilterFindingDraft> PolicyFindings(IEnumerable<FilterFindingDraft> findings) =>
+        [.. findings.Where(f => f.Kind is FilterFindingKind.OverlapsPolicy or FilterFindingKind.PolicyConflict)];
+
+    private static FilterProposalDto DomainProposal() => Proposal("@example.com", null, "Synthetic/Shop");
+
+    private static FilterProposalDto Proposal(string? from, string? query, string label, bool skipInbox = false) => new(
+        from?.TrimStart('@') ?? "list", null, 1, null, new SenderPatternDto(label, false, false, 0, 1, 0, null),
+        new FilterSuggestionDto(
+            new FilterCriteriaDto(from, null, null, query, null, null, null, null, null),
+            new FilterActionRequest([label], skipInbox, false)),
+        "policy:1", FilterProposalSources.Policy, Guid.NewGuid());
 
     private static IReadOnlyList<FilterFindingDraft> Run(IEnumerable<FilterRow> rows) => FilterChecks.Run(rows, Labels, NotEvaluable, 365);
 

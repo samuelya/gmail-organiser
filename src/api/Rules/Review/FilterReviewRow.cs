@@ -24,6 +24,12 @@ public enum FilterFindingKind
 
     /// <summary>Single-sender <c>from</c> filters with identical actions.</summary>
     Mergeable,
+
+    /// <summary>Filters within a policy's proposed filter (#373) with the same action: the proposal replaces them.</summary>
+    OverlapsPolicy,
+
+    /// <summary>A filter within a policy's proposed filter that labels, trashes or archives against the policy.</summary>
+    PolicyConflict,
 }
 
 [JsonConverter(typeof(SnakeCaseJsonConverter<FilterFixKind>))]
@@ -35,6 +41,9 @@ public enum FilterFixKind
     Merge,
     MergeActions,
     DropLabel,
+
+    /// <summary>Replaces a filter by the policy's proposed filter.</summary>
+    Relabel,
 }
 
 [JsonConverter(typeof(SnakeCaseJsonConverter<FilterFindingStatus>))]
@@ -52,7 +61,8 @@ public enum FilterFindingStatus
 public sealed record FilterFixCreate(GmailFilterCriteria Criteria, GmailFilterAction Action);
 
 /// <summary>A finding's proposed fix: create <see cref="Create"/> (if any) first, then delete <see cref="DeleteFilterIds"/>.</summary>
-public sealed record FilterFix(FilterFixKind Kind, IReadOnlyList<string> DeleteFilterIds, FilterFixCreate? Create = null);
+/// <param name="PolicyId">The sender policy whose proposed filter the fix creates (#374).</param>
+public sealed record FilterFix(FilterFixKind Kind, IReadOnlyList<string> DeleteFilterIds, FilterFixCreate? Create = null, Guid? PolicyId = null);
 
 /// <summary>One filter review (<c>filter_reviews</c>); the summary columns are filled by the LLM summary (#215).</summary>
 public sealed class FilterReviewRow
