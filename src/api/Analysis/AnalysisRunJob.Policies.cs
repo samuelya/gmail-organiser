@@ -69,13 +69,14 @@ public sealed partial class AnalysisRunJob
 
     /// <summary>
     /// The sender's profile (with bodies), the policy prompt, one chat call and the parsed proposal. A sender that got a
-    /// proposed or approved policy since the run started, or has no live mail left, is skipped without a call.
+    /// proposed or approved policy since the run started (or a rejected one, when the run walks all senders), or has no
+    /// live mail left, is skipped without a call.
     /// </summary>
     private async Task<PolicyOutcome> ProposeAsync(
         AnalysisRunRow run, PolicyCandidate sender, AppSettings settings, IReadOnlyList<string> labelTree, LabelTreeIndex labelIndex,
         IChatClient chat, CancellationToken ct)
     {
-        if (await HasOpenPolicyAsync(sender, ct)
+        if (await HasTakenPolicyAsync(run, sender, ct)
             || await profiles.BuildAsync(sender.Scope, sender.ScopeKey, includeBodies: true, ct) is not { } profile)
         {
             return PolicyOutcome.Skipped;
@@ -112,15 +113,23 @@ public sealed partial class AnalysisRunJob
         return new PolicyOutcome(policy, false, 1, usage);
     }
 
-    private Task<bool> HasOpenPolicyAsync(PolicyCandidate sender, CancellationToken ct) =>
-        db.SenderPolicies.AsNoTracking().AnyAsync(
+    private Task<bool> HasTakenPolicyAsync(AnalysisRunRow run, PolicyCandidate sender, CancellationToken ct)
+    {
+        var walk = run.SenderAddress is null;
+        return db.SenderPolicies.AsNoTracking().AnyAsync(
             p => p.Scope == sender.Scope && p.ScopeKey == sender.ScopeKey
-                && (p.Status == PolicyStatus.Proposed || p.Status == PolicyStatus.Approved),
+                && (p.Status == PolicyStatus.Proposed || p.Status == PolicyStatus.Approved
+                    || (walk && p.Status == PolicyStatus.Rejected)),
             ct);
+    }
+
+    /// <summary>Proposed and approved policies are always taken; a rejected one only when the run walks all senders.</summary>
+    private static bool IsTaken(AnalysisRunRow run, PolicyStatus status) =>
+        status is PolicyStatus.Proposed or PolicyStatus.Approved || (status == PolicyStatus.Rejected && run.SenderAddress is null);
 
     /// <summary>
-    /// One transaction: the proposed policy and its rules (replacing a rejected policy of the same scope key), the run
-    /// counters and the checkpoint. A unique violation means another writer stored a policy for the key after the check:
+    /// One transaction: the proposed policy and its rules (a single-sender run replaces a rejected policy of the same
+    /// scope key), the run counters and the checkpoint. A unique violation means another writer stored a policy for the key after the check:
     /// the retry starts from the stored counters and its check skips the sender. Returns the pause/cancel signal.
     /// </summary>
     private async Task<JobSignal> StorePolicyAsync(
@@ -163,7 +172,7 @@ public sealed partial class AnalysisRunJob
         }
     }
 
-    /// <summary>Under the key's row lock: skips a sender proposed or approved meanwhile, replaces a rejected policy.</summary>
+    /// <summary>Under the key's row lock: skips a sender whose key got taken meanwhile, otherwise replaces a rejected policy.</summary>
     private async Task WritePolicyAsync(AnalysisRunRow run, PolicyCandidate sender, PolicyOutcome outcome, CancellationToken c)
     {
         if (outcome.Policy is { } policy)
@@ -173,7 +182,7 @@ public sealed partial class AnalysisRunJob
                 .SqlQuery<string>(
                     $"SELECT status AS \"Value\" FROM sender_policies WHERE scope = {scope} AND scope_key = {sender.ScopeKey} FOR UPDATE")
                 .ToListAsync(c);
-            if (existing.Any(s => SnakeCaseEnumConverter<PolicyStatus>.FromDb(s) is PolicyStatus.Proposed or PolicyStatus.Approved))
+            if (existing.Any(s => IsTaken(run, SnakeCaseEnumConverter<PolicyStatus>.FromDb(s))))
             {
                 run.PoliciesProposed--;
                 run.MixedGroups -= policy.IsMixed ? 1 : 0;

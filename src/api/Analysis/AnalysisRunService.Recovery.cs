@@ -199,7 +199,10 @@ public sealed partial class AnalysisRunService
 
         if (run.Scope == AnalysisScope.TopSenders)
         {
-            // Senders with a proposed policy are no candidates any more; the run owes the rest of its count.
+            // Senders with a proposed policy are no candidates any more; the run owes the rest of its count. The walk
+            // restarts, so the skipped senders and the groups of failed ones are counted again; calls and tokens were spent.
+            run.SkippedMessages = 0;
+            run.Groups = run.PoliciesProposed;
             var owedSenders = run.RequestedCount - run.PoliciesProposed;
             return new AnalysisRunCursor(run.Id, Senders: owedSenders < 1
                 ? []

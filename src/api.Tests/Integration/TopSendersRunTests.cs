@@ -44,18 +44,7 @@ public sealed class TopSendersRunTests(ApiFactory factory, PostgresFixture postg
         Seed(db, Lister, 5, listId: " <News.Example.com> ");
         Seed(db, Last, 4);
         Seed(db, Tiny, 2);
-        db.SenderPolicies.Add(new SenderPolicyRow
-        {
-            Id = Guid.NewGuid(),
-            Scope = PolicyScope.Sender,
-            ScopeKey = Taken,
-            TopicLabel = "Updates/Taken",
-            Action = PolicyAction.Archive,
-            Confidence = 0.9,
-            Reason = "Synthetic",
-            Status = PolicyStatus.Proposed,
-            CreatedAt = Newest,
-        });
+        db.SenderPolicies.Add(Policy(Taken, PolicyStatus.Proposed));
         await db.SaveChangesAsync(Ct);
     }
 
@@ -153,6 +142,54 @@ public sealed class TopSendersRunTests(ApiFactory factory, PostgresFixture postg
         (await db.SenderPolicies.AsNoTracking().SingleAsync(p => p.ScopeKey == Tiny, Ct)).RunId.ShouldBe(third.Id);
     }
 
+    [Fact]
+    public async Task A_walk_skips_rejected_senders_and_keeps_the_rejection()
+    {
+        await using var db = postgres.CreateDbContext();
+        await db.SenderPolicies.Where(p => p.ScopeKey == Taken).ExecuteUpdateAsync(u => u.SetProperty(p => p.Status, PolicyStatus.Rejected), Ct);
+        (await PreviewAsync(new { scope = "top_senders", count = 10 })).Senders.ShouldNotBeNull()
+            .Select(s => s.ScopeKey).ShouldBe([Mixed, Plain, ListId, Last]);
+
+        // Rejected after the run froze its senders: the walk skips it without a call.
+        var run = await h.StartAsync(new StartAnalysisRunRequest("top_senders", null, null, 2, null));
+        db.SenderPolicies.Add(Policy(Mixed, PolicyStatus.Rejected));
+        await db.SaveChangesAsync(Ct);
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.PoliciesProposed, done.MessagesCovered, done.SkippedMessages, done.LlmCalls).ShouldBe(("completed", 1, 6, 8, 1));
+        h.Chat.Calls.ShouldBe(1);
+        (await db.SenderPolicies.AsNoTracking().Where(p => p.ScopeKey == Mixed || p.ScopeKey == Taken).Select(p => p.Status).ToListAsync(Ct))
+            .ShouldBe([PolicyStatus.Rejected, PolicyStatus.Rejected]);
+    }
+
+    [Fact]
+    public async Task Resume_after_the_job_row_is_gone_counts_the_rewalked_senders_once()
+    {
+        // Plain is skipped (open policy), Mixed proposed, then the model goes away on Lister and the job row is lost.
+        await using var db = postgres.CreateDbContext();
+        var run = await h.StartAsync(new StartAnalysisRunRequest("top_senders", null, null, 3, null));
+        db.SenderPolicies.Add(Policy(Plain, PolicyStatus.Proposed));
+        await db.SaveChangesAsync(Ct);
+        var answer = h.Chat.Respond;
+        h.Chat.Respond = (ids, call, messages, ct) =>
+            call == 1 ? answer(ids, call, messages, ct) : throw new InvalidOperationException("Synthetic model outage");
+        await h.RunNextAsync();
+        var failed = await h.GetRunAsync(run.Id);
+        (failed.Status, failed.PoliciesProposed, failed.SkippedMessages).ShouldBe(("failed", 1, 6));
+
+        // Plain's policy is deleted, so the rebuilt walk proposes it and Lister.
+        await db.SenderPolicies.Where(p => p.ScopeKey == Plain).ExecuteDeleteAsync(Ct);
+        await db.Jobs.ExecuteDeleteAsync(Ct);
+        h.Chat.Respond = answer;
+        (await h.PostWithoutBodyAsync($"/api/analysis/runs/{run.Id}/resume")).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.PoliciesProposed, done.MessagesCovered, done.SkippedMessages, done.Groups, done.FailedMessages)
+            .ShouldBe(("completed", 3, 19, 0, 3, 0));
+    }
+
     [Theory]
     [InlineData(101, null, "count")]
     [InlineData(0, null, "count")]
@@ -171,6 +208,19 @@ public sealed class TopSendersRunTests(ApiFactory factory, PostgresFixture postg
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         return (await response.Content.ReadFromJsonAsync<GroupingPreviewDto>(Ct)).ShouldNotBeNull();
     }
+
+    private static SenderPolicyRow Policy(string address, PolicyStatus status) => new()
+    {
+        Id = Guid.NewGuid(),
+        Scope = PolicyScope.Sender,
+        ScopeKey = address,
+        TopicLabel = "Updates/Synthetic",
+        Action = PolicyAction.Archive,
+        Confidence = 0.9,
+        Reason = "Synthetic",
+        Status = status,
+        CreatedAt = Newest,
+    };
 
     private static void Seed(
         Data.AppDbContext db, string address, int count, Func<int, MessageCategory>? category = null, string? listId = null)

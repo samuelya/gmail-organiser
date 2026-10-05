@@ -36,14 +36,17 @@ public static class PolicyCandidates
             .GroupBy(m => new { m.CanonicalAddress, m.ListId })
             .Select(g => new { g.Key.CanonicalAddress, g.Key.ListId, Count = g.Count() })
             .ToListAsync(ct);
+        // A rejection blocks the walk until the user deletes it; only a run for one sender may replace it.
+        var walk = canonicalAddress is null;
         var taken = (await db.SenderPolicies.AsNoTracking()
-                .Where(p => p.Status == PolicyStatus.Proposed || p.Status == PolicyStatus.Approved)
+                .Where(p => p.Status == PolicyStatus.Proposed || p.Status == PolicyStatus.Approved
+                    || (walk && p.Status == PolicyStatus.Rejected))
                 .Select(p => new { p.Scope, p.ScopeKey })
                 .ToListAsync(ct))
             .Select(p => (p.Scope, p.ScopeKey))
             .ToHashSet();
 
-        var min = canonicalAddress is null ? minMessages : 1;
+        var min = walk ? minMessages : 1;
         var picked = perList
             .GroupBy(r => r.CanonicalAddress, StringComparer.Ordinal)
             .Select(sender =>
