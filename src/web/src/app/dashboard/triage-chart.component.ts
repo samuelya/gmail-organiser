@@ -10,7 +10,16 @@ import {
   input,
   signal,
 } from '@angular/core';
-import { linePath, nearestIndex, niceMax, PlotBox, TriagePoint, xAt, yAt } from './triage.models';
+import {
+  countTicks,
+  linePath,
+  nearestIndex,
+  niceMax,
+  PlotBox,
+  TriagePoint,
+  xAt,
+  yAt,
+} from './triage.models';
 
 /** Chart height in pixels; the width follows the container. */
 export const CHART_HEIGHT = 220;
@@ -220,10 +229,10 @@ export class TriageChart {
     ),
   );
   readonly unreadTicks = computed(() =>
-    [0, 0.5, 1].map((f) => {
-      const value = this.unreadMax() * f;
-      return { value, y: yAt(value, this.unreadMax(), this.box()) };
-    }),
+    countTicks(this.unreadMax()).map((value) => ({
+      value,
+      y: yAt(value, this.unreadMax(), this.box()),
+    })),
   );
   readonly coverageTicks = computed(() =>
     [0, 50, 100].map((value) => ({ value, y: yAt(value, 100, this.box()) })),

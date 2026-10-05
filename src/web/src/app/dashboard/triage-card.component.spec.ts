@@ -113,6 +113,32 @@ describe('TriageCard', () => {
     expect(q('triage-policy')?.textContent?.trim()).toBe('42.5%');
   });
 
+  it('Refresh after a failed load hides the error and Retry cannot cancel the snapshot', async () => {
+    const { fixture, q } = await render(metrics());
+    triage.get.mockReturnValue(throwError(() => new Error('down')));
+    fixture.componentInstance.load();
+    await fixture.whenStable();
+    expect(q('triage-error')).not.toBeNull();
+
+    const reply = new Subject<TriageMetricsDto>();
+    triage.snapshot.mockReturnValue(reply);
+    q('triage-refresh')?.click();
+    await fixture.whenStable();
+    expect(q('triage-error')).toBeNull();
+    expect(fixture.nativeElement.querySelector('mat-progress-bar')).not.toBeNull();
+
+    triage.get.mockClear();
+    fixture.componentInstance.load();
+    expect(triage.get).not.toHaveBeenCalled();
+    expect(reply.observed).toBe(true);
+
+    reply.next(metrics({ llmHours: 4 }));
+    reply.complete();
+    await fixture.whenStable();
+    expect(q('triage-llm')?.textContent?.trim()).toBe('4.0 h');
+    expect(q('triage-error')).toBeNull();
+  });
+
   it('arrow keys move the chart tooltip from the latest day; Escape hides it', async () => {
     const { fixture, q } = await render(metrics());
     const chart = q('triage-chart')!;

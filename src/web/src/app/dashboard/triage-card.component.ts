@@ -155,7 +155,10 @@ export class TriageCard {
     this.load();
   }
 
+  /** Reloads the metrics; never cancels a running snapshot, whose answer carries them anyway. */
   load(): void {
+    if (this.busy()) return;
+    this.loadFailed.set(false);
     this.requests.next(this.triage.get());
   }
 
@@ -163,6 +166,7 @@ export class TriageCard {
   refresh(): void {
     if (this.busy()) return;
     this.busy.set(true);
+    this.loadFailed.set(false);
     this.requests.next(this.triage.snapshot());
   }
 }

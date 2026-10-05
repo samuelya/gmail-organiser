@@ -65,12 +65,19 @@ export function triagePoints(history: readonly MetricPointDto[]): TriagePoint[] 
   }));
 }
 
-/** The smallest of 1, 2, 2.5, 5 × 10ⁿ at or above `value` (at least 1), so axis ticks stay round. */
+/** The smallest whole number of 1, 2, 2.5, 5 × 10ⁿ at or above `value` (at least 1), so axis ticks stay round. */
 export function niceMax(value: number): number {
   if (value <= 1) return 1;
   const magnitude = 10 ** Math.floor(Math.log10(value));
-  const step = [1, 2, 2.5, 5, 10].find((s) => s * magnitude >= value) ?? 10;
+  const step =
+    [1, 2, 2.5, 5, 10].find((s) => s * magnitude >= value && Number.isInteger(s * magnitude)) ?? 10;
   return step * magnitude;
+}
+
+/** Axis values for a count axis up to `max`: 0, the middle when it is a whole number, and `max`. */
+export function countTicks(max: number): number[] {
+  const mid = max / 2;
+  return Number.isInteger(mid) && mid > 0 ? [0, mid, max] : [0, max];
 }
 
 /** The plot area inside the SVG, in pixels. */

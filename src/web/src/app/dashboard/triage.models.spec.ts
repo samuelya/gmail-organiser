@@ -1,5 +1,6 @@
 import {
   hoursText,
+  countTicks,
   linePath,
   MetricPointDto,
   nearestIndex,
@@ -58,6 +59,19 @@ describe('triage figures', () => {
     expect(niceMax(240)).toBe(250);
     expect(niceMax(4100)).toBe(5000);
     expect(niceMax(500)).toBe(500);
+  });
+
+  it('niceMax skips 2.5 below ten so the unread axis stays whole', () => {
+    expect(niceMax(2.2)).toBe(5);
+    expect(niceMax(24)).toBe(25);
+  });
+
+  it('countTicks keeps the middle tick only when it is a whole number', () => {
+    expect(countTicks(1)).toEqual([0, 1]);
+    expect(countTicks(5)).toEqual([0, 5]);
+    expect(countTicks(25)).toEqual([0, 25]);
+    expect(countTicks(10)).toEqual([0, 5, 10]);
+    expect(countTicks(2)).toEqual([0, 1, 2]);
   });
 });
 
