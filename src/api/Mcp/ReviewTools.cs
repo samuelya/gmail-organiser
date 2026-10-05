@@ -49,7 +49,8 @@ public sealed class ReviewTools(ReviewItemBuilder items, LabelTreeBuilder labelT
     [McpServerTool(Name = "get_label_tree", Title = "Get the label tree", ReadOnly = true, Destructive = false, Idempotent = true, OpenWorld = false)]
     [Description("Returns the user's Gmail labels as a nested tree ('/' separates levels) with the number of stored "
         + "messages carrying each label, marking the configured action label and to-be-deleted label, plus the document-type "
-        + "parent (null when off) and its existing child labels. A node without an id is a parent level that is not itself "
+        + "parent (null when off), its existing document types (documentTypesTruncated when more exist than listed) and "
+        + "documentTypeMaxDepth, the most levels a type may sit under the parent. A node without an id is a parent level that is not itself "
         + "a label." + Untrusted)]
     public Task<CallToolResult> GetLabelTree(CancellationToken cancellationToken = default) =>
         RunAsync(logger, "get_label_tree", async () =>

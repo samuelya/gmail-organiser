@@ -281,13 +281,13 @@ public sealed partial class AnalysisRunJob
 
     /// <summary>
     /// The replaced labels resolve to the ids this message carries: a derived member without one loses nothing. The
-    /// document-type label takes the spelling of the run's label tree entry it matches and is new when there is none, so
-    /// a derived row agrees with its representatives.
+    /// document-type label takes the spelling of the run's label tree entry it matches (for a new one, of its longest
+    /// existing ancestor) and is new when there is none, so a derived row agrees with its representatives.
     /// </summary>
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson)
     {
-        var existingType = output.DocumentTypeLabel is { } type ? context.LabelIndex.Find(type) : null;
+        var type = output.DocumentTypeLabel is { } suggested ? context.LabelIndex.Respell(suggested) : null;
         var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
@@ -297,8 +297,8 @@ public sealed partial class AnalysisRunJob
             Source = source,
             TopicLabel = output.TopicLabel,
             IsNewLabel = output.IsNewLabel,
-            DocumentTypeLabel = existingType ?? output.DocumentTypeLabel,
-            DocumentTypeIsNew = output.DocumentTypeLabel is not null && existingType is null,
+            DocumentTypeLabel = type,
+            DocumentTypeIsNew = type is not null && !context.LabelIndex.Contains(type),
             NeedsAction = output.NeedsAction,
             ToBeDeleted = output.ToBeDeleted,
             UnsubscribeSuggested = output.UnsubscribeSuggested,

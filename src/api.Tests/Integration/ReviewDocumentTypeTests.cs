@@ -41,9 +41,9 @@ public sealed class ReviewDocumentTypeTests(ApiFactory factory, PostgresFixture 
     public ValueTask DisposeAsync() => h.DisposeAsync();
 
     [Theory]
-    [InlineData("Other/Receipt", "Must be exactly one level under 'Synthetic Types'.")]
-    [InlineData(Parent + "/Receipt/Paper", "Must be exactly one level under 'Synthetic Types'.")]
-    [InlineData(Parent, "Must be exactly one level under 'Synthetic Types'.")]
+    [InlineData("Other/Receipt", "Must be 1 to 3 levels under 'Synthetic Types'.")]
+    [InlineData(Parent + "/Receipt/Paper/Scan/Copy", "Must be 1 to 3 levels under 'Synthetic Types'.")]
+    [InlineData(Parent, "Must be 1 to 3 levels under 'Synthetic Types'.")]
     [InlineData(Parent + "/ Receipt", "Not a label path Gmail accepts.")]
     [InlineData(Parent + "/Shopping", "Must differ from the topic label.")]
     public async Task Edit_refuses_a_document_type_label_outside_the_rule(string type, string error)
@@ -81,6 +81,9 @@ public sealed class ReviewDocumentTypeTests(ApiFactory factory, PostgresFixture 
         (await EditAsync("a01", Edit("Shopping", null))).DocumentTypeLabel.ShouldBe(Existing);
         var cleared = await EditAsync("a01", Edit("Shopping", "  "));
         (cleared.DocumentTypeLabel, cleared.DocumentTypeIsNew).ShouldBe((null, false));
+
+        var nested = await EditAsync("a01", Edit("Shopping", " synthetic types/Bills/Power/Peak "));
+        (nested.DocumentTypeLabel, nested.DocumentTypeIsNew).ShouldBe((Parent + "/Bills/Power/Peak", true));
     }
 
     [Fact]

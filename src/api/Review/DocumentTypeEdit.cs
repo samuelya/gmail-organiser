@@ -53,7 +53,7 @@ public static class DocumentTypeEdit
         errors[Field] = [error switch
         {
             DocumentTypePathError.InvalidPath => "Not a label path Gmail accepts.",
-            DocumentTypePathError.NotOneLevel => $"Must be exactly one level under '{parent}'.",
+            DocumentTypePathError.NotUnderParent => $"Must be {DocumentTypePath.LevelsUnder(parent)} under '{parent}'.",
             _ => SameAsTopicMessage,
         }];
         return DocumentTypeChange.Unchanged;

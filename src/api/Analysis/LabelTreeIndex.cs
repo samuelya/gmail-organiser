@@ -26,4 +26,22 @@ public sealed class LabelTreeIndex
 
     /// <summary>The existing label's spelling (trimmed); null when the tree has no such label.</summary>
     public string? Find(string label) => names.GetValueOrDefault(label.Trim());
+
+    /// <summary>
+    /// <paramref name="label"/> (trimmed) with its longest existing prefix (the label itself or an ancestor) in the tree's
+    /// spelling, so a new leaf under an existing parent agrees however the parent was cased.
+    /// </summary>
+    public string Respell(string label)
+    {
+        var name = label.Trim();
+        for (var end = name.Length; end > 0; end = name.LastIndexOf('/', end - 1))
+        {
+            if (names.TryGetValue(name[..end], out var existing))
+            {
+                return existing + name[end..];
+            }
+        }
+
+        return name;
+    }
 }

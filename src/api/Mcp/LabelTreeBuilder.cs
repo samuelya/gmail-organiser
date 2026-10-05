@@ -21,12 +21,16 @@ public sealed record LabelNodeDto(
     IReadOnlyList<LabelNodeDto> Children);
 
 /// <param name="DocumentTypeParent">The document-type parent setting; null when document-type labels are off.</param>
-/// <param name="DocumentTypes">The existing document-type labels (<see cref="DocumentTypePath.Children"/>).</param>
+/// <param name="DocumentTypes">The existing document-type labels (<see cref="DocumentTypePath.Children(string?, IEnumerable{string}, out bool)"/>).</param>
+/// <param name="DocumentTypesTruncated">True when more document types exist than <paramref name="DocumentTypes"/> lists.</param>
+/// <param name="DocumentTypeMaxDepth">Most levels a document type may sit under the parent (<see cref="DocumentTypePath.MaxDepthUnder"/>); null when off.</param>
 public sealed record LabelTreeDto(
     string ActionLabel,
     string DeleteLabel,
     string? DocumentTypeParent,
     IReadOnlyList<string> DocumentTypes,
+    bool DocumentTypesTruncated,
+    int? DocumentTypeMaxDepth,
     int LabelCount,
     IReadOnlyList<LabelNodeDto> Labels);
 
@@ -85,8 +89,9 @@ public sealed partial class LabelTreeBuilder(AppDbContext db, LabelCatalog catal
 
         var roots = paths.Where(p => Parent(p) is null).Select(Node).ToList();
         var typeParent = app.DocumentTypeParent;
-        var types = DocumentTypePath.Children(typeParent, byPath.Keys);
-        return new LabelTreeDto(app.ActionLabelName, app.DeleteLabelName, typeParent, types, labels.Count, roots);
+        var types = DocumentTypePath.Children(typeParent, byPath.Keys, out var truncated);
+        var maxDepth = typeParent is null ? (int?)null : DocumentTypePath.MaxDepthUnder(typeParent);
+        return new LabelTreeDto(app.ActionLabelName, app.DeleteLabelName, typeParent, types, truncated, maxDepth, labels.Count, roots);
     }
 
     /// <summary>

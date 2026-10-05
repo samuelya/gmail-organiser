@@ -104,7 +104,11 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         return string.Join('\n', lines);
     }
 
-    /// <summary>The parent and its direct children from the label tree (ordinal order, at most <see cref="MaxDocumentTypes"/>).</summary>
+    /// <summary>
+    /// The parent, how deep types may go under it (<see cref="DocumentTypePath.LevelsUnder"/>) and the existing types from
+    /// the label tree (<see cref="DocumentTypePath.Children(string?, IEnumerable{string}, out bool)"/>, then a note that
+    /// more were omitted).
+    /// </summary>
     private static string RenderDocumentTypes(string? parent, IReadOnlyList<string> labels)
     {
         if (string.IsNullOrWhiteSpace(parent))
@@ -112,9 +116,14 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             return DocumentTypesOff;
         }
 
-        var children = DocumentTypePath.Children(parent, labels).Select(l => $"`{OneLine(l)}`").ToList();
+        var children = DocumentTypePath.Children(parent, labels, out var truncated).Select(l => $"`{OneLine(l)}`").ToList();
+        if (truncated)
+        {
+            children.Add("(more omitted)");
+        }
+
         var existing = children.Count == 0 ? "none yet" : string.Join(", ", children);
-        return $"Document-type labels live under `{OneLine(parent.Trim())}`. Existing: {existing}.";
+        return $"Document-type labels live under `{OneLine(parent.Trim())}`, {DocumentTypePath.LevelsUnder(parent)} deep. Existing: {existing}.";
     }
 
     private static string RenderMemory(IReadOnlyList<MemoryHint> memory)

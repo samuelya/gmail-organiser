@@ -43,6 +43,36 @@ public sealed partial class UndoActionsJobTests
         }
     }
 
+    [Fact]
+    public async Task Apply_creates_a_nested_type_and_a_processor_merchant_topic_parent_first_in_one_call_and_undo_removes_them()
+    {
+        await h.Gmail.Inner.CreateLabelAsync("Finance", Ct);
+        await h.Gmail.Inner.CreateLabelAsync("Finance/Payco", Ct);
+        await h.Gmail.Inner.CreateLabelAsync("Types", Ct);
+        await SeedAsync(("a00", "Finance/Payco/Gridco", false, false));
+        await SetTypeAsync("a00", "Types/Utilities/Electricity");
+        var before = Labels("a00");
+        var calls = h.Gmail.BatchModifyCalls.Count;
+
+        var apply = await ApplyAndRunAsync();
+
+        var ids = (await h.Gmail.Inner.ListLabelsAsync(Ct)).ToDictionary(l => l.Name, l => l.Id);
+        Labels("a00").ShouldBe(["CATEGORY_UPDATES", ids["Finance/Payco/Gridco"], ids["Types/Utilities/Electricity"]], ignoreOrder: true);
+        h.Gmail.BatchModifyCalls.Skip(calls).ShouldHaveSingleItem().ShouldBe(["a00"]);
+        (await DetailAsync(apply.Id)).CreatedLabels.Select(l => l.Name)
+            .ShouldBe(["Finance/Payco/Gridco", "Types/Utilities", "Types/Utilities/Electricity"], ignoreOrder: true);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.ActionLog.SingleAsync(l => l.BatchId == apply.Id, Ct)).LabelsAdded
+                .ShouldBe(["Finance/Payco/Gridco", "Types/Utilities/Electricity"], ignoreOrder: true);
+        }
+
+        await UndoAsync(apply.Id);
+        await h.RunNextAsync();
+
+        Labels("a00").ShouldBe(before, ignoreOrder: true);
+    }
+
     private async Task SetTypeAsync(string id, string type)
     {
         await using var db = postgres.CreateDbContext();
