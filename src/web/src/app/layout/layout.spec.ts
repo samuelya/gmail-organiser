@@ -74,13 +74,14 @@ describe('Layout', () => {
     expect(el.querySelector('[data-testid="setup-banner"]')).toBeNull();
   });
 
-  it('includes the nine feature pages and the noisy senders page', () => {
+  it('includes the ten feature pages and the noisy senders page', () => {
     expect(NAV_ITEMS.map((i) => i.path).sort()).toEqual(
       [
         'analyse',
         'clean-up',
         'dashboard',
         'history',
+        'policies',
         'review',
         'rules',
         'settings',

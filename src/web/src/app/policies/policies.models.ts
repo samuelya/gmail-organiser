@@ -212,10 +212,7 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
 
 /** Trimmed, without control characters, at most the API's length. */
 export function cleanSearch(text: string): string {
-  return text
-    .replace(CONTROL_CHARS, '')
-    .trim()
-    .slice(0, MAX_SEARCH_LENGTH);
+  return text.replace(CONTROL_CHARS, '').trim().slice(0, MAX_SEARCH_LENGTH);
 }
 
 /** A rule's match as one line, e.g. `subject contains "invoice" · List-Id`. */
@@ -417,23 +414,39 @@ export function editRequest(form: PolicyForm): EditPolicyRequest {
   };
 }
 
+/** Server field errors by control, held with the value they were given for. */
+const SERVER_ERRORS = new WeakMap<AbstractControl, { value: string; message: string }>();
+
+/** `{ server }` while the control keeps the value the server refused; survives re-validation. */
+function serverErrorValidator(control: AbstractControl): ValidationErrors | null {
+  const held = SERVER_ERRORS.get(control);
+  if (!held) return null;
+  if (held.value === JSON.stringify(control.value)) return { server: held.message };
+  SERVER_ERRORS.delete(control);
+  return null;
+}
+
 /**
  * Puts each ProblemDetails field error (`topicLabel`, `rules[2].match`, …) on the form control it names,
- * or on its nearest named ancestor; returns the messages no control below the form takes.
+ * or on its nearest named ancestor, until its value changes; returns the messages no control below the
+ * form takes.
  */
 export function applyServerErrors(form: PolicyForm, errors: Record<string, string[]>): string[] {
   const unplaced: string[] = [];
   for (const [key, messages] of Object.entries(errors)) {
-    const message = messages.join(' ');
     let path = key.replace(/\[(\d+)\]/g, '.$1').split('.');
     let control: AbstractControl | null = null;
     while (path.length && !(control = form.get(path))) path = path.slice(0, -1);
-    if (control && control !== form) {
-      control.setErrors({ ...control.errors, server: message });
-      control.markAsTouched();
-    } else {
-      unplaced.push(message);
+    if (!control || control === form) {
+      unplaced.push(messages.join(' '));
+      continue;
     }
+    const held = SERVER_ERRORS.get(control);
+    const message = held ? `${held.message} ${messages.join(' ')}` : messages.join(' ');
+    SERVER_ERRORS.set(control, { value: JSON.stringify(control.value), message });
+    if (!control.hasValidator(serverErrorValidator)) control.addValidators(serverErrorValidator);
+    control.updateValueAndValidity();
+    control.markAsTouched();
   }
   return unplaced;
 }
