@@ -42,6 +42,9 @@ public sealed class DecisionRow
     /// The document-type parent of the suggestion's run (null: off). Memory counts the type only under the same parent.
     /// </summary>
     public string? DocumentTypeParent { get; set; }
+
+    /// <summary>The decided mail type (#365); null when the suggestion had none.</summary>
+    public MailType? MailType { get; set; }
     public bool NeedsAction { get; set; }
     public bool ToBeDeleted { get; set; }
     public DecisionOutcome Outcome { get; set; }
@@ -73,6 +76,7 @@ public sealed class DecisionRow
             e.Property(r => r.TopicLabel).IsRequired();
             e.Property(r => r.Outcome).IsRequired().HasConversion(new SnakeCaseEnumConverter<DecisionOutcome>());
             e.Property(r => r.Source).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionSource>());
+            e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());
             e.Property(r => r.Embedding).HasColumnType("vector");
             e.HasIndex(r => new { r.SenderAddress, r.Outcome, r.CreatedAt });
             e.HasIndex(r => new { r.EmbeddingModel, r.SenderAddress });

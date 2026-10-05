@@ -81,6 +81,7 @@ public sealed partial class AnalysisRunJob(
     public const int MaxErrorLength = 300;
     private const int MaxStoreAttempts = 3;
     private readonly LlmCallMeter _meter = new(time, logger);
+    private bool newLabelDisagreementLogged;
 
     public string Type => JobType;
 
@@ -437,6 +438,10 @@ public sealed partial class AnalysisRunJob(
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Triage model unavailable, asking the chat model: {Reason}")]
     private static partial void LogTriageUnavailable(ILogger logger, string reason);
+
+    [LoggerMessage(Level = LogLevel.Information,
+        Message = "The model's isNewLabel disagreed with the label tree for {Count} email(s); the label tree decides (logged once per run)")]
+    private static partial void LogNewLabelDisagreement(ILogger logger, int count);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output ignored: {Notes}")]
     private static partial void LogDroppedOutput(ILogger logger, string notes);

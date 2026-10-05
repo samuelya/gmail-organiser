@@ -69,7 +69,8 @@ public static class FakeAnalysisResponder
         {
             id = e.Id,
             topicLabel = label,
-            isNewLabel = !tree.Contains(label),
+            proposedNewLabel = tree.Contains(label) ? null : label,
+            mailType = promotions ? "marketing" : social ? "social" : bill ? "action_bill" : "notification",
             needsAction = bill,
             toBeDeleted = promotions,
             unsubscribeSuggested = promotions,

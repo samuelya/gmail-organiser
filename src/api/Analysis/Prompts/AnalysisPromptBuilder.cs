@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using GmailOrganiser.Data;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Policies.Prompts;
 using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Analysis.Prompts;
@@ -24,7 +25,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     /// The answer shape: one object wrapping the per-email array, because Ollama's JSON mode only yields a top-level
     /// object. OllamaSharp sends the schema as Ollama's <c>format</c>, so the model is constrained to it.
     /// </summary>
-    private static readonly JsonElement OutputSchema = JsonDocument.Parse("""
+    private static readonly JsonElement OutputSchema = JsonDocument.Parse($$"""
         {
           "type": "object",
           "properties": {
@@ -35,6 +36,8 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
                 "properties": {
                   "id": { "type": "string" },
                   "topicLabel": { "type": "string" },
+                  "proposedNewLabel": { "type": ["string", "null"] },
+                  "mailType": {{SenderPolicyPromptBuilder.EnumSchema<MailType>(nullable: false)}},
                   "isNewLabel": { "type": "boolean" },
                   "needsAction": { "type": "boolean" },
                   "toBeDeleted": { "type": "boolean" },
@@ -44,7 +47,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
                   "replaceLabels": { "type": "array", "items": { "type": "string" } },
                   "documentTypeLabel": { "type": ["string", "null"] }
                 },
-                "required": ["id", "topicLabel", "isNewLabel", "needsAction", "toBeDeleted", "unsubscribeSuggested", "confidence", "reason"]
+                "required": ["id", "topicLabel", "mailType", "needsAction", "toBeDeleted", "unsubscribeSuggested", "confidence", "reason"]
               }
             },
             "filterCriteria": {
@@ -61,6 +64,9 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         """).RootElement.Clone();
 
     public string Version => template.Version;
+
+    /// <inheritdoc cref="PromptTemplate.AsksMailType"/>
+    public bool AsksMailType => template.AsksMailType;
 
     /// <summary>
     /// Schema-constrained JSON at temperature 0: the most reliable structured output across local models. Ollama gets
@@ -79,6 +85,9 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["labelTree"] = RenderLabelTree(input.LabelTree),
+            ["mailTypes"] = MailTypes.PromptList(),
+            // Lock mode (#367) fills this; empty until then.
+            ["blockedLabels"] = "",
             ["documentTypes"] = RenderDocumentTypes(input.DocumentTypeParent, input.LabelTree),
             ["memory"] = RenderMemory(input.Memory) + RenderPolicies(input.Policies ?? []),
             ["attachments"] = DefuseBodyTags(input.AttachmentsSection ?? string.Empty),
@@ -142,7 +151,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
 
         return MemoryHeading + "\n" + string.Join('\n', memory.Select(m => string.Create(CultureInfo.InvariantCulture,
             $"- sender: {OneLine(m.SenderAddress)} | subject: {OneLine(m.SubjectTemplate ?? "-")} | topicLabel: {OneLine(m.TopicLabel)}"
-            + $" | type: {(m.DocumentTypeDecided ? OneLine(m.DocumentTypeLabel ?? "-") : "?")}"
+            + $" | type: {(m.DocumentTypeDecided ? OneLine(m.DocumentTypeLabel ?? "-") : "?")} | mailType: {MailTypeName(m.MailType)}"
             + $" | needsAction: {YesNo(m.NeedsAction)} | toBeDeleted: {YesNo(m.ToBeDeleted)} | outcome: {OneLine(m.Outcome)}"
             + $" | similarity: {m.Similarity:0.00}")));
     }
@@ -154,7 +163,9 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     private static string RenderPolicies(IReadOnlyList<SenderPolicyHint> policies) =>
         policies.Count == 0 ? "" : "\n" + PolicyHeading + "\n" + string.Join('\n', policies.Select(p =>
             $"- {OneLine(p.Scope)}: {OneLine(p.ScopeKey)} | topicLabel: {(p.IsMixed ? "(mixed: decide per email)" : OneLine(p.TopicLabel ?? "-"))}"
-            + $" | mailType: {(p.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : "-")} | action: {OneLine(p.Action)}"));
+            + $" | mailType: {MailTypeName(p.MailType)} | action: {OneLine(p.Action)}"));
+
+    private static string MailTypeName(MailType? type) => type is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : "-";
 
     private static string RenderEmails(IReadOnlyList<EmailForPrompt> emails)
     {

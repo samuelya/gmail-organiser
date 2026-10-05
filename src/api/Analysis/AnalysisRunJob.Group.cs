@@ -170,7 +170,7 @@ public sealed partial class AnalysisRunJob
 
         var decision = DerivationRule.Decide(
             [.. representatives.Select(m => outputs.TryGetValue(m.Id, out var o)
-                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels, o.DocumentTypeLabel)
+                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels, o.DocumentTypeLabel, o.MailType)
                 : null)],
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
@@ -185,7 +185,7 @@ public sealed partial class AnalysisRunJob
         var isNewLabel = outputs.Values.Any(o => o.IsNewLabel && string.Equals(o.TopicLabel.Trim(), agreed.TopicLabel, StringComparison.OrdinalIgnoreCase));
         var derived = new SuggestionOutput(
             "", agreed.TopicLabel, isNewLabel, agreed.NeedsAction, agreed.ToBeDeleted, agreed.UnsubscribeSuggested, agreed.Confidence,
-            $"Same as {outputs.Count} analysed emails of this group", agreed.DocumentTypeLabel)
+            $"Same as {outputs.Count} analysed emails of this group", agreed.DocumentTypeLabel, agreed.MailType)
         {
             ReplaceLabels = agreed.ReplaceLabels,
         };
@@ -266,7 +266,7 @@ public sealed partial class AnalysisRunJob
             return escalated with { Calls = escalated.Calls + 1, TriageCalls = 1, EscalatedCalls = 1 };
         }
 
-        var parsed = SuggestionOutputParser.Parse(text, expected, current, context.Run.DocumentTypeParent);
+        var parsed = SuggestionOutputParser.Parse(text, expected, current, context.Run.DocumentTypeParent, ParseContext(context));
         LogDropped(parsed);
         var threshold = context.Settings.TriageConfidenceThreshold;
         var triaged = parsed.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
@@ -306,7 +306,7 @@ public sealed partial class AnalysisRunJob
         var parent = context.Run.DocumentTypeParent;
         var model = context.Run.Model;
         var (firstText, usage) = await ChatAsync(context, context.Chat, model, messages, expected.Count, ct);
-        var first = SuggestionOutputParser.Parse(firstText, expected, current, parent);
+        var first = SuggestionOutputParser.Parse(firstText, expected, current, parent, ParseContext(context));
         LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
         var filter = first.Filter;
@@ -318,7 +318,7 @@ public sealed partial class AnalysisRunJob
         var (retryText, retryUsage) = await ChatAsync(
             context, context.Chat, model, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], expected.Count, ct);
         usage += retryUsage;
-        var retry = SuggestionOutputParser.Parse(retryText, expected, current, parent);
+        var retry = SuggestionOutputParser.Parse(retryText, expected, current, parent, ParseContext(context));
         LogDropped(retry);
         foreach (var o in retry.Valid)
         {
@@ -345,7 +345,17 @@ public sealed partial class AnalysisRunJob
         {
             LogDroppedOutput(logger, string.Join("; ", parsed.Dropped));
         }
+
+        // The job is scoped to one run, so this logs once per run.
+        if (parsed.NewLabelDisagreements > 0 && !newLabelDisagreementLogged)
+        {
+            newLabelDisagreementLogged = true;
+            LogNewLabelDisagreement(logger, parsed.NewLabelDisagreements);
+        }
     }
+
+    private static SuggestionParseContext ParseContext(RunContext context) => new(
+        context.LabelIndex, [context.Settings.ActionLabelName, context.Settings.DeleteLabelName], context.Builder.AsksMailType);
 
     private Task<(string Text, LlmUsage Usage)> ChatAsync(
         RunContext context, IChatClient chat, string? model, IList<ChatMessage> messages, int groupSize, CancellationToken ct) =>
@@ -409,6 +419,8 @@ public sealed partial class AnalysisRunJob
             IsNewLabel = output.IsNewLabel,
             DocumentTypeLabel = type,
             DocumentTypeIsNew = type is not null && !context.LabelIndex.Contains(type),
+            MailType = output.MailType,
+            ProposedNewLabel = output.ProposedNewLabel,
             NeedsAction = output.NeedsAction,
             ToBeDeleted = output.ToBeDeleted,
             UnsubscribeSuggested = output.UnsubscribeSuggested,

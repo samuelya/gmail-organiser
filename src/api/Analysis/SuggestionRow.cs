@@ -52,6 +52,12 @@ public sealed class SuggestionRow
 
     /// <summary><see cref="DocumentTypeLabel"/> was not in the label tree at analysis time (case-insensitive).</summary>
     public bool DocumentTypeIsNew { get; set; }
+
+    /// <summary>What kind of mail it is (#365); null when the model, memory or policy gave none.</summary>
+    public MailType? MailType { get; set; }
+
+    /// <summary>The model's proposed new label that became <see cref="TopicLabel"/>; null when it picked an existing one.</summary>
+    public string? ProposedNewLabel { get; set; }
     public bool NeedsAction { get; set; }
     public bool ToBeDeleted { get; set; }
     public bool UnsubscribeSuggested { get; set; }
@@ -168,6 +174,7 @@ public sealed class SuggestionRow
             e.Property(r => r.ReplaceLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.FilterCriteria).HasColumnType("jsonb");
             e.Property(r => r.Status).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionStatus>());
+            e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());
             e.HasOne<MessageRow>().WithMany().HasForeignKey(r => r.MessageId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<AnalysisRunRow>().WithMany().HasForeignKey(r => r.RunId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne<SenderPolicyRow>().WithMany().HasForeignKey(r => r.PolicyId).OnDelete(DeleteBehavior.SetNull);

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Analysis.Prompts;
@@ -29,23 +30,25 @@ public static class SuggestionOutputParser
     /// <param name="currentLabels">Each email's current personal label names, the only entries <c>replaceLabels</c>
     /// may hold; an email missing here has none.</param>
     /// <param name="documentTypeParent">The document-type parent label; null turns <c>documentTypeLabel</c> off.</param>
+    /// <param name="context">The label tree and configured labels; <see cref="SuggestionParseContext.Default"/> when null.</param>
     public static ParsedSuggestions Parse(
         string? raw, IReadOnlySet<string> expectedIds, IReadOnlyDictionary<string, IReadOnlyList<string>>? currentLabels = null,
-        string? documentTypeParent = null)
+        string? documentTypeParent = null, SuggestionParseContext? context = null)
     {
         ArgumentNullException.ThrowIfNull(expectedIds);
         var valid = new List<SuggestionOutput>();
         var errors = new List<string>();
         var dropped = new List<string>();
-        var current = currentLabels ?? new Dictionary<string, IReadOnlyList<string>>();
-        FilterCriteriaOutput? filter = null;
         var parent = string.IsNullOrWhiteSpace(documentTypeParent) ? null : documentTypeParent.Trim();
+        var read = new ItemReader(
+            context ?? SuggestionParseContext.Default, currentLabels ?? new Dictionary<string, IReadOnlyList<string>>(), parent, errors, dropped);
+        FilterCriteriaOutput? filter = null;
 
         var document = ReadFirstValue(raw ?? string.Empty, out var candidates);
         if (document is null)
         {
             errors.Add(candidates == 0 ? "Output contains no JSON array or object." : "Output is not valid JSON.");
-            return Finish(valid, errors, filter, expectedIds, [], dropped);
+            return Finish(valid, errors, filter, expectedIds, [], read);
         }
 
         var answered = new HashSet<string>(StringComparer.Ordinal);
@@ -63,14 +66,14 @@ public static class SuggestionOutputParser
             {
                 // A lone surrogate escape (\ud800) in a name or string: System.Text.Json throws on reading it.
                 errors.Add(InvalidText);
-                return Finish(valid, errors, null, expectedIds, [], dropped);
+                return Finish(valid, errors, null, expectedIds, [], read);
             }
 
             foreach (var item in items)
             {
                 try
                 {
-                    filter = ReadItem(item, expectedIds, current, parent, errors, dropped, filter, answered, accepted, valid);
+                    filter = ReadItem(item, expectedIds, read, filter, answered, accepted, valid);
                 }
                 catch (InvalidOperationException)
                 {
@@ -79,13 +82,13 @@ public static class SuggestionOutputParser
             }
         }
 
-        return Finish(valid, errors, filter, expectedIds, answered, dropped);
+        return Finish(valid, errors, filter, expectedIds, answered, read);
     }
 
-    private static FilterCriteriaOutput? ReadItem(JsonElement item, IReadOnlySet<string> expectedIds,
-        IReadOnlyDictionary<string, IReadOnlyList<string>> current, string? parent, List<string> errors, List<string> dropped,
+    private static FilterCriteriaOutput? ReadItem(JsonElement item, IReadOnlySet<string> expectedIds, ItemReader read,
         FilterCriteriaOutput? filter, HashSet<string> answered, HashSet<string> accepted, List<SuggestionOutput> valid)
     {
+        var errors = read.Errors;
         if (item.ValueKind != JsonValueKind.Object)
         {
             errors.Add("Array item is not an object.");
@@ -111,7 +114,7 @@ public static class SuggestionOutputParser
         {
             errors.Add($"Duplicate id '{id}': first valid answer kept.");
         }
-        else if (ReadSuggestion(id, item, current.GetValueOrDefault(id) ?? [], parent, errors, dropped) is { } suggestion)
+        else if (ReadSuggestion(id, item, read) is { } suggestion)
         {
             accepted.Add(id);
             valid.Add(suggestion);
@@ -195,11 +198,17 @@ public static class SuggestionOutputParser
         return arrays.Count == 1 ? (arrays[0].Value.EnumerateArray(), true) : ([root], false);
     }
 
-    private static SuggestionOutput? ReadSuggestion(
-        string id, JsonElement item, IReadOnlyList<string> current, string? parent, List<string> errors, List<string> dropped)
+    /// <summary>
+    /// One email's answer. A usable <c>proposedNewLabel</c> becomes the topic label; <c>isNewLabel</c> is computed from
+    /// the label tree (a disagreeing model value is only counted); an unknown or missing <c>mailType</c> is null with a note.
+    /// </summary>
+    private static SuggestionOutput? ReadSuggestion(string id, JsonElement item, ItemReader read)
     {
+        var (errors, dropped, parent) = (read.Errors, read.Dropped, read.DocumentTypeParent);
+        var current = read.Current.GetValueOrDefault(id) ?? [];
         var count = errors.Count;
-        var label = ReadString(item, "topicLabel")?.Trim();
+        var proposed = ReadProposedNewLabel(id, item, read);
+        var label = proposed ?? ReadString(item, "topicLabel")?.Trim();
         if (label is null || !IsValidLabelPath(label))
         {
             errors.Add($"Email '{id}': 'topicLabel' is missing or not a valid label path.");
@@ -209,7 +218,7 @@ public static class SuggestionOutputParser
             errors.Add($"Email '{id}': 'topicLabel' is a Gmail system label.");
         }
 
-        var isNewLabel = ReadBool(id, item, "isNewLabel", errors);
+        var isNewLabel = label is not null && !read.Context.LabelTree.Contains(label);
         var needsAction = ReadBool(id, item, "needsAction", errors);
         var toBeDeleted = ReadBool(id, item, "toBeDeleted", errors);
         var unsubscribe = ReadBool(id, item, "unsubscribeSuggested", errors);
@@ -221,13 +230,74 @@ public static class SuggestionOutputParser
         }
 
         var replaceLabels = ReadReplaceLabels(id, item, label, current, dropped);
-        return errors.Count > count
-            ? null
-            : new SuggestionOutput(id, label!, isNewLabel, needsAction, toBeDeleted, unsubscribe, confidence,
-                Cut(reason!, MaxReasonLength), ReadDocumentTypeLabel(id, item, label!, parent, dropped))
-            {
-                ReplaceLabels = replaceLabels,
-            };
+        if (errors.Count > count)
+        {
+            return null;
+        }
+
+        if (item.TryGetProperty("isNewLabel", out var claimed) && claimed.ValueKind is JsonValueKind.True or JsonValueKind.False
+            && claimed.GetBoolean() != isNewLabel)
+        {
+            read.NewLabelDisagreements++;
+        }
+
+        return new SuggestionOutput(id, label!, isNewLabel, needsAction, toBeDeleted, unsubscribe, confidence,
+            Cut(reason!, MaxReasonLength), ReadDocumentTypeLabel(id, item, label!, parent, dropped), ReadMailType(id, item, read))
+        {
+            ReplaceLabels = replaceLabels,
+            ProposedNewLabel = proposed,
+        };
+    }
+
+    /// <summary>
+    /// The optional <c>proposedNewLabel</c>, in the label tree's spelling of its longest existing prefix. Absent, null or
+    /// blank is null; a value that is not a valid label path, a Gmail system label, or the app's action or delete label (or
+    /// a label under one) is dropped with a note, and <c>topicLabel</c> stands.
+    /// </summary>
+    private static string? ReadProposedNewLabel(string id, JsonElement item, ItemReader read)
+    {
+        if (!item.TryGetProperty("proposedNewLabel", out var element) || element.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        var value = element.ValueKind == JsonValueKind.String ? element.GetString()!.Trim() : null;
+        if (value is { Length: 0 })
+        {
+            return null;
+        }
+
+        if (value is null || !IsValidLabelPath(value) || LabelPath.IsReserved(value) || read.Context.ConfiguredLabels.Any(c => IsSameOrUnder(value, c)))
+        {
+            read.Dropped.Add($"Email '{id}': 'proposedNewLabel' ignored (not a usable new label).");
+            return null;
+        }
+
+        return read.Context.LabelTree.Respell(value);
+    }
+
+    private static bool IsSameOrUnder(string label, string configured)
+    {
+        var name = configured.Trim();
+        return name.Length > 0 && (string.Equals(label, name, StringComparison.OrdinalIgnoreCase)
+            || label.StartsWith(name + "/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static MailType? ReadMailType(string id, JsonElement item, ItemReader read)
+    {
+        if (!read.Context.ReadMailType)
+        {
+            return null;
+        }
+
+        if (item.TryGetProperty("mailType", out var element) && element.ValueKind == JsonValueKind.String
+            && SnakeCaseEnumConverter<MailType>.TryFromDb(element.GetString()!, out var type))
+        {
+            return type;
+        }
+
+        read.Dropped.Add($"Email '{id}': 'mailType' is missing or not one of {SnakeCaseEnumConverter<MailType>.NamesList}; none stored.");
+        return null;
     }
 
     /// <summary>
@@ -389,10 +459,28 @@ public static class SuggestionOutputParser
     }
 
     private static ParsedSuggestions Finish(List<SuggestionOutput> valid, List<string> errors, FilterCriteriaOutput? filter,
-        IReadOnlySet<string> expectedIds, HashSet<string> answered, List<string> dropped)
+        IReadOnlySet<string> expectedIds, HashSet<string> answered, ItemReader read)
     {
         errors.AddRange(expectedIds.Where(id => !answered.Contains(id)).Order(StringComparer.Ordinal).Select(id => $"Email '{id}': no answer."));
-        return new ParsedSuggestions(valid, errors, filter) { Dropped = dropped };
+        return new ParsedSuggestions(valid, errors, filter) { Dropped = read.Dropped, NewLabelDisagreements = read.NewLabelDisagreements };
+    }
+
+    /// <summary>One parse's inputs and the notes it collects.</summary>
+    private sealed class ItemReader(
+        SuggestionParseContext context, IReadOnlyDictionary<string, IReadOnlyList<string>> current, string? documentTypeParent,
+        List<string> errors, List<string> dropped)
+    {
+        public SuggestionParseContext Context { get; } = context;
+
+        public IReadOnlyDictionary<string, IReadOnlyList<string>> Current { get; } = current;
+
+        public string? DocumentTypeParent { get; } = documentTypeParent;
+
+        public List<string> Errors { get; } = errors;
+
+        public List<string> Dropped { get; } = dropped;
+
+        public int NewLabelDisagreements { get; set; }
     }
 
     private static string Shorten(string id) => id.Length <= MaxIdInError ? id : Cut(id, MaxIdInError) + "…";

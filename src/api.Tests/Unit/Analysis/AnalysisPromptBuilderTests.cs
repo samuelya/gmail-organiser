@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Settings;
 using Microsoft.Extensions.AI;
@@ -21,14 +22,16 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v5");
+        template.Version.ShouldBe("analysis-v6");
+        template.AsksMailType.ShouldBeTrue();
+        template.Text.ShouldContain("`proposedNewLabel` (string or null)");
         template.Text.ShouldContain("`topicLabel` is the processor's organisation label plus `/<Merchant>`");
         template.Text.ShouldContain("the same processor and merchant always get the same `topicLabel`");
         template.Text.ShouldContain("A label under the document-type parent named below, as many levels deep as it allows");
         template.Text.ShouldContain("Follow the past decisions for the same sender (for processor receipts, only for the same merchant).");
         template.Text.ShouldNotContain("1 to 3");
         Regex.Matches(template.Text, @"\{\{([a-zA-Z]+)\}\}").Select(m => m.Groups[1].Value).Distinct().Order(StringComparer.Ordinal)
-            .ShouldBe(["actionLabel", "attachments", "deleteLabel", "documentTypes", "emails", "labelTree", "memory"]);
+            .ShouldBe(["actionLabel", "attachments", "blockedLabels", "deleteLabel", "documentTypes", "emails", "labelTree", "mailTypes", "memory"]);
         template.Text.IndexOf("{{documentTypes}}", StringComparison.Ordinal)
             .ShouldBeLessThan(template.Text.IndexOf("{{memory}}", StringComparison.Ordinal));
     }
@@ -246,13 +249,23 @@ public sealed class AnalysisPromptBuilderTests
     }
 
     [Fact]
+    public void Built_in_prompt_lists_every_mail_type_and_leaves_blocked_labels_empty()
+    {
+        var system = new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(Input([Email(1)]))[0].Text;
+
+        system.ShouldContain("exactly one of:\n- `personal`: mail from a person writing to the person\n- `action_bill`:");
+        Enum.GetValues<MailType>().ShouldAllBe(t => system.Contains($"- `{Data.SnakeCaseEnumConverter<MailType>.ToDb(t)}`: ", StringComparison.Ordinal));
+        system.ShouldNotContain("{{");
+    }
+
+    [Fact]
     public void Memory_and_long_label_trees_are_rendered()
     {
         var labels = Enumerable.Range(0, 502).Select(i => $"Topic/L{i}").ToList();
         var memory = new[]
         {
             new MemoryHint("news@example.com", "weekly digest #", "Topic/News", false, true, "approved", 0.876),
-            new MemoryHint("bills@example.com", null, "Topic/Bills", true, false, "approved", 0.5, "Type/Invoice", DocumentTypeDecided: true),
+            new MemoryHint("bills@example.com", null, "Topic/Bills", true, false, "approved", 0.5, "Type/Invoice", DocumentTypeDecided: true, MailType.ActionBill),
             new MemoryHint("info@example.com", null, "Topic/Info", false, false, "approved", 0.4, DocumentTypeDecided: true),
             new MemoryHint("old@example.com", null, "Topic/Old", false, false, "approved", 0.3, "Other/Invoice"),
         };
@@ -263,12 +276,12 @@ public sealed class AnalysisPromptBuilderTests
         messages[0].Text.ShouldNotContain("Topic/L500");
         messages[0].Text.ShouldNotContain("news@example.com");
         messages[1].Text.ShouldContain(AnalysisPromptBuilder.MemoryHeading + "\n- sender: news@example.com | subject: weekly digest # | topicLabel: Topic/News"
-            + " | type: ? | needsAction: no | toBeDeleted: yes | outcome: approved | similarity: 0.88\n"
-            + "- sender: bills@example.com | subject: - | topicLabel: Topic/Bills | type: Type/Invoice"
+            + " | type: ? | mailType: - | needsAction: no | toBeDeleted: yes | outcome: approved | similarity: 0.88\n"
+            + "- sender: bills@example.com | subject: - | topicLabel: Topic/Bills | type: Type/Invoice | mailType: action_bill"
             + " | needsAction: yes | toBeDeleted: no | outcome: approved | similarity: 0.50\n"
-            + "- sender: info@example.com | subject: - | topicLabel: Topic/Info | type: -"
+            + "- sender: info@example.com | subject: - | topicLabel: Topic/Info | type: - | mailType: -"
             + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.40\n"
-            + "- sender: old@example.com | subject: - | topicLabel: Topic/Old | type: ?"
+            + "- sender: old@example.com | subject: - | topicLabel: Topic/Old | type: ? | mailType: -"
             + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.30");
     }
 
@@ -281,6 +294,7 @@ public sealed class AnalysisPromptBuilderTests
         var messages = builder.Build(Input([Email(1)]) with { AttachmentsSection = "Attachments: none", DocumentTypeParent = "Types" });
 
         builder.Version.ShouldBe(PromptTemplate.CustomVersion);
+        builder.AsksMailType.ShouldBeFalse();
         messages[0].Text.ShouldBe("Labels: Topic\nTopic/Sub / Action/Test / {{unknown}}\nNow:");
         messages.ShouldAllBe(m => !m.Text!.Contains("documentTypeLabel"));
         messages[1].Text.ShouldStartWith("Emails to classify (1):");

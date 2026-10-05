@@ -247,8 +247,17 @@ public sealed class GroupingTests
 
     private static RepresentativeOutput Out(
         string label = "Shopping", bool action = false, bool delete = true, double confidence = 0.9, bool unsubscribe = false, string[]? replace = null,
-        string? type = null) =>
-        new(label, action, delete, unsubscribe, confidence, replace, type);
+        string? type = null, MailType? mailType = null) =>
+        new(label, action, delete, unsubscribe, confidence, replace, type, mailType);
+
+    [Fact]
+    public void Rule_agrees_on_the_mail_type_like_the_document_type()
+    {
+        DerivationRule.Decide([Out(mailType: MailType.Receipt), Out(mailType: MailType.Receipt)], 0.10)
+            .ShouldBeOfType<Agreed>().MailType.ShouldBe(MailType.Receipt);
+        DerivationRule.Decide([Out(mailType: MailType.Receipt), Out(mailType: MailType.Marketing)], 0.10).ShouldBe(Mixed.Instance);
+        DerivationRule.Decide([Out(mailType: MailType.Receipt), Out()], 0.10).ShouldBeOfType<Agreed>().MailType.ShouldBeNull();
+    }
 
     [Fact]
     public void Rule_agrees_on_the_document_type_label_case_insensitively_none_equals_none()

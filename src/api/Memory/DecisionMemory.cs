@@ -138,7 +138,7 @@ public sealed partial class DecisionMemory(
             .Select(h => new MemoryHint(
                 h.Decision.SenderAddress, h.Decision.SubjectTemplate, h.Decision.TopicLabel, h.Decision.NeedsAction,
                 h.Decision.ToBeDeleted, SnakeCaseEnumConverter<DecisionOutcome>.ToDb(h.Decision.Outcome), h.Similarity,
-                h.Decision.DocumentTypeLabel, DecidedUnder(h.Decision.DocumentTypeParent, documentTypeParent)))
+                h.Decision.DocumentTypeLabel, DecidedUnder(h.Decision.DocumentTypeParent, documentTypeParent), h.Decision.MailType))
             .ToList();
     }
 
