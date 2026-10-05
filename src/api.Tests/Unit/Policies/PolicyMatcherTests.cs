@@ -127,13 +127,15 @@ public sealed class PolicyMatcherTests
     }
 
     [Fact]
-    public void Cheaper_rule_wins_over_an_earlier_dearer_one()
+    public void Earlier_rule_wins_regardless_of_cost_class()
     {
-        var bySubject = Rule(PolicyAction.Keep, new RuleMatch { SubjectContains = "sale" }, position: 0);
-        var byHeader = Rule(PolicyAction.Archive, new RuleMatch { ListIdPresent = true }, position: 1);
+        var bySubject = Rule(PolicyAction.Keep, new RuleMatch { SubjectContains = "notice" }, position: 0);
+        var byHeader = Rule(PolicyAction.Delete, new RuleMatch { ListIdPresent = true }, position: 1);
 
-        Matcher.Match(Message(listId: "news.example.com", subject: "Big sale"), Mixed(bySubject, byHeader))
-            .ShouldNotBeNull().Rule.ShouldBe(byHeader);
+        var match = Matcher.Match(Message(listId: "news.example.com", subject: "Your notice"), Mixed(byHeader, bySubject))
+            .ShouldNotBeNull();
+        match.Rule.ShouldBe(bySubject);
+        match.Action.ShouldBe(PolicyAction.Keep);
     }
 
     [Fact]

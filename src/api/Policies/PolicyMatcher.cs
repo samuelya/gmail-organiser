@@ -25,7 +25,8 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
 {
     /// <summary>
     /// <list type="number">
-    /// <item>The first approved rule, in <see cref="CostOrder"/>, whose every set match field holds.</item>
+    /// <item>The first approved rule, in saved <see cref="SenderPolicyRuleRow.Position"/> order, whose every set match
+    /// field holds. Saved order wins so a specific rule placed above a broad one is never overridden.</item>
     /// <item>When the message is transactional and no rule matched or the rule deletes: a mixed policy gives null (review);
     /// otherwise the policy default with delete downgraded to archive, <see cref="PolicyMatch.Guarded"/> set.</item>
     /// <item>A matched rule gives its outcome.</item>
@@ -35,8 +36,10 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
     /// <param name="canonicalAddress">The message's relay-decoded sender, when known; rules test it and the raw address.</param>
     public PolicyMatch? Match(MessageRow m, SenderPolicyRow policy, string? canonicalAddress = null)
     {
-        var approved = policy.Rules.Where(r => r.Status == PolicyStatus.Approved).OrderBy(r => r.Position);
-        var rule = CostOrder(approved).FirstOrDefault(r => Holds(r.Match, m, canonicalAddress));
+        var rule = policy.Rules
+            .Where(r => r.Status == PolicyStatus.Approved)
+            .OrderBy(r => r.Position)
+            .FirstOrDefault(r => Holds(r.Match, m, canonicalAddress));
 
         if ((rule is null || rule.Action == PolicyAction.Delete) && guard.IsTransactional(m))
         {
@@ -59,7 +62,8 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
 
     /// <summary>
     /// Sorts rules stably by the cost of their dearest set field: header presence, then address or subdomain, then
-    /// category, then subject template, then subject contains. Rules of one class keep their input order.
+    /// category, then subject template, then subject contains. Rules of one class keep their input order. Used for the
+    /// initial order of proposed rules only; <see cref="Match"/> follows the saved order.
     /// </summary>
     public static IEnumerable<SenderPolicyRuleRow> CostOrder(IEnumerable<SenderPolicyRuleRow> rules) =>
         rules.OrderBy(r => CostClass(r.Match));
