@@ -47,8 +47,19 @@ public sealed class LearnedRuleProposer(AppDbContext db, ISettingsStore settings
             Category = message.Category,
         };
 
+        // The policy's row lock serialises concurrent approvals for its sender: the rules read after it include any rule
+        // another approval committed meanwhile, so the same match is never added twice. The callers hold a transaction.
+        var status = await db.Database
+            .SqlQuery<string>($"SELECT status AS \"Value\" FROM sender_policies WHERE id = {policy.Id} FOR UPDATE")
+            .ToListAsync(ct);
+        if (status is not [var locked] || SnakeCaseEnumConverter<PolicyStatus>.FromDb(locked) != PolicyStatus.Approved)
+        {
+            return;
+        }
+
         // Stored rules of any status (a rejected one is not proposed again) and rules added earlier in this unit of work.
-        var rules = policy.Rules.Concat(db.SenderPolicyRules.Local.Where(r => r.PolicyId == policy.Id)).ToList();
+        var stored = await db.SenderPolicyRules.AsNoTracking().Where(r => r.PolicyId == policy.Id).ToListAsync(ct);
+        var rules = stored.Concat(db.SenderPolicyRules.Local.Where(r => r.PolicyId == policy.Id)).ToList();
         if (match.IsEmpty || rules.Any(r => SameMatch(r.Match, match)))
         {
             return;

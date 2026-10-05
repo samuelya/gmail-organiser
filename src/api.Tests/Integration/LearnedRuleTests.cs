@@ -113,6 +113,14 @@ public sealed class LearnedRuleTests(ApiFactory factory, PostgresFixture postgre
     }
 
     [Fact]
+    public async Task Concurrent_approvals_of_one_template_propose_one_rule()
+    {
+        await Task.WhenAll(new[] { "a00", "a01", "a02", "a03" }.Select(id => DecideAsync(id, "approve")));
+
+        (await LearnedAsync()).ShouldHaveSingleItem().Position.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Rejecting_learns_nothing_and_neither_does_a_single_label_policy()
     {
         await DecideAsync("a00", "reject");
