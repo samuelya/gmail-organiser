@@ -25,6 +25,35 @@ public sealed class BulkSignalTests
     public void Auto_submitted_other_than_no_is_bulk(string autoSubmitted, MessageOrigin expected) =>
         BulkSignal.Of(Message(m => m.AutoSubmitted = autoSubmitted)).ShouldBe(expected);
 
+    [Theory]
+    [InlineData("no; foo=bar", MessageOrigin.Unknown)]
+    [InlineData("no (manual)", MessageOrigin.Unknown)]
+    [InlineData(" No;x=y", MessageOrigin.Unknown)]
+    [InlineData("auto-generated; foo=bar", MessageOrigin.Bulk)]
+    [InlineData("auto-replied (vacation)", MessageOrigin.Bulk)]
+    public void Auto_submitted_compares_only_the_keyword(string autoSubmitted, MessageOrigin expected) =>
+        BulkSignal.Of(Message(m => m.AutoSubmitted = autoSubmitted)).ShouldBe(expected);
+
+    [Theory]
+    [InlineData("bulk (via relay)", MessageOrigin.Bulk)]
+    [InlineData("list; x=y", MessageOrigin.Bulk)]
+    [InlineData("junk(comment)", MessageOrigin.Bulk)]
+    [InlineData("first-class (bulk)", MessageOrigin.Unknown)]
+    [InlineData("bulky", MessageOrigin.Unknown)]
+    public void Precedence_compares_only_the_keyword(string precedence, MessageOrigin expected) =>
+        BulkSignal.Of(Message(m => m.Precedence = precedence)).ShouldBe(expected);
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("(comment only)")]
+    public void Empty_keyword_is_no_signal(string value) =>
+        BulkSignal.Of(Message(m =>
+        {
+            m.Precedence = value;
+            m.AutoSubmitted = value;
+        })).ShouldBe(MessageOrigin.Unknown);
+
     [Fact]
     public void List_id_is_bulk() =>
         BulkSignal.Of(Message(m => m.ListId = "news.example.com")).ShouldBe(MessageOrigin.Bulk);
