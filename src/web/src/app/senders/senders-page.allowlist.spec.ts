@@ -4,6 +4,7 @@ import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, Subject, throwError } from 'rxjs';
+import { AnalysisService } from '../analyse/analysis.service';
 import { isActiveJob, JobDto, JobsConnectionState } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { SettingsService } from '../settings/settings.service';
@@ -65,6 +66,7 @@ describe('SendersPage allowlist toggle', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([{ path: 'senders', component: SendersPage }]),
+        { provide: AnalysisService, useValue: {} },
         { provide: JobsService, useValue: new FakeJobs() },
         { provide: SendersService, useValue: api },
         { provide: SettingsService, useValue: settings },
@@ -178,9 +180,7 @@ describe('SendersPage allowlist toggle', () => {
     expect(q('allowlist-sender')).not.toBeNull();
 
     TestBed.resetTestingModule();
-    const listed = await render(sender({ ...relay, allowlistedByDomain: true }), [
-      'example.net',
-    ]);
+    const listed = await render(sender({ ...relay, allowlistedByDomain: true }), ['example.net']);
     expect(listed.q('allowlist-domain')!.getAttribute('aria-label')).toBe(
       'Remove example.net from allowlist',
     );

@@ -148,6 +148,11 @@ export class AnalysisSettingsSection {
       hint: 'Most area labels one taxonomy proposal may suggest.',
     },
   ];
+  readonly contextField: NumberField = {
+    key: 'llmNumCtx',
+    label: 'LLM context (tokens)',
+    hint: 'The context window each LLM call asks for. Raise it when a run shows "near context limit".',
+  };
   readonly memoryField: NumberField = {
     key: 'analysisMemoryMinApprovals',
     label: 'Minimum approvals',
@@ -166,6 +171,8 @@ export class AnalysisSettingsSection {
     analysisMemoryMinApprovals: numberControl('analysisMemoryMinApprovals'),
     bulkApproveThreshold: numberControl('bulkApproveThreshold'),
     autoArchiveOnActionDone: new FormControl(false, { nonNullable: true }),
+    policyAutoApplyFetched: new FormControl(false, { nonNullable: true }),
+    llmNumCtx: numberControl('llmNumCtx'),
     taxonomyMaxSenders: numberControl('taxonomyMaxSenders'),
     taxonomyMaxLabels: numberControl('taxonomyMaxLabels'),
     analysisPromptTemplate: new FormControl('', {

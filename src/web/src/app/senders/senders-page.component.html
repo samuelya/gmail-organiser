@@ -285,6 +285,17 @@
                 >
                   <mat-icon aria-hidden="true">psychology</mat-icon>
                 </a>
+                <button
+                  mat-icon-button
+                  type="button"
+                  (click)="proposePolicy.start(row.sender.address)"
+                  [disabled]="proposePolicy.starting().has(row.sender.address)"
+                  matTooltip="Propose policy"
+                  [attr.aria-label]="'Propose policy for ' + row.sender.address"
+                  data-testid="propose-policy"
+                >
+                  <mat-icon aria-hidden="true">policy</mat-icon>
+                </button>
                 <a
                   mat-icon-button
                   routerLink="/senders/noisy"

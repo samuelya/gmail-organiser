@@ -59,9 +59,12 @@
       <mat-card appearance="outlined">
         <mat-card-content class="flex flex-col gap-3">
           <div>
-            <h2 class="sender-title m-0" data-testid="detail-title">
-              {{ d.sender.displayName || d.sender.address }}
-            </h2>
+            <div class="flex flex-wrap items-center gap-2">
+              <h2 class="sender-title m-0" data-testid="detail-title">
+                {{ d.sender.displayName || d.sender.address }}
+              </h2>
+              <app-policy-coverage-chip [address]="d.sender.address" />
+            </div>
             <div class="muted text-sm">
               {{ d.sender.address }} · {{ d.sender.pending }} pending ·
               {{ d.sender.approved }} approved · {{ d.sender.rejected }} rejected ·

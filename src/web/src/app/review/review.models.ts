@@ -20,7 +20,7 @@ export const REVIEW_STATUSES: readonly { value: ReviewStatus; label: string }[] 
 /** `SuggestionStatus` as the API writes it. */
 export type SuggestionStatus = ReviewStatus;
 /** `SuggestionSource` as the API writes it. */
-export type SuggestionSource = 'llm' | 'derived' | 'memory' | 'sender_pattern';
+export type SuggestionSource = 'llm' | 'derived' | 'memory' | 'sender_pattern' | 'policy';
 
 /** What applying a suggestion does to the message's own labels, as the API writes it. */
 export type LabelChange = 'none' | 'keep' | 'add' | 'move' | 'relabel';
@@ -213,6 +213,7 @@ export const SOURCE_LABELS: Record<SuggestionSource, string> = {
   derived: 'derived',
   memory: 'memory',
   sender_pattern: 'pattern',
+  policy: 'Policy',
 };
 
 export function percent(confidence: number): string {

@@ -5,6 +5,7 @@ import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
 import { provideRouter, Router } from '@angular/router';
 import { of, Subject } from 'rxjs';
+import { PoliciesService } from '../policies/policies.service';
 import { AnalysisService } from '../analyse/analysis.service';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
@@ -177,6 +178,7 @@ describe('ReviewPage', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([]),
+        { provide: PoliciesService, useValue: { list: () => of({ items: [], total: 0 }) } },
         { provide: JobsService, useValue: jobs },
         { provide: ReviewService, useValue: api },
         { provide: AnalysisService, useValue: analysis },

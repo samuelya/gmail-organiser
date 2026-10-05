@@ -45,6 +45,8 @@ const settings = (over: Partial<SettingsDto> = {}): SettingsDto => ({
   analysisMemoryMinApprovals: 3,
   bulkApproveThreshold: 0.8,
   autoArchiveOnActionDone: false,
+  policyAutoApplyFetched: true,
+  llmNumCtx: 8192,
   taxonomyMaxSenders: 80,
   taxonomyMaxLabels: 25,
   analysisPromptTemplate: null,

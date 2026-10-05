@@ -7,6 +7,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { Observable, of, Subject } from 'rxjs';
+import { AnalysisService } from '../analyse/analysis.service';
 import { errorInterceptor } from '../core/error.interceptor';
 import { isActiveJob, JobDto, JobsConnectionState, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
@@ -88,6 +89,7 @@ describe('SendersPage', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([{ path: 'senders', component: SendersPage }]),
+        { provide: AnalysisService, useValue: {} },
         { provide: JobsService, useValue: jobs },
         { provide: SendersService, useValue: api },
         {
@@ -448,7 +450,6 @@ describe('SendersPage', () => {
       expect.anything(),
     );
   });
-
 });
 
 describe('SendersPage API errors', () => {

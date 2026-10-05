@@ -60,6 +60,7 @@ import {
   SuggestionDto,
 } from './review.models';
 import { ReviewService } from './review.service';
+import { PolicyCoverageChip } from './policy-coverage-chip.component';
 import { SelectionActions } from './selection-actions.component';
 import { SenderList } from './sender-list.component';
 
@@ -79,6 +80,7 @@ import { SenderList } from './sender-list.component';
     MatProgressBarModule,
     MatTooltipModule,
     PageHeader,
+    PolicyCoverageChip,
     SelectionActions,
     SenderList,
   ],

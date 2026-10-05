@@ -54,6 +54,7 @@ import { coveringDomain } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
 import { SENDER_KIND_OPTIONS, SenderKindChip } from './sender-kind-chip.component';
 import { SenderProgress } from './sender-progress.component';
+import { injectProposePolicy } from './propose-policy';
 import {
   cleanSearch,
   DEFAULT_SENDER_QUERY,
@@ -130,6 +131,7 @@ export class SendersPage {
   private readonly destroyRef = inject(DestroyRef);
   private readonly jobs = inject(JobsService);
   private readonly settings = inject(SettingsService);
+  readonly proposePolicy = injectProposePolicy();
   private readonly requests = new Subject<SenderQuery>();
   /** Drops a pending debounced search: the URL changed or the box was cleared. */
   private readonly searchReset = new Subject<void>();
