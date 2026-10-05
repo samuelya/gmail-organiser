@@ -122,12 +122,13 @@ public sealed class MessageUpserter(AppDbContext db, TimeProvider time)
         return row;
     }
 
-    /// <summary>Sets the relay-decoded sender from <see cref="MessageRow.FromAddress"/>.</summary>
-    public static void SetCanonical(MessageRow row)
+    /// <summary>Sets the relay-decoded sender from <see cref="MessageRow.FromAddress"/>; true when a relay address was decoded.</summary>
+    public static bool SetCanonical(MessageRow row)
     {
         var canonical = RelayAddressDecoder.Decode(row.FromAddress);
         row.CanonicalAddress = canonical.CanonicalAddress;
         row.CanonicalDomain = canonical.CanonicalDomain;
+        return canonical.IsRelay;
     }
 
     private static void Refresh(MessageRow row, GmailMessageMetadata m)

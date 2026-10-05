@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using GmailOrganiser.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -13,9 +14,11 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261005060629_M8_CanonicalSender")]
+    partial class M8_CanonicalSender
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -39,10 +42,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<int>("AttachmentsSkipped")
                         .HasColumnType("integer")
                         .HasColumnName("attachments_skipped");
-
-                    b.Property<long>("CompletionTokens")
-                        .HasColumnType("bigint")
-                        .HasColumnName("completion_tokens");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -88,10 +87,6 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("llm_calls");
 
-                    b.Property<long>("LlmMilliseconds")
-                        .HasColumnType("bigint")
-                        .HasColumnName("llm_milliseconds");
-
                     b.PrimitiveCollection<string[]>("MessageIds")
                         .HasColumnType("text[]")
                         .HasColumnName("message_ids");
@@ -119,14 +114,6 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("Model")
                         .HasColumnType("text")
                         .HasColumnName("model");
-
-                    b.Property<int>("NearContextLimit")
-                        .HasColumnType("integer")
-                        .HasColumnName("near_context_limit");
-
-                    b.Property<long>("PromptTokens")
-                        .HasColumnType("bigint")
-                        .HasColumnName("prompt_tokens");
 
                     b.Property<string>("PromptVersion")
                         .HasColumnType("text")

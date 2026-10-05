@@ -34,10 +34,6 @@ public static partial class RelayAddressDecoder
         return new CanonicalSender(lower, domain, false);
     }
 
-    /// <summary>Whether <paramref name="address"/> is at one of the <see cref="RelayDomains"/>, decodable or not.</summary>
-    public static bool IsRelayDomain(string address) =>
-        RelayDomains.Any(d => address.EndsWith("@" + d, StringComparison.OrdinalIgnoreCase));
-
     /// <summary>A pathological local part that times out is treated as not decodable, never as a fetch failure.</summary>
     private static Match? MatchRelay(string localPart)
     {
