@@ -203,13 +203,14 @@ public sealed class SenderArchiveJob(
             {
                 var settings = await settingsStore.GetAsync(t);
 
-                // A reply or a stats rebuild since the start can make a sender human: no further chunk is archived. The
-                // noisy thresholds were checked at the start only; counts that drift (a gone message) don't stop the job.
+                // A reply or a stats rebuild since the start can make a sender human, and a new address of it without stats
+                // may be one: no further chunk is archived. The noisy thresholds were checked at the start only; counts that
+                // drift (a gone message) don't stop the job.
                 var senders = await NoisySenderQuery.Stage0SendersAsync(db, settings.Protection.AllowlistedDomains, cursor.CanonicalAddresses, t);
-                if (cursor.CanonicalAddresses.FirstOrDefault(a => senders.TryGetValue(a, out var s) && s.Excluded) is { } human)
+                if (cursor.CanonicalAddresses.FirstOrDefault(a => senders.TryGetValue(a, out var s) && (s.Excluded || s.StatsMissing)) is { } human)
                 {
                     throw new SenderRefusedException(
-                        $"stopped: {human} is a human, replied-to or allowlisted sender. The rest is not archived; what was can be undone from History.");
+                        $"stopped: {human} is a human, replied-to or allowlisted sender, or has an address without stats. The rest is not archived; what was can be undone from History.");
                 }
 
                 var allowlist = await AllowlistLoader.LoadAsync(db, settings, [.. messages.Select(m => m.FromAddress).Distinct()], t);
