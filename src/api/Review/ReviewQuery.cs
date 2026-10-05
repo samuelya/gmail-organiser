@@ -115,6 +115,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
                 Llm = g.Count(s => s.Source == SuggestionSource.Llm),
                 Derived = g.Count(s => s.Source == SuggestionSource.Derived),
                 Memory = g.Count(s => s.Source == SuggestionSource.Memory),
+                Stage0 = g.Count(s => s.Source == SuggestionSource.Stage0),
                 ConfidenceMin = g.Min(s => s.Confidence),
                 ConfidenceMax = g.Max(s => s.Confidence),
                 NewLabels = g.Count(s => s.IsNewLabel),
@@ -365,6 +366,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             stats.Llm,
             stats.Derived,
             stats.Memory,
+            stats.Stage0,
             shared.TopicLabel,
             shared.NeedsAction,
             shared.ToBeDeleted,
@@ -415,6 +417,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         public int Llm { get; init; }
         public int Derived { get; init; }
         public int Memory { get; init; }
+        public int Stage0 { get; init; }
         public double ConfidenceMin { get; init; }
         public double ConfidenceMax { get; init; }
         public int NewLabels { get; init; }

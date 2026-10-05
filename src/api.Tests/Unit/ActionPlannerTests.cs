@@ -64,9 +64,73 @@ public sealed class ActionPlannerTests
         var message = Message("INBOX");
         message.HasAttachment = true;
 
-        var plan = Plan(Suggestion(topic: "synthetic delete"), message);
+        var plan = Plan(Suggestion(topic: "synthetic delete", toBeDeleted: true), message);
 
         plan.Add.ShouldBeEmpty();
+        plan.Remove.ShouldBe(["INBOX"]);
+    }
+
+    [Theory]
+    [InlineData(SuggestionSource.Llm, false)]
+    [InlineData(SuggestionSource.Stage0, false)]
+    [InlineData(SuggestionSource.Stage0, true)]
+    public void Mail_not_to_be_deleted_whose_topic_is_the_delete_label_changes_nothing(SuggestionSource source, bool edited)
+    {
+        // #405: unticking "to be deleted" on a Stage-0 card keeps the mail in the inbox without the delete label.
+        var suggestion = Suggestion(topic: "Synthetic Delete");
+        suggestion.Source = source;
+        suggestion.Edited = edited;
+
+        var plan = Plan(suggestion, Message("INBOX", "CATEGORY_UPDATES"));
+
+        plan.Add.ShouldBeEmpty();
+        plan.Remove.ShouldBeEmpty();
+        plan.Note.ShouldBe(ActionPlanner.NotDeletableNote);
+    }
+
+    [Fact]
+    public void The_delete_label_is_never_added_through_the_action_label_unless_deletable()
+    {
+        var settings = Settings with { ActionLabelName = "Synthetic Delete" };
+
+        Plan(Suggestion(needsAction: true), Message("INBOX"), settings: settings).Add.ShouldBe(["L1"]);
+    }
+
+    [Fact]
+    public void A_deletable_suggestion_whose_topic_is_the_delete_label_adds_it_once()
+    {
+        var plan = Plan(Suggestion(topic: "Synthetic Delete", toBeDeleted: true), Message("INBOX"));
+
+        plan.Add.ShouldBe(["L3"]);
+        plan.Remove.ShouldBe(["INBOX"]);
+        plan.Note.ShouldBeNull();
+    }
+
+    [Fact]
+    public void A_protected_stage0_suggestion_changes_nothing_so_the_mail_stays_in_the_inbox()
+    {
+        var suggestion = Suggestion(topic: "Synthetic Delete", toBeDeleted: true);
+        suggestion.Source = SuggestionSource.Stage0;
+
+        var plan = Plan(suggestion, Message("INBOX", "STARRED"));
+
+        plan.Add.ShouldBeEmpty();
+        plan.Remove.ShouldBeEmpty();
+        plan.Note.ShouldBe("protected: starred");
+    }
+
+    [Fact]
+    public void An_edited_stage0_card_with_a_real_topic_follows_the_normal_protected_path()
+    {
+        var suggestion = Suggestion();
+        suggestion.Source = SuggestionSource.Stage0;
+        suggestion.Edited = true;
+        var message = Message("INBOX");
+        message.HasAttachment = true;
+
+        var plan = Plan(suggestion, message);
+
+        plan.Add.ShouldBe(["L1"]);
         plan.Remove.ShouldBe(["INBOX"]);
     }
 

@@ -258,7 +258,7 @@ public sealed partial class ReviewService(
 
     /// <summary>
     /// Approves pending suggestions with <c>confidence ≥ threshold</c>: model answers only unless
-    /// <paramref name="includeDerived"/>; a to-be-deleted suggestion of a protected message stays pending (only an
+    /// <paramref name="includeDerived"/> (derived, memory and Stage-0 ones too); a to-be-deleted suggestion of a protected message stays pending (only an
     /// individual approve takes it).
     /// </summary>
     public async Task<BulkApproveResponse> BulkApproveAsync(
@@ -267,7 +267,7 @@ public sealed partial class ReviewService(
         var settings = await settingsStore.GetAsync(ct);
         var min = threshold ?? settings.BulkApproveThreshold;
         SuggestionSource[] sources = includeDerived
-            ? [SuggestionSource.Llm, SuggestionSource.Derived, SuggestionSource.Memory]
+            ? [SuggestionSource.Llm, SuggestionSource.Derived, SuggestionSource.Memory, SuggestionSource.Stage0]
             : [SuggestionSource.Llm];
         var candidates = db.Suggestions.AsNoTracking().Where(s =>
             s.Status == SuggestionStatus.Pending && s.Confidence >= min && sources.Contains(s.Source));

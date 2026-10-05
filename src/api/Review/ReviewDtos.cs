@@ -27,6 +27,7 @@ public sealed record ReviewGroupDto(
     int LlmCount,
     int DerivedCount,
     int MemoryCount,
+    int Stage0Count,
     string TopicLabel,
     bool NeedsAction,
     bool ToBeDeleted,

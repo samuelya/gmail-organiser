@@ -81,13 +81,28 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
     }
 
     /// <summary>
-    /// The noisy groups in SQL (<c>GROUP BY canonical_address</c>). Sums cover only rows whose stats were computed; one
-    /// excluded raw row (human, replied to, allowlisted) excludes the whole group, so a relay never hides a protected sender.
+    /// The Stage-0 view of <paramref name="canonical"/> (#349): one entry per known canonical address, with whether a raw
+    /// row of it is human, replied to or allowlisted (by address or domain), as the noisy list excludes them, whether a
+    /// raw row has no stats yet (its kind and replies are unknown, so it may be a human), and whether it meets the default
+    /// noisy thresholds with a bulk raw row, so the Stage-0 reason holds.
     /// </summary>
+    public static async Task<Dictionary<string, Stage0Sender>> Stage0SendersAsync(
+        AppDbContext db, IReadOnlyList<string> allowlistedDomains, IReadOnlyList<string> canonical, CancellationToken ct)
+    {
+        var senders = db.Senders.AsNoTracking().Where(s => canonical.Contains(s.CanonicalAddress));
+        var (min, ratio) = (DefaultMinMessages, DefaultMinUnreadRatio);
+        var rows = await Grouped(senders, allowlistedDomains)
+            .Select(g => new Stage0Sender(
+                g.CanonicalAddress, g.Excluded > 0, g.StatsRows < g.Rows,
+                g.TotalCount >= min && (double)g.UnreadCount / (g.TotalCount == 0 ? 1 : g.TotalCount) >= ratio && g.Bulk > 0,
+                g.TotalCount, g.UnreadCount))
+            .ToListAsync(ct);
+        return rows.ToDictionary(r => r.CanonicalAddress, StringComparer.Ordinal);
+    }
+
+    /// <summary>The noisy groups in SQL: <see cref="Grouped"/> narrowed by the search and the thresholds.</summary>
     private IQueryable<Group> Groups(AppDbContext db, IReadOnlyList<string> allowlistedDomains)
     {
-        // As CleanUpQuery: an IDN entry also matches its Unicode form; entries hold no '@'.
-        var domains = Allowlist.SqlForms(allowlistedDomains);
         var senders = db.Senders.AsNoTracking();
         if (Search is not null)
         {
@@ -96,6 +111,21 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
         }
 
         var (min, ratio) = (MinMessages, MinUnreadRatio);
+        // The CASE keeps the division safe: SQL does not promise to evaluate TotalCount >= min first.
+        return Grouped(senders, allowlistedDomains)
+            .Where(g => g.Excluded == 0 && g.StatsRows > 0 && g.TotalCount >= min
+                && (double)g.UnreadCount / (g.TotalCount == 0 ? 1 : g.TotalCount) >= ratio);
+    }
+
+    /// <summary>
+    /// <paramref name="senders"/> grouped in SQL (<c>GROUP BY canonical_address</c>). Sums cover only rows whose stats were
+    /// computed; one excluded raw row (human, replied to, allowlisted) excludes the whole group, so a relay never hides a
+    /// protected sender.
+    /// </summary>
+    private static IQueryable<Group> Grouped(IQueryable<SenderRow> senders, IReadOnlyList<string> allowlistedDomains)
+    {
+        // As CleanUpQuery: an IDN entry also matches its Unicode form; entries hold no '@'.
+        var domains = Allowlist.SqlForms(allowlistedDomains);
         return senders
             .Select(s => new
             {
@@ -112,6 +142,7 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
                 CanonicalDomain = g.Max(s => s.Row.CanonicalDomain)!,
                 DisplayName = g.Max(s => s.Row.DisplayName),
                 Excluded = g.Sum(s => s.Excluded ? 1 : 0),
+                Rows = g.Count(),
                 StatsRows = g.Sum(s => s.Stats ? 1 : 0),
                 TotalCount = g.Sum(s => s.Stats ? s.Row.TotalCount : 0),
                 UnreadCount = g.Sum(s => s.Stats ? s.Row.UnreadCount : 0),
@@ -126,10 +157,7 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
                 FirstSeenAt = g.Min(s => s.Row.FirstSeenAt),
                 LastSeenAt = g.Max(s => s.Row.LastSeenAt),
                 UnsubscribedAt = g.Max(s => s.Row.UnsubscribedAt),
-            })
-            // The CASE keeps the division safe: SQL does not promise to evaluate TotalCount >= min first.
-            .Where(g => g.Excluded == 0 && g.StatsRows > 0 && g.TotalCount >= min
-                && (double)g.UnreadCount / (g.TotalCount == 0 ? 1 : g.TotalCount) >= ratio);
+            });
     }
 
     /// <summary>One query for the page: each canonical sender's raw addresses, highest volume first.</summary>
@@ -154,6 +182,7 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
         public string CanonicalDomain { get; init; } = "";
         public string? DisplayName { get; init; }
         public int Excluded { get; init; }
+        public int Rows { get; init; }
         public int StatsRows { get; init; }
         public int TotalCount { get; init; }
         public int UnreadCount { get; init; }
@@ -170,3 +199,10 @@ public sealed record NoisySenderQuery(int MinMessages, double MinUnreadRatio, in
         public DateTimeOffset? UnsubscribedAt { get; init; }
     }
 }
+
+/// <summary>A canonical sender as Stage-0 proposals and the sender archive check it; counts as on the noisy list.</summary>
+/// <param name="Excluded">A raw row of it is human, replied to or allowlisted: Stage 0 never targets it.</param>
+/// <param name="StatsMissing">A raw row of it has no stats yet: Stage 0 refuses it until a stats rebuild.</param>
+/// <param name="Noisy">At least <see cref="NoisySenderQuery.DefaultMinMessages"/> messages, at least
+/// <see cref="NoisySenderQuery.DefaultMinUnreadRatio"/> unread and a raw row classed bulk: Stage 0 refuses it otherwise.</param>
+public sealed record Stage0Sender(string CanonicalAddress, bool Excluded, bool StatsMissing, bool Noisy, int TotalCount, int UnreadCount);
