@@ -111,7 +111,8 @@ public static class TaxonomyPrompt
 
     /// <summary>
     /// The profile as one line: key, names, messages, kind, categories, labels in use and the top subjects. The key
-    /// comes first, so no subject or name can stand in for it.
+    /// comes first, so no subject or name can stand in for it, and is never clipped: <see cref="Parse"/> accepts only
+    /// the exact profiled key the model echoes.
     /// </summary>
     public static string ProfileLine(SenderProfile profile)
     {
@@ -129,7 +130,7 @@ public static class TaxonomyPrompt
             .Select(c => $"{c.Name} {c.Count.ToString(CultureInfo.InvariantCulture)}");
         string[] fields =
         [
-            Clip(profile.ScopeKey, 80),
+            profile.ScopeKey,
             string.Join(", ", profile.DisplayNames.Take(2).Select(n => Clip(n, 30))),
             s.Total.ToString(CultureInfo.InvariantCulture),
             SnakeCaseEnumConverter<SenderKind>.ToDb(s.Kind),

@@ -300,7 +300,7 @@ public sealed partial class LabelPlanApplyJob(
     /// <summary>The item's error for an exception that refuses only this item; null for one that must fail the job.</summary>
     private static string? ItemError(Exception ex) => ex switch
     {
-        ItemRefusedException or GmailLabelExistsException or ArgumentException => ex.Message,
+        ItemRefusedException or GmailLabelExistsException or LabelLimitException or ArgumentException => ex.Message,
         GoogleApiException { HttpStatusCode: >= HttpStatusCode.BadRequest and < HttpStatusCode.InternalServerError } api
             when !GmailRetryPolicy.IsRateLimited(api) => api.Error?.Message ?? api.Message,
         _ => null,

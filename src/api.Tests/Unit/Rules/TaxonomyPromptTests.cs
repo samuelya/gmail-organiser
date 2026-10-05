@@ -47,6 +47,20 @@ public sealed class TaxonomyPromptTests
     }
 
     [Fact]
+    public void A_long_sender_key_is_shown_whole_and_its_echo_is_accepted()
+    {
+        var key = new string('n', 120) + "@bulk.example.com";
+
+        var line = TaxonomyPrompt.ProfileLine(Profile(key));
+        var parsed = TaxonomyPrompt.Parse(
+            $$"""{"labels":[{"name":"Bulk","parent":null,"description":"Bulk","senders":["{{key}}"]}],"notes":""}""",
+            [key], 25, Protected, null, out var error).ShouldNotBeNull(error);
+
+        line.ShouldStartWith(TaxonomyPrompt.ProfilePrefix + key + TaxonomyPrompt.FieldSeparator);
+        parsed.Labels.ShouldHaveSingleItem().Senders.ShouldBe([key]);
+    }
+
+    [Fact]
     public void Parse_keeps_valid_labels_with_the_profiles_spelling_of_the_keys()
     {
         var parsed = Parse("""

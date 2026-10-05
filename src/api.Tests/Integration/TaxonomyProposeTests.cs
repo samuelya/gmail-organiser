@@ -4,6 +4,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Policies;
+using GmailOrganiser.Review;
 using GmailOrganiser.Rules.Labels;
 using GmailOrganiser.Rules.Taxonomy;
 using GmailOrganiser.Senders;
@@ -136,6 +137,31 @@ public sealed class TaxonomyProposeTests(ApiFactory factory, PostgresFixture pos
         {
             (await db.ActionBatches.CountAsync(b => b.Description == "Created label Bank", Ct)).ShouldBe(1);
         }
+    }
+
+    [Fact]
+    public async Task At_the_label_limit_a_create_item_fails_and_the_rest_of_the_plan_applies()
+    {
+        await h.Gmail.Inner.CreateLabelAsync("Powers", Ct);
+        (await h.PostWithoutBodyAsync(Taxonomy)).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+        var plan = await LatestAsync();
+        var bank = plan.Items.Single(i => i.Kind == LabelPlanItemKind.Create);
+        var power = plan.Items.Single(i => i.Kind == LabelPlanItemKind.NearDuplicate);
+        await AcceptAsync(plan.Id, bank.Id);
+        await AcceptAsync(plan.Id, power.Id);
+        h.Gmail.BeforeCreateLabel = _ => throw new LabelLimitException("Synthetic label limit.");
+
+        (await h.PostWithoutBodyAsync($"{Plans}/{plan.Id}/apply")).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+
+        var applied = await LatestAsync();
+        applied.Items.Single(i => i.Id == bank.Id).ShouldSatisfyAllConditions(
+            i => i.Status.ShouldBe(LabelPlanItemStatus.Failed), i => i.Error.ShouldBe("Synthetic label limit."));
+        applied.Items.Single(i => i.Id == power.Id).Status.ShouldBe(LabelPlanItemStatus.Applied);
+        (await h.Gmail.Inner.ListLabelsAsync(Ct)).ShouldNotContain(l => l.Name == "Bank");
+        var policies = await PoliciesAsync();
+        policies.Keys.ShouldBe([Power]);
     }
 
     [Fact]
