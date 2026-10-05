@@ -118,14 +118,13 @@ public static partial class AnalysisPreviewEndpoint
 
     private static AnalysisScope? ParseScope(string? value, Dictionary<string, string[]> errors)
     {
-        var scope = Enum.GetValues<AnalysisScope>().Cast<AnalysisScope?>().FirstOrDefault(v =>
-            string.Equals(SnakeCaseEnumConverter<AnalysisScope>.ToDb(v!.Value), value?.Trim(), StringComparison.OrdinalIgnoreCase));
-        if (scope is null)
+        if (value is not null && SnakeCaseEnumConverter<AnalysisScope>.TryFromDb(value, out var scope))
         {
-            errors["scope"] = ["Must be one of inbox, all, sender, messages, labelled."];
+            return scope;
         }
 
-        return scope;
+        errors["scope"] = [$"Must be one of {SnakeCaseEnumConverter<AnalysisScope>.NamesList}."];
+        return null;
     }
 
     [GeneratedRegex(@"^[A-Za-z0-9_-]+$", RegexOptions.CultureInvariant)]

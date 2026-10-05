@@ -21,17 +21,13 @@ public sealed class ExternalReviewQuery(AppDbContext db)
             return true;
         }
 
-        var name = value.Trim().ToLowerInvariant();
-        foreach (var s in Enum.GetValues<ExternalReviewStatus>())
+        if (!SnakeCaseEnumConverter<ExternalReviewStatus>.TryFromDb(value, out var parsed))
         {
-            if (SnakeCaseEnumConverter<ExternalReviewStatus>.ToDb(s) == name)
-            {
-                status = s;
-                return true;
-            }
+            return false;
         }
 
-        return false;
+        status = parsed;
+        return true;
     }
 
     /// <summary>

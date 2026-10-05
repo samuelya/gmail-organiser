@@ -43,7 +43,8 @@ public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
 /// unknown, plus candidates that stopped qualifying before their group ran. <c>savedPercent</c> is
 /// <c>1 − llmCalls / max(1, messagesCovered)</c>; retries count as calls, so it can go negative. Tokens and
 /// <c>llmMilliseconds</c> (<c>llmSeconds</c>) are summed over the model calls; <c>nearContextLimit</c> counts calls whose
-/// prompt filled at least 90 % of <c>num_ctx</c> (#353).
+/// prompt filled at least 90 % of <c>num_ctx</c> (#353). <c>isStalled</c>: queued or running, but no queued, running or
+/// paused job is behind it (start-up recovery marks such runs failed; <c>POST /runs/{id}/resume</c> continues them, #378).
 /// </summary>
 public sealed record AnalysisRunDto(
     Guid Id,
@@ -76,7 +77,8 @@ public sealed record AnalysisRunDto(
     long CompletionTokens,
     long LlmMilliseconds,
     double LlmSeconds,
-    int NearContextLimit);
+    int NearContextLimit,
+    bool IsStalled);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed

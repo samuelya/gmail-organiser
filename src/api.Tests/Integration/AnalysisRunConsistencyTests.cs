@@ -183,7 +183,7 @@ public sealed class AnalysisRunConsistencyTests(ApiFactory factory, PostgresFixt
         settings.Current = settings.Current with { ChatModel = AnalysisRunHarness.ChatModel };
         var service = new AnalysisRunService(db, new ThrowingJobService(), settings, new SenderStatsUpdater(db, TimeProvider.System),
             new LabelCatalog(new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), TimeProvider.System),
-            TimeProvider.System);
+            TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<AnalysisRunService>.Instance);
 
         await Should.ThrowAsync<InvalidOperationException>(() => service.StartAsync(AnalysisScope.Inbox, null, null, 5, null, Ct));
 

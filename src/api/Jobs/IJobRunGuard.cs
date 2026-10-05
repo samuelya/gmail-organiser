@@ -27,3 +27,13 @@ public interface IJobCancelHook
     /// <summary>Runs after a queued, paused or failed job was cancelled.</summary>
     Task CancelledAsync(string? cursor, CancellationToken ct);
 }
+
+/// <summary>
+/// Repairs a feature's own rows once <see cref="JobRunner.RecoverAsync"/> has re-queued the interrupted jobs at start-up
+/// (e.g. an analysis run whose job is gone). Register with <c>services.AddScoped&lt;IJobStartupRecovery, T&gt;()</c>; a
+/// failure is logged and never keeps the runner from claiming jobs.
+/// </summary>
+public interface IJobStartupRecovery
+{
+    Task RecoverAsync(CancellationToken ct);
+}

@@ -13,6 +13,7 @@ public static class AnalysisExtensions
         services.AddAnalysisGrouping();
         services.AddAttachments();
         services.AddScoped<AnalysisRunService>();
+        services.AddScoped<IJobStartupRecovery>(sp => sp.GetRequiredService<AnalysisRunService>());
         // The run reads Gmail bodies: refused while the local data belongs to another account.
         services.AddKeyedScoped<IJobRunGuard, FetchAccountJobGuard>(AnalysisRunJob.JobType);
         services.AddKeyedScoped<IJobHandler, AnalysisRunJob>(AnalysisRunJob.JobType);
