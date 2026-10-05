@@ -361,6 +361,56 @@ public sealed class SenderPolicyOutputParserTests
         parsed.Rules.Select(r => (r.Position, r.Reason)).ShouldBe([(0, "specific"), (1, "broad")]);
     }
 
+    [Fact]
+    public void A_learned_rule_passes_and_gets_a_name()
+    {
+        var rule = Parser.CheckLearned(Learned("Weekly offer #", "Shop", PolicyAction.Delete, "Types/Receipts"), allowlisted: false, Settings)
+            .ShouldNotBeNull();
+
+        (rule.Action, rule.DocumentTypeLabel).ShouldBe((PolicyAction.Delete, "Types/Receipts"));
+        rule.Name.ShouldBe("category promotions, subject \"Weekly offer #\"");
+    }
+
+    [Theory]
+    [InlineData("Shop", "Invoice #", PolicyAction.Delete)]
+    [InlineData("Shop", "Your receipt #", PolicyAction.Unsubscribe)]
+    [InlineData("INBOX", "Weekly offer #", PolicyAction.Archive)]
+    [InlineData("Synthetic Delete", "Weekly offer #", PolicyAction.Archive)]
+    [InlineData("Shop//Example", "Weekly offer #", PolicyAction.Archive)]
+    public void A_learned_rule_is_refused_like_a_models_rule(string topic, string template, PolicyAction action)
+    {
+        Parser.CheckLearned(Learned(template, topic, action, null), allowlisted: false, Settings).ShouldBeNull();
+    }
+
+    [Fact]
+    public void A_learned_rule_with_an_unusable_or_empty_match_is_refused()
+    {
+        Parser.CheckLearned(Learned(new string('x', SenderPolicyOutputParser.MaxMatchValueLength + 1), "Shop", PolicyAction.Archive, null),
+            allowlisted: false, Settings).ShouldBeNull();
+        var empty = Learned("t", "Shop", PolicyAction.Archive, null);
+        empty.Match = new RuleMatch();
+        Parser.CheckLearned(empty, allowlisted: false, Settings).ShouldBeNull();
+    }
+
+    [Fact]
+    public void An_allowlisted_senders_learned_rule_keeps_and_a_misplaced_document_type_is_dropped()
+    {
+        var rule = Parser.CheckLearned(Learned("Weekly offer #", "Shop", PolicyAction.Delete, "Elsewhere/Receipts"), allowlisted: true, Settings)
+            .ShouldNotBeNull();
+
+        (rule.Action, rule.DocumentTypeLabel).ShouldBe((PolicyAction.Keep, null));
+    }
+
+    private static SenderPolicyRuleRow Learned(string template, string topic, PolicyAction action, string? documentType) => new()
+    {
+        Match = new RuleMatch { SubjectTemplate = template, Category = MessageCategory.Promotions },
+        TopicLabel = topic,
+        DocumentTypeLabel = documentType,
+        Action = action,
+        Status = PolicyStatus.Proposed,
+        Source = PolicyRuleSource.Learned,
+    };
+
     private static string Single(string label, bool isNewLabel) =>
         $$"""{"topicLabel":"{{label}}","isNewLabel":{{(isNewLabel ? "true" : "false")}},"action":"archive","confidence":0.8,"reason":"r","isMixed":false,"rules":[]}""";
 
