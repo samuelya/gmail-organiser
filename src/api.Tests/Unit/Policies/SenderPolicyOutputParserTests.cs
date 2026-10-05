@@ -178,6 +178,30 @@ public sealed class SenderPolicyOutputParserTests
         parsed.Errors.ShouldContain(e => e.Contains(field, StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("delete")]
+    [InlineData("unsubscribe")]
+    public void A_default_that_removes_a_transactional_senders_mail_becomes_archive(string action)
+    {
+        var profile = Profile with { Templates = [Profile.Templates[0] with { Template = "your invoice #" }] };
+
+        var parsed = Parser.Parse(Default(action), profile, Tree, Settings);
+
+        parsed.Errors.ShouldBeEmpty();
+        parsed.Policy!.Action.ShouldBe(PolicyAction.Archive);
+        parsed.Dropped.ShouldHaveSingleItem().ShouldContain("transactional");
+    }
+
+    [Fact]
+    public void A_delete_default_of_a_sender_without_transactional_subjects_is_kept()
+    {
+        var parsed = Parser.Parse(Default("delete"), Profile, Tree, Settings);
+
+        parsed.Errors.ShouldBeEmpty();
+        parsed.Dropped.ShouldBeEmpty();
+        parsed.Policy!.Action.ShouldBe(PolicyAction.Delete);
+    }
+
     [Fact]
     public void An_allowlisted_sender_keeps_its_mail()
     {
@@ -339,6 +363,9 @@ public sealed class SenderPolicyOutputParserTests
 
     private static string Single(string label, bool isNewLabel) =>
         $$"""{"topicLabel":"{{label}}","isNewLabel":{{(isNewLabel ? "true" : "false")}},"action":"archive","confidence":0.8,"reason":"r","isMixed":false,"rules":[]}""";
+
+    private static string Default(string action) =>
+        $$"""{"topicLabel":"Shop","action":"{{action}}","confidence":0.99,"reason":"r","isMixed":false}""";
 
     // A valid base rule first, so dropping the rule under test leaves the mixed policy usable.
     private static string Mixed(string rules) =>

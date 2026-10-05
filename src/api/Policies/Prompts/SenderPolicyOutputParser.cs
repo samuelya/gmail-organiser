@@ -107,6 +107,13 @@ public sealed partial class SenderPolicyOutputParser(TransactionalGuard guard)
             dropped.Add($"A mixed sender's default cannot be '{Snake(action.Value)}'; changed to 'archive'.");
             action = PolicyAction.Archive;
         }
+        else if (action is PolicyAction.Delete or PolicyAction.Unsubscribe
+            && profile.Templates.Any(t => guard.HasKeyword(t.Template)))
+        {
+            // Transactional mail is never deleted and never unsubscribed (DESIGN §6.2); the default covers every template.
+            dropped.Add($"The sender's subjects name a transactional document; default '{Snake(action.Value)}' changed to 'archive'.");
+            action = PolicyAction.Archive;
+        }
 
         if (profile.Stats.Allowlisted && action is { } given && given != PolicyAction.Keep)
         {
