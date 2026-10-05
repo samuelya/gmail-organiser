@@ -81,16 +81,16 @@ public sealed partial class AnalysisRunService(
 
     private static AnalysisRunRow NewRun(
         AnalysisScope scope, string? sender, string[]? ids, int count, AnalysisGroupingMode groupingMode, DateTimeOffset now) => new()
-    {
-        Id = Guid.CreateVersion7(now),
-        Scope = scope,
-        SenderAddress = sender,
-        MessageIds = ids,
-        RequestedCount = count,
-        GroupingMode = groupingMode,
-        Status = AnalysisRunStatus.Queued,
-        CreatedAt = now,
-    };
+        {
+            Id = Guid.CreateVersion7(now),
+            Scope = scope,
+            SenderAddress = sender,
+            MessageIds = ids,
+            RequestedCount = count,
+            GroupingMode = groupingMode,
+            Status = AnalysisRunStatus.Queued,
+            CreatedAt = now,
+        };
 
     /// <summary>
     /// Starts a compare run (#248) over suggestions of any status: <paramref name="suggestionIds"/>, or every suggestion

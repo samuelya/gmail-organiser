@@ -170,10 +170,10 @@ public sealed partial class AnalysisRunJob
         {
             var scope = SnakeCaseEnumConverter<PolicyScope>.ToDb(sender.Scope);
             var existing = await db.Database
-                .SqlQuery<string>($"SELECT status AS \"Value\" FROM sender_policies WHERE scope = {scope} AND scope_key = {sender.ScopeKey} FOR UPDATE")
+                .SqlQuery<string>(
+                    $"SELECT status AS \"Value\" FROM sender_policies WHERE scope = {scope} AND scope_key = {sender.ScopeKey} FOR UPDATE")
                 .ToListAsync(c);
-            string[] open = [SnakeCaseEnumConverter<PolicyStatus>.ToDb(PolicyStatus.Proposed), SnakeCaseEnumConverter<PolicyStatus>.ToDb(PolicyStatus.Approved)];
-            if (existing.Any(open.Contains))
+            if (existing.Any(s => SnakeCaseEnumConverter<PolicyStatus>.FromDb(s) is PolicyStatus.Proposed or PolicyStatus.Approved))
             {
                 run.PoliciesProposed--;
                 run.MixedGroups -= policy.IsMixed ? 1 : 0;
