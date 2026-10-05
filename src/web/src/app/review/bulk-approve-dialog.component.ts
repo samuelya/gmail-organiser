@@ -51,7 +51,8 @@ export function bulkApproveData(
 /** "n suggestions with new labels are excluded while the taxonomy is locked"; null for none. */
 export function newLabelExclusionText(count: number): string | null {
   if (count <= 0) return null;
-  const subject = count === 1 ? 'suggestion with a new label is' : 'suggestions with new labels are';
+  const subject =
+    count === 1 ? 'suggestion with a new label is' : 'suggestions with new labels are';
   return `${count} ${subject} excluded while the taxonomy is locked.`;
 }
 

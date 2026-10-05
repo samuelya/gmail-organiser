@@ -14,9 +14,9 @@ describe('MailTypeChip', () => {
     const fixture = TestBed.createComponent(MailTypeChip);
     (fixture.componentRef as ComponentRef<MailTypeChip>).setInput('type', type);
     fixture.detectChanges();
-    return fixture.nativeElement.querySelector('[data-testid="mail-type-chip"]') as
-      | HTMLElement
-      | null;
+    return fixture.nativeElement.querySelector(
+      '[data-testid="mail-type-chip"]',
+    ) as HTMLElement | null;
   }
 
   it('shows the type spaced, with its own colour', () => {

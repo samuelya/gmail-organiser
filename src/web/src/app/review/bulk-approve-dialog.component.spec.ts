@@ -98,10 +98,7 @@ describe('BulkApproveDialog', () => {
   it('counts the listed newLabelPending members and falls back to the threshold maximum', () => {
     const member = (newLabelPending: boolean) => ({ newLabelPending }) as SuggestionDto;
     const detail = {
-      groups: [
-        { members: [member(true), member(false)] },
-        { members: [member(true)] },
-      ],
+      groups: [{ members: [member(true), member(false)] }, { members: [member(true)] }],
     } as ReviewSenderDetailDto;
     const data = bulkApproveData(null, 'news@example.com', detail);
     expect(data.newLabelPending).toBe(2);
