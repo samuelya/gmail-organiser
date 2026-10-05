@@ -1,6 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
+import { provideRouter } from '@angular/router';
 import { of, Subject } from 'rxjs';
 import { PagedDto } from '../core/paging.models';
 import { LabelsService } from '../review/labels.service';
@@ -162,6 +163,7 @@ describe('FiltersTab', () => {
           },
         },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
+        provideRouter([]),
       ],
     });
     const fixture = TestBed.createComponent(Host);
@@ -265,7 +267,13 @@ describe('FiltersTab', () => {
     ]);
     const partial = all('proposal-partial');
     expect(partial).toHaveLength(1);
-    expect(partial[0].textContent!.trim()).toBe('Partial');
+    expect(partial[0].textContent).toContain('Partial');
+    expect(
+      all('proposal-policy').map((a) => [a.textContent!.trim(), a.getAttribute('href')]),
+    ).toEqual([
+      ['Receipts', '/policies/p-1'],
+      ['Offers', '/policies/p-1'],
+    ]);
     expect(partial[0].getAttribute('aria-label')).toBe(
       'This filter covers only part of the policy. A rule condition has no Gmail equivalent.',
     );
@@ -281,6 +289,24 @@ describe('FiltersTab', () => {
     await settle();
     expect(api.create).toHaveBeenCalledWith(rules[1].suggested);
     expect(q('proposals-more')).toBeNull();
+  });
+
+  it('filters the proposals by source from page 1', async () => {
+    const { all, settle } = await render(
+      undefined,
+      paged([...ruleProposals(), proposal('a@example.com')], 40),
+    );
+    expect(api.proposals).toHaveBeenLastCalledWith(1, 'all');
+    api.proposals.mockReturnValue(of(paged([proposal('a@example.com')])));
+    const toggles = [
+      ...document.querySelectorAll<HTMLElement>('[data-testid="proposals-source"] button'),
+    ];
+    expect(toggles.map((b) => b.textContent!.trim())).toEqual(['All', 'Policies', 'Patterns']);
+    toggles[2].click();
+    await settle();
+    expect(api.proposals).toHaveBeenLastCalledWith(1, 'pattern');
+    expect(all('proposal-origin').map((e) => e.textContent!.trim())).toEqual(['Pattern']);
+    expect(all('proposals-more')).toHaveLength(0);
   });
 
   it('labels a policy default proposal "Policy"', async () => {
@@ -321,7 +347,7 @@ describe('FiltersTab', () => {
     api.proposals.mockReturnValue(of(paged([proposal('b@example.com')], 2, 2)));
     q('proposals-more')!.click();
     await settle();
-    expect(api.proposals).toHaveBeenLastCalledWith(2);
+    expect(api.proposals).toHaveBeenLastCalledWith(2, 'all');
     expect(all('proposal')).toHaveLength(2);
     expect(q('proposals-more')).toBeNull();
   });
@@ -340,7 +366,7 @@ describe('FiltersTab', () => {
     dialog('preview-create')!.click();
     await settle();
     await settle();
-    expect(api.proposals).toHaveBeenLastCalledWith(1);
+    expect(api.proposals).toHaveBeenLastCalledWith(1, 'all');
     expect(all('proposal').map((p) => p.textContent)).toEqual([
       expect.stringContaining('b@example.com'),
       expect.stringContaining('c@example.com'),
@@ -369,7 +395,7 @@ describe('FiltersTab', () => {
 
   it('opens the proposal of ?propose= after the list loads', async () => {
     const { fixture } = await render('NEWS@example.com');
-    expect(api.proposals).toHaveBeenCalledWith(1);
+    expect(api.proposals).toHaveBeenCalledWith(1, 'all');
     expect((dialog('preview-label') as HTMLInputElement).value).toBe('Topic/Alpha');
     expect(fixture.componentInstance.handled).toBe(1);
   });

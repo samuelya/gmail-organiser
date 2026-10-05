@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
+import { provideRouter } from '@angular/router';
 import { Observable, of, Subject, throwError } from 'rxjs';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
@@ -144,6 +145,7 @@ describe('FindingsTab', () => {
           useValue: { externalReviewChanges: claudeChanges, reconnects: signal(0) },
         },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
+        provideRouter([]),
       ],
     });
     const fixture = TestBed.createComponent(FindingsTab);
@@ -203,6 +205,54 @@ describe('FindingsTab', () => {
     const carried = card('Half applied.');
     expect(all('finding-earlier', carried)).toHaveLength(1);
     expect(all('finding-apply', carried)[0].textContent!.trim()).toBe('Resume fix');
+  });
+
+  it('renders the policy findings with their fixes and a link to the policy', async () => {
+    const policyFix = (kind: 'relabel' | 'delete') => ({
+      kind,
+      deleteFilterIds: ['f2'],
+      create:
+        kind === 'relabel'
+          ? {
+              criteria: filterDto('n', 'b@example.com').criteria,
+              action: filterDto('n', 'x').action,
+            }
+          : null,
+    });
+    const { all, card } = await render(
+      of(
+        reviewDto([
+          finding({
+            id: 'p1',
+            kind: 'overlaps_policy',
+            policyId: 'pol-1',
+            description: 'Covered by the policy filter.',
+            fix: policyFix('delete'),
+          }),
+          finding({
+            id: 'p2',
+            kind: 'policy_conflict',
+            policyId: 'pol-1',
+            description: 'Labels against the policy.',
+            fix: policyFix('relabel'),
+          }),
+        ]),
+      ),
+    );
+    expect(all('finding-group').map((g) => g.querySelector('h3')!.textContent!.trim())).toEqual([
+      'Covered by a policy filter (1)',
+      'Conflicts with a policy (1)',
+    ]);
+    const conflict = card('Labels against the policy.');
+    expect(all('finding-fix', conflict)[0].textContent).toContain(
+      "Replace with the policy's filter",
+    );
+    expect(all('fix-create', conflict)[0].textContent).toContain('from:b@example.com');
+    expect(all('fix-delete', conflict)[0].textContent).toContain('from:a@example.com');
+    expect(all('finding-policy', conflict)[0].getAttribute('href')).toBe('/policies/pol-1');
+    const covered = card('Covered by the policy filter.');
+    expect(all('finding-apply', covered)).toHaveLength(1);
+    expect(all('finding-policy', card('Covered by the policy filter.'))).toHaveLength(1);
   });
 
   const applied = () => finding({ status: 'applied', appliedAt: new Date().toISOString() });

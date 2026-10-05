@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, input, output } from '@an
 import { MatButtonModule } from '@angular/material/button';
 import { MatChipsModule } from '@angular/material/chips';
 import { MatIconModule } from '@angular/material/icon';
+import { RouterLink } from '@angular/router';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeVerdict } from '../review/claude-verdict.component';
 import { relativeTime } from '../senders/senders.models';
@@ -14,7 +15,7 @@ import { actionChips, FilterFindingDto, fixView } from './rules.models';
  */
 @Component({
   selector: 'app-finding-card',
-  imports: [ClaudeVerdict, MatButtonModule, MatChipsModule, MatIconModule],
+  imports: [ClaudeVerdict, MatButtonModule, MatChipsModule, MatIconModule, RouterLink],
   template: `
     @let f = finding();
     <article class="finding flex flex-col gap-3 rounded-lg p-4" data-testid="finding">
@@ -24,6 +25,14 @@ import { actionChips, FilterFindingDto, fixView } from './rules.models';
           <span class="badge text-sm" data-testid="finding-earlier">From an earlier review</span>
         }
       </div>
+      @if (f.policyId) {
+        <a
+          class="self-start text-sm"
+          [routerLink]="['/policies', f.policyId]"
+          data-testid="finding-policy"
+          >Open the policy</a
+        >
+      }
 
       <ul class="m-0 flex list-none flex-col gap-2 p-0" aria-label="Filters involved">
         @for (filter of f.filters; track filter.id) {
