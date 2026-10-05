@@ -8,8 +8,12 @@
  *   or a label-rule label are archived (mail without any user label is never touched; rule labels
  *   follow only their `days`). Gmail search matches single messages, so each match is re-checked
  *   against the labels of all its messages before archiving.
+ * - Retention: threads carrying `label` (in or out of the inbox) whose last message is older than `days`
+ *   are archived and get `toBeDeletedLabel`, unless starred, important or already marked; the portal's
+ *   Delete moves them to Trash only after the user's review.
  * When in doubt the script archives less: a missing or unsearchable action/keep label skips the
- * action-done phase. It only archives (removes from the inbox); it never trashes, spams or deletes.
+ * action-done phase, a missing or unsearchable To-Be-Deleted label skips retention. It only archives
+ * and labels; it never trashes, spams or deletes.
  *
  * Install: paste this file into a new Apps Script project, replace CONFIG with the block
  * generated on the portal's Settings page, run `runAutoArchive` once with `dryRun: true`
@@ -17,13 +21,17 @@
  */
 
 const CONFIG = {
-  scriptVersion: 1,
+  scriptVersion: 2,
   labelRules: [
     // { label: 'Example/Newsletters', days: 30 },
   ],
   actionLabel: 'Action/ToDo',
   actionDoneArchive: true,
   keepInInboxLabels: [],
+  retentionRules: [
+    // { label: 'Example/Receipts', days: 365 },
+  ],
+  toBeDeletedLabel: 'To-Be-Deleted',
   pageSize: 100,
   maxRuntimeSeconds: 280,
   dryRun: true,
@@ -46,7 +54,8 @@ function runAutoArchive() {
   const log = (message) => Logger.log(message);
   const now = () => Date.now();
   const startedAt = now();
-  const seen = new Set(); // shared by both phases, so a thread is archived and counted once
+  const seen = new Set(); // shared by both archive phases, so a thread is archived and counted once
+  const marked = new Set();
   log(`Auto-archive v${CONFIG.scriptVersion} started${CONFIG.dryRun ? ' (dry run: nothing is changed)' : ''}.`);
 
   const byLabel = archiveByLabelRules_(CONFIG, now, GmailApp, log, startedAt, seen);
@@ -55,9 +64,16 @@ function runAutoArchive() {
     actionDone = archiveActionDone_(CONFIG, now, GmailApp, log, startedAt, seen);
   }
 
+  let retention = { marked: 0, stopped: false };
+  if (!byLabel.stopped && !actionDone.stopped) {
+    retention = applyRetentionRules_(CONFIG, now, GmailApp, log, startedAt, marked);
+  }
+
   const verb = CONFIG.dryRun ? 'would archive' : 'archived';
-  const stopped = byLabel.stopped || actionDone.stopped;
-  log(`Done: ${verb} ${seen.size} thread(s)` +
+  const markVerb = CONFIG.dryRun ? 'would mark' : 'marked';
+  const markNote = (CONFIG.retentionRules || []).length > 0 ? `; ${markVerb} ${marked.size} for deletion` : '';
+  const stopped = byLabel.stopped || actionDone.stopped || retention.stopped;
+  log(`Done: ${verb} ${seen.size} thread(s)${markNote}` +
     (stopped ? '; stopped at the runtime limit, the next run continues.' : '.'));
 }
 
@@ -119,6 +135,66 @@ function archiveActionDone_(config, now, gmail, log, startedAt, seen = new Set()
   return archiveQuery_(query, null, { config, now, gmail, log, deadline: deadline_(config, startedAt), seen, guard });
 }
 
+/**
+ * Per `{ label, days }` retention rule, archives threads whose last message is older than `days` and adds
+ * `toBeDeletedLabel`, skipping starred or important threads, threads already carrying it and threads with
+ * the action label or a keep-in-inbox label on any message (those always win over retention). Archiving
+ * comes first: a run that stops between the two calls leaves an archived, unmarked thread that the
+ * query (not limited to the inbox) still matches, so the next run marks it.
+ * @return {{ marked: number, stopped: boolean }} marked = threads new to `seen` (in a dry run: would be marked)
+ */
+function applyRetentionRules_(config, now, gmail, log, startedAt, seen = new Set()) {
+  const rules = config.retentionRules || [];
+  if (rules.length === 0) return { marked: 0, stopped: false };
+  const name = config.toBeDeletedLabel;
+  if (!isNonEmpty_(name) || labelQueryName_(name) === null) {
+    log('Warning: toBeDeletedLabel is empty or has characters Gmail search can\'t match reliably; retention skipped.');
+    return { marked: 0, stopped: false };
+  }
+  const target = gmail.getUserLabelByName(name.trim());
+  if (!target) {
+    log(`Warning: label "${name}" does not exist in this account; retention skipped.`);
+    return { marked: 0, stopped: false };
+  }
+  const run = {
+    config, now, gmail, log, deadline: deadline_(config, startedAt), seen,
+    guard: guardLabels_([name, config.actionLabel, ...(config.keepInInboxLabels || [])]),
+    protect: (thread) => thread.hasStarredMessages() || thread.isImportant(),
+    act: (threads) => {
+      gmail.moveThreadsToArchive(threads);
+      target.addToThreads(threads);
+    },
+    verbs: ['Marked for deletion', 'Would mark for deletion'],
+    guardNote: 'starred, important, already marked, or action or keep label',
+  };
+  let marked = 0;
+  for (const rule of rules) {
+    if (!isValidRule_(rule)) {
+      log(`Warning: skipping invalid retention rule ${JSON.stringify(rule)}; expected { label: string, days: positive integer }.`);
+      continue;
+    }
+    if (labelQueryName_(rule.label) === null) {
+      log(`Warning: label "${rule.label}" has characters Gmail search can't match reliably; retention rule skipped.`);
+      continue;
+    }
+    if (!gmail.getUserLabelByName(rule.label)) {
+      log(`Warning: label "${rule.label}" does not exist in this account; retention rule skipped.`);
+      continue;
+    }
+    const cutoff = startedAt - rule.days * DAY_MS_;
+    const result = archiveQuery_(buildRetentionQuery_(rule, name), cutoff, run);
+    marked += result.archived;
+    if (result.stopped) return { marked, stopped: true };
+  }
+  return { marked, stopped: false };
+}
+
+/** `label:<name> older_than:<days>d -label:<toBeDeleted> -is:starred -is:important` */
+function buildRetentionQuery_(rule, toBeDeletedLabel) {
+  return `label:${labelQueryName_(rule.label)} older_than:${rule.days}d -label:${labelQueryName_(toBeDeletedLabel)} ` +
+    '-is:starred -is:important';
+}
+
 /** Lower-cased, trimmed label names a thread must not carry on any message to be archived. */
 function guardLabels_(names) {
   return new Set(names.filter(isNonEmpty_).map((name) => name.trim().toLowerCase()));
@@ -174,17 +250,19 @@ function labelQueryName_(name) {
 }
 
 /**
- * Pages through `query` and archives the new matches in groups of ≤ 100. With a `cutoff`, a thread
- * whose last message is not older than it (a recent reply) is left alone, as is a thread carrying a
- * `run.guard` label on any message.
- * Archived threads leave `in:inbox`, so a live run re-reads from the start after archiving and only
- * moves `start` past a page with nothing new. Search can still list just-archived threads (lagging
- * index), so a pass that met them is repeated from the start, at most MAX_RESCANS_ times, before the
+ * Pages through `query` and archives the new matches in groups of ≤ 100 (or hands them to `run.act`).
+ * With a `cutoff`, a thread whose last message is not older than it (a recent reply) is left alone, as is
+ * a thread carrying a `run.guard` label on any message or one `run.protect` returns true for.
+ * Acted-on threads leave the query (`in:inbox`, or the excluded label `run.act` adds), so a live run
+ * re-reads from the start after acting and only moves `start` past a page with nothing new. Search can
+ * still list just-acted-on threads (lagging index), so a pass that met them is repeated from the start, at most MAX_RESCANS_ times, before the
  * query counts as done.
  */
 function archiveQuery_(query, cutoff, run) {
   const { config, now, gmail, log, deadline, seen } = run;
   const guard = run.guard || new Set();
+  const act = run.act || ((threads) => gmail.moveThreadsToArchive(threads));
+  const [doneVerb, dryVerb] = run.verbs || ['Archived', 'Would archive'];
   const pageSize = pageSize_(config);
   const tooRecent = new Set();
   const guarded = new Set();
@@ -214,7 +292,7 @@ function archiveQuery_(query, cutoff, run) {
       } else if (!tooRecent.has(id) && !guarded.has(id)) {
         if (cutoff !== null && thread.getLastMessageDate().getTime() >= cutoff) {
           tooRecent.add(id);
-        } else if (carriesGuardLabel_(thread, guard)) {
+        } else if (carriesGuardLabel_(thread, guard) || (run.protect && run.protect(thread))) {
           guarded.add(id);
         } else {
           fresh.push(thread);
@@ -229,7 +307,7 @@ function archiveQuery_(query, cutoff, run) {
       continue;
     }
     for (let i = 0; i < fresh.length; i += ARCHIVE_BATCH_SIZE_) {
-      gmail.moveThreadsToArchive(fresh.slice(i, i + ARCHIVE_BATCH_SIZE_));
+      act(fresh.slice(i, i + ARCHIVE_BATCH_SIZE_));
     }
     if (fresh.length > 0) {
       start = 0;
@@ -240,9 +318,9 @@ function archiveQuery_(query, cutoff, run) {
   }
   const left = [];
   if (tooRecent.size > 0) left.push(`${tooRecent.size} left: recent reply`);
-  if (guarded.size > 0) left.push(`${guarded.size} left: action, keep or rule label on another message`);
+  if (guarded.size > 0) left.push(`${guarded.size} left: ${run.guardNote || 'action, keep or rule label on another message'}`);
   const note = left.length > 0 ? ` (${left.join('; ')})` : '';
-  log(`${config.dryRun ? 'Would archive' : 'Archived'} ${matched} thread(s) for "${query}"${note}.`);
+  log(`${config.dryRun ? dryVerb : doneVerb} ${matched} thread(s) for "${query}"${note}.`);
   return { archived: matched, stopped: false };
 }
 
