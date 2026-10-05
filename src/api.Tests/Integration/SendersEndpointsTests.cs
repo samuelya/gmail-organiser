@@ -147,6 +147,8 @@ public sealed class SendersEndpointsTests(ApiFactory factory, PostgresFixture po
     [Fact]
     public async Task Active_sender_fetch_job_is_attached_to_the_matching_address_or_domain()
     {
+        // Start the host first: startup recovery ends any job already marked running.
+        _ = factory.CreateClient();
         var job = await AddJobAsync(FetchJobTypes.Sender, JobStatus.Running, new { target = "d2.example.com" });
         await AddJobAsync("other_type", JobStatus.Running, new { target = "s001@d1.example.com" });
 
