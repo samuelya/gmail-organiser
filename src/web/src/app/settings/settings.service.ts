@@ -4,7 +4,14 @@ import { AsyncSubject, concatMap, defer, finalize, map, Observable, of, take } f
 import { QUIET_STATUSES } from '../core/error.interceptor';
 import { JobDto } from '../core/jobs.models';
 import { SetupService } from '../setup/setup.service';
-import { RetentionStatusDto, RetentionUpdate, TaxonomyUpdate } from './triage-settings.models';
+import {
+  PackSettings,
+  RetentionStatusDto,
+  RetentionUpdate,
+  TaxonomyUpdate,
+  TriageModelSettings,
+  TriageUpdate,
+} from './triage-settings.models';
 import {
   AnalysisSettingsUpdate,
   AppsScriptConfigDto,
@@ -91,6 +98,13 @@ export class SettingsService {
 
   /** A partial update of the taxonomy fields; the blocked labels are replaced whole. */
   saveTaxonomy(changes: TaxonomyUpdate): Observable<SettingsDto> {
+    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** A partial update of the triage model and pack fields: fields left out stay unchanged. */
+  saveTriage(
+    changes: TriageUpdate,
+  ): Observable<SettingsDto & Partial<TriageModelSettings & PackSettings>> {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
   }
 
