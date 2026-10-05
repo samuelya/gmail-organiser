@@ -16,10 +16,16 @@ import { MatIconModule } from '@angular/material/icon';
 import { RouterLink } from '@angular/router';
 import { catchError, of, Subject, switchMap } from 'rxjs';
 import { JobsService } from '../core/jobs.service';
-import { AnalysisSummaryDto, analysisJobsKey, savingsText } from './analysis.models';
+import {
+  AnalysisSummaryDto,
+  analysisJobsKey,
+  modelCountersText,
+  savingsText,
+  usageText,
+} from './analysis.models';
 import { AnalysisService } from './analysis.service';
 
-/** Dashboard card: messages by analysis status, Action and To-Be-Deleted counts, cumulative LLM savings. */
+/** Dashboard card: messages by analysis status, Action and To-Be-Deleted counts, cumulative LLM savings, usage and model counters. */
 @Component({
   selector: 'app-analysis-summary-card',
   imports: [DecimalPipe, MatButtonModule, MatCardModule, MatIconModule, RouterLink],
@@ -72,6 +78,18 @@ import { AnalysisService } from './analysis.service';
             Already labelled, not analysed: {{ s.labelledNotAnalysed | number }}
           </p>
           <p class="muted m-0" data-testid="savings">{{ savings() }}</p>
+          @if (s.policiesProposed > 0) {
+            <p class="muted m-0" data-testid="summary-policies">
+              {{ s.policiesProposed | number }}
+              {{ s.policiesProposed === 1 ? 'policy' : 'policies' }} proposed
+            </p>
+          }
+          @if (usage(); as u) {
+            <p class="muted m-0" data-testid="summary-usage">{{ u }}</p>
+          }
+          @if (counters(); as c) {
+            <p class="muted m-0" data-testid="summary-counters">{{ c }}</p>
+          }
         }
       </mat-card-content>
     </mat-card>
@@ -110,6 +128,15 @@ export class AnalysisSummaryCard {
     return s
       ? `All runs: ${savingsText(s.totalLlmCalls, s.totalMessagesCovered, s.savedPercent)}`
       : '';
+  });
+
+  readonly usage = computed(() => {
+    const s = this.summary();
+    return s ? usageText(s) : null;
+  });
+  readonly counters = computed(() => {
+    const s = this.summary();
+    return s ? modelCountersText(s) : null;
   });
 
   /** Counts change when an analysis job appears or changes status, or after a reconnect. */

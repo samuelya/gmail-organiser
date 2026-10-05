@@ -21,6 +21,14 @@ const summary: AnalysisSummaryDto = {
   savedPercent: 0.8,
   labelledNotAnalysed: 42,
   alternatives: 0,
+  policiesProposed: 3,
+  promptTokens: 1200,
+  completionTokens: 300,
+  llmSeconds: 12.5,
+  triageCalls: 50,
+  escalatedCalls: 4,
+  packedMessages: 0,
+  packRetries: 0,
 };
 
 class FakeJobs {
@@ -57,11 +65,34 @@ describe('AnalysisSummaryCard', () => {
     expect(q('action-count')!.textContent).toContain('7');
     expect(q('to-be-deleted')!.textContent).toContain('90');
     expect(q('savings')!.textContent).toContain('60 LLM calls for 300 emails (80 % saved)');
+    expect(q('summary-policies')!.textContent).toContain('3 policies proposed');
+    expect(q('summary-usage')!.textContent).toContain(
+      '1,200 prompt + 300 completion tokens · 12.5 s LLM',
+    );
+    expect(q('summary-counters')!.textContent).toContain('50 triage calls · 4 escalated');
+    expect(q('summary-counters')!.textContent).not.toContain('packed');
     expect(q('labelled-not-analysed')!.textContent).toContain('Already labelled, not analysed: 42');
     expect(q('link-analyse')!.getAttribute('href')).toBe('/analyse');
     expect(q('link-review')!.getAttribute('href')).toBe('/review');
     expect(q('open-clean-up')!.getAttribute('href')).toBe('/clean-up');
     expect(q('open-clean-up')!.textContent).not.toMatch(/\d/);
+  });
+
+  it('hides the policies, usage and counters lines while all are zero', async () => {
+    const zero = {
+      ...summary,
+      policiesProposed: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      llmSeconds: 0,
+      triageCalls: 0,
+      escalatedCalls: 0,
+    };
+    const { q } = await render(() => of(zero));
+    expect(q('savings')).not.toBeNull();
+    expect(q('summary-policies')).toBeNull();
+    expect(q('summary-usage')).toBeNull();
+    expect(q('summary-counters')).toBeNull();
   });
 
   it('reloads when an analysis job changes status, not for other jobs', async () => {

@@ -139,6 +139,15 @@ export interface AnalysisSummaryDto {
   labelledNotAnalysed: number;
   /** Suggestions with a re-analysis result waiting for "Use new" or "Keep current". */
   alternatives: number;
+  /** From `policiesProposed` to `packRetries`: the analyse runs' counters summed, compare runs excluded. */
+  policiesProposed: number;
+  promptTokens: number;
+  completionTokens: number;
+  llmSeconds: number;
+  triageCalls: number;
+  escalatedCalls: number;
+  packedMessages: number;
+  packRetries: number;
 }
 
 /** `CompareRunRequest`: exactly one of the two. */

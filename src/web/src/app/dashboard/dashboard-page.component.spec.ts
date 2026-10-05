@@ -27,6 +27,14 @@ const analysisSummary: AnalysisSummaryDto = {
   savedPercent: 0,
   labelledNotAnalysed: 0,
   alternatives: 0,
+  policiesProposed: 0,
+  promptTokens: 0,
+  completionTokens: 0,
+  llmSeconds: 0,
+  triageCalls: 0,
+  escalatedCalls: 0,
+  packedMessages: 0,
+  packRetries: 0,
 };
 
 /** Signals and calls the page reads from `JobsService`, driven by the test. */
