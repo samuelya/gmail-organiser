@@ -147,7 +147,8 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
         await ConnectAsync(OtherAccount);
         var runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
 
-        (await runner.ClaimAsync(Ct)).ShouldBe([started.JobId]);
+        // A completed fetch may have queued the sender stats rebuild on its own queue.
+        (await runner.ClaimAsync(Ct)).ShouldContain(started.JobId);
         await runner.RunAsync(started.JobId, Ct);
 
         await using var db = postgres.CreateDbContext();
@@ -333,7 +334,8 @@ public sealed class AccountGuardTests(ApiFactory factory, PostgresFixture postgr
     private static async Task RunAsync(WebApplicationFactory<Program> app, Guid jobId)
     {
         var runner = ActivatorUtilities.CreateInstance<JobRunner>(app.Services);
-        (await runner.ClaimAsync(Ct)).ShouldBe([jobId]);
+        // A completed fetch may have queued the sender stats rebuild on its own queue.
+        (await runner.ClaimAsync(Ct)).ShouldContain(jobId);
         await runner.RunAsync(jobId, Ct);
     }
 

@@ -174,7 +174,12 @@ public sealed class LabelResyncJobTests(ApiFactory factory, PostgresFixture post
 
     private async Task RunNextAsync()
     {
-        var id = (await runner.ClaimAsync(Ct)).ShouldHaveSingleItem();
-        await runner.RunAsync(id, Ct);
+        // A completed fetch queues the sender stats rebuild on its own queue, so it may be claimed alongside.
+        var claimed = await runner.ClaimAsync(Ct);
+        claimed.ShouldNotBeEmpty();
+        foreach (var id in claimed)
+        {
+            await runner.RunAsync(id, Ct);
+        }
     }
 }

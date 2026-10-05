@@ -101,19 +101,19 @@ public sealed class SenderStatsRebuildJob(AppDbContext db, TimeProvider time) : 
 
         var groups = await db.Database.SqlQuery<HeaderGroup>(
             $"""
-            SELECT m.from_address AS "Address", m.precedence AS "Precedence", m.auto_submitted AS "AutoSubmitted", m.list_id AS "ListId",
-                count(*)::int AS "Total",
-                count(*) FILTER (WHERE {FilterSpec.Unread} = ANY(m.label_ids))::int AS "Unread",
-                count(*) FILTER (WHERE {MessageProtection.StarredLabel} = ANY(m.label_ids))::int AS "Starred",
+            SELECT m.from_address AS address, m.precedence, m.auto_submitted, m.list_id,
+                count(*)::int AS "total",
+                count(*) FILTER (WHERE {FilterSpec.Unread} = ANY(m.label_ids))::int AS "unread",
+                count(*) FILTER (WHERE {MessageProtection.StarredLabel} = ANY(m.label_ids))::int AS "starred",
                 count(*) FILTER (WHERE m.thread_replied IS TRUE OR EXISTS (
-                    SELECT 1 FROM messages r WHERE r.thread_id = m.thread_id AND {MessageProtection.SentLabel} = ANY(r.label_ids)))::int AS "Replied",
-                count(*) FILTER (WHERE m.list_unsubscribe ~ '\S')::int AS "ListUnsubscribe",
-                count(*) FILTER (WHERE m.category = {Primary})::int AS "Primary",
-                count(*) FILTER (WHERE m.category = {Promotions})::int AS "Promotions",
-                count(*) FILTER (WHERE m.category = {Social})::int AS "Social",
-                count(*) FILTER (WHERE m.category = {Updates})::int AS "Updates",
-                count(*) FILTER (WHERE m.category = {Forums})::int AS "Forums",
-                min(m.internal_date) AS "FirstSeen"
+                    SELECT 1 FROM messages r WHERE r.thread_id = m.thread_id AND {MessageProtection.SentLabel} = ANY(r.label_ids)))::int AS "replied",
+                count(*) FILTER (WHERE m.list_unsubscribe ~ '\S')::int AS "list_unsubscribe",
+                count(*) FILTER (WHERE m.category = {Primary})::int AS "primary",
+                count(*) FILTER (WHERE m.category = {Promotions})::int AS "promotions",
+                count(*) FILTER (WHERE m.category = {Social})::int AS "social",
+                count(*) FILTER (WHERE m.category = {Updates})::int AS "updates",
+                count(*) FILTER (WHERE m.category = {Forums})::int AS "forums",
+                min(m.internal_date) AS "first_seen"
             FROM messages m
             WHERE m.from_address = ANY({addresses}) AND NOT m.deleted_in_gmail
             GROUP BY m.from_address, m.precedence, m.auto_submitted, m.list_id
