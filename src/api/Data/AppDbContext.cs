@@ -5,6 +5,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Rules;
 using GmailOrganiser.Rules.Labels;
@@ -46,6 +47,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<LabelPlanRow> LabelPlans => Set<LabelPlanRow>();
     public DbSet<FilterReviewRow> FilterReviews => Set<FilterReviewRow>();
     public DbSet<FilterFindingRow> FilterFindings => Set<FilterFindingRow>();
+    public DbSet<SenderPolicyRow> SenderPolicies => Set<SenderPolicyRow>();
+    public DbSet<SenderPolicyRuleRow> SenderPolicyRules => Set<SenderPolicyRuleRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -134,6 +137,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         FilterRow.Configure(modelBuilder);
         LabelPlanRow.Configure(modelBuilder);
         FilterReviewRow.Configure(modelBuilder);
+        SenderPolicyRow.Configure(modelBuilder);
+        SenderPolicyRuleRow.Configure(modelBuilder);
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>
