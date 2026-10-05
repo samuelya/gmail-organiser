@@ -80,6 +80,32 @@ public sealed class AnalysisRunTriageTests : IClassFixture<ApiFactory>, IAsyncLi
     }
 
     [Fact]
+    public async Task An_unreachable_triage_model_hands_every_group_to_the_chat_model()
+    {
+        await UseTriageAsync();
+        triage.Respond = (_, _, _, _) => throw new HttpRequestException("Connection refused");
+
+        var done = await RunAsync();
+
+        (done.LlmCalls, done.TriageCalls, done.EscalatedCalls, done.FailedMessages).ShouldBe((6, 3, 3, 0));
+        h.Chat.Calls.ShouldBe(3);
+        (await RowsAsync()).ShouldAllBe(s => s.Model == ChatModel);
+    }
+
+    [Fact]
+    public async Task An_unreachable_chat_model_still_fails_the_run_after_triage_escalates()
+    {
+        await UseTriageAsync();
+        triage.Respond = (ids, _, _, _) => Task.FromResult(Answer(ids, 0.1));
+        h.Chat.Respond = (_, _, _, _) => throw new HttpRequestException("Connection refused");
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+
+        await h.RunNextAsync();
+
+        (await h.GetRunAsync(run.Id)).Status.ShouldBe("failed");
+    }
+
+    [Fact]
     public async Task Errors_that_name_no_email_do_not_escalate()
     {
         await UseTriageAsync();

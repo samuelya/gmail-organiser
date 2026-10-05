@@ -408,6 +408,9 @@ public sealed partial class AnalysisRunJob(
         Message = "Triage answer escalated to the chat model: {Missing} email(s) without a valid answer, {Below} below confidence {Threshold}; errors: {Errors}")]
     private static partial void LogTriageEscalated(ILogger logger, int missing, int below, double threshold, string errors);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Triage model unavailable, asking the chat model: {Reason}")]
+    private static partial void LogTriageUnavailable(ILogger logger, string reason);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output ignored: {Notes}")]
     private static partial void LogDroppedOutput(ILogger logger, string notes);
 

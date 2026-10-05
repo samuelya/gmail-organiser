@@ -248,7 +248,21 @@ public sealed partial class AnalysisRunJob
             return await AskChatModelAsync(context, messages, expected, new HashSet<string>(), current, ct);
         }
 
-        var (text, usage) = await ChatAsync(context, triage, context.Settings.TriageModel, messages, emails.Count, ct);
+        string text;
+        LlmUsage usage;
+        try
+        {
+            (text, usage) = await ChatAsync(context, triage, context.Settings.TriageModel, messages, emails.Count, ct);
+        }
+        catch (AnalysisModelUnavailableException ex)
+        {
+            // Triage is an optimisation: an unreachable triage model hands the group to the chat model, whose own
+            // unavailability still fails the run.
+            LogTriageUnavailable(logger, ex.Message);
+            var escalated = await AskChatModelAsync(context, messages, expected, new HashSet<string>(), current, ct);
+            return escalated with { Calls = escalated.Calls + 1, TriageCalls = 1, EscalatedCalls = 1 };
+        }
+
         var parsed = SuggestionOutputParser.Parse(text, expected, current, context.Run.DocumentTypeParent);
         LogDropped(parsed);
         var threshold = context.Settings.TriageConfidenceThreshold;
