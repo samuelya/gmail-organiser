@@ -27,7 +27,7 @@ public sealed class OllamaVisionClient(ILlmClientFactory llm) : IVisionClient
         using var client = llm.CreateChatClient(OllamaHttp.Parse(reading.OllamaBaseUrl), model);
         var response = await client.GetResponseAsync(
             [new ChatMessage(ChatRole.User, [new TextContent(Prompt), new DataContent(image, mediaType)])],
-            LlmCallMeter.NoThink(new ChatOptions { ResponseFormat = ChatResponseFormat.Json, Temperature = 0 }),
+            new ChatOptions { ResponseFormat = ChatResponseFormat.Json, Temperature = 0 },
             ct);
         return Parse(response.Text);
     }

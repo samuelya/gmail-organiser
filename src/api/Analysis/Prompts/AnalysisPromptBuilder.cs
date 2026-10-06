@@ -76,12 +76,12 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     /// Schema-constrained JSON at temperature 0: the most reliable structured output across local models. Ollama gets
     /// <paramref name="numCtx"/> as <c>num_ctx</c>, else it uses the model's default and truncates a long prompt (#353).
     /// </summary>
-    public static ChatOptions CreateOptions(int numCtx) => LlmCallMeter.NoThink(new()
+    public static ChatOptions CreateOptions(int numCtx) => new()
     {
         ResponseFormat = ChatResponseFormat.ForJsonSchema(OutputSchema, "suggestions"),
         Temperature = 0,
         AdditionalProperties = new() { [LlmCallMeter.NumCtxKey] = numCtx },
-    });
+    };
 
     public IList<ChatMessage> Build(PromptInput input)
     {

@@ -40,7 +40,7 @@ public sealed class LlmModelTester(
         using var client = factory.CreateChatClient(baseUrl, model);
         var response = await client.GetResponseAsync(
             [new ChatMessage(ChatRole.User, ChatPrompt)],
-            LlmCallMeter.NoThink(new ChatOptions { ResponseFormat = ChatResponseFormat.Json, Temperature = 0 }),
+            new ChatOptions { ResponseFormat = ChatResponseFormat.Json, Temperature = 0 },
             ct);
         return IsJsonObject(response.Text) ? null : "The model answered, but not with a JSON object.";
     }

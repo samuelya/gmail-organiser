@@ -27,7 +27,9 @@ public static class LlmEndpoints
                 o.UseFake = bool.TryParse(value.Trim(), out var useFake)
                     ? useFake
                     : throw new InvalidOperationException($"{LlmOptions.FakeEnvironmentKey} must be 'true' or 'false'.");
-            });
+            })
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         services.AddHttpClient(OllamaHttp.ClientName);
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OllamaCatalog>();

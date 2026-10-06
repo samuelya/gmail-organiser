@@ -25,24 +25,6 @@ public sealed partial class LlmCallMeter(TimeProvider time, ILogger logger)
     /// </summary>
     public const string NumCtxKey = "num_ctx";
 
-    /// <summary>
-    /// The <see cref="ChatOptions.AdditionalProperties"/> key OllamaSharp maps to the request's top-level <c>think</c>
-    /// field (not under <c>options</c>); other clients ignore it.
-    /// </summary>
-    public const string ThinkKey = "think";
-
-    /// <summary>
-    /// Sends <c>"think":false</c>, so a thinking model answers without a long hidden reasoning phase (#457). Ollama
-    /// rejects <c>think</c> only when it is <c>true</c> on a model without thinking, so this is safe for every model.
-    /// </summary>
-    public static ChatOptions NoThink(ChatOptions options)
-    {
-        ArgumentNullException.ThrowIfNull(options);
-        options.AdditionalProperties ??= [];
-        options.AdditionalProperties[ThinkKey] = false;
-        return options;
-    }
-
     public const double NearLimitRatio = 0.9;
 
     public async Task<(ChatResponse Response, LlmUsage Usage)> GetResponseAsync(

@@ -55,33 +55,42 @@ public sealed class OllamaThinkRequestTests
     }
 
     [Fact]
-    public async Task NoThink_sends_a_top_level_think_false_next_to_num_ctx()
+    public async Task Think_false_is_sent_top_level_next_to_num_ctx()
     {
-        var body = await SendAsync(LlmCallMeter.NoThink(new ChatOptions
-        {
-            AdditionalProperties = new() { [LlmCallMeter.NumCtxKey] = 4096 },
-        }));
+        var body = await SendAsync(new ChatOptions { AdditionalProperties = new() { [LlmCallMeter.NumCtxKey] = 4096 } });
 
         ShouldNotThink(body);
         body.GetProperty("options").GetProperty("num_ctx").GetInt32().ShouldBe(4096);
     }
 
     [Fact]
-    public async Task Without_NoThink_no_think_field_is_sent()
+    public async Task Think_false_is_sent_without_options()
     {
-        var body = await SendAsync(new ChatOptions { Temperature = 0 });
+        var stub = ChatStub("{}");
+        using var client = Factory(stub).CreateChatClient(BaseUrl, Model);
 
-        var think = body.TryGetProperty("think", out var value) ? value.ValueKind : JsonValueKind.Undefined;
-        think.ShouldBeOneOf(JsonValueKind.Undefined, JsonValueKind.Null);
+        await client.GetResponseAsync([new ChatMessage(ChatRole.User, "hello")], cancellationToken: Ct);
+
+        ShouldNotThink(ChatBody(stub));
     }
 
     [Fact]
-    public void NoThink_keeps_existing_properties()
+    public async Task The_callers_options_are_not_mutated()
     {
-        var options = LlmCallMeter.NoThink(new ChatOptions { AdditionalProperties = new() { [LlmCallMeter.NumCtxKey] = 8192 } });
+        var options = new ChatOptions { AdditionalProperties = new() { [LlmCallMeter.NumCtxKey] = 8192 } };
 
-        options.AdditionalProperties![LlmCallMeter.NumCtxKey].ShouldBe(8192);
-        options.AdditionalProperties[LlmCallMeter.ThinkKey].ShouldBe(false);
+        await SendAsync(options);
+
+        options.AdditionalProperties.ContainsKey(OllamaRequestOptions.ThinkKey).ShouldBeFalse();
+        options.AdditionalProperties[LlmCallMeter.NumCtxKey].ShouldBe(8192);
+    }
+
+    [Fact]
+    public async Task A_calls_own_think_value_is_kept()
+    {
+        var body = await SendAsync(new ChatOptions { AdditionalProperties = new() { [OllamaRequestOptions.ThinkKey] = true } });
+
+        body.GetProperty("think").ValueKind.ShouldBe(JsonValueKind.True);
     }
 
     [Theory]
