@@ -7,10 +7,12 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// Picks the members of a group that go to the LLM: every protected member, then newest, oldest, the longest distinct
 /// subject and members spread over the group's date range, until there are <c>k</c> (or more, when protected members
 /// alone exceed <c>k</c>; <see cref="AnalysisGrouper"/> keeps at most <c>k</c> protected members in a group).
+/// <c>seeds</c> (an embedding cluster's nearest, farthest and newest members, #114) come right after the protected ones.
 /// </summary>
 public static class RepresentativePicker
 {
-    public static IReadOnlyList<string> Pick(MessageGroup group, int k, Allowlist allowlist, ProtectionSettings rules)
+    public static IReadOnlyList<string> Pick(
+        MessageGroup group, int k, Allowlist allowlist, ProtectionSettings rules, IReadOnlyList<string>? seeds = null)
     {
         // Oldest first, so an index is a position on the group's timeline.
         var byDate = group.Members.OrderBy(m => m.InternalDate).ThenBy(m => m.Id, StringComparer.Ordinal).ToList();
@@ -22,6 +24,15 @@ public static class RepresentativePicker
             if (MessageProtection.IsProtected(byDate[i], allowlist, rules))
             {
                 picked.Add(i);
+            }
+        }
+
+        foreach (var seed in seeds ?? [])
+        {
+            var index = byDate.FindIndex(m => string.Equals(m.Id, seed, StringComparison.Ordinal));
+            if (index >= 0)
+            {
+                Add(index);
             }
         }
 

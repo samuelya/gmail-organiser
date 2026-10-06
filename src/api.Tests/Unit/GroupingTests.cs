@@ -36,8 +36,8 @@ public sealed class GroupingTests
         ],
         new AppSettings { DeleteLabelName = "Synthetic Delete" });
 
-    private static Task<IReadOnlyList<MessageGroup>> GroupAsync(IReadOnlyList<MessageRow> messages, GroupingSettings? settings = null) =>
-        new AnalysisGrouper(new NoOpGroupRefiner()).GroupAsync(messages, settings ?? Defaults, NoAllowlist, Labels, Ct);
+    private static async Task<IReadOnlyList<MessageGroup>> GroupAsync(IReadOnlyList<MessageRow> messages, GroupingSettings? settings = null) =>
+        (await new AnalysisGrouper(new NoOpGroupRefiner()).GroupAsync(messages, settings ?? Defaults, NoAllowlist, Labels, Ct)).Groups;
 
     [Fact]
     public async Task Off_mode_makes_one_individual_group_per_message()
@@ -133,7 +133,7 @@ public sealed class GroupingTests
         var grouper = new AnalysisGrouper(new FuncRefiner(groups =>
             [groups[0] with { Key = "cluster:1", Members = [.. groups.SelectMany(g => g.Members).OrderBy(m => m.InternalDate)] }]));
 
-        var group = (await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, PersonalLabels.None, Ct)).Single();
+        var group = (await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, PersonalLabels.None, Ct)).Groups.Single();
 
         group.Key.ShouldBe("cluster:1");
         group.Members.Select(m => m.Id).ShouldBe(["m003", "m002", "m001"]);
@@ -328,8 +328,8 @@ public sealed class GroupingTests
 
     private sealed class FuncRefiner(Func<IReadOnlyList<MessageGroup>, IReadOnlyList<MessageGroup>> refine) : IGroupRefiner
     {
-        public Task<IReadOnlyList<MessageGroup>> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct) =>
-            Task.FromResult(refine(groups));
+        public Task<GroupRefinement> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct) =>
+            Task.FromResult(new GroupRefinement(refine(groups)));
     }
 
     private sealed class RecordingRefiner : IGroupRefiner
@@ -337,11 +337,11 @@ public sealed class GroupingTests
         public int Calls { get; private set; }
         public IReadOnlyList<MessageGroup> Seen { get; private set; } = [];
 
-        public Task<IReadOnlyList<MessageGroup>> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct)
+        public Task<GroupRefinement> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct)
         {
             Calls++;
             Seen = groups;
-            return Task.FromResult(groups);
+            return Task.FromResult(new GroupRefinement(groups));
         }
     }
 }

@@ -59,6 +59,7 @@ public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
 /// A <c>top_senders</c> run counts one group and one call per sender, <c>policiesProposed</c> the policies it stored,
 /// <c>messagesCovered</c> their senders' messages and <c>failedMessages</c> the senders whose output was invalid (#357).
 /// <c>newLabelsProposed</c>: distinct new topic labels among the run's stored suggestions (#367).
+/// <c>embeddingFallback</c>: Auto grouping kept the deterministic groups because embeddings were unavailable (#114).
 /// </summary>
 public sealed record AnalysisRunDto(
     Guid Id,
@@ -98,7 +99,8 @@ public sealed record AnalysisRunDto(
     int PoliciesProposed,
     int NewLabelsProposed,
     int PackedMessages,
-    int PackRetries);
+    int PackRetries,
+    bool EmbeddingFallback);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed

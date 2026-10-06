@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Claude;
 using GmailOrganiser.CleanUp.Unsubscribe;
 using GmailOrganiser.Dashboard;
@@ -51,6 +52,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<SenderPolicyRow> SenderPolicies => Set<SenderPolicyRow>();
     public DbSet<SenderPolicyRuleRow> SenderPolicyRules => Set<SenderPolicyRuleRow>();
     public DbSet<MetricSnapshotRow> MetricSnapshots => Set<MetricSnapshotRow>();
+    public DbSet<MessageEmbeddingRow> MessageEmbeddings => Set<MessageEmbeddingRow>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -166,6 +168,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         SenderPolicyRow.Configure(modelBuilder);
         SenderPolicyRuleRow.Configure(modelBuilder);
         MetricSnapshotRow.Configure(modelBuilder);
+        MessageEmbeddingRow.Configure(modelBuilder);
     }
 
     /// <summary>Applies the provider settings shared by the app, design-time tooling and tests.</summary>

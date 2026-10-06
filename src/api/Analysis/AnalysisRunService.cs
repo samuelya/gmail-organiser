@@ -412,5 +412,6 @@ public sealed partial class AnalysisRunService(
         run.PoliciesProposed,
         newLabels,
         run.PackedMessages,
-        run.PackRetries);
+        run.PackRetries,
+        run.EmbeddingFallback);
 }

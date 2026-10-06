@@ -35,6 +35,9 @@ public sealed record GroupingSettings(
         s.Protection);
 }
 
+/// <param name="EmbeddingFallback">Auto grouping wanted embedding clusters but kept the deterministic groups (#114).</param>
+public sealed record GroupingResult(IReadOnlyList<MessageGroup> Groups, bool EmbeddingFallback);
+
 /// <summary>Partitions a run's candidates into groups (epic #22 option A, refined by <see cref="IGroupRefiner"/>).</summary>
 public sealed class AnalysisGrouper(IGroupRefiner refiner)
 {
@@ -43,32 +46,55 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
     public const string NoSubjectDisplay = "(no subject)";
 
     /// <summary>Groups ordered by their newest member (newest first), then key; deterministic for the same input.</summary>
-    public async Task<IReadOnlyList<MessageGroup>> GroupAsync(
+    public Task<GroupingResult> GroupAsync(
         IReadOnlyList<MessageRow> messages,
         GroupingSettings settings,
         Allowlist allowlist,
         PersonalLabels labels,
+        CancellationToken ct) =>
+        GroupAsync(messages, settings, allowlist, labels, refine: true, ct);
+
+    /// <param name="refine">False keeps Auto deterministic (the preview never calls a model).</param>
+    public async Task<GroupingResult> GroupAsync(
+        IReadOnlyList<MessageRow> messages,
+        GroupingSettings settings,
+        Allowlist allowlist,
+        PersonalLabels labels,
+        bool refine,
         CancellationToken ct)
     {
         var ordered = Newest(messages);
         if (settings.Mode == AnalysisGroupingMode.Off)
         {
-            return ordered.Select(Single).ToList();
+            return new GroupingResult(ordered.Select(Single).ToList(), EmbeddingFallback: false);
         }
 
-        List<MessageGroup> keyed = ordered
+        List<(MessageGroup Group, IReadOnlyList<string> Seeds, bool OwnDisplay)> keyed = ordered
             .GroupBy(m => GroupKey.ForGrouping(m, labels), StringComparer.Ordinal)
-            .Select(g => Keyed(g.Key, g.ToList(), labels))
+            .Select(g => (Keyed(g.Key, g.ToList(), labels), (IReadOnlyList<string>)[], false))
             .ToList();
-        if (settings.Mode == AnalysisGroupingMode.Auto)
+        var result = new List<MessageGroup>();
+        var fallback = false;
+        if (settings.Mode == AnalysisGroupingMode.Auto && refine)
         {
-            var refined = await refiner.RefineAsync(keyed, settings, ct);
-            EnsurePartition(ordered, refined);
-            keyed = refined.Select(g => Keyed(g.Key, Newest(g.Members), labels)).ToList();
+            var refinement = await refiner.RefineAsync([.. keyed.Select(k => k.Group)], settings, ct);
+            fallback = refinement.EmbeddingFallback;
+            EnsurePartition(ordered, refinement.Groups);
+            var deterministic = keyed.Select(k => k.Group.Key).ToHashSet(StringComparer.Ordinal);
+            result.AddRange(refinement.Groups.Where(g => g.Individual).SelectMany(g => g.Members).Select(Single));
+            keyed = refinement.Groups
+                .Where(g => !g.Individual)
+                .Select(g =>
+                {
+                    var group = Keyed(g.Key, Newest(g.Members), labels);
+                    return deterministic.Contains(g.Key)
+                        ? (group, g.RepresentativeIds, false)
+                        : (group with { Display = g.Display + LabelsDisplay(g.Key, labels.Names) }, g.RepresentativeIds, true);
+                })
+                .ToList();
         }
 
-        var result = new List<MessageGroup>();
-        foreach (var keyedGroup in keyed)
+        foreach (var (keyedGroup, seeds, ownDisplay) in keyed)
         {
             // Protected members are never derived: beyond the k newest they go to the model one by one, so a group of
             // protected mail never becomes one oversized prompt.
@@ -77,8 +103,8 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
                 .Skip(settings.RepresentativesPerGroup)
                 .ToHashSet();
             result.AddRange(overflow.Select(Single));
-            var group = overflow.Count == 0
-                ? keyedGroup
+            var group = overflow.Count == 0 ? keyedGroup
+                : ownDisplay ? keyedGroup with { Members = [.. keyedGroup.Members.Where(m => !overflow.Contains(m))] }
                 : Keyed(keyedGroup.Key, keyedGroup.Members.Where(m => !overflow.Contains(m)).ToList(), labels);
 
             if (group.Members.Count < Math.Max(settings.MinGroupSize, 2))
@@ -89,14 +115,16 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
 
             result.Add(group with
             {
-                RepresentativeIds = RepresentativePicker.Pick(group, settings.RepresentativesPerGroup, allowlist, settings.Protection),
+                RepresentativeIds = RepresentativePicker.Pick(group, settings.RepresentativesPerGroup, allowlist, settings.Protection, seeds),
             });
         }
 
-        return result
-            .OrderByDescending(g => g.Members[0].InternalDate)
-            .ThenBy(g => g.Key, StringComparer.Ordinal)
-            .ToList();
+        return new GroupingResult(
+            result
+                .OrderByDescending(g => g.Members[0].InternalDate)
+                .ThenBy(g => g.Key, StringComparer.Ordinal)
+                .ToList(),
+            fallback);
     }
 
     private static List<MessageRow> Newest(IEnumerable<MessageRow> members) =>

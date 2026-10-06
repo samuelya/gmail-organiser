@@ -289,8 +289,9 @@ public sealed partial class AnalysisRunJob(
 
         var individual = (cursor.IndividualIds ?? []).ToHashSet(StringComparer.Ordinal);
         var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode };
-        var groups = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, labels, ct);
-        return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], groups, allowlisted, cursor, policies);
+        var grouped = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, labels, ct);
+        run.EmbeddingFallback |= grouped.EmbeddingFallback;
+        return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], grouped.Groups, allowlisted, cursor, policies);
     }
 
     /// <summary>The mailbox's user label names, sorted, and the person's own labels; read once per run.</summary>
