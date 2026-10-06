@@ -30,6 +30,11 @@ public sealed partial class GoogleGmailClient(
 {
     private const string Me = "me";
 
+    // The scoped TokenStore and SettingsStore share the scope's one AppDbContext, and callers (the analysis run's
+    // parallel body fetches) call this client concurrently: only the DB reads and writes are serialised, never the
+    // Gmail HTTP calls.
+    private readonly SemaphoreSlim dbGate = new(1, 1);
+
     public Task<GmailProfile> GetProfileAsync(CancellationToken ct) =>
         RunAsync(async service =>
         {
@@ -384,31 +389,35 @@ public sealed partial class GoogleGmailClient(
             catch (TokenResponseException ex) when (ex.Error?.Error == "invalid_grant")
             {
                 // Revoked, or expired (a consent screen in Testing mode issues 7-day refresh tokens).
-                await tokens.MarkReauthRequiredAsync(CancellationToken.None);
+                await MarkReauthRequiredAsync();
                 throw new GmailNotConnectedException("The Gmail connection was revoked or has expired; reconnect Gmail.", ex);
             }
             catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.Unauthorized)
             {
-                await tokens.MarkReauthRequiredAsync(CancellationToken.None);
+                await MarkReauthRequiredAsync();
                 throw new GmailNotConnectedException("Gmail rejected the stored credentials; reconnect Gmail.", ex);
             }
         }
     }
 
-    private async Task<(GoogleAuthorizationCodeFlow Flow, GmailService Service)> CreateServiceAsync(CancellationToken ct)
+    /// <summary>Flags the stored connection for reauth; serialised with the other DB work on the shared context.</summary>
+    internal async Task MarkReauthRequiredAsync()
     {
-        var token = await tokens.GetAsync(ct)
-            ?? throw new GmailNotConnectedException("Gmail is not connected.");
-        if (token.ReauthRequired)
+        await dbGate.WaitAsync(CancellationToken.None);
+        try
         {
-            throw new GmailNotConnectedException("The Gmail connection was revoked or has expired; reconnect Gmail.");
+            await tokens.MarkReauthRequiredAsync(CancellationToken.None);
         }
+        finally
+        {
+            dbGate.Release();
+        }
+    }
 
-        var client = await googleClient.GetAsync(ct);
-        if (string.IsNullOrWhiteSpace(client.ClientId) || string.IsNullOrWhiteSpace(client.ClientSecret))
-        {
-            throw new GmailNotConnectedException("The Google OAuth client ID and secret are not configured.");
-        }
+    internal async Task<(GoogleAuthorizationCodeFlow Flow, GmailService Service)> CreateServiceAsync(CancellationToken ct)
+    {
+        var (token, client) = await ReadCredentialsAsync(ct);
+
 
         // No DataStore: the flow keeps the access token in memory only.
         var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
@@ -423,5 +432,32 @@ public sealed partial class GoogleGmailClient(
             ApplicationName = SettingsEndpoints.ApplicationName,
         });
         return (flow, service);
+    }
+
+    /// <summary>Reads the stored token and the Google client under <see cref="dbGate"/>, re-read on every call so a reconnect is picked up.</summary>
+    private async Task<(OAuthToken Token, GoogleClientCredentials Client)> ReadCredentialsAsync(CancellationToken ct)
+    {
+        await dbGate.WaitAsync(ct);
+        try
+        {
+            var token = await tokens.GetAsync(ct)
+                ?? throw new GmailNotConnectedException("Gmail is not connected.");
+            if (token.ReauthRequired)
+            {
+                throw new GmailNotConnectedException("The Gmail connection was revoked or has expired; reconnect Gmail.");
+            }
+
+            var client = await googleClient.GetAsync(ct);
+            if (string.IsNullOrWhiteSpace(client.ClientId) || string.IsNullOrWhiteSpace(client.ClientSecret))
+            {
+                throw new GmailNotConnectedException("The Google OAuth client ID and secret are not configured.");
+            }
+
+            return (token, client);
+        }
+        finally
+        {
+            dbGate.Release();
+        }
     }
 }
