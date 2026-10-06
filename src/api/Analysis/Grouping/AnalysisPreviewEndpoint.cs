@@ -20,7 +20,8 @@ public static partial class AnalysisPreviewEndpoint
 
     public static IServiceCollection AddAnalysisGrouping(this IServiceCollection services)
     {
-        services.AddSingleton<IGroupRefiner, NoOpGroupRefiner>();
+        services.AddSingleton<MessageEmbeddingStore>();
+        services.AddScoped<IGroupRefiner, EmbeddingGroupRefiner>();
         services.AddScoped<AnalysisGrouper>();
         return services;
     }
@@ -61,7 +62,8 @@ public static partial class AnalysisPreviewEndpoint
 
         labels ??= PersonalLabels.None;
         var allowlisted = await AllowlistLoader.LoadAsync(db, settings, ct);
-        var groups = await grouper.GroupAsync(candidates, GroupingSettings.From(settings), allowlisted, labels, ct);
+        // Deterministic: the preview never calls a model, so Auto shows the groups before embedding clusters (#114).
+        var groups = (await grouper.GroupAsync(candidates, GroupingSettings.From(settings), allowlisted, labels, refine: false, ct)).Groups;
 
         // The run's own memory lookup, in one query for all groups: a covered group costs one call per member memory
         // left out (protected mail), and derives nothing. The label tree does not change the counts; the names by id do.

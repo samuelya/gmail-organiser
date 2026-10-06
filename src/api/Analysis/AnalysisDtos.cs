@@ -10,7 +10,9 @@ public sealed record AnalysisPreviewRequest(string? Scope, string? SenderAddress
 /// <summary>
 /// What a run with these settings would cost, without any model call. <c>skipped</c>: ids of a messages scope that
 /// are approved, applied, deleted or unknown and so are not analysed (0 for the other scopes). <c>packs</c>: shared
-/// snippet-only prompts for one-off senders (#376), one call each before retries.
+/// snippet-only prompts for one-off senders (#376), one call each before retries. The preview stays deterministic and
+/// never calls a model: with Auto grouping and <c>embeddingsAvailable</c>, the run's embedding clusters (#114) may merge
+/// or split these groups, so the run's group count and calls can differ from <c>groups</c> and <c>estimatedLlmCalls</c>.
 /// </summary>
 public sealed record GroupingPreviewDto(
     int Messages,
@@ -59,6 +61,7 @@ public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
 /// A <c>top_senders</c> run counts one group and one call per sender, <c>policiesProposed</c> the policies it stored,
 /// <c>messagesCovered</c> their senders' messages and <c>failedMessages</c> the senders whose output was invalid (#357).
 /// <c>newLabelsProposed</c>: distinct new topic labels among the run's stored suggestions (#367).
+/// <c>embeddingFallback</c>: Auto grouping kept the deterministic groups because embeddings were unavailable (#114).
 /// </summary>
 public sealed record AnalysisRunDto(
     Guid Id,
@@ -98,7 +101,8 @@ public sealed record AnalysisRunDto(
     int PoliciesProposed,
     int NewLabelsProposed,
     int PackedMessages,
-    int PackRetries);
+    int PackRetries,
+    bool EmbeddingFallback);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed

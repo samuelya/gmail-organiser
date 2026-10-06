@@ -88,6 +88,12 @@ public sealed class AnalysisRunRow
     public int PackedMessages { get; set; }
     public int PackRetries { get; set; }
 
+    /// <summary>
+    /// The Auto grouping asked for embedding clusters but kept the deterministic groups (no model, model error or a
+    /// dimension mismatch; #114), so the UI can say "embeddings unavailable".
+    /// </summary>
+    public bool EmbeddingFallback { get; set; }
+
     /// <summary>Sender policies a <see cref="AnalysisScope.TopSenders"/> run proposed (#357).</summary>
     public int PoliciesProposed { get; set; }
     public string? Model { get; set; }

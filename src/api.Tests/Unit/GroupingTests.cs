@@ -36,8 +36,8 @@ public sealed class GroupingTests
         ],
         new AppSettings { DeleteLabelName = "Synthetic Delete" });
 
-    private static Task<IReadOnlyList<MessageGroup>> GroupAsync(IReadOnlyList<MessageRow> messages, GroupingSettings? settings = null) =>
-        new AnalysisGrouper(new NoOpGroupRefiner()).GroupAsync(messages, settings ?? Defaults, NoAllowlist, Labels, Ct);
+    private static async Task<IReadOnlyList<MessageGroup>> GroupAsync(IReadOnlyList<MessageRow> messages, GroupingSettings? settings = null) =>
+        (await new AnalysisGrouper(new NoOpGroupRefiner()).GroupAsync(messages, settings ?? Defaults, NoAllowlist, Labels, Ct)).Groups;
 
     [Fact]
     public async Task Off_mode_makes_one_individual_group_per_message()
@@ -133,7 +133,7 @@ public sealed class GroupingTests
         var grouper = new AnalysisGrouper(new FuncRefiner(groups =>
             [groups[0] with { Key = "cluster:1", Members = [.. groups.SelectMany(g => g.Members).OrderBy(m => m.InternalDate)] }]));
 
-        var group = (await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, PersonalLabels.None, Ct)).Single();
+        var group = (await grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, PersonalLabels.None, Ct)).Groups.Single();
 
         group.Key.ShouldBe("cluster:1");
         group.Members.Select(m => m.Id).ShouldBe(["m003", "m002", "m001"]);
@@ -173,6 +173,30 @@ public sealed class GroupingTests
         group.RepresentativeIds.ShouldBe(["m007", "m008", "m009"]);
         groups.Where(g => g.Individual).Select(g => g.Key).Order().ShouldBe(Enumerable.Range(1, 6).Select(i => $"msg:m{i:D3}"));
     }
+
+    [Fact]
+    public async Task A_cluster_whose_key_member_is_trimmed_off_fails_loudly()
+    {
+        // All protected: the k = 3 newest stay, the rest become singles, among them the member the key names.
+        var messages = Enumerable.Range(0, 6).Select(i => Msg(i)).ToList();
+        messages.ForEach(m => m.HasAttachment = true);
+        var grouper = new AnalysisGrouper(new FuncRefiner(groups =>
+            [groups[0] with { Key = $"{EmbeddingGroupRefiner.KeyPrefix}shop@example.com:0123abcd:m000" }]));
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, Labels, Ct));
+
+        ex.Message.ShouldContain("m000");
+    }
+
+    [Theory]
+    [InlineData("emb:shop@example.com:0123abcd:m7", "m7")]
+    [InlineData("emb:list:news.example.com:0123abcd:m7|labels:Label_1,Label_2", "m7")]
+    [InlineData("from:shop@example.com|promotions|weekly deals", null)]
+    [InlineData("list:news.example.com|digest|labels:Label_1", null)]
+    [InlineData("msg:m7", null)]
+    public void A_cluster_key_names_its_member_and_other_keys_name_none(string key, string? member) =>
+        EmbeddingGroupRefiner.KeyMemberId(key).ShouldBe(member);
 
     [Fact]
     public void Representatives_per_group_is_at_least_the_derivation_minimum()
@@ -328,8 +352,8 @@ public sealed class GroupingTests
 
     private sealed class FuncRefiner(Func<IReadOnlyList<MessageGroup>, IReadOnlyList<MessageGroup>> refine) : IGroupRefiner
     {
-        public Task<IReadOnlyList<MessageGroup>> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct) =>
-            Task.FromResult(refine(groups));
+        public Task<GroupRefinement> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct) =>
+            Task.FromResult(new GroupRefinement(refine(groups)));
     }
 
     private sealed class RecordingRefiner : IGroupRefiner
@@ -337,11 +361,11 @@ public sealed class GroupingTests
         public int Calls { get; private set; }
         public IReadOnlyList<MessageGroup> Seen { get; private set; } = [];
 
-        public Task<IReadOnlyList<MessageGroup>> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct)
+        public Task<GroupRefinement> RefineAsync(IReadOnlyList<MessageGroup> groups, GroupingSettings settings, CancellationToken ct)
         {
             Calls++;
             Seen = groups;
-            return Task.FromResult(groups);
+            return Task.FromResult(new GroupRefinement(groups));
         }
     }
 }
