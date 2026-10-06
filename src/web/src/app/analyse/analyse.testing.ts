@@ -51,6 +51,7 @@ export const run = (over: Partial<AnalysisRunDto> = {}): AnalysisRunDto => ({
   triageCalls: 0,
   escalatedCalls: 0,
   isStalled: false,
+  embeddingFallback: false,
   packedMessages: 0,
   packRetries: 0,
   ...over,
