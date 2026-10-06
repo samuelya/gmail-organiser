@@ -221,6 +221,31 @@ public sealed class SetupStatusServiceTests
     }
 
     [Fact]
+    public async Task A_token_needing_reauth_with_a_chat_model_backfills_completed_once()
+    {
+        settings.Current = settings.Current with { ChatModel = "test-chat" };
+        await tokens.MarkReauthRequiredAsync(Ct);
+
+        var status = await Create().GetAsync(Ct);
+
+        status.Complete.ShouldBeFalse();
+        status.CompletedOnce.ShouldBeTrue();
+        settings.Current.SetupCompletedOnce.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Fake_gmail_reports_completed_once_but_never_stores_it()
+    {
+        settings.Current = settings.Current with { ChatModel = "test-chat" };
+        useFakeGmail = true;
+
+        (await Create().GetAsync(Ct)).CompletedOnce.ShouldBeTrue();
+
+        settings.Writes.ShouldBe(0);
+        settings.Current.SetupCompletedOnce.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task A_failing_save_still_reports_completed_once_and_the_next_call_tries_again()
     {
         settings.Current = settings.Current with { ChatModel = "test-chat" };
@@ -228,7 +253,7 @@ public sealed class SetupStatusServiceTests
         var service = Create();
 
         (await service.GetAsync(Ct)).CompletedOnce.ShouldBeTrue();
-        logger.Warnings.ShouldBe(["Could not store the first setup completion (InvalidOperationException)"]);
+        logger.Warnings.ShouldBe(["Could not store the first setup completion (InvalidOperationException: synthetic failure)"]);
         settings.Current.SetupCompletedOnce.ShouldBeFalse();
 
         settings.FailWrites = false;

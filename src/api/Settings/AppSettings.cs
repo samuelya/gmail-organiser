@@ -40,7 +40,10 @@ public sealed record AppSettings
 
     public bool SetupWizardSeen { get; init; }
 
-    /// <summary>Set by the setup status the first time setup is complete; never reset, so the Setup nav stays hidden.</summary>
+    /// <summary>
+    /// Set by the setup status once a Gmail token (even one needing re-auth) and a chat model exist; never reset, so the Setup
+    /// nav stays hidden. Not stored while the fake Gmail client is active.
+    /// </summary>
     public bool SetupCompletedOnce { get; init; }
 
     /// <summary>Messages per mailbox fetch chunk (one checkpoint each); see <see cref="SettingsValidation"/> for the range.</summary>

@@ -44,17 +44,26 @@ public sealed class SettingsStore(
         var row = (await db.Settings
             .FromSql($"SELECT * FROM settings WHERE id = {SettingsRow.SingletonId} FOR UPDATE")
             .ToListAsync(ct)).Single();
-        var stored = Parse(row.Document);
+        try
+        {
+            var stored = Parse(row.Document);
 
-        var before = JsonSerializer.SerializeToNode(Effective(stored), Json)!.AsObject();
-        var after = JsonSerializer.SerializeToNode(change(Effective(stored)), Json)!.AsObject();
-        StoreChanges(stored, before, after);
+            var before = JsonSerializer.SerializeToNode(Effective(stored), Json)!.AsObject();
+            var after = JsonSerializer.SerializeToNode(change(Effective(stored)), Json)!.AsObject();
+            StoreChanges(stored, before, after);
 
-        row.Document = stored.ToJsonString(Json);
-        row.UpdatedAt = time.GetUtcNow();
-        await db.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        return Effective(stored);
+            row.Document = stored.ToJsonString(Json);
+            row.UpdatedAt = time.GetUtcNow();
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return Effective(stored);
+        }
+        catch
+        {
+            // The context is scoped and shared: a later SaveChanges must not write this document outside the row lock.
+            db.Entry(row).State = EntityState.Detached;
+            throw;
+        }
     }
 
     /// <summary>

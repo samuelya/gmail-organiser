@@ -52,7 +52,11 @@ public sealed class SetupStatusService(
         var gmailConnected = token is not null && !token.ReauthRequired;
         var chatModelSelected = !string.IsNullOrWhiteSpace(current.ChatModel);
         var complete = gmailConnected && chatModelSelected;
-        if (complete && !current.SetupCompletedOnce)
+
+        // A token row needing re-auth was connected once, so it still counts: this also backfills installs that completed
+        // setup before the flag existed. The fake Gmail token proves nothing about a real account, so it is never stored.
+        var completedEver = token is not null && chatModelSelected;
+        if (completedEver && !current.SetupCompletedOnce && !gmail.Value.UseFake)
         {
             await SaveCompletedOnceAsync(ct);
         }
@@ -67,7 +71,7 @@ public sealed class SetupStatusService(
             WizardSeen: current.SetupWizardSeen,
             Complete: complete,
             AccountMismatch: accountMismatch,
-            CompletedOnce: complete || current.SetupCompletedOnce);
+            CompletedOnce: completedEver || current.SetupCompletedOnce);
     }
 
     // A failed save still reports completedOnce from the live status; the next status call tries again.
@@ -79,7 +83,11 @@ public sealed class SetupStatusService(
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            logger.LogWarning("Could not store the first setup completion ({Error})", ex.GetType().Name);
+            // Database errors carry no settings values in the message (Npgsql leaves out row detail by default).
+            logger.LogWarning(
+                "Could not store the first setup completion ({Error}: {Message})",
+                ex.GetType().Name,
+                ex.GetBaseException().Message);
         }
     }
 
