@@ -288,7 +288,7 @@ public sealed partial class AnalysisRunJob(
         var allowlisted = await AllowlistLoader.LoadAsync(db, settings, ct);
 
         var individual = (cursor.IndividualIds ?? []).ToHashSet(StringComparer.Ordinal);
-        var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode };
+        var grouping = GroupingSettings.From(settings) with { Mode = run.GroupingMode, RunId = run.Id };
         var grouped = await grouper.GroupAsync([.. candidates.Where(m => !individual.Contains(m.Id))], grouping, allowlisted, labels, ct);
         run.EmbeddingFallback |= grouped.EmbeddingFallback;
         return new Plan([.. candidates.Where(m => individual.Contains(m.Id)).Select(AnalysisGrouper.Single)], grouped.Groups, allowlisted, cursor, policies);

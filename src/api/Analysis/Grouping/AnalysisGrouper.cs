@@ -17,13 +17,15 @@ public sealed record MessageGroup(
     bool Individual,
     bool Packed = false);
 
+/// <param name="RunId">The run being grouped; embedding cluster keys carry it, so no other run shares one (#459).</param>
 public sealed record GroupingSettings(
     AnalysisGroupingMode Mode,
     int RepresentativesPerGroup,
     int MinGroupSize,
     double DerivedConfidencePenalty,
     double ClusterDistance,
-    ProtectionSettings Protection)
+    ProtectionSettings Protection,
+    Guid RunId = default)
 {
     /// <summary>k is at least <see cref="DerivationRule.MinValidRepresentatives"/>, or no group could ever be derived.</summary>
     public static GroupingSettings From(AppSettings s) => new(

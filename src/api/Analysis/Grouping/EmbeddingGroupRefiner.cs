@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Memory;
@@ -22,7 +20,7 @@ public sealed partial class EmbeddingGroupRefiner(
 {
     public const int BatchSize = 32;
     public const string KeyPrefix = "emb:";
-    private const int HashLength = 16;
+    private const int RunIdLength = 8;
 
     /// <summary>Members farther than this many cluster distances from their centroid are analysed on their own.</summary>
     public const double OutlierFactor = 2.0;
@@ -52,7 +50,7 @@ public sealed partial class EmbeddingGroupRefiner(
         foreach (var (partition, members) in partitions)
         {
             refined.AddRange(members.Count >= minimum && members.All(m => vectors.ContainsKey(m.Id))
-                ? Cluster(partition, members, vectors, settings.ClusterDistance)
+                ? Cluster(partition, members, vectors, settings.ClusterDistance, settings.RunId)
                 : partition);
         }
 
@@ -144,9 +142,9 @@ public sealed partial class EmbeddingGroupRefiner(
         [.. members.OrderByDescending(m => m.InternalDate).ThenBy(m => m.Id, StringComparer.Ordinal)];
 
     private static IEnumerable<MessageGroup> Cluster(
-        IReadOnlyList<MessageGroup> partition, IReadOnlyList<MessageRow> members, IReadOnlyDictionary<string, float[]> vectors, double distance)
+        IReadOnlyList<MessageGroup> partition, IReadOnlyList<MessageRow> members, IReadOnlyDictionary<string, float[]> vectors, double distance,
+        Guid runId)
     {
-        var deterministicKey = partition.SelectMany(g => g.Members.Select(m => (m.Id, g.Key))).ToDictionary(p => p.Id, p => p.Key, StringComparer.Ordinal);
         var clusters = new List<(List<MessageRow> Members, double[] Sum, float[] Centroid)>();
         foreach (var m in members)
         {
@@ -183,7 +181,7 @@ public sealed partial class EmbeddingGroupRefiner(
         var identity = PartitionOf(partition[0]);
         var labelsAt = identity.IndexOf(GroupKey.LabelsPrefix, StringComparison.Ordinal);
         var (prefix, suffix) = labelsAt < 0 ? (identity, "") : (identity[..labelsAt], identity[labelsAt..]);
-        var used = new HashSet<string>(StringComparer.Ordinal);
+        var run = runId.ToString("N")[..RunIdLength];
         foreach (var (list, _, centroid) in clusters)
         {
             var scored = list.Select(m => (Member: m, Distance: CosineDistance(vectors[m.Id], centroid))).ToList();
@@ -201,16 +199,10 @@ public sealed partial class EmbeddingGroupRefiner(
             var nearest = kept.OrderBy(s => s.Distance).ThenBy(s => s.Member.Id, StringComparer.Ordinal).First().Member;
             var farthest = kept.OrderByDescending(s => s.Distance).ThenBy(s => s.Member.Id, StringComparer.Ordinal).First().Member;
             var newest = kept[0].Member;
-            // Review treats (sender, key) as one group across runs, so the key names what the cluster is made of (its
-            // deterministic groups), never its position: another run's cluster of other mail never shares it. Two
-            // clusters of the same groups in one run are told apart by the member nearest the centroid.
-            var hash = Hash(kept.Select(s => deterministicKey[s.Member.Id]));
-            var key = $"{KeyPrefix}{prefix}:{hash}{suffix}";
-            if (!used.Add(key))
-            {
-                key = $"{KeyPrefix}{prefix}:{hash}:{nearest.Id}{suffix}";
-                used.Add(key);
-            }
+            // Review treats (sender, key) as one group across runs, so the key is unique by construction: a message is in
+            // one cluster, so its nearest member names it within the run, and the run id tells it from other runs'. A
+            // resumed run re-plans only unfinished mail, so its clusters never take a finished cluster's nearest member.
+            var key = $"{KeyPrefix}{prefix}:{run}:{nearest.Id}{suffix}";
 
             yield return new MessageGroup(
                 key,
@@ -223,11 +215,6 @@ public sealed partial class EmbeddingGroupRefiner(
     }
 
     private static double CosineDistance(float[] a, float[] b) => DecisionMemory.CosineDistance(a, b);
-
-    /// <summary>A short digest of the distinct deterministic keys, in ordinal order.</summary>
-    private static string Hash(IEnumerable<string> keys) =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
-            string.Join('\n', keys.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)))))[..HashLength];
 
     private static float[] Normalise(float[] v) => Normalise(v.Select(x => (double)x).ToArray());
 

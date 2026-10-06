@@ -175,7 +175,7 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
     }
 
     [Fact]
-    public async Task Cluster_keys_name_their_content_so_another_runs_cluster_of_other_mail_never_shares_one()
+    public async Task Cluster_keys_stay_within_a_run_and_other_mail_never_shares_one()
     {
         var promos = await SeedAsync(
             Msg(1, "Weekly deals", Angle(0)), Msg(2, "Weekly deals", Angle(0.01)), Msg(3, "Summer news", Angle(0.02)));
@@ -187,6 +187,37 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
         invoiceKey.ShouldStartWith($"emb:{Shop}:");
         invoiceKey.ShouldNotBe(promoKey); // review approves (sender, key) across runs
         (await GroupAsync(promos)).Groups.ShouldHaveSingleItem().Key.ShouldBe(promoKey);
+    }
+
+    [Fact]
+    public async Task A_resumed_run_never_gives_the_remaining_cluster_a_finished_clusters_key()
+    {
+        var all = await SeedAsync(
+            Msg(4, "Weekly deals", Angle(0)), Msg(3, "Weekly deals", Angle(0.01)),
+            Msg(2, "Weekly deals", Angle(1.2)), Msg(1, "Weekly deals", Angle(1.21)));
+        var first = (await GroupAsync(all)).Groups;
+        var promoKey = first.Single(g => g.Members.Any(m => m.Id == "m4")).Key;
+        var receiptKey = first.Single(g => g.Members.Any(m => m.Id == "m2")).Key;
+
+        // After a pause the promos' suggestions are stored, so the run re-plans only the receipts.
+        var resumed = (await GroupAsync([.. all.Where(m => m.Id is "m2" or "m1")])).Groups.ShouldHaveSingleItem().Key;
+
+        resumed.ShouldNotBe(promoKey);
+        resumed.ShouldBe(receiptKey);
+    }
+
+    [Fact]
+    public async Task A_later_run_with_the_clusters_in_swapped_order_never_reuses_a_key_for_other_mail()
+    {
+        var run1 = (await GroupAsync(await SeedAsync(
+            Msg(4, "Weekly deals", Angle(0)), Msg(3, "Weekly deals", Angle(0.01)),
+            Msg(2, "Weekly deals", Angle(1.2)), Msg(1, "Weekly deals", Angle(1.21))), Grouping with { RunId = Guid.NewGuid() })).Groups;
+        var run2 = (await GroupAsync(await SeedAsync(
+            Msg(14, "Weekly deals", Angle(1.2)), Msg(13, "Weekly deals", Angle(1.21)),
+            Msg(12, "Weekly deals", Angle(0)), Msg(11, "Weekly deals", Angle(0.01))), Grouping with { RunId = Guid.NewGuid() })).Groups;
+
+        run2.Count.ShouldBe(2);
+        run2.Select(g => g.Key).ShouldAllBe(k => !run1.Select(g => g.Key).Contains(k));
     }
 
     [Fact]
