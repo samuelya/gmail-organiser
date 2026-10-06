@@ -18,6 +18,9 @@ public sealed class FakeEmbeddingGenerator(int dimension = 8) : IEmbeddingGenera
 
     /// <summary>A call with any input this matches fails as a whole, like a model rejecting one invalid input.</summary>
     public Func<string, bool>? Rejects { get; set; }
+
+    /// <summary>A test's own vector for an input (null: the hash vector), e.g. near-identical vectors for a cluster.</summary>
+    public Func<string, float[]?>? VectorFor { get; set; }
     public bool Disposed { get; private set; }
 
     public IReadOnlyList<string> Inputs
@@ -51,7 +54,7 @@ public sealed class FakeEmbeddingGenerator(int dimension = 8) : IEmbeddingGenera
             throw new HttpRequestException("synthetic rejected input");
         }
 
-        return Task.FromResult(new GeneratedEmbeddings<Embedding<float>>(list.Select(v => new Embedding<float>(Vector(v)))));
+        return Task.FromResult(new GeneratedEmbeddings<Embedding<float>>(list.Select(v => new Embedding<float>(VectorFor?.Invoke(v) ?? Vector(v)))));
     }
 
     public float[] Vector(string value)
