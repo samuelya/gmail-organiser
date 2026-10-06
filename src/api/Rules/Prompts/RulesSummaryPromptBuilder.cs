@@ -35,7 +35,8 @@ public static class RulesSummaryPromptBuilder
     public static string Template { get; } = Load();
 
     /// <summary>Prose at a low temperature, short enough for a few sentences.</summary>
-    public static ChatOptions CreateOptions() => new() { Temperature = 0.2f, MaxOutputTokens = 600 };
+    public static ChatOptions CreateOptions() =>
+        Llm.LlmCallMeter.NoThink(new() { Temperature = 0.2f, MaxOutputTokens = 600 });
 
     /// <summary>
     /// The instructions before the first placeholder line are the system message, the rest the user message, so filter

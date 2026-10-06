@@ -84,12 +84,12 @@ public static class SenderPolicyPromptBuilder
     public static string Template { get; } = Load();
 
     /// <summary>Schema-constrained JSON at temperature 0 with the analysis <c>num_ctx</c> (#353).</summary>
-    public static ChatOptions CreateOptions(int numCtx) => new()
+    public static ChatOptions CreateOptions(int numCtx) => LlmCallMeter.NoThink(new()
     {
         ResponseFormat = ChatResponseFormat.ForJsonSchema(OutputSchema, "senderPolicy"),
         Temperature = 0,
         AdditionalProperties = new() { [LlmCallMeter.NumCtxKey] = numCtx },
-    };
+    });
 
     public static SenderPolicyPrompt Build(SenderProfile profile, IReadOnlyList<string> labelTree, AppSettings settings)
     {

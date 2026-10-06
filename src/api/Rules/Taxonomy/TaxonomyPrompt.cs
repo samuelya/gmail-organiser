@@ -76,12 +76,12 @@ public static class TaxonomyPrompt
         """).RootElement.Clone();
 
     /// <summary>Schema-constrained JSON at temperature 0, with <paramref name="numCtx"/> as <c>num_ctx</c> (#353).</summary>
-    public static ChatOptions CreateOptions(int numCtx) => new()
+    public static ChatOptions CreateOptions(int numCtx) => Llm.LlmCallMeter.NoThink(new()
     {
         ResponseFormat = ChatResponseFormat.ForJsonSchema(OutputSchema, "taxonomy"),
         Temperature = 0,
         AdditionalProperties = new() { [Llm.LlmCallMeter.NumCtxKey] = numCtx },
-    };
+    });
 
     /// <summary>
     /// The instructions up to the label tree are the system message; the label tree and the profiles (label names,
