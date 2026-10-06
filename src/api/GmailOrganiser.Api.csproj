@@ -4,9 +4,6 @@
     <AssemblyName>GmailOrganiser.Api</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <InternalsVisibleTo Include="GmailOrganiser.Api.Tests" />
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
     <!-- DocumentFormat.OpenXml: MIT. docx, xlsx and pptx attachment converters. -->
     <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />

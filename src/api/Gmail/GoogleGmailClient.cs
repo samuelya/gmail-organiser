@@ -32,8 +32,10 @@ public sealed partial class GoogleGmailClient(
 
     // The scoped TokenStore and SettingsStore share the scope's one AppDbContext, and callers (the analysis run's
     // parallel body fetches) call this client concurrently: only the DB reads and writes are serialised, never the
-    // Gmail HTTP calls.
+    // Gmail HTTP calls. The credentials are read once per instance and dropped when Google rejects them.
     private readonly SemaphoreSlim dbGate = new(1, 1);
+    private (OAuthToken Token, GoogleClientCredentials Client)? credentials;
+    private bool reauthMarked;
 
     public Task<GmailProfile> GetProfileAsync(CancellationToken ct) =>
         RunAsync(async service =>
@@ -389,24 +391,29 @@ public sealed partial class GoogleGmailClient(
             catch (TokenResponseException ex) when (ex.Error?.Error == "invalid_grant")
             {
                 // Revoked, or expired (a consent screen in Testing mode issues 7-day refresh tokens).
-                await MarkReauthRequiredAsync();
+                await MarkReauthRequiredAsync(ct);
                 throw new GmailNotConnectedException("The Gmail connection was revoked or has expired; reconnect Gmail.", ex);
             }
             catch (GoogleApiException ex) when (ex.HttpStatusCode == HttpStatusCode.Unauthorized)
             {
-                await MarkReauthRequiredAsync();
+                await MarkReauthRequiredAsync(ct);
                 throw new GmailNotConnectedException("Gmail rejected the stored credentials; reconnect Gmail.", ex);
             }
         }
     }
 
-    /// <summary>Flags the stored connection for reauth; serialised with the other DB work on the shared context.</summary>
-    internal async Task MarkReauthRequiredAsync()
+    /// <summary>Flags the stored connection for reauth once per instance and drops the cached credentials.</summary>
+    private async Task MarkReauthRequiredAsync(CancellationToken ct)
     {
-        await dbGate.WaitAsync(CancellationToken.None);
+        await dbGate.WaitAsync(ct);
         try
         {
-            await tokens.MarkReauthRequiredAsync(CancellationToken.None);
+            credentials = null;
+            if (!reauthMarked)
+            {
+                await tokens.MarkReauthRequiredAsync(CancellationToken.None);
+                reauthMarked = true;
+            }
         }
         finally
         {
@@ -414,10 +421,9 @@ public sealed partial class GoogleGmailClient(
         }
     }
 
-    internal async Task<(GoogleAuthorizationCodeFlow Flow, GmailService Service)> CreateServiceAsync(CancellationToken ct)
+    private async Task<(GoogleAuthorizationCodeFlow Flow, GmailService Service)> CreateServiceAsync(CancellationToken ct)
     {
-        var (token, client) = await ReadCredentialsAsync(ct);
-
+        var (token, client) = await GetCredentialsAsync(ct);
 
         // No DataStore: the flow keeps the access token in memory only.
         var flow = new GoogleAuthorizationCodeFlow(new GoogleAuthorizationCodeFlow.Initializer
@@ -434,12 +440,17 @@ public sealed partial class GoogleGmailClient(
         return (flow, service);
     }
 
-    /// <summary>Reads the stored token and the Google client under <see cref="dbGate"/>, re-read on every call so a reconnect is picked up.</summary>
-    private async Task<(OAuthToken Token, GoogleClientCredentials Client)> ReadCredentialsAsync(CancellationToken ct)
+    /// <summary>The stored token and the Google client, read under <see cref="dbGate"/> on first use only.</summary>
+    private async Task<(OAuthToken Token, GoogleClientCredentials Client)> GetCredentialsAsync(CancellationToken ct)
     {
         await dbGate.WaitAsync(ct);
         try
         {
+            if (credentials is { } cached)
+            {
+                return cached;
+            }
+
             var token = await tokens.GetAsync(ct)
                 ?? throw new GmailNotConnectedException("Gmail is not connected.");
             if (token.ReauthRequired)
@@ -453,6 +464,7 @@ public sealed partial class GoogleGmailClient(
                 throw new GmailNotConnectedException("The Google OAuth client ID and secret are not configured.");
             }
 
+            credentials = (token, client);
             return (token, client);
         }
         finally
