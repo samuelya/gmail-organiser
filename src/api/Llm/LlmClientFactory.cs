@@ -47,7 +47,8 @@ public sealed class LlmClientFactory(
         return UseFake ? CreateFakeEmbeddingGenerator() : CreateEmbeddingGenerator(OllamaHttp.Parse(s.OllamaBaseUrl), model);
     }
 
-    public IChatClient CreateChatClient(Uri baseUrl, string model) => UseFake ? CreateFakeChatClient() : Create(baseUrl, model);
+    public IChatClient CreateChatClient(Uri baseUrl, string model) =>
+        UseFake ? CreateFakeChatClient() : CreateOllamaChatClient(baseUrl, model);
 
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) =>
         UseFake ? CreateFakeEmbeddingGenerator() : Create(baseUrl, model);
@@ -61,6 +62,11 @@ public sealed class LlmClientFactory(
     // Reports the fake model name, so memory never records fake vectors under the real model chosen in Settings.
     private static FakeEmbeddingGenerator CreateFakeEmbeddingGenerator() =>
         new(FakeEmbeddingDimension) { ModelId = FakeOllamaCatalog.EmbeddingModel };
+
+    // Every chat call (analysis, policies, taxonomy, rules summary, vision, model test) sends think:false. The
+    // pipeline disposes the inner client.
+    private IChatClient CreateOllamaChatClient(Uri baseUrl, string model) =>
+        new ChatClientBuilder(Create(baseUrl, model)).ConfigureOptions(OllamaRequestOptions.NoThink).Build();
 
     // OllamaApiClient implements both IChatClient and IEmbeddingGenerator; its HttpClient comes from IHttpClientFactory,
     // so disposing the client never disposes a pooled handler.

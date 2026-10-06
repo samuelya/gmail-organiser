@@ -31,6 +31,12 @@ ollama list                     # shows the exact names to enter in the app
 Larger chat models give better suggestions but analyse fewer emails per minute. Without an embedding model the app
 still works; memory falls back to exact-sender matches.
 
+Each chat, embedding and vision call may take up to `Llm__ModelTimeoutSeconds` (default 180, 1 to 3600; the api refuses
+to start outside that range), model load included; set it in `.env` for a slow model or GPU. When the chat model and the
+embedding model don't both fit in GPU memory, Ollama evicts one, and the next call pays its load time again. Chat calls
+ask the model not to think (`think: false`), but some models accept only think levels and may still reason; if batches
+still time out, pick a non-thinking chat model.
+
 Optional: image attachments are read by local OCR (Tesseract, in the `api` image) by default. To have a **vision model**
 describe and transcribe them instead, pull one (`ollama pull <vision-model>`), enter it as the vision model and set
 the image mode to "vision" on the Settings page. Vision mode without a vision model skips images; the vision model gets

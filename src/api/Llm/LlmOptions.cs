@@ -1,3 +1,6 @@
+using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.AI;
+
 namespace GmailOrganiser.Llm;
 
 /// <summary>
@@ -15,11 +18,33 @@ public sealed class LlmOptions
     /// <summary>For <c>/api/tags</c>, <c>/api/show</c> and <c>/api/version</c>.</summary>
     public int CatalogTimeoutSeconds { get; set; } = 10;
 
-    /// <summary>For chat and embedding calls, including model load time.</summary>
+    /// <summary>For chat, embedding and vision calls, including model load time; validated at startup.</summary>
+    [Range(1, 3600, ErrorMessage = "Llm:ModelTimeoutSeconds (Llm__ModelTimeoutSeconds) must be a whole number of seconds from 1 to 3600.")]
     public int ModelTimeoutSeconds { get; set; } = 180;
 
     public TimeSpan CatalogTimeout => TimeSpan.FromSeconds(Math.Max(1, CatalogTimeoutSeconds));
-    public TimeSpan ModelTimeout => TimeSpan.FromSeconds(Math.Max(1, ModelTimeoutSeconds));
+    public TimeSpan ModelTimeout => TimeSpan.FromSeconds(ModelTimeoutSeconds);
+}
+
+/// <summary>Request fields every Ollama chat call carries, applied once in <see cref="LlmClientFactory"/>.</summary>
+public static class OllamaRequestOptions
+{
+    /// <summary>
+    /// The <see cref="ChatOptions.AdditionalProperties"/> key OllamaSharp maps to the request's top-level <c>think</c>
+    /// field (not under <c>options</c>).
+    /// </summary>
+    public const string ThinkKey = "think";
+
+    /// <summary>
+    /// Sends <c>"think":false</c> unless the call set <see cref="ThinkKey"/> itself, so a thinking model answers without
+    /// a long hidden reasoning phase (#457). Ollama rejects <c>think</c> only when it is <c>true</c> on a model without
+    /// thinking, so this is safe for every model. The options are the per-call clone, never a caller's shared instance.
+    /// </summary>
+    public static void NoThink(ChatOptions options)
+    {
+        options.AdditionalProperties ??= [];
+        options.AdditionalProperties.TryAdd(ThinkKey, false);
+    }
 }
 
 /// <summary>Creates <see cref="HttpClient"/>s for the named <c>ollama</c> client.</summary>
