@@ -115,6 +115,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
                 continue;
             }
 
+            EnsureKeyMember(group);
             result.Add(group with
             {
                 RepresentativeIds = RepresentativePicker.Pick(group, settings.RepresentativesPerGroup, allowlist, settings.Protection, seeds),
@@ -141,6 +142,18 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
         {
             throw new InvalidOperationException(
                 $"The group refiner must partition the {input.Count} candidates exactly; it returned {ids.Count} members ({unique.Count} distinct).");
+        }
+    }
+
+    /// <summary>
+    /// A cluster key names a member of the group it ends up on (that is what makes it unique within a run and across a
+    /// resume, #462): checked here, after protected overflow and the min-size fallback, where the group takes its final shape.
+    /// </summary>
+    private static void EnsureKeyMember(MessageGroup group)
+    {
+        if (EmbeddingGroupRefiner.KeyMemberId(group.Key) is { } id && !group.Members.Any(m => m.Id == id))
+        {
+            throw new InvalidOperationException($"The group key {group.Key} names a message that is not among its {group.Members.Count} members.");
         }
     }
 

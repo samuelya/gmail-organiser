@@ -221,6 +221,64 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
     }
 
     [Fact]
+    public async Task A_resumed_cluster_of_protected_overflow_never_takes_the_stored_groups_key()
+    {
+        // One cluster of six starred messages: the grouper keeps the k = 3 newest protected, the rest are analysed alone.
+        var all = await SeedAsync(
+            Msg(6, "Weekly deals", Angle(0), starred: true), Msg(5, "Weekly deals", Angle(0.10), starred: true),
+            Msg(4, "Weekly deals", Angle(0.10), starred: true), Msg(3, "Weekly deals", Angle(0.05), starred: true),
+            Msg(2, "Weekly deals", Angle(0.06), starred: true), Msg(1, "Weekly deals", Angle(0.07), starred: true));
+        var run = Grouping with { RunId = Guid.NewGuid() };
+        var first = (await GroupAsync(all, run)).Groups;
+        var stored = first.Single(g => !g.Individual);
+        stored.Members.Select(m => m.Id).ShouldBe(["m6", "m5", "m4"]);
+
+        // Paused after that group's suggestions were stored: the overflow singles are re-planned and now cluster.
+        var resumed = (await GroupAsync([.. all.Where(m => m.Id is "m3" or "m2" or "m1")], run)).Groups;
+
+        resumed.Select(g => g.Key).ShouldNotContain(stored.Key);
+        first.Concat(resumed).ToList().ForEach(KeyShouldNameAMember);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task Every_key_names_a_member_of_its_own_group_across_splits_overflow_outliers_and_resume(int seed)
+    {
+        var random = new Random(seed);
+        var messages = await SeedAsync([.. Enumerable.Range(1, 12 + random.Next(20)).Select(i => Msg(
+            i,
+            random.Next(3) switch { 0 => "Weekly deals", 1 => "Summer news", _ => "Receipt" },
+            random.Next(6) == 0 ? Far() : Angle(random.NextDouble() * 1.5),
+            from: random.Next(4) == 0 ? "other@example.com" : Shop,
+            starred: random.Next(2) == 0))]);
+        var run = Grouping with { RunId = Guid.NewGuid(), RepresentativesPerGroup = 2 + random.Next(2) };
+
+        var first = (await GroupAsync(messages, run)).Groups;
+        // The groups stored before a pause are finished; the run re-plans everything else, overflow singles included.
+        var clusters = first.Where(g => !g.Individual).ToList();
+        var finished = clusters.Take(random.Next(clusters.Count)).ToList();
+        var done = finished.SelectMany(g => g.Members).Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+        var resumed = (await GroupAsync([.. messages.Where(m => !done.Contains(m.Id))], run)).Groups;
+
+        first.Concat(resumed).ToList().ForEach(KeyShouldNameAMember);
+        first.Select(g => g.Key).ShouldBeUnique();
+        finished.Concat(resumed).Select(g => g.Key).ShouldBeUnique();
+    }
+
+    private static void KeyShouldNameAMember(MessageGroup g)
+    {
+        var id = EmbeddingGroupRefiner.KeyMemberId(g.Key);
+        if (!g.Individual)
+        {
+            id.ShouldNotBeNull(g.Key);
+            g.Members.Select(m => m.Id).ShouldContain(id, g.Key);
+        }
+    }
+
+    [Fact]
     public async Task Two_clusters_of_the_same_deterministic_group_get_distinct_keys()
     {
         var messages = await SeedAsync(
@@ -364,7 +422,7 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
         return [.. seeded.Select(s => s.Message)];
     }
 
-    private static (MessageRow, float[]) Msg(int n, string subject, float[] vector, string from = Shop, string? listId = null) => (new MessageRow
+    private static (MessageRow, float[]) Msg(int n, string subject, float[] vector, string from = Shop, string? listId = null, bool starred = false) => (new MessageRow
     {
         Id = $"m{n}",
         ThreadId = $"t{n}",
@@ -376,7 +434,7 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
         Snippet = $"synthetic snippet {n}",
         InternalDate = Now.AddDays(n - 40),
         Category = MessageCategory.Promotions,
-        LabelIds = ["INBOX"],
+        LabelIds = starred ? ["INBOX", MessageProtection.StarredLabel] : ["INBOX"],
         FetchedAt = Now,
         UpdatedAt = Now,
     }, vector);

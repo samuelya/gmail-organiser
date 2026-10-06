@@ -199,19 +199,39 @@ public sealed partial class EmbeddingGroupRefiner(
             var nearest = kept.OrderBy(s => s.Distance).ThenBy(s => s.Member.Id, StringComparer.Ordinal).First().Member;
             var farthest = kept.OrderByDescending(s => s.Distance).ThenBy(s => s.Member.Id, StringComparer.Ordinal).First().Member;
             var newest = kept[0].Member;
-            // Review treats (sender, key) as one group across runs, so the key is unique by construction: a message is in
-            // one cluster, so its nearest member names it within the run, and the run id tells it from other runs'. A
-            // resumed run re-plans only unfinished mail, so its clusters never take a finished cluster's nearest member.
-            var key = $"{KeyPrefix}{prefix}:{run}:{nearest.Id}{suffix}";
 
             yield return new MessageGroup(
-                key,
+                Key(prefix, run, newest, suffix),
                 newest.FromAddress,
                 string.IsNullOrWhiteSpace(nearest.Subject) ? AnalysisGrouper.NoSubjectDisplay : nearest.Subject,
                 [.. kept.Select(s => s.Member)],
                 [.. new[] { nearest.Id, farthest.Id, newest.Id }.Distinct(StringComparer.Ordinal)],
                 Individual: false);
         }
+    }
+
+    /// <summary>
+    /// Review treats (sender, key) as one group, so a cluster key is unique by construction: it names a member of the
+    /// final group (a message is in one group, finished mail is not re-planned on resume) and carries the run id. The
+    /// member is the cluster's newest, the one no later trim removes: outliers left before the key was picked, the
+    /// grouper's protected overflow keeps the k newest protected members, and the min-size fallback dissolves the whole
+    /// group (#462). <see cref="AnalysisGrouper"/> checks the member is in the group it finally forms.
+    /// </summary>
+    private static string Key(string prefix, string run, MessageRow member, string suffix) =>
+        $"{KeyPrefix}{prefix}:{run}:{member.Id}{suffix}";
+
+    /// <summary>The id of the member a cluster key names; null for any other key.</summary>
+    public static string? KeyMemberId(string key)
+    {
+        if (!key.StartsWith(KeyPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var labelsAt = key.LastIndexOf(GroupKey.LabelsPrefix, StringComparison.Ordinal);
+        var named = labelsAt < 0 ? key : key[..labelsAt];
+        var memberAt = named.LastIndexOf(':');
+        return memberAt < 0 ? null : named[(memberAt + 1)..];
     }
 
     private static double CosineDistance(float[] a, float[] b) => DecisionMemory.CosineDistance(a, b);

@@ -175,6 +175,30 @@ public sealed class GroupingTests
     }
 
     [Fact]
+    public async Task A_cluster_whose_key_member_is_trimmed_off_fails_loudly()
+    {
+        // All protected: the k = 3 newest stay, the rest become singles, among them the member the key names.
+        var messages = Enumerable.Range(0, 6).Select(i => Msg(i)).ToList();
+        messages.ForEach(m => m.HasAttachment = true);
+        var grouper = new AnalysisGrouper(new FuncRefiner(groups =>
+            [groups[0] with { Key = $"{EmbeddingGroupRefiner.KeyPrefix}shop@example.com:0123abcd:m000" }]));
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => grouper.GroupAsync(messages, Defaults with { Mode = AnalysisGroupingMode.Auto }, NoAllowlist, Labels, Ct));
+
+        ex.Message.ShouldContain("m000");
+    }
+
+    [Theory]
+    [InlineData("emb:shop@example.com:0123abcd:m7", "m7")]
+    [InlineData("emb:list:news.example.com:0123abcd:m7|labels:Label_1,Label_2", "m7")]
+    [InlineData("from:shop@example.com|promotions|weekly deals", null)]
+    [InlineData("list:news.example.com|digest|labels:Label_1", null)]
+    [InlineData("msg:m7", null)]
+    public void A_cluster_key_names_its_member_and_other_keys_name_none(string key, string? member) =>
+        EmbeddingGroupRefiner.KeyMemberId(key).ShouldBe(member);
+
+    [Fact]
     public void Representatives_per_group_is_at_least_the_derivation_minimum()
     {
         GroupingSettings.From(new AppSettings { AnalysisRepresentativesPerGroup = 1 }).RepresentativesPerGroup
