@@ -40,6 +40,9 @@ public sealed record AppSettings
 
     public bool SetupWizardSeen { get; init; }
 
+    /// <summary>Set by the setup status the first time setup is complete; never reset, so the Setup nav stays hidden.</summary>
+    public bool SetupCompletedOnce { get; init; }
+
     /// <summary>Messages per mailbox fetch chunk (one checkpoint each); see <see cref="SettingsValidation"/> for the range.</summary>
     public int FetchChunkSize { get; init; } = DefaultFetchChunkSize;
 

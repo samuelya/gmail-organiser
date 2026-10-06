@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -43,6 +44,7 @@ public sealed class SetupEndpointsTests(ApiFactory factory, PostgresFixture post
             ["wizardSeen"] = false,
             ["complete"] = false,
             ["accountMismatch"] = false,
+            ["completedOnce"] = false,
         });
     }
 
@@ -69,6 +71,9 @@ public sealed class SetupEndpointsTests(ApiFactory factory, PostgresFixture post
         json["embeddingModelSelected"].ShouldBeFalse();
         json["wizardSeen"].ShouldBeTrue();
         json["complete"].ShouldBeTrue();
+        json["completedOnce"].ShouldBeTrue();
+        await using var scope = host.Services.CreateAsyncScope();
+        (await scope.ServiceProvider.GetRequiredService<ISettingsStore>().GetAsync(Ct)).SetupCompletedOnce.ShouldBeTrue();
     }
 
     private static async Task<Dictionary<string, bool>> GetStatusAsync(WebApplicationFactory<Program> host)
