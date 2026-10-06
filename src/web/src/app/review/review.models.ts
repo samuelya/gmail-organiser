@@ -1,5 +1,7 @@
 import { InjectionToken } from '@angular/core';
+import { ParamMap } from '@angular/router';
 import { Observable } from 'rxjs';
+import { parseSenderParam } from '../analyse/analysis.models';
 import {
   CreateExternalReviewsRequest,
   ExternalReviewDto,
@@ -18,6 +20,15 @@ export const REVIEW_STATUSES: readonly { value: ReviewStatus; label: string }[] 
   { value: 'rejected', label: 'Rejected' },
   { value: 'applied', label: 'Applied' },
 ];
+
+/** The page's tab and sender from `/review?status=<status>&sender=<address>`; anything invalid falls back. */
+export function parseReviewParams(params: ParamMap): {
+  status: ReviewStatus;
+  sender: string | null;
+} {
+  const status = REVIEW_STATUSES.find((s) => s.value === params.get('status'))?.value ?? 'pending';
+  return { status, sender: parseSenderParam(params) };
+}
 
 /** `SuggestionStatus` as the API writes it. */
 export type SuggestionStatus = ReviewStatus;

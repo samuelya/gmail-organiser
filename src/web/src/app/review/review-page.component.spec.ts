@@ -3,6 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
+import { Location } from '@angular/common';
+import { provideLocationMocks } from '@angular/common/testing';
 import { provideRouter, Router } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { of, Subject, throwError } from 'rxjs';
@@ -138,20 +140,23 @@ describe('ReviewPage', () => {
     claudeReviewerMode = 'off',
     groups = [group()],
     alternatives = 0,
+    url = '/',
   ) {
     const jobs = new FakeJobs();
+    const firstPage = [sender(), sender({ address: 'shop@example.com', displayName: null })];
     const claude = {
       createReviews: vi.fn(() => of({ created: 1, skipped: 0, items: [] })),
     };
     const api = {
-      listSenders: vi.fn(() =>
-        of({
-          items: [sender(), sender({ address: 'shop@example.com', displayName: null })],
-          page: 1,
-          pageSize: 25,
-          total: 2,
-        }),
-      ),
+      // The first page lists two senders; a search also finds `other@example.com`, listed off that page.
+      listSenders: vi.fn((_status: string, search: string) => {
+        const items = search
+          ? [...firstPage, sender({ address: 'other@example.com' })].filter((s) =>
+              s.address.includes(search.toLowerCase()),
+            )
+          : firstPage;
+        return of({ items, page: 1, pageSize: 25, total: items.length });
+      }),
       sender: vi.fn(() => of(detail(groups))),
       pattern: vi.fn(() => of(pattern)),
       approve: vi.fn(() => of(member('a'))),
@@ -180,6 +185,7 @@ describe('ReviewPage', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([]),
+        provideLocationMocks(),
         { provide: PoliciesService, useValue: { list: () => of({ items: [], total: 0 }) } },
         { provide: JobsService, useValue: jobs },
         { provide: ReviewService, useValue: api },
@@ -201,6 +207,10 @@ describe('ReviewPage', () => {
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
+    const router = TestBed.inject(Router);
+    // Back and Forward reach the router as in the app.
+    router.setUpLocationChangeListener();
+    await router.navigateByUrl(url);
     const fixture = TestBed.createComponent(ReviewPage);
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
@@ -846,5 +856,139 @@ describe('ReviewPage', () => {
     await settle();
     expect(api.sender).toHaveBeenCalledTimes(1);
     expect(api.sender).toHaveBeenCalledWith('shop@example.com', 'pending', 1, 20, true, []);
+  });
+
+  it('opens with the tab and sender the URL names, even a sender off the first page', async () => {
+    const { api } = await render(
+      noPattern,
+      'off',
+      [group()],
+      0,
+      '/?status=approved&sender=%20Other@Example.com%20&mailType=receipt',
+    );
+    expect(api.listSenders).toHaveBeenCalledWith('approved', '', 1, 25, false, ['receipt']);
+    // Off the first page: a search checks the API lists it under this tab before its detail is requested.
+    expect(api.listSenders).toHaveBeenCalledWith('approved', 'Other@Example.com', 1, 25, false, [
+      'receipt',
+    ]);
+    expect(api.sender).toHaveBeenCalledTimes(1);
+    expect(api.sender).toHaveBeenCalledWith('other@example.com', 'approved', 1, 20, false, [
+      'receipt',
+    ]);
+    expect(TestBed.inject(Router).url).toContain('sender=other@example.com');
+  });
+
+  it('a stale link selects the first listed sender without requesting the unlisted one', async () => {
+    const { api } = await render(noPattern, 'off', [group()], 0, '/?sender=gone@example.com');
+    expect(api.sender).toHaveBeenCalledTimes(1);
+    expect(api.sender).toHaveBeenCalledWith('news@example.com', 'pending', 1, 20, false, []);
+    expect(TestBed.inject(Router).url).toBe('/?sender=news@example.com');
+  });
+
+  it('a link to an unlisted sender while the page is open keeps the detail it can show', async () => {
+    const { api, settle } = await render();
+    await TestBed.inject(Router).navigateByUrl('/?sender=gone@example.com');
+    await settle();
+    expect(api.sender).not.toHaveBeenCalledWith(
+      'gone@example.com',
+      expect.anything(),
+      1,
+      20,
+      false,
+      [],
+    );
+    expect(TestBed.inject(Router).url).toBe('/?sender=news@example.com');
+  });
+
+  it('an unknown status is written back as pending', async () => {
+    await render(noPattern, 'off', [group()], 0, '/?status=bogus');
+    expect(TestBed.inject(Router).url).toBe('/?status=pending&sender=news@example.com');
+  });
+
+  it('a tab change writes the status, drops the sender and keeps the mail types', async () => {
+    const { api, el, settle } = await render(
+      noPattern,
+      'off',
+      [group()],
+      0,
+      '/?mailType=receipt&sender=shop@example.com',
+    );
+    el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')[2].click();
+    await settle();
+    const url = TestBed.inject(Router).url;
+    expect(url).toContain('status=rejected');
+    expect(url).toContain('mailType=receipt');
+    // The new list still has the sender, so the entry names it again.
+    expect(url).toContain('sender=shop@example.com');
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'rejected', 1, 20, false, [
+      'receipt',
+    ]);
+  });
+
+  describe('history', () => {
+    // The router handles a popstate on the next macrotask.
+    const go = async (settle: () => Promise<void>, step: 'back' | 'forward') => {
+      TestBed.inject(Location)[step]();
+      await new Promise((resolve) => setTimeout(resolve));
+      await settle();
+    };
+
+    it('a sender selection is a navigation: Back restores each sender the entries showed', async () => {
+      const { api, all, settle } = await render();
+      expect(TestBed.inject(Router).url).toBe('/?sender=news@example.com');
+      all('sender-item')[1].click();
+      await settle();
+      expect(TestBed.inject(Router).url).toBe('/?sender=shop@example.com');
+      all('sender-item')[0].click();
+      await settle();
+      expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, false, []);
+      await go(settle, 'back');
+      expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, false, []);
+      await go(settle, 'back');
+      expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, false, []);
+    });
+
+    it('Forward to another tab keeps the sender that entry named, even off the first page', async () => {
+      const { api, settle } = await render();
+      await TestBed.inject(Router).navigateByUrl('/?status=approved&sender=other@example.com');
+      await settle();
+      expect(api.sender).toHaveBeenLastCalledWith(
+        'other@example.com',
+        'approved',
+        1,
+        20,
+        false,
+        [],
+      );
+      await go(settle, 'back');
+      expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, false, []);
+      await go(settle, 'forward');
+      expect(api.sender).toHaveBeenLastCalledWith(
+        'other@example.com',
+        'approved',
+        1,
+        20,
+        false,
+        [],
+      );
+      expect(TestBed.inject(Router).url).toBe('/?status=approved&sender=other@example.com');
+    });
+
+    it('Back to a sender no longer listed selects the first listed one, without a 404', async () => {
+      const { api, all, settle, fixture } = await render();
+      all('sender-item')[1].click();
+      await settle();
+      all('sender-item')[0].click();
+      await settle();
+      // The shop's suggestions were all approved meanwhile: a search no longer finds it under Pending.
+      api.listSenders.mockImplementation(() =>
+        of({ items: [sender()], page: 1, pageSize: 25, total: 1 }),
+      );
+      fixture.componentInstance.senders.set({ items: [sender()], page: 1, pageSize: 25, total: 1 });
+      api.sender.mockClear();
+      await go(settle, 'back');
+      expect(api.sender).not.toHaveBeenCalledWith('shop@example.com', 'pending', 1, 20, false, []);
+      expect(TestBed.inject(Router).url).toBe('/?sender=news@example.com');
+    });
   });
 });

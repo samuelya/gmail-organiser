@@ -17,12 +17,13 @@ import { MatPaginatorModule, PageEvent } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { catchError, filter, finalize, map, merge, Observable, of, switchMap, tap } from 'rxjs';
+import { filter, finalize, map, merge, Observable, of, switchMap, tap } from 'rxjs';
 import { analysisJobsKey } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { ExternalReviewDto } from '../core/claude.models';
 import { openConfirm } from '../core/confirm-dialog';
 import { JobsService } from '../core/jobs.service';
+import { orNull } from '../core/or-null';
 import { PagedDto } from '../core/paging.models';
 import { PageHeader } from '../layout/page-header';
 import { SettingsService } from '../settings/settings.service';
@@ -41,6 +42,7 @@ import { ClaudeSenderActions } from './claude-verdict.component';
 import { GroupCard } from './group-card.component';
 import { listedKey, MailTypeFilter } from './mail-type-filter';
 import {
+  applyRestMessage,
   applyRestRequest,
   canApplyRest,
   DEFAULT_FLAG_LABELS,
@@ -61,6 +63,7 @@ import {
   SuggestionDto,
 } from './review.models';
 import { ReviewService } from './review.service';
+import { ReviewUrl } from './review-url';
 import { PolicyCoverageChip } from './policy-coverage-chip.component';
 import { SelectionActions } from './selection-actions.component';
 import { SenderList } from './sender-list.component';
@@ -85,7 +88,7 @@ import { SenderList } from './sender-list.component';
     SelectionActions,
     SenderList,
   ],
-  providers: [ApplyTracker, CardReanalyse, MailTypeFilter],
+  providers: [ApplyTracker, CardReanalyse, MailTypeFilter, ReviewUrl],
   templateUrl: './review-page.component.html',
   styles: `
     .muted {
@@ -115,12 +118,14 @@ export class ReviewPage {
   readonly groupPageSize = GROUP_PAGE_SIZE;
   readonly pendingAgainNote = PENDING_AGAIN_NOTE;
 
-  readonly status = signal<ReviewStatus>('pending');
+  /** The tab and selected sender, fed from the query string. */
+  private readonly url = inject(ReviewUrl);
+  readonly status = this.url.status;
   /** The "Re-analysed" filter: only suggestions with a re-analysis result waiting. */
   readonly reanalysed = signal(false);
   private readonly search = signal('');
   private readonly senderPage = signal(1);
-  readonly selected = signal<string | null>(null);
+  readonly selected = this.url.selected;
   private readonly groupPage = signal(1);
   /** The status and "Re-analysed" filter of the last senders list shown. */
   private readonly listedFilter = signal<string | null>(null);
@@ -149,12 +154,9 @@ export class ReviewPage {
   readonly skipped = signal<ReadonlySet<string>>(new Set());
   readonly busy = signal(false);
 
-  private readonly settings = toSignal(
-    inject(SettingsService)
-      .getSettings()
-      .pipe(catchError(() => of(null))),
-    { initialValue: null },
-  );
+  private readonly settings = toSignal(inject(SettingsService).getSettings().pipe(orNull()), {
+    initialValue: null,
+  });
   readonly flagLabels = computed(() => {
     const s = this.settings();
     return s ? { action: s.actionLabelName, delete: s.deleteLabelName } : DEFAULT_FLAG_LABELS;
@@ -175,6 +177,12 @@ export class ReviewPage {
   });
 
   constructor() {
+    this.url.connect({ senders: this.senders, reanalysed: this.reanalysed });
+    this.url.changed.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((change) => {
+      if (change === 'status') this.senderPage.set(1);
+      this.resetDetail();
+    });
+
     const sendersKey = computed(() => ({
       status: this.status(),
       reanalysed: this.reanalysed(),
@@ -203,16 +211,15 @@ export class ReviewPage {
         this.senders.set(page);
         if (!page) return;
         // A tab, "Re-analysed" or mail-type change moves to the new list's first sender unless the selected one is in it.
-        const selected = this.selected();
         const changed = listed !== this.listedFilter();
         this.listedFilter.set(listed);
-        if (!selected || (changed && !page.items.some((s) => s.address === selected)))
-          this.selected.set(page.items[0]?.address ?? null);
+        this.url.onList(changed);
       });
 
-    // Waits for the list of the current tab and filter, so a sender it hides is never requested (404).
+    // Waits for the list of the current tab and filter, and for a sender the URL names to be listed in it, so a
+    // sender it hides is never requested (404).
     const detailKey = computed(() => ({
-      listed: this.listedFilter() === sendersKey().listed,
+      listed: this.listedFilter() === sendersKey().listed && this.url.listed(),
       address: this.selected(),
       status: this.status(),
       reanalysed: this.reanalysed(),
@@ -241,7 +248,10 @@ export class ReviewPage {
         if (kept) this.selection.set(kept);
       });
 
-    const patternKey = computed(() => ({ address: this.selected(), version: this.version() }));
+    const patternKey = computed(() => ({
+      address: this.url.listed() ? this.selected() : null,
+      version: this.version(),
+    }));
     toObservable(patternKey)
       .pipe(
         tap(() => this.pattern.set(null)),
@@ -276,9 +286,7 @@ export class ReviewPage {
   }
 
   onStatus(status: ReviewStatus): void {
-    this.status.set(status);
-    this.senderPage.set(1);
-    this.resetDetail();
+    this.url.setStatus(status);
   }
 
   onReanalysed(on: boolean): void {
@@ -304,9 +312,7 @@ export class ReviewPage {
   }
 
   selectSender(address: string): void {
-    if (address === this.selected()) return;
-    this.selected.set(address);
-    this.resetDetail();
+    this.url.setSender(address);
   }
 
   onGroupPage(event: PageEvent): void {
@@ -427,10 +433,7 @@ export class ReviewPage {
         this.run(this.review.applyRest(address, request), (r) => {
           const jobId = r.batch?.jobId ?? null;
           this.apply.track(jobId);
-          const adjusted = r.protectedAdjusted
-            ? `; ${r.protectedAdjusted} protected ${r.protectedAdjusted === 1 ? 'message is' : 'messages are'} not marked for deletion`
-            : '';
-          const created = `Created ${r.created} ${r.created === 1 ? 'suggestion' : 'suggestions'}${adjusted}.`;
+          const created = applyRestMessage(r.created, r.protectedAdjusted);
           // The apply job's completion snackbar replaces this one, so the offer moves there.
           if (jobId) {
             this.apply.offerFilterAfter(jobId, r.filterCandidate.from);
@@ -486,13 +489,4 @@ export class ReviewPage {
     this.selection.set(new Set());
     this.skipped.set(new Set());
   }
-}
-
-/** Errors become `null`; the error interceptor already told the user. */
-function orNull<T>() {
-  return (source: Observable<T>) =>
-    source.pipe(
-      map((value) => value as T | null),
-      catchError(() => of(null)),
-    );
 }
