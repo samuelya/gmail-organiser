@@ -9,6 +9,7 @@ namespace GmailOrganiser.Setup;
 /// <summary>
 /// What the setup wizard and the "setup incomplete" banner need. <see cref="Complete"/> = Gmail connected and a chat model selected.
 /// <see cref="AccountMismatch"/>: the local data belongs to another Gmail account, so fetching is blocked.
+/// <see cref="CompletedOnce"/>: setup has been complete at least once; it stays true when <see cref="Complete"/> turns false.
 /// </summary>
 public sealed record SetupStatusDto(
     bool GoogleClientConfigured,
@@ -19,9 +20,10 @@ public sealed record SetupStatusDto(
     bool EmbeddingModelSelected,
     bool WizardSeen,
     bool Complete,
-    bool AccountMismatch);
+    bool AccountMismatch,
+    bool CompletedOnce);
 
-/// <summary>Composes the setup status from the settings, the token store and an Ollama ping; stores nothing.</summary>
+/// <summary>Composes the setup status from the settings, the token store and an Ollama ping; stores only the first-completion flag.</summary>
 public sealed class SetupStatusService(
     ISettingsStore settings,
     ITokenStore tokens,
@@ -49,6 +51,15 @@ public sealed class SetupStatusService(
 
         var gmailConnected = token is not null && !token.ReauthRequired;
         var chatModelSelected = !string.IsNullOrWhiteSpace(current.ChatModel);
+        var complete = gmailConnected && chatModelSelected;
+
+        // A token row needing re-auth was connected once, so it still counts: this also backfills installs that completed
+        // setup before the flag existed. The fake Gmail token proves nothing about a real account, so it is never stored.
+        var completedEver = token is not null && chatModelSelected;
+        if (completedEver && !current.SetupCompletedOnce && !gmail.Value.UseFake)
+        {
+            await SaveCompletedOnceAsync(ct);
+        }
 
         return new SetupStatusDto(
             GoogleClientConfigured: googleClientConfigured,
@@ -58,8 +69,26 @@ public sealed class SetupStatusService(
             ChatModelSelected: chatModelSelected,
             EmbeddingModelSelected: !string.IsNullOrWhiteSpace(current.EmbeddingModel),
             WizardSeen: current.SetupWizardSeen,
-            Complete: gmailConnected && chatModelSelected,
-            AccountMismatch: accountMismatch);
+            Complete: complete,
+            AccountMismatch: accountMismatch,
+            CompletedOnce: completedEver || current.SetupCompletedOnce);
+    }
+
+    // A failed save still reports completedOnce from the live status; the next status call tries again.
+    private async Task SaveCompletedOnceAsync(CancellationToken ct)
+    {
+        try
+        {
+            await settings.UpdateAsync(s => s with { SetupCompletedOnce = true }, ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            // Database errors carry no settings values in the message (Npgsql leaves out row detail by default).
+            logger.LogWarning(
+                "Could not store the first setup completion ({Error}: {Message})",
+                ex.GetType().Name,
+                ex.GetBaseException().Message);
+        }
     }
 
     // Any failure (unreachable, not Ollama, invalid saved URL, timeout) is "not reachable"; only the caller's abort propagates.

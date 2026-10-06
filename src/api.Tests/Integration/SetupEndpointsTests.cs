@@ -1,6 +1,9 @@
 using System.Net;
 using System.Text.Json;
+using GmailOrganiser.Data;
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -43,6 +46,7 @@ public sealed class SetupEndpointsTests(ApiFactory factory, PostgresFixture post
             ["wizardSeen"] = false,
             ["complete"] = false,
             ["accountMismatch"] = false,
+            ["completedOnce"] = false,
         });
     }
 
@@ -69,6 +73,43 @@ public sealed class SetupEndpointsTests(ApiFactory factory, PostgresFixture post
         json["embeddingModelSelected"].ShouldBeFalse();
         json["wizardSeen"].ShouldBeTrue();
         json["complete"].ShouldBeTrue();
+        json["completedOnce"].ShouldBeTrue();
+
+        // The fake Gmail token says nothing about a real account, so the flag is reported but never stored.
+        await using var scope = host.Services.CreateAsyncScope();
+        (await scope.ServiceProvider.GetRequiredService<ISettingsStore>().GetAsync(Ct)).SetupCompletedOnce.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task A_token_needing_reauth_with_a_chat_model_backfills_completed_once()
+    {
+        await using var host = Host(StubOllamaHandler.WithModels(("test-chat", ["completion"])));
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var tokens = scope.ServiceProvider.GetRequiredService<ITokenStore>();
+            await tokens.SaveAsync("owner@example.com", "synthetic-refresh-token", ["scope-a"], Ct);
+            await tokens.MarkReauthRequiredAsync(Ct);
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(s => s with { ChatModel = "test-chat" }, Ct);
+        }
+
+        var json = await GetStatusAsync(host);
+
+        json["complete"].ShouldBeFalse();
+        json["completedOnce"].ShouldBeTrue();
+        await using var check = host.Services.CreateAsyncScope();
+        (await check.ServiceProvider.GetRequiredService<ISettingsStore>().GetAsync(Ct)).SetupCompletedOnce.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_failed_settings_update_leaves_no_tracked_settings_row()
+    {
+        await using var scope = factory.Services.CreateAsyncScope();
+        var store = scope.ServiceProvider.GetRequiredService<ISettingsStore>();
+
+        await Should.ThrowAsync<InvalidOperationException>(
+            () => store.UpdateAsync(_ => throw new InvalidOperationException("synthetic failure"), Ct));
+
+        scope.ServiceProvider.GetRequiredService<AppDbContext>().ChangeTracker.Entries<SettingsRow>().ShouldBeEmpty();
     }
 
     private static async Task<Dictionary<string, bool>> GetStatusAsync(WebApplicationFactory<Program> host)

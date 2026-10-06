@@ -6,6 +6,7 @@ using GmailOrganiser.Settings;
 using GmailOrganiser.Setup;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -17,7 +18,8 @@ public sealed class SetupStatusServiceTests
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     private readonly FakeTimeProvider time = new();
-    private readonly InMemorySettingsStore settings = new();
+    private readonly RecordingSettingsStore settings = new();
+    private readonly CapturingLogger logger = new();
     private readonly FakeTokenStore tokens;
     private readonly StubCatalog ollama = new();
     private readonly StubAccountGuard accountGuard = new();
@@ -43,7 +45,8 @@ public sealed class SetupStatusServiceTests
             EmbeddingModelSelected: false,
             WizardSeen: false,
             Complete: false,
-            AccountMismatch: false));
+            AccountMismatch: false,
+            CompletedOnce: false));
     }
 
     [Fact]
@@ -178,6 +181,87 @@ public sealed class SetupStatusServiceTests
         (await Create().GetAsync(Ct)).AccountMismatch.ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task Incomplete_setup_is_not_completed_once_and_writes_nothing()
+    {
+        var status = await Create().GetAsync(Ct);
+
+        status.Complete.ShouldBeFalse();
+        status.CompletedOnce.ShouldBeFalse();
+        settings.Writes.ShouldBe(0);
+        settings.Current.SetupCompletedOnce.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task First_complete_status_stores_completed_once_and_later_calls_do_not_write()
+    {
+        settings.Current = settings.Current with { ChatModel = "test-chat" };
+        var service = Create();
+
+        (await service.GetAsync(Ct)).CompletedOnce.ShouldBeTrue();
+        settings.Writes.ShouldBe(1);
+        settings.Current.SetupCompletedOnce.ShouldBeTrue();
+
+        (await service.GetAsync(Ct)).CompletedOnce.ShouldBeTrue();
+        settings.Writes.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Stored_completed_once_stays_true_when_setup_is_no_longer_complete()
+    {
+        settings.Current = settings.Current with { ChatModel = "test-chat", SetupCompletedOnce = true };
+        await tokens.MarkReauthRequiredAsync(Ct);
+
+        var status = await Create().GetAsync(Ct);
+
+        status.Complete.ShouldBeFalse();
+        status.CompletedOnce.ShouldBeTrue();
+        settings.Writes.ShouldBe(0);
+        settings.Current.SetupCompletedOnce.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_token_needing_reauth_with_a_chat_model_backfills_completed_once()
+    {
+        settings.Current = settings.Current with { ChatModel = "test-chat" };
+        await tokens.MarkReauthRequiredAsync(Ct);
+
+        var status = await Create().GetAsync(Ct);
+
+        status.Complete.ShouldBeFalse();
+        status.CompletedOnce.ShouldBeTrue();
+        settings.Current.SetupCompletedOnce.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Fake_gmail_reports_completed_once_but_never_stores_it()
+    {
+        settings.Current = settings.Current with { ChatModel = "test-chat" };
+        useFakeGmail = true;
+
+        (await Create().GetAsync(Ct)).CompletedOnce.ShouldBeTrue();
+
+        settings.Writes.ShouldBe(0);
+        settings.Current.SetupCompletedOnce.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task A_failing_save_still_reports_completed_once_and_the_next_call_tries_again()
+    {
+        settings.Current = settings.Current with { ChatModel = "test-chat" };
+        settings.FailWrites = true;
+        var service = Create();
+
+        (await service.GetAsync(Ct)).CompletedOnce.ShouldBeTrue();
+        logger.Warnings.ShouldBe(["Could not store the first setup completion (InvalidOperationException: synthetic failure)"]);
+        settings.Current.SetupCompletedOnce.ShouldBeFalse();
+
+        settings.FailWrites = false;
+        (await service.GetAsync(Ct)).CompletedOnce.ShouldBeTrue();
+        settings.Current.SetupCompletedOnce.ShouldBeTrue();
+        settings.Writes.ShouldBe(2);
+    }
+
     private SetupStatusService Create() => new(
         settings,
         tokens,
@@ -187,7 +271,42 @@ public sealed class SetupStatusServiceTests
             settings, new EphemeralDataProtectionProvider(), Options.Create(env), NullLogger<GoogleClientService>.Instance),
         Options.Create(new GmailOptions { UseFake = useFakeGmail }),
         time,
-        NullLogger<SetupStatusService>.Instance);
+        logger);
+
+    private sealed class RecordingSettingsStore : ISettingsStore
+    {
+        private readonly InMemorySettingsStore inner = new();
+
+        public AppSettings Current { get => inner.Current; set => inner.Current = value; }
+        public int Writes { get; private set; }
+        public bool FailWrites { get; set; }
+
+        public Task<AppSettings> GetAsync(CancellationToken ct = default) => inner.GetAsync(ct);
+
+        public Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> change, CancellationToken ct = default)
+        {
+            Writes++;
+            return FailWrites ? throw new InvalidOperationException("synthetic failure") : inner.UpdateAsync(change, ct);
+        }
+    }
+
+    private sealed class CapturingLogger : ILogger<SetupStatusService>
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+            {
+                Warnings.Add(formatter(state, exception));
+            }
+        }
+    }
 
     private sealed class StubCatalog : IOllamaCatalog
     {
