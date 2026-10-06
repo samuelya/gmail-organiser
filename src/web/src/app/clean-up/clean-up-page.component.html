@@ -1,7 +1,10 @@
-<app-page-header title="Clean-up">
+<app-page-header
+  title="Clean-up"
+  description="Mail you approved for deletion. Delete moves it to Gmail's Trash; nothing is deleted for good here."
+>
   <button
     actions
-    mat-flat-button
+    mat-stroked-button
     type="button"
     [disabled]="busy() || !!tracked() || !summary()?.messages"
     (click)="deleteAll()"

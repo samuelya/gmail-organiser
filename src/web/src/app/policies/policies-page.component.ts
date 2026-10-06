@@ -62,13 +62,12 @@ const TAB_LABELS: Readonly<Record<PolicyStatus, string>> = {
     ReactiveFormsModule,
   ],
   template: `
-    <app-page-header title="Policies" />
+    <app-page-header
+      title="Policies"
+      description="A policy decides all mail from one sender, domain or list. Approving it applies it to past mail (undo from History) and to new mail as it arrives."
+    />
     <mat-card appearance="outlined">
       <mat-card-content class="flex flex-col gap-4">
-        <p class="muted m-0">
-          A policy decides all mail from one sender, domain or list. Approving it applies it to past
-          mail (undo from History) and to new mail as it arrives.
-        </p>
         <mat-tab-group
           [selectedIndex]="statuses.indexOf(query().status)"
           (selectedIndexChange)="onTab($event)"
