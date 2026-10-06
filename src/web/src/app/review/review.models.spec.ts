@@ -4,10 +4,10 @@ import { parseReviewParams } from './review.models';
 describe('parseReviewParams', () => {
   const parse = (params: Record<string, string>) => parseReviewParams(convertToParamMap(params));
 
-  it('reads a known status and a trimmed, lower-cased sender', () => {
+  it('reads a known status and a trimmed sender', () => {
     expect(parse({ status: 'applied', sender: ' News@Example.com ' })).toEqual({
       status: 'applied',
-      sender: 'news@example.com',
+      sender: 'News@Example.com',
     });
   });
 

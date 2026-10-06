@@ -169,6 +169,12 @@ export const FINISHED_RUNS_SHOWN = 20;
 export const ACTIVE_RUNS_LIMIT = 200;
 export const MAX_SENDER_LENGTH = 320;
 
+/** `?sender=` trimmed; null when missing, blank or longer than an address can be. */
+export function parseSenderParam(params: ParamMap): string | null {
+  const sender = params.get('sender')?.trim() ?? '';
+  return sender && sender.length <= MAX_SENDER_LENGTH ? sender : null;
+}
+
 /** The Analyse page's scope options, in toggle order; `help` is shown under the toggle when set. */
 export const SCOPE_OPTIONS: readonly { value: AnalysisScope; label: string; help?: string }[] = [
   { value: 'inbox', label: 'Inbox' },
@@ -247,10 +253,9 @@ export function parseAnalyseParams(params: ParamMap): {
   sender: string | null;
   count: number | null;
 } {
-  const sender = params.get('sender')?.trim() ?? '';
   const count = Number(params.get('count'));
   return {
-    sender: sender && sender.length <= MAX_SENDER_LENGTH ? sender : null,
+    sender: parseSenderParam(params),
     count: Number.isInteger(count) && count >= 1 && count <= 1000 ? count : null,
   };
 }

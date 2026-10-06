@@ -1,7 +1,7 @@
 import { InjectionToken } from '@angular/core';
 import { ParamMap } from '@angular/router';
 import { Observable } from 'rxjs';
-import { MAX_SENDER_LENGTH } from '../analyse/analysis.models';
+import { parseSenderParam } from '../analyse/analysis.models';
 import {
   CreateExternalReviewsRequest,
   ExternalReviewDto,
@@ -27,8 +27,7 @@ export function parseReviewParams(params: ParamMap): {
   sender: string | null;
 } {
   const status = REVIEW_STATUSES.find((s) => s.value === params.get('status'))?.value ?? 'pending';
-  const sender = params.get('sender')?.trim().toLowerCase() ?? '';
-  return { status, sender: sender && sender.length <= MAX_SENDER_LENGTH ? sender : null };
+  return { status, sender: parseSenderParam(params) };
 }
 
 /** `SuggestionStatus` as the API writes it. */

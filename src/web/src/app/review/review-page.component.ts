@@ -177,6 +177,7 @@ export class ReviewPage {
   });
 
   constructor() {
+    this.url.connect({ senders: this.senders, reanalysed: this.reanalysed });
     this.url.changed.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((change) => {
       if (change === 'status') this.senderPage.set(1);
       this.resetDetail();
@@ -212,15 +213,13 @@ export class ReviewPage {
         // A tab, "Re-analysed" or mail-type change moves to the new list's first sender unless the selected one is in it.
         const changed = listed !== this.listedFilter();
         this.listedFilter.set(listed);
-        this.url.onList(
-          page.items.map((s) => s.address),
-          changed,
-        );
+        this.url.onList(changed);
       });
 
-    // Waits for the list of the current tab and filter, so a sender it hides is never requested (404).
+    // Waits for the list of the current tab and filter, and for a sender the URL names to be listed in it, so a
+    // sender it hides is never requested (404).
     const detailKey = computed(() => ({
-      listed: this.listedFilter() === sendersKey().listed,
+      listed: this.listedFilter() === sendersKey().listed && this.url.listed(),
       address: this.selected(),
       status: this.status(),
       reanalysed: this.reanalysed(),
@@ -249,7 +248,10 @@ export class ReviewPage {
         if (kept) this.selection.set(kept);
       });
 
-    const patternKey = computed(() => ({ address: this.selected(), version: this.version() }));
+    const patternKey = computed(() => ({
+      address: this.url.listed() ? this.selected() : null,
+      version: this.version(),
+    }));
     toObservable(patternKey)
       .pipe(
         tap(() => this.pattern.set(null)),
