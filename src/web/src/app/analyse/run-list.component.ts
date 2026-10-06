@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe, NgTemplateOutlet } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -46,6 +46,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
   imports: [
     DatePipe,
     DecimalPipe,
+    NgTemplateOutlet,
     MatButtonModule,
     MatChipsModule,
     MatIconModule,
@@ -110,6 +111,9 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
             @if (v.progress?.message; as message) {
               <span class="muted text-sm" data-testid="run-message">{{ message }}</span>
             }
+          }
+          @if (v.run.embeddingFallback) {
+            <ng-container [ngTemplateOutlet]="embeddingFallbackNote" />
           }
         </div>
       } @empty {
@@ -232,6 +236,9 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
               }
             </span>
           }
+          @if (run.embeddingFallback) {
+            <ng-container [ngTemplateOutlet]="embeddingFallbackNote" />
+          }
           @if (run.error) {
             <div class="error flex items-start gap-1 text-sm" role="note">
               <mat-icon aria-hidden="true">error</mat-icon>
@@ -261,6 +268,20 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
         </p>
       }
     </section>
+
+    <ng-template #embeddingFallbackNote>
+      <div
+        class="muted flex items-start gap-1 text-sm"
+        role="note"
+        data-testid="run-embedding-fallback"
+      >
+        <mat-icon class="warn icon-sm" aria-hidden="true">warning</mat-icon>
+        <span>
+          Embeddings unavailable: this run kept the sender and subject groups. Check the embedding
+          model in <a routerLink="/settings">Settings</a>.
+        </span>
+      </div>
+    </ng-template>
   `,
   styles: `
     .card-title {

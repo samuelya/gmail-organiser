@@ -121,6 +121,25 @@ describe('RunList run status', () => {
     expect(q('run-counters')!.textContent).toContain('4 triage calls · 1 escalated');
   });
 
+  it('notes a running or finished run that fell back from embeddings, with a link to Settings', async () => {
+    const { el } = await render(
+      [run({ embeddingFallback: true })],
+      [
+        run({ id: 'run-2', status: 'completed', embeddingFallback: true }),
+        run({ id: 'run-3', status: 'completed' }),
+      ],
+    );
+    const notes = el.querySelectorAll<HTMLElement>('[data-testid="run-embedding-fallback"]');
+    expect(notes).toHaveLength(2);
+    for (const note of notes) {
+      expect(note.getAttribute('role')).toBe('note');
+      expect(note.textContent!.replace(/\s+/g, ' ')).toContain(
+        'Embeddings unavailable: this run kept the sender and subject groups. Check the embedding model in Settings.',
+      );
+      expect(note.querySelector('a')!.getAttribute('href')).toBe('/settings');
+    }
+  });
+
   it('the Failed chip asks for the failed-only filter; the empty list says so', async () => {
     const { fixture, q } = await render([], []);
     const changes: boolean[] = [];

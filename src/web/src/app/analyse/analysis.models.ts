@@ -89,6 +89,8 @@ export interface AnalysisRunDto {
   escalatedCalls: number;
   /** Queued or running, but no job is behind it any more: it can only be resumed. */
   isStalled: boolean;
+  /** Embeddings failed, so the run kept the deterministic sender and subject groups. */
+  embeddingFallback: boolean;
   /** Emails sent in a pack of one-off senders; `packRetries` of them were asked again on their own. */
   packedMessages: number;
   packRetries: number;
