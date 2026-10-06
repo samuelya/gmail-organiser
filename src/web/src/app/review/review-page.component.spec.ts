@@ -3,6 +3,8 @@ import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
+import { Location } from '@angular/common';
+import { provideLocationMocks } from '@angular/common/testing';
 import { provideRouter, Router } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { of, Subject, throwError } from 'rxjs';
@@ -138,6 +140,7 @@ describe('ReviewPage', () => {
     claudeReviewerMode = 'off',
     groups = [group()],
     alternatives = 0,
+    url = '/',
   ) {
     const jobs = new FakeJobs();
     const claude = {
@@ -180,6 +183,7 @@ describe('ReviewPage', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([]),
+        provideLocationMocks(),
         { provide: PoliciesService, useValue: { list: () => of({ items: [], total: 0 }) } },
         { provide: JobsService, useValue: jobs },
         { provide: ReviewService, useValue: api },
@@ -201,6 +205,10 @@ describe('ReviewPage', () => {
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
+    const router = TestBed.inject(Router);
+    // Back and Forward reach the router as in the app.
+    router.setUpLocationChangeListener();
+    await router.navigateByUrl(url);
     const fixture = TestBed.createComponent(ReviewPage);
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
@@ -846,5 +854,60 @@ describe('ReviewPage', () => {
     await settle();
     expect(api.sender).toHaveBeenCalledTimes(1);
     expect(api.sender).toHaveBeenCalledWith('shop@example.com', 'pending', 1, 20, true, []);
+  });
+
+  it('opens with the tab and sender the URL names, even a sender off the first page', async () => {
+    const { api } = await render(
+      noPattern,
+      'off',
+      [group()],
+      0,
+      '/?status=approved&sender=%20Other@Example.com%20&mailType=receipt',
+    );
+    expect(api.listSenders).toHaveBeenCalledWith('approved', '', 1, 25, false, ['receipt']);
+    expect(api.sender).toHaveBeenCalledTimes(1);
+    expect(api.sender).toHaveBeenCalledWith('other@example.com', 'approved', 1, 20, false, [
+      'receipt',
+    ]);
+  });
+
+  it('a tab change writes the status, drops the sender and keeps the mail types', async () => {
+    const { api, el, settle } = await render(
+      noPattern,
+      'off',
+      [group()],
+      0,
+      '/?mailType=receipt&sender=shop@example.com',
+    );
+    el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')[2].click();
+    await settle();
+    const url = TestBed.inject(Router).url;
+    expect(url).toContain('status=rejected');
+    expect(url).toContain('mailType=receipt');
+    expect(url).not.toContain('sender=');
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'rejected', 1, 20, false, [
+      'receipt',
+    ]);
+  });
+
+  it('a sender selection is a navigation: Back restores the previous sender, then the first listed', async () => {
+    const { api, all, settle } = await render();
+    all('sender-item')[1].click();
+    await settle();
+    expect(TestBed.inject(Router).url).toBe('/?sender=shop@example.com');
+    all('sender-item')[0].click();
+    await settle();
+    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, false, []);
+    const location = TestBed.inject(Location);
+    // The router handles a popstate on the next macrotask.
+    const back = async () => {
+      location.back();
+      await new Promise((resolve) => setTimeout(resolve));
+      await settle();
+    };
+    await back();
+    expect(api.sender).toHaveBeenLastCalledWith('shop@example.com', 'pending', 1, 20, false, []);
+    await back();
+    expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, false, []);
   });
 });

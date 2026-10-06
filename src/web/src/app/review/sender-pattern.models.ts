@@ -73,3 +73,11 @@ export function patternSummary(
     `A Gmail filter for this sender can be created afterwards.`
   );
 }
+
+/** "Apply to rest of sender" created suggestions; protected messages are never marked for deletion. */
+export function applyRestMessage(created: number, protectedAdjusted: number): string {
+  const adjusted = protectedAdjusted
+    ? `; ${protectedAdjusted} protected ${protectedAdjusted === 1 ? 'message is' : 'messages are'} not marked for deletion`
+    : '';
+  return `Created ${created} ${created === 1 ? 'suggestion' : 'suggestions'}${adjusted}.`;
+}
