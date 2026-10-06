@@ -10,7 +10,9 @@ public sealed record AnalysisPreviewRequest(string? Scope, string? SenderAddress
 /// <summary>
 /// What a run with these settings would cost, without any model call. <c>skipped</c>: ids of a messages scope that
 /// are approved, applied, deleted or unknown and so are not analysed (0 for the other scopes). <c>packs</c>: shared
-/// snippet-only prompts for one-off senders (#376), one call each before retries.
+/// snippet-only prompts for one-off senders (#376), one call each before retries. The preview stays deterministic and
+/// never calls a model: with Auto grouping and <c>embeddingsAvailable</c>, the run's embedding clusters (#114) may merge
+/// or split these groups, so the run's group count and calls can differ from <c>groups</c> and <c>estimatedLlmCalls</c>.
 /// </summary>
 public sealed record GroupingPreviewDto(
     int Messages,

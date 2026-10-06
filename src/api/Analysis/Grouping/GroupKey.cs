@@ -50,5 +50,8 @@ public static class GroupKey
     public static string? NormaliseListId(string? listId) =>
         string.IsNullOrWhiteSpace(listId) ? null : listId.Trim().ToLowerInvariant();
 
-    public static bool IsList(string key) => key.StartsWith(ListPrefix, StringComparison.Ordinal);
+    /// <summary>A list group's key, deterministic or an embedding cluster of the list (<c>emb:list:</c>, #114).</summary>
+    public static bool IsList(string key) =>
+        key.StartsWith(ListPrefix, StringComparison.Ordinal)
+        || key.StartsWith(EmbeddingGroupRefiner.KeyPrefix + ListPrefix, StringComparison.Ordinal);
 }

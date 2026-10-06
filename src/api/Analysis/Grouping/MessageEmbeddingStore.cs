@@ -11,18 +11,18 @@ namespace GmailOrganiser.Analysis.Grouping;
 public sealed class MessageEmbeddingStore(IServiceScopeFactory scopes, TimeProvider time)
 {
     /// <summary>The stored vectors of <paramref name="model"/> for the given messages; other models' rows are ignored.</summary>
-    public async Task<Dictionary<string, float[]>> LoadAsync(string model, IReadOnlyCollection<string> messageIds, CancellationToken ct)
+    public async Task<Dictionary<string, StoredEmbedding>> LoadAsync(string model, IReadOnlyCollection<string> messageIds, CancellationToken ct)
     {
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var rows = await db.MessageEmbeddings.AsNoTracking()
             .Where(r => r.Model == model && messageIds.Contains(r.MessageId))
-            .Select(r => new { r.MessageId, r.Dimension, r.Embedding })
+            .Select(r => new { r.MessageId, r.Dimension, r.Embedding, r.CreatedAt })
             .ToListAsync(ct);
         return rows
-            .Select(r => (r.MessageId, Vector: r.Embedding.ToArray(), r.Dimension))
-            .Where(r => r.Vector.Length == r.Dimension)
-            .ToDictionary(r => r.MessageId, r => r.Vector, StringComparer.Ordinal);
+            .Select(r => (r.MessageId, Stored: new StoredEmbedding(r.Embedding.ToArray(), r.CreatedAt), r.Dimension))
+            .Where(r => r.Stored.Vector.Length == r.Dimension)
+            .ToDictionary(r => r.MessageId, r => r.Stored, StringComparer.Ordinal);
     }
 
     /// <summary>Upserts by message id: a row of another model is overwritten with this model's vector.</summary>
@@ -55,3 +55,6 @@ public sealed class MessageEmbeddingStore(IServiceScopeFactory scopes, TimeProvi
         await db.SaveChangesAsync(ct);
     }
 }
+
+/// <summary>A stored vector and when it was written: the newest row's dimension is the model's current one.</summary>
+public sealed record StoredEmbedding(float[] Vector, DateTimeOffset CreatedAt);

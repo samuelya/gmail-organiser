@@ -38,6 +38,26 @@ public sealed partial class DecisionMemory(
     public static string EmbeddingText(string sender, string? subjectTemplate, string? snippet) =>
         $"{sender} | {subjectTemplate ?? ""} | {snippet ?? ""}";
 
+    /// <summary>A message's <see cref="EmbeddingText(string, string?, string?)"/>, shared with the embedding clusters (#114).</summary>
+    public static string EmbeddingText(MessageRow m) => EmbeddingText(m.FromAddress, SubjectNormaliser.Template(m.Subject), m.Snippet);
+
+    /// <summary>The model vectors are recorded under: the generator's own (with LLM_FAKE the fake's), else the Settings model.</summary>
+    public static string ModelOf(IEmbeddingGenerator generator, string configured) =>
+        generator.GetService<EmbeddingGeneratorMetadata>()?.DefaultModelId ?? configured;
+
+    /// <summary>One model call for all texts; throws when the model returns too few or too many vectors, or an empty one.</summary>
+    public static async Task<IReadOnlyList<float[]>> GenerateAsync(
+        IEmbeddingGenerator<string, Embedding<float>> generator, IReadOnlyList<string> texts, CancellationToken ct)
+    {
+        var embeddings = await generator.GenerateAsync(texts, cancellationToken: ct);
+        if (embeddings.Count != texts.Count || embeddings.Any(e => e.Vector.Length == 0))
+        {
+            throw new InvalidOperationException("The embedding model returned an unexpected number of vectors or an empty one.");
+        }
+
+        return [.. embeddings.Select(e => e.Vector.ToArray())];
+    }
+
     public async Task EmbedAsync(IReadOnlyList<DecisionRow> decisions, CancellationToken ct)
     {
         if (decisions.Count == 0)
@@ -85,18 +105,42 @@ public sealed partial class DecisionMemory(
 
     public async Task<bool> CanEmbedAsync(CancellationToken ct) => await EmbedTextsAsync([ProbeText], ct) is not null;
 
+    /// <summary>
+    /// Vectors the run's embedding clusters stored (<c>message_embeddings</c>, #114) are reused; only the rest costs a
+    /// model call, and a stored vector of another dimension than the fresh ones is left out (its message falls back to
+    /// sender matches).
+    /// </summary>
     public async Task<MessageVectors?> EmbedMessagesAsync(IReadOnlyList<MessageRow> messages, CancellationToken ct)
     {
         var distinct = messages.DistinctBy(m => m.Id, StringComparer.Ordinal).ToList();
-        if (distinct.Count == 0
-            || await EmbedTextsAsync([.. distinct.Select(m => EmbeddingText(m.FromAddress, SubjectNormaliser.Template(m.Subject), m.Snippet))], ct)
-                is not { } embedded)
+        if (distinct.Count == 0)
         {
             return null;
         }
 
-        return new MessageVectors(
-            embedded.Model, distinct.Select((m, i) => (m.Id, embedded.Vectors[i])).ToDictionary(x => x.Id, x => x.Item2, StringComparer.Ordinal));
+        return await WithGeneratorAsync(distinct.Count, async (generator, model) =>
+        {
+            var ids = distinct.Select(m => m.Id).ToArray();
+            var byId = await db.MessageEmbeddings.AsNoTracking()
+                .Where(r => r.Model == model && ids.Contains(r.MessageId))
+                .ToDictionaryAsync(r => r.MessageId, r => r.Embedding, StringComparer.Ordinal, ct);
+            var missing = distinct.Where(m => !byId.ContainsKey(m.Id)).ToList();
+            if (missing.Count > 0)
+            {
+                var fresh = await GenerateAsync(generator, [.. missing.Select(EmbeddingText)], ct);
+                foreach (var stale in byId.Where(p => p.Value.Memory.Length != fresh[0].Length).Select(p => p.Key).ToList())
+                {
+                    byId.Remove(stale);
+                }
+
+                for (var i = 0; i < missing.Count; i++)
+                {
+                    byId[missing[i].Id] = new Vector(fresh[i]);
+                }
+            }
+
+            return new MessageVectors(model, byId);
+        }, ct);
     }
 
     public async Task<IReadOnlyList<MemoryHint>> FindSimilarAsync(
@@ -212,7 +256,14 @@ public sealed partial class DecisionMemory(
     private sealed record Embedded(string Model, IReadOnlyList<Vector> Vectors);
 
     /// <summary>One model call for all texts; null without an embedding model or on any failure (logged without content).</summary>
-    private async Task<Embedded?> EmbedTextsAsync(IReadOnlyList<string> texts, CancellationToken ct)
+    private Task<Embedded?> EmbedTextsAsync(IReadOnlyList<string> texts, CancellationToken ct) =>
+        WithGeneratorAsync<Embedded>(texts.Count, async (generator, model) =>
+            new Embedded(model, [.. (await GenerateAsync(generator, texts, ct)).Select(v => new Vector(v))]), ct);
+
+    /// <summary>Runs <paramref name="embed"/> with the configured generator and its model; null without one or on any failure.</summary>
+    private async Task<T?> WithGeneratorAsync<T>(
+        int count, Func<IEmbeddingGenerator<string, Embedding<float>>, string, Task<T>> embed, CancellationToken ct)
+        where T : class
     {
         try
         {
@@ -223,20 +274,11 @@ public sealed partial class DecisionMemory(
             }
 
             using var generator = await llm.CreateEmbeddingGeneratorAsync(ct);
-            var embeddings = await generator.GenerateAsync(texts, cancellationToken: ct);
-            if (embeddings.Count != texts.Count || embeddings.Any(e => e.Vector.Length == 0))
-            {
-                LogEmbeddingFailed(logger, texts.Count, "unexpected embedding count or empty vector");
-                return null;
-            }
-
-            // The generator's own model wins: with LLM_FAKE the vectors are the fake's, not the Settings model's.
-            var madeBy = generator.GetService<EmbeddingGeneratorMetadata>()?.DefaultModelId ?? model;
-            return new Embedded(madeBy, [.. embeddings.Select(e => new Vector(e.Vector))]);
+            return await embed(generator, ModelOf(generator, model));
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            LogEmbeddingFailed(logger, texts.Count, ex.GetType().Name);
+            LogEmbeddingFailed(logger, count, ex.GetType().Name);
             return null;
         }
     }
@@ -265,17 +307,15 @@ public sealed partial class DecisionMemory(
         }
 
         return [.. rows
-            .Select(d => (Decision: d, Distance: CosineDistance(d.Embedding!, vector)))
+            .Select(d => (Decision: d, Distance: CosineDistance(d.Embedding!.Memory.Span, vector.Memory.Span)))
             .Where(r => r.Distance <= MaxDistance)
             .OrderBy(r => r.Distance)
             .Select(r => (r.Decision, 1 - r.Distance))];
     }
 
     /// <summary>pgvector's cosine distance; a zero vector has none, so it is never within <see cref="MaxDistance"/>.</summary>
-    private static double CosineDistance(Vector a, Vector b)
+    public static double CosineDistance(ReadOnlySpan<float> x, ReadOnlySpan<float> y)
     {
-        var x = a.Memory.Span;
-        var y = b.Memory.Span;
         double dot = 0, xx = 0, yy = 0;
         for (var i = 0; i < x.Length; i++)
         {

@@ -89,7 +89,7 @@ public sealed class AnalysisGrouper(IGroupRefiner refiner)
                     var group = Keyed(g.Key, Newest(g.Members), labels);
                     return deterministic.Contains(g.Key)
                         ? (group, g.RepresentativeIds, false)
-                        : (group with { Display = g.Display + LabelsDisplay(g.Key, labels.Names) }, g.RepresentativeIds, true);
+                        : (group with { Display = g.Display + (GroupKey.IsList(g.Key) ? ListDisplaySuffix : "") + LabelsDisplay(g.Key, labels.Names) }, g.RepresentativeIds, true);
                 })
                 .ToList();
         }

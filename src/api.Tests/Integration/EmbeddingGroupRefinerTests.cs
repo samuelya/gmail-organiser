@@ -3,6 +3,7 @@ using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Llm.Fake;
+using GmailOrganiser.Memory;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
@@ -67,7 +68,7 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
 
         result.EmbeddingFallback.ShouldBeFalse();
         var group = result.Groups.ShouldHaveSingleItem();
-        group.Key.ShouldBe($"emb:{Shop}:1");
+        group.Key.ShouldStartWith($"emb:{Shop}:");
         group.Members.Select(m => m.Id).ShouldBe(["m5", "m4", "m3", "m2", "m1"]);
         group.Individual.ShouldBeFalse();
         group.RepresentativeIds.Count.ShouldBe(Grouping.RepresentativesPerGroup);
@@ -173,7 +174,135 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
         groups.ShouldHaveSingleItem().Members.Count.ShouldBe(messages.Count);
     }
 
-    private async Task<GroupingResult> GroupAsync(IReadOnlyList<MessageRow> messages, GroupingSettings? grouping = null)
+    [Fact]
+    public async Task Cluster_keys_name_their_content_so_another_runs_cluster_of_other_mail_never_shares_one()
+    {
+        var promos = await SeedAsync(
+            Msg(1, "Weekly deals", Angle(0)), Msg(2, "Weekly deals", Angle(0.01)), Msg(3, "Summer news", Angle(0.02)));
+        var promoKey = (await GroupAsync(promos)).Groups.ShouldHaveSingleItem().Key;
+
+        var invoices = await SeedAsync(Msg(11, "Invoice ready", Far()), Msg(12, "Invoice ready", Far()));
+        var invoiceKey = (await GroupAsync(invoices)).Groups.ShouldHaveSingleItem().Key;
+
+        invoiceKey.ShouldStartWith($"emb:{Shop}:");
+        invoiceKey.ShouldNotBe(promoKey); // review approves (sender, key) across runs
+        (await GroupAsync(promos)).Groups.ShouldHaveSingleItem().Key.ShouldBe(promoKey);
+    }
+
+    [Fact]
+    public async Task Two_clusters_of_the_same_deterministic_group_get_distinct_keys()
+    {
+        var messages = await SeedAsync(
+            Msg(1, "Weekly deals", Angle(0)), Msg(2, "Weekly deals", Angle(0.01)),
+            Msg(3, "Weekly deals", Angle(1.2)), Msg(4, "Weekly deals", Angle(1.21)));
+
+        var groups = (await GroupAsync(messages)).Groups;
+
+        groups.Count.ShouldBe(2);
+        groups.Select(g => g.Key).Distinct().Count().ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task A_late_batch_failure_keeps_the_batches_before_it_and_a_cancelled_run_stops()
+    {
+        var messages = await SeedAsync([.. Enumerable.Range(1, EmbeddingGroupRefiner.BatchSize + 3).Select(i => Msg(i, "Weekly deals", Angle(0)))]);
+        embeddings.Rejects = text => text.EndsWith("| synthetic snippet 1", StringComparison.Ordinal); // oldest: the second batch
+
+        var failed = await GroupAsync(messages);
+
+        failed.EmbeddingFallback.ShouldBeTrue();
+        failed.Groups.ShouldHaveSingleItem().Key.ShouldStartWith(GroupKey.FromPrefix);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.MessageEmbeddings.CountAsync(Ct)).ShouldBe(EmbeddingGroupRefiner.BatchSize);
+        }
+
+        embeddings.Rejects = null;
+        var inputs = embeddings.Inputs.Count;
+        (await GroupAsync(messages)).Groups.ShouldHaveSingleItem().Key.ShouldStartWith(EmbeddingGroupRefiner.KeyPrefix);
+        embeddings.Inputs.Count.ShouldBe(inputs + 3);
+
+        await using var other = postgres.CreateDbContext();
+        await other.MessageEmbeddings.ExecuteDeleteAsync(Ct);
+        await Should.ThrowAsync<OperationCanceledException>(() => GroupAsync(messages, ct: new CancellationToken(canceled: true)));
+    }
+
+    [Fact]
+    public async Task A_stored_row_of_another_dimension_under_the_same_model_is_re_embedded()
+    {
+        var messages = await SeedAsync(Msg(1, "Weekly deals", Angle(0)), Msg(2, "Weekly deals", Angle(0.01)), Msg(3, "Weekly deals", Angle(0.02)));
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.MessageEmbeddings.AddRange(messages.Take(2).Select(m => new MessageEmbeddingRow
+            {
+                MessageId = m.Id,
+                Model = "synthetic-embed-a",
+                Dimension = 3,
+                Embedding = new Pgvector.Vector(new[] { 1f, 0f, 0f }),
+                CreatedAt = Now.AddDays(-1),
+            }));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var result = await GroupAsync(messages);
+
+        result.EmbeddingFallback.ShouldBeFalse();
+        result.Groups.ShouldHaveSingleItem().Key.ShouldStartWith(EmbeddingGroupRefiner.KeyPrefix);
+        embeddings.Inputs.Count.ShouldBe(3);
+        await using var check = postgres.CreateDbContext();
+        (await check.MessageEmbeddings.AsNoTracking().ToListAsync(Ct)).ShouldAllBe(r => r.Dimension == 4);
+    }
+
+    [Fact]
+    public async Task A_list_clusters_across_its_senders_and_keeps_its_list_identity()
+    {
+        var messages = await SeedAsync(
+            Msg(1, "Digest one", Angle(0), from: "a@example.com", listId: "News.Example.com"),
+            Msg(2, "Another digest", Angle(0.01), from: "b@example.com", listId: "news.example.com"));
+
+        var group = (await GroupAsync(messages)).Groups.ShouldHaveSingleItem();
+
+        group.Key.ShouldStartWith($"{EmbeddingGroupRefiner.KeyPrefix}{GroupKey.ListPrefix}news.example.com:");
+        GroupKey.IsList(group.Key).ShouldBeTrue();
+        group.Display.ShouldEndWith(AnalysisGrouper.ListDisplaySuffix);
+        group.Members.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task A_failed_partition_stays_deterministic_while_the_others_cluster_and_a_lone_message_is_not_embedded()
+    {
+        const string Other = "other@example.com";
+        const string Lone = "lone@example.com";
+        var messages = await SeedAsync([
+            .. Enumerable.Range(1, EmbeddingGroupRefiner.BatchSize).Select(i => Msg(100 + i, i % 2 == 0 ? "Weekly deals" : "Summer news", Angle(0))),
+            Msg(1, "Receipt", Far(), from: Other), Msg(2, "Order", Far(), from: Other),
+            Msg(3, "Hello", Far(), from: Lone)]);
+        embeddings.Rejects = text => text.StartsWith(Other, StringComparison.Ordinal);
+
+        var result = await GroupAsync(messages);
+
+        result.EmbeddingFallback.ShouldBeTrue();
+        result.Groups.Single(g => g.SenderAddress == Shop && !g.Individual).Key.ShouldStartWith(EmbeddingGroupRefiner.KeyPrefix);
+        result.Groups.Where(g => g.SenderAddress == Other).ShouldAllBe(g => g.Individual); // deterministic singletons
+        embeddings.Inputs.ShouldNotContain(text => text.StartsWith(Lone, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Memory_reuses_the_stored_vectors_of_representatives()
+    {
+        var messages = await SeedAsync(Msg(1, "Weekly deals", Angle(0)), Msg(2, "Weekly deals", Angle(0.01)));
+        await GroupAsync(messages);
+        var inputs = embeddings.Inputs.Count;
+
+        await using var db = postgres.CreateDbContext();
+        var memory = new DecisionMemory(db, new FakeLlmClientFactory(embed: embeddings), settings, NullLogger<DecisionMemory>.Instance);
+        var reused = await memory.EmbedMessagesAsync(messages, Ct);
+
+        embeddings.Inputs.Count.ShouldBe(inputs);
+        reused!.ById.Keys.ShouldBe(["m1", "m2"], ignoreOrder: true);
+    }
+
+    private async Task<GroupingResult> GroupAsync(IReadOnlyList<MessageRow> messages, GroupingSettings? grouping = null, CancellationToken? ct = null)
     {
         provider ??= Services();
         var refiner = new EmbeddingGroupRefiner(
@@ -181,7 +310,7 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
             new FakeLlmClientFactory(embed: embeddings),
             new MessageEmbeddingStore(provider.GetRequiredService<IServiceScopeFactory>(), new FakeTimeProvider(Now)),
             NullLogger<EmbeddingGroupRefiner>.Instance);
-        return await new AnalysisGrouper(refiner).GroupAsync(messages, grouping ?? Grouping, Allowlist.Empty, PersonalLabels.None, Ct);
+        return await new AnalysisGrouper(refiner).GroupAsync(messages, grouping ?? Grouping, Allowlist.Empty, PersonalLabels.None, ct ?? Ct);
     }
 
     private ServiceProvider Services()
@@ -204,12 +333,13 @@ public sealed class EmbeddingGroupRefinerTests(PostgresFixture postgres) : IAsyn
         return [.. seeded.Select(s => s.Message)];
     }
 
-    private static (MessageRow, float[]) Msg(int n, string subject, float[] vector) => (new MessageRow
+    private static (MessageRow, float[]) Msg(int n, string subject, float[] vector, string from = Shop, string? listId = null) => (new MessageRow
     {
         Id = $"m{n}",
         ThreadId = $"t{n}",
-        FromAddress = Shop,
-        CanonicalAddress = Shop,
+        FromAddress = from,
+        CanonicalAddress = from,
+        ListId = listId,
         CanonicalDomain = "example.com",
         Subject = subject,
         Snippet = $"synthetic snippet {n}",
