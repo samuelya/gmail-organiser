@@ -29,6 +29,13 @@ describe('LlmProviderSettingsSection', () => {
   const overlay = (id: string) =>
     document.querySelector<HTMLElement>(`.cdk-overlay-container [data-testid="${id}"]`);
   const keyUrl = '/api/llm/claude-api/key';
+  const modelsUrl = '/api/llm/claude-api/models';
+  const noModels = { keySet: true, reachable: true, error: null, models: [] };
+
+  async function flushModels() {
+    http.expectOne(modelsUrl).flush(noModels);
+    await fixture.whenStable();
+  }
 
   async function render(settings: SettingsDto | null = settingsOf()) {
     snackOpen = vi.fn();
@@ -149,12 +156,17 @@ describe('LlmProviderSettingsSection', () => {
     expect(fixture.componentInstance.replacing()).toBe(false);
     expect(q('claude-api-key-input')).toBeNull();
     expect(q('claude-api-key-saved')).not.toBeNull();
+    // Leaving Claude API cancelled the first models request; coming back loads again.
+    const loads = http.match(modelsUrl);
+    expect(loads.map((r) => r.cancelled)).toEqual([true, false]);
+    loads[1].flush(noModels);
   });
 
   it('asks for a new key when the saved one cannot be read', async () => {
     await render(
       settingsOf({ llmProvider: 'claude_api', claudeApiKeySet: true, claudeApiKeyHint: null }),
     );
+    await flushModels();
     const text = q('claude-api-key-saved')!.textContent!;
     expect(text).toContain("can't be read. Replace it.");
     expect(text).not.toContain('ending');
@@ -202,6 +214,7 @@ describe('LlmProviderSettingsSection', () => {
     );
     await fixture.whenStable();
 
+    await flushModels();
     expect(q('claude-api-key-saved')!.textContent).toContain('Key saved, ending …abcd');
     expect(q('claude-api-key-input')).toBeNull();
     expect(q('llm-provider-incomplete')).toBeNull();
@@ -236,6 +249,7 @@ describe('LlmProviderSettingsSection', () => {
     await render(
       settingsOf({ llmProvider: 'claude_api', claudeApiKeySet: true, claudeApiKeyHint: '…abcd' }),
     );
+    await flushModels();
     q<HTMLButtonElement>('replace-claude-api-key')!.click();
     await fixture.whenStable();
     expect(q<HTMLInputElement>('claude-api-key-input')!.value).toBe('');
@@ -258,6 +272,8 @@ describe('LlmProviderSettingsSection', () => {
       }),
     );
     await fixture.whenStable();
+    // The key is still set, yet a replaced key may list other models.
+    await flushModels();
     expect(q('claude-api-key-saved')!.textContent).toContain('…wxyz');
   });
 
@@ -265,6 +281,7 @@ describe('LlmProviderSettingsSection', () => {
     await render(
       settingsOf({ llmProvider: 'claude_api', claudeApiKeySet: true, claudeApiKeyHint: '…abcd' }),
     );
+    await flushModels();
     q<HTMLButtonElement>('remove-claude-api-key')!.click();
     await fixture.whenStable();
     overlay('confirm-cancel')!.click();
@@ -305,6 +322,8 @@ describe('LlmProviderSettingsSection', () => {
     );
     await fixture.whenStable();
     expect(fixture.componentInstance.provider.value).toBe('ollama');
+    // Only the first load was sent, and the key going away cancelled it.
+    expect(http.match(modelsUrl).map((r) => r.cancelled)).toEqual([true]);
   });
 
   it('links to the Claude review card', async () => {
