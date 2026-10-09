@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Anthropic.Core;
 using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Llm.ClaudeApi;
@@ -9,6 +11,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 
 namespace GmailOrganiser.Tests.Unit;
 
@@ -25,13 +28,18 @@ public sealed class ClaudeApiChatTests : IDisposable
 
     public void Dispose() => services?.Dispose();
 
-    private IChatClient Create(int maxRetries = 3)
+    private IChatClient Create(int maxRetries = 3, Dictionary<string, string?>? settings = null, TimeProvider? time = null, HttpMessageHandler? handler = null)
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Llm:ClaudeApiMaxRetries"] = maxRetries.ToString() })
-            .Build();
+        settings ??= [];
+        settings["Llm:ClaudeApiMaxRetries"] = maxRetries.ToString(CultureInfo.InvariantCulture);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
         var collection = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddLlm();
-        collection.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+        if (time is not null)
+        {
+            collection.AddSingleton(time);
+        }
+
+        collection.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
         services = collection.BuildServiceProvider();
         var options = services.GetRequiredService<IOptions<LlmOptions>>().Value;
         return ClaudeApiChat.Create(services.GetRequiredService<IHttpClientFactory>(), options, ApiKey, Model);
@@ -142,6 +150,115 @@ public sealed class ClaudeApiChatTests : IDisposable
     }
 
     [Fact]
+    public async Task Anthropic_environment_variables_never_reach_the_request()
+    {
+        string[] names = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+        var saved = names.ToDictionary(n => n, Environment.GetEnvironmentVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable("ANTHROPIC_BASE_URL", "https://proxy.example.com");
+            Environment.SetEnvironmentVariable("ANTHROPIC_AUTH_TOKEN", "synthetic-env-token");
+            Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-test-env-synthetic");
+            api.Message("ok");
+            using var chat = Create();
+
+            await chat.GetResponseAsync(Messages(), cancellationToken: Ct);
+        }
+        finally
+        {
+            foreach (var (name, value) in saved)
+            {
+                Environment.SetEnvironmentVariable(name, value);
+            }
+        }
+
+        var request = api.Requests.ShouldHaveSingleItem();
+        request.Host.ShouldBe(new Uri(EnvironmentUrl.Production).Host);
+        request.Headers["x-api-key"].ShouldBe(ApiKey);
+        request.Headers.ContainsKey("authorization").ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task The_configured_base_url_is_used()
+    {
+        api.Message("ok");
+        using var chat = Create(settings: new() { ["Llm:ClaudeApiBaseUrl"] = "https://claude.example.com" });
+
+        await chat.GetResponseAsync(Messages(), cancellationToken: Ct);
+
+        api.Requests.ShouldHaveSingleItem().Host.ShouldBe("claude.example.com");
+    }
+
+    [Fact]
+    public async Task The_header_filter_drops_headers_the_sdk_does_not_set()
+    {
+        api.Message("ok");
+        using var invoker = new HttpMessageInvoker(new ClaudeApiHeaderFilter { InnerHandler = api });
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://claude.example.com/v1/messages");
+        request.Headers.Add("x-api-key", ApiKey);
+        request.Headers.Add("anthropic-version", "2023-06-01");
+        request.Headers.Add("X-Stainless-Lang", "csharp");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer synthetic-env-token");
+        request.Headers.Add("X-Custom-Gateway", "synthetic");
+
+        using var _ = await invoker.SendAsync(request, Ct);
+
+        api.Requests.ShouldHaveSingleItem().Headers.Keys.ShouldBe(["x-api-key", "anthropic-version", "x-stainless-lang"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task A_retry_wait_past_the_call_timeout_returns_the_rate_limit_at_once()
+    {
+        api.Error(HttpStatusCode.TooManyRequests, "rate_limit_error", ("retry-after", "45"));
+        using var chat = Create(settings: new() { ["Llm:ClaudeApiTimeoutSeconds"] = "30" }, time: new FakeTimeProvider());
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        ex.Message.ShouldContain("rate limited or overloaded");
+        api.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task An_unreadable_answer_surfaces_as_a_key_free_http_error()
+    {
+        api.Unreadable();
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldBe("The Claude API sent an answer this app could not read.");
+        ex.ToString().ShouldNotContain(ApiKey);
+    }
+
+    [Fact]
+    public async Task The_sdk_timeout_surfaces_as_a_claude_http_error()
+    {
+        using var chat = Create(settings: new() { ["Llm:ClaudeApiTimeoutSeconds"] = "1" }, handler: new HangingHandler());
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldBe("No answer from the Claude API within 1 s.");
+    }
+
+    [Fact]
+    public async Task Streaming_errors_are_mapped_like_non_streaming_ones()
+    {
+        api.Error(HttpStatusCode.Unauthorized, "authentication_error");
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(async () =>
+        {
+            await foreach (var _ in chat.GetStreamingResponseAsync(Messages(), cancellationToken: Ct))
+            {
+            }
+        });
+
+        ex.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        ex.Message.ShouldContain("rejected the API key");
+    }
+
+    [Fact]
     public async Task Disposing_the_client_keeps_the_pooled_handler()
     {
         api.Message("ok");
@@ -201,5 +318,14 @@ public sealed class ClaudeApiChatTests : IDisposable
         var closed = json.Schema.ShouldNotBeNull();
         closed.GetProperty("additionalProperties").GetBoolean().ShouldBeFalse();
         closed.GetProperty("properties").GetProperty("a").GetProperty("additionalProperties").GetBoolean().ShouldBeFalse();
+    }
+
+    private sealed class HangingHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            throw new InvalidOperationException("Unreachable.");
+        }
     }
 }

@@ -59,6 +59,26 @@ public sealed class LlmClientFactoryTests
     }
 
     [Fact]
+    public async Task Claude_api_with_a_blank_saved_key_throws_not_configured()
+    {
+        var (factory, _, _) = await CreateClaudeApi(new FakeAnthropicHandler(), "test-model-a", apiKey: "   ");
+
+        var ex = await Should.ThrowAsync<LlmNotConfiguredException>(() => factory.CreateChatClientAsync(Ct));
+
+        ex.Message.ShouldBe("No Claude API key is set. Add one in Settings.");
+    }
+
+    [Theory]
+    [InlineData("", "test-model-a")]
+    [InlineData("sk-test-synthetic", " ")]
+    public void An_explicit_claude_api_client_rejects_a_blank_key_or_model(string apiKey, string model)
+    {
+        var (factory, _, _) = Create(new FakeAnthropicHandler());
+
+        Should.Throw<ArgumentException>(() => factory.CreateClaudeApiChatClient(apiKey, model));
+    }
+
+    [Fact]
     public async Task Claude_api_calls_the_messages_api_with_the_saved_key_and_model()
     {
         var api = new FakeAnthropicHandler().Message("ok");
@@ -163,6 +183,8 @@ public sealed class LlmClientFactoryTests
     [InlineData("Llm:ClaudeApiMaxRetries", "11", "Llm__ClaudeApiMaxRetries")]
     [InlineData("Llm:ClaudeApiTimeoutSeconds", "0", "Llm__ClaudeApiTimeoutSeconds")]
     [InlineData("Llm:ClaudeApiMaxOutputTokens", "0", "Llm__ClaudeApiMaxOutputTokens")]
+    [InlineData("Llm:ClaudeApiMaxOutputTokens", "8193", "Llm__ClaudeApiMaxOutputTokens")]
+    [InlineData("Llm:ClaudeApiBaseUrl", "not-a-url", "Llm__ClaudeApiBaseUrl")]
     public void Out_of_range_claude_api_options_fail_validation(string key, string value, string expected)
     {
         using var services = LlmServices(value, key);

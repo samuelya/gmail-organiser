@@ -30,9 +30,19 @@ public sealed class LlmOptions
     [Range(0, 10, ErrorMessage = "Llm:ClaudeApiMaxRetries (Llm__ClaudeApiMaxRetries) must be a whole number from 0 to 10.")]
     public int ClaudeApiMaxRetries { get; set; } = 3;
 
-    /// <summary>Anthropic's required <c>max_tokens</c>, sent when the call sets no <see cref="ChatOptions.MaxOutputTokens"/>.</summary>
-    [Range(1, 1_000_000, ErrorMessage = "Llm:ClaudeApiMaxOutputTokens (Llm__ClaudeApiMaxOutputTokens) must be a whole number from 1 to 1000000.")]
+    /// <summary>
+    /// Anthropic's required <c>max_tokens</c>, sent when the call sets no <see cref="ChatOptions.MaxOutputTokens"/>. At most
+    /// <see cref="MaxNonStreamingOutputTokens"/>: calls are non-streaming, and the SDK refuses more for some models.
+    /// </summary>
+    [Range(1, MaxNonStreamingOutputTokens, ErrorMessage = "Llm:ClaudeApiMaxOutputTokens (Llm__ClaudeApiMaxOutputTokens) must be a whole number from 1 to 8192.")]
     public int ClaudeApiMaxOutputTokens { get; set; } = 8192;
+
+    /// <summary>The SDK's lowest non-streaming <c>max_tokens</c> limit (<c>ClientOptions.TimeoutFromMaxTokens</c>).</summary>
+    public const int MaxNonStreamingOutputTokens = 8192;
+
+    /// <summary>Claude API base URL; empty means the SDK's production URL. Never read from <c>ANTHROPIC_BASE_URL</c>.</summary>
+    [Url(ErrorMessage = "Llm:ClaudeApiBaseUrl (Llm__ClaudeApiBaseUrl) must be an http or https URL.")]
+    public string? ClaudeApiBaseUrl { get; set; }
 
     public TimeSpan CatalogTimeout => TimeSpan.FromSeconds(Math.Max(1, CatalogTimeoutSeconds));
     public TimeSpan ModelTimeout => TimeSpan.FromSeconds(ModelTimeoutSeconds);

@@ -19,8 +19,11 @@ public sealed class ClaudeApiKeyService(
     private readonly IDataProtector protector = dataProtection.CreateProtector(ProtectorPurpose);
 
     /// <summary>The decrypted key, or <c>null</c> when none is saved or it no longer decrypts.</summary>
-    public async Task<string?> GetAsync(CancellationToken ct = default) =>
-        await UnprotectAsync((await store.GetAsync(ct)).ClaudeApiKeyProtected, ct);
+    public async Task<string?> GetAsync(CancellationToken ct = default) => await GetAsync(await store.GetAsync(ct), ct);
+
+    /// <summary>The decrypted key from already-loaded settings, or <c>null</c> when none is saved or it no longer decrypts.</summary>
+    public async Task<string?> GetAsync(AppSettings settings, CancellationToken ct = default) =>
+        await UnprotectAsync(settings.ClaudeApiKeyProtected, ct);
 
     /// <summary>Saves a validated, trimmed key.</summary>
     public async Task SetAsync(string apiKey, CancellationToken ct = default)

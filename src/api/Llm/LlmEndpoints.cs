@@ -33,8 +33,12 @@ public static class LlmEndpoints
             .ValidateOnStart();
         services.AddHttpClient(OllamaHttp.ClientName);
         services.AddHttpClient(ClaudeApiHttp.ClientName)
-            .AddHttpMessageHandler(sp => new ClaudeApiRetryHandler(
-                sp.GetRequiredService<IOptions<LlmOptions>>().Value.ClaudeApiMaxRetries, sp.GetRequiredService<TimeProvider>()));
+            .AddHttpMessageHandler(() => new ClaudeApiHeaderFilter())
+            .AddHttpMessageHandler(sp =>
+            {
+                var llm = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
+                return new ClaudeApiRetryHandler(llm.ClaudeApiMaxRetries, llm.ClaudeApiTimeout, sp.GetRequiredService<TimeProvider>());
+            });
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OllamaCatalog>();
         services.AddScoped<IOllamaCatalog>(sp => UseFake(sp)

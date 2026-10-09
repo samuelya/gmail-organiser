@@ -1,6 +1,10 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Anthropic;
+using Anthropic.Core;
 using Anthropic.Exceptions;
 using Microsoft.Extensions.AI;
 
@@ -9,19 +13,35 @@ namespace GmailOrganiser.Llm.ClaudeApi;
 /// <summary>
 /// Builds the <see cref="IChatClient"/> for <see cref="LlmProvider.ClaudeApi"/> (#487): the official SDK's adapter over the
 /// named <c>claude-api</c> client, so every chat caller works unchanged. Retries live in <see cref="ClaudeApiRetryHandler"/>
-/// on the named client (the SDK's own backoff can't run on a <see cref="TimeProvider"/>), so the SDK's are off.
+/// on the named client (the SDK's own backoff can't run on a <see cref="TimeProvider"/>), so the SDK's are off. The SDK's
+/// <see cref="ClientOptions.Timeout"/> is the only timeout and bounds one call including those retries.
 /// </summary>
 public static class ClaudeApiChat
 {
-    /// <summary>The client disposes its <see cref="HttpClient"/>, never the pooled handler behind it.</summary>
+    private static readonly ConcurrentDictionary<string, JsonElement> ClosedSchemas = new();
+
+    /// <summary>
+    /// The client disposes its <see cref="HttpClient"/>, never the pooled handler behind it. Base URL, key and auth token
+    /// are set explicitly, so no <c>ANTHROPIC_*</c> environment variable or profile reaches the client.
+    /// </summary>
     public static IChatClient Create(IHttpClientFactory httpClients, LlmOptions options, string apiKey, string model)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(model);
         var http = httpClients.CreateClient(ClaudeApiHttp.ClientName);
-        http.Timeout = options.ClaudeApiTimeout;
-        var anthropic = new AnthropicClient { ApiKey = apiKey, HttpClient = http, MaxRetries = 0, Timeout = options.ClaudeApiTimeout };
+        http.Timeout = Timeout.InfiniteTimeSpan;
+        var anthropic = new AnthropicClient
+        {
+            BaseUrl = options.ClaudeApiBaseUrl ?? EnvironmentUrl.Production,
+            ApiKey = apiKey,
+            AuthToken = null,
+            HttpClient = http,
+            MaxRetries = 0,
+            Timeout = options.ClaudeApiTimeout,
+        };
         return new ChatClientBuilder(anthropic.AsIChatClient(model, options.ClaudeApiMaxOutputTokens))
             .ConfigureOptions(PrepareOptions)
-            .Use(inner => new ClaudeApiErrorClient(inner, anthropic))
+            .Use(inner => new ClaudeApiErrorClient(inner, anthropic, options.ClaudeApiTimeout))
             .Build();
     }
 
@@ -41,28 +61,57 @@ public static class ClaudeApiChat
 
         if (options.ResponseFormat is ChatResponseFormatJson { Schema: { } schema } json)
         {
-            var closed = AIJsonUtilities.TransformSchema(schema, new AIJsonSchemaTransformOptions { DisallowAdditionalProperties = true });
+            // The callers' schemas are static, so each is transformed once.
+            var closed = ClosedSchemas.GetOrAdd(schema.GetRawText(), static (_, schema) =>
+                AIJsonUtilities.TransformSchema(schema, new AIJsonSchemaTransformOptions { DisallowAdditionalProperties = true }), schema);
             options.ResponseFormat = ChatResponseFormat.ForJsonSchema(closed, json.SchemaName, json.SchemaDescription);
         }
     }
 }
 
-/// <summary>The named <c>claude-api</c> client; its timeout comes from <see cref="LlmOptions.ClaudeApiTimeoutSeconds"/>.</summary>
+/// <summary>The named <c>claude-api</c> client; the SDK's timeout bounds its calls, so its own is infinite.</summary>
 public static class ClaudeApiHttp
 {
     public const string ClientName = "claude-api";
 }
 
 /// <summary>
-/// Retries 429, 529 and other 5xx answers up to <see cref="LlmOptions.ClaudeApiMaxRetries"/> times, waiting
-/// <c>retry-after</c> or an exponential backoff (both capped at <see cref="MaxWait"/>); the last answer is returned as is.
+/// Drops every request header the SDK did not set for the API itself, i.e. what <c>ANTHROPIC_CUSTOM_HEADERS</c> adds
+/// (the SDK reads it once per process with no option to turn it off), including any <c>Authorization</c>.
 /// </summary>
-public sealed class ClaudeApiRetryHandler(int maxRetries, TimeProvider time) : DelegatingHandler
+public sealed class ClaudeApiHeaderFilter : DelegatingHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        foreach (var name in request.Headers.Select(h => h.Key).Where(name => !IsAllowed(name)).ToList())
+        {
+            request.Headers.Remove(name);
+        }
+
+        return base.SendAsync(request, cancellationToken);
+    }
+
+    /// <summary>The key, the SDK's <c>anthropic-*</c> and <c>x-stainless-*</c> headers, and the generic HTTP ones.</summary>
+    public static bool IsAllowed(string name) =>
+        name.Equals("x-api-key", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("user-agent", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("accept", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("anthropic-", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("x-stainless-", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// Retries 429, 529 and other 5xx answers up to <see cref="LlmOptions.ClaudeApiMaxRetries"/> times, waiting
+/// <c>retry-after</c> or an exponential backoff (both capped at <see cref="MaxWait"/>); the last answer is returned as is,
+/// also when the wait would outlast <paramref name="budget"/> (the call's timeout), so the caller sees the 429/529.
+/// </summary>
+public sealed class ClaudeApiRetryHandler(int maxRetries, TimeSpan budget, TimeProvider time) : DelegatingHandler
 {
     public static readonly TimeSpan MaxWait = TimeSpan.FromSeconds(60);
 
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        var deadline = time.GetUtcNow() + budget;
         for (var attempt = 0; ; attempt++)
         {
             var response = await base.SendAsync(request, cancellationToken);
@@ -71,7 +120,13 @@ public sealed class ClaudeApiRetryHandler(int maxRetries, TimeProvider time) : D
                 return response;
             }
 
-            var delay = RetryDelay(response.Headers.RetryAfter, attempt, time.GetUtcNow());
+            var now = time.GetUtcNow();
+            var delay = RetryDelay(response.Headers.RetryAfter, attempt, now);
+            if (now + delay >= deadline)
+            {
+                return response;
+            }
+
             response.Dispose();
             await Task.Delay(delay, time, cancellationToken);
         }
@@ -94,11 +149,11 @@ public sealed class ClaudeApiRetryHandler(int maxRetries, TimeProvider time) : D
 }
 
 /// <summary>
-/// Rethrows the SDK's errors as <see cref="HttpRequestException"/>s with the status code, so callers treat them like an
-/// unreachable Ollama; messages carry the status and Anthropic's error type, never the key or a header. Owns the
-/// <see cref="AnthropicClient"/>.
+/// Rethrows every SDK error, and the SDK's timeout, as an <see cref="HttpRequestException"/> (with the status code when
+/// there is one), so callers treat it like an unreachable Ollama; messages carry the status and Anthropic's error type,
+/// never the key, a header or the SDK's own text. Owns the <see cref="AnthropicClient"/>.
 /// </summary>
-internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient anthropic) : DelegatingChatClient(inner)
+internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient anthropic, TimeSpan timeout) : DelegatingChatClient(inner)
 {
     public override async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
@@ -107,15 +162,44 @@ internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient an
         {
             return await base.GetResponseAsync(messages, options, cancellationToken);
         }
-        catch (AnthropicApiException ex)
+        catch (Exception ex) when (Map(ex, cancellationToken) is { } mapped)
         {
-            throw new HttpRequestException(Describe(ex), null, ex.StatusCode);
-        }
-        catch (AnthropicIOException ex)
-        {
-            throw new HttpRequestException("Could not reach the Claude API.", ex.InnerException);
+            throw mapped;
         }
     }
+
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await using var updates = base.GetStreamingResponseAsync(messages, options, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        while (true)
+        {
+            try
+            {
+                if (!await updates.MoveNextAsync())
+                {
+                    yield break;
+                }
+            }
+            catch (Exception ex) when (Map(ex, cancellationToken) is { } mapped)
+            {
+                throw mapped;
+            }
+
+            yield return updates.Current;
+        }
+    }
+
+    /// <summary>The key-free replacement for an SDK error or timeout; <c>null</c> for anything else (e.g. the caller's cancel).</summary>
+    private HttpRequestException? Map(Exception ex, CancellationToken cancellationToken) => ex switch
+    {
+        AnthropicApiException api => new HttpRequestException(Describe(api), null, api.StatusCode),
+        AnthropicIOException io => new HttpRequestException("Could not reach the Claude API.", io.InnerException),
+        AnthropicException => new HttpRequestException("The Claude API sent an answer this app could not read."),
+        TaskCanceledException { InnerException: TimeoutException } when !cancellationToken.IsCancellationRequested =>
+            new HttpRequestException($"No answer from the Claude API within {timeout.TotalSeconds:0} s."),
+        _ => null,
+    };
 
     public static string Describe(AnthropicApiException ex)
     {

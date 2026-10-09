@@ -52,7 +52,12 @@ public sealed class LlmClientFactory(
 
         if (s.LlmProvider == LlmProvider.ClaudeApi)
         {
-            var apiKey = await claudeApiKey.GetAsync(ct) ?? throw new LlmNotConfiguredException(ModelKinds.Chat, NoClaudeApiKeyMessage);
+            var apiKey = await claudeApiKey.GetAsync(s, ct);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new LlmNotConfiguredException(ModelKinds.Chat, NoClaudeApiKeyMessage);
+            }
+
             return CreateClaudeApiChatClient(apiKey, model);
         }
 

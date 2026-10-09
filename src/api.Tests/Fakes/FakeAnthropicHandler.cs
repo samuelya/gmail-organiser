@@ -10,7 +10,7 @@ namespace GmailOrganiser.Tests.Fakes;
 
 /// <summary>
 /// Stands in for the Anthropic Messages API: answers each request with the next queued response (the last one repeats)
-/// and records the request path, headers and JSON body. Synthetic content only.
+/// and records the request host, path, headers and JSON body. Synthetic content only.
 /// </summary>
 public sealed class FakeAnthropicHandler : HttpMessageHandler
 {
@@ -19,7 +19,7 @@ public sealed class FakeAnthropicHandler : HttpMessageHandler
     private readonly Lock _gate = new();
     private Func<HttpResponseMessage>? _last;
 
-    public sealed record Recorded(string Path, IReadOnlyDictionary<string, string> Headers, JsonElement Body);
+    public sealed record Recorded(string Host, string Path, IReadOnlyDictionary<string, string> Headers, JsonElement Body);
 
     public IReadOnlyList<Recorded> Requests
     {
@@ -48,6 +48,9 @@ public sealed class FakeAnthropicHandler : HttpMessageHandler
             usage = new { input_tokens = inputTokens, output_tokens = outputTokens },
         });
 
+    /// <summary>A 200 answer whose body is not a message, as an API change or a broken proxy would send.</summary>
+    public FakeAnthropicHandler Unreadable() => Enqueue(HttpStatusCode.OK, new { type = "message", content = "synthetic" });
+
     /// <summary>An Anthropic error body with <paramref name="status"/>, e.g. 429 or 529, plus headers such as <c>retry-after</c>.</summary>
     public FakeAnthropicHandler Error(HttpStatusCode status, string type, params (string Name, string Value)[] headers) =>
         Enqueue(status, new { type = "error", error = new { type, message = "synthetic error" } }, headers);
@@ -74,7 +77,7 @@ public sealed class FakeAnthropicHandler : HttpMessageHandler
         var headers = request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => string.Join(",", h.Value));
         lock (_gate)
         {
-            _requests.Add(new Recorded(request.RequestUri!.AbsolutePath, headers, JsonDocument.Parse(body).RootElement.Clone()));
+            _requests.Add(new Recorded(request.RequestUri!.Host, request.RequestUri.AbsolutePath, headers, JsonDocument.Parse(body).RootElement.Clone()));
             if (_responses.TryDequeue(out var next))
             {
                 _last = next;
