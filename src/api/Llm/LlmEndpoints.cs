@@ -39,7 +39,7 @@ public static class LlmEndpoints
                 var llm = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
                 return new ClaudeApiRetryHandler(llm.ClaudeApiMaxRetries, llm.ClaudeApiTimeout, sp.GetRequiredService<TimeProvider>());
             });
-        services.AddHttpClient(ClaudeApiHttp.CatalogClientName)
+        services.AddHttpClient(ClaudeApiHttp.NoRetryClientName)
             .AddHttpMessageHandler(() => new ClaudeApiHeaderFilter());
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OllamaCatalog>();

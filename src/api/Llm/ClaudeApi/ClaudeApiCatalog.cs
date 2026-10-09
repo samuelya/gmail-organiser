@@ -12,7 +12,7 @@ public interface IClaudeApiCatalog
 }
 
 /// <summary>
-/// Pages through the SDK's <c>Models.List</c> over the named <see cref="ClaudeApiHttp.CatalogClientName"/> client (header
+/// Pages through the SDK's <c>Models.List</c> over the named <see cref="ClaudeApiHttp.NoRetryClientName"/> client (header
 /// filter, no retries), built like the chat client (<see cref="ClaudeApiChat.CreateAnthropic"/>): at most
 /// <see cref="MaxPages"/> pages of <see cref="PageSize"/>, within <see cref="LlmOptions.CatalogTimeout"/>.
 /// Errors use the chat client's wording (<see cref="ClaudeApiErrorClient.Map"/>), never the key, a header or Anthropic's text.
@@ -52,7 +52,7 @@ public sealed class ClaudeApiCatalog(
     /// <summary>Stops when there are no more pages, the cursor does not move, or after <see cref="MaxPages"/> (incomplete).</summary>
     private async Task<(List<ClaudeApiModelDto> Models, bool Complete)> ListAllAsync(string apiKey, TimeSpan timeout, CancellationToken ct)
     {
-        using var anthropic = ClaudeApiChat.CreateAnthropic(httpClients, ClaudeApiHttp.CatalogClientName, options.Value, apiKey, timeout);
+        using var anthropic = ClaudeApiChat.CreateAnthropic(httpClients, ClaudeApiHttp.NoRetryClientName, options.Value, apiKey, timeout);
         var models = new List<ClaudeApiModelDto>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         string? afterId = null;

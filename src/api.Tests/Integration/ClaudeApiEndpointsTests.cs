@@ -116,6 +116,21 @@ public sealed class ClaudeApiEndpointsTests(ApiFactory factory, PostgresFixture 
         error.Length.ShouldBeLessThanOrEqualTo(330);
     }
 
+    [Fact]
+    public async Task Test_model_reports_a_rate_limit_after_one_attempt()
+    {
+        api.Error(HttpStatusCode.TooManyRequests, "rate_limit_error", ("retry-after", "30"));
+        await using var host = Host();
+        await SetKeyAsync(host);
+
+        var response = await PostAsync(host, new TestClaudeApiModelRequest("test-model-a"));
+
+        var result = (await response.Content.ReadFromJsonAsync<TestModelResultDto>(Ct)).ShouldNotBeNull();
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain("rate limited or overloaded (HTTP 429)");
+        api.Requests.Count.ShouldBe(1);
+    }
+
     public static TheoryData<string> InvalidModels => new() { "", "  ", "model\nname", new string('m', SettingsValidation.MaxModelNameLength + 1) };
 
     [Theory]
@@ -168,7 +183,7 @@ public sealed class ClaudeApiEndpointsTests(ApiFactory factory, PostgresFixture 
             b.ConfigureServices(s =>
             {
                 s.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => api);
-                s.AddHttpClient(ClaudeApiHttp.CatalogClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+                s.AddHttpClient(ClaudeApiHttp.NoRetryClientName).ConfigurePrimaryHttpMessageHandler(() => api);
             });
         });
 

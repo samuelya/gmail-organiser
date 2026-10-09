@@ -26,6 +26,10 @@ public sealed class LlmOptions
     [Range(1, 3600, ErrorMessage = "Llm:ClaudeApiTimeoutSeconds (Llm__ClaudeApiTimeoutSeconds) must be a whole number of seconds from 1 to 3600.")]
     public int ClaudeApiTimeoutSeconds { get; set; } = 120;
 
+    /// <summary>Bounds one Settings model test (one attempt, no retries); never more than <see cref="ClaudeApiTimeoutSeconds"/>.</summary>
+    [Range(1, 3600, ErrorMessage = "Llm:ClaudeApiTestTimeoutSeconds (Llm__ClaudeApiTestTimeoutSeconds) must be a whole number of seconds from 1 to 3600.")]
+    public int ClaudeApiTestTimeoutSeconds { get; set; } = 15;
+
     /// <summary>Retries of a Claude API call answered 429, 529 or another 5xx.</summary>
     [Range(0, 10, ErrorMessage = "Llm:ClaudeApiMaxRetries (Llm__ClaudeApiMaxRetries) must be a whole number from 0 to 10.")]
     public int ClaudeApiMaxRetries { get; set; } = 3;
@@ -47,6 +51,9 @@ public sealed class LlmOptions
     public TimeSpan CatalogTimeout => TimeSpan.FromSeconds(Math.Max(1, CatalogTimeoutSeconds));
     public TimeSpan ModelTimeout => TimeSpan.FromSeconds(ModelTimeoutSeconds);
     public TimeSpan ClaudeApiTimeout => TimeSpan.FromSeconds(ClaudeApiTimeoutSeconds);
+
+    /// <summary>The model test is never looser than a real call.</summary>
+    public TimeSpan ClaudeApiTestTimeout => TimeSpan.FromSeconds(Math.Min(ClaudeApiTestTimeoutSeconds, ClaudeApiTimeoutSeconds));
 }
 
 /// <summary>Request fields every Ollama chat call carries, applied once in <see cref="LlmClientFactory"/>.</summary>

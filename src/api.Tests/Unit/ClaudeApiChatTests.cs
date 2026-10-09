@@ -22,13 +22,35 @@ public sealed class ClaudeApiChatTests : IDisposable
     private const string ApiKey = "sk-test-0000-synthetic";
 
     private readonly FakeAnthropicHandler api = new();
-    private ServiceProvider? services;
+    private readonly List<ServiceProvider> providers = [];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public void Dispose() => services?.Dispose();
+    public void Dispose()
+    {
+        foreach (var provider in providers)
+        {
+            provider.Dispose();
+        }
+    }
 
     private IChatClient Create(int maxRetries = 3, Dictionary<string, string?>? settings = null, TimeProvider? time = null, HttpMessageHandler? handler = null)
+    {
+        var provider = BuildServices(maxRetries, settings, time, handler);
+        var options = provider.GetRequiredService<IOptions<LlmOptions>>().Value;
+        return ClaudeApiChat.Create(provider.GetRequiredService<IHttpClientFactory>(), options, ApiKey, Model);
+    }
+
+    /// <summary>The model test's client, as <see cref="LlmClientFactory"/> builds it, over its own services.</summary>
+    private IChatClient CreateTest(Dictionary<string, string?>? settings = null, HttpMessageHandler? handler = null)
+    {
+        var provider = BuildServices(3, settings, null, handler);
+        var options = provider.GetRequiredService<IOptions<LlmOptions>>().Value;
+        return ClaudeApiChat.Create(
+            provider.GetRequiredService<IHttpClientFactory>(), ClaudeApiHttp.NoRetryClientName, options, ApiKey, Model, options.ClaudeApiTestTimeout);
+    }
+
+    private ServiceProvider BuildServices(int maxRetries, Dictionary<string, string?>? settings, TimeProvider? time, HttpMessageHandler? handler)
     {
         settings ??= [];
         settings["Llm:ClaudeApiMaxRetries"] = maxRetries.ToString(CultureInfo.InvariantCulture);
@@ -40,9 +62,10 @@ public sealed class ClaudeApiChatTests : IDisposable
         }
 
         collection.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
-        services = collection.BuildServiceProvider();
-        var options = services.GetRequiredService<IOptions<LlmOptions>>().Value;
-        return ClaudeApiChat.Create(services.GetRequiredService<IHttpClientFactory>(), options, ApiKey, Model);
+        collection.AddHttpClient(ClaudeApiHttp.NoRetryClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
+        var provider = collection.BuildServiceProvider();
+        providers.Add(provider);
+        return provider;
     }
 
     private static List<ChatMessage> Messages() =>
@@ -217,6 +240,34 @@ public sealed class ClaudeApiChatTests : IDisposable
         ex.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
         ex.Message.ShouldContain("rate limited or overloaded");
         api.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task The_model_test_client_sends_one_attempt_while_the_chat_client_still_retries()
+    {
+        api.Error(HttpStatusCode.TooManyRequests, "rate_limit_error", ("retry-after", "30"));
+        using var chat = Create(time: new FakeTimeProvider());
+        using var test = CreateTest();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => test.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        ex.Message.ShouldBe("The Claude API is rate limited or overloaded (HTTP 429); try again later.");
+        api.Requests.Count.ShouldBe(1);
+
+        api.Error(HttpStatusCode.TooManyRequests, "rate_limit_error", ("retry-after", "0")).Message("ok");
+        (await chat.GetResponseAsync(Messages(), cancellationToken: Ct)).Text.ShouldBe("ok");
+        api.Requests.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task The_model_test_client_times_out_with_its_own_timeout()
+    {
+        using var test = CreateTest(new() { ["Llm:ClaudeApiTestTimeoutSeconds"] = "1" }, new HangingHandler());
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => test.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldBe("No answer from the Claude API within 1 s.");
     }
 
     [Fact]

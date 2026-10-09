@@ -17,7 +17,7 @@ public sealed class FakeLlmClientFactory(
     public FakeChatClient Chat { get; } = chat ?? new FakeChatClient();
     public FakeEmbeddingGenerator Embeddings { get; } = embed ?? new FakeEmbeddingGenerator();
     public List<(Uri BaseUrl, string Model)> Targets { get; } = [];
-    public List<string> ClaudeApiModels { get; } = [];
+    public List<string> ClaudeApiTestModels { get; } = [];
 
     /// <summary>A real factory (without <c>LLM_FAKE</c>) whose start check reads <paramref name="settings"/>.</summary>
     public static LlmClientFactory Checks(ISettingsStore settings) => new(
@@ -42,9 +42,9 @@ public sealed class FakeLlmClientFactory(
         return Chat;
     }
 
-    public IChatClient CreateClaudeApiChatClient(string apiKey, string model)
+    public IChatClient CreateClaudeApiTestChatClient(string apiKey, string model)
     {
-        ClaudeApiModels.Add(model);
+        ClaudeApiTestModels.Add(model);
         return Chat;
     }
 

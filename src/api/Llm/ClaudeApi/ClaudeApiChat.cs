@@ -24,14 +24,22 @@ public static class ClaudeApiChat
     /// The client disposes its <see cref="HttpClient"/>, never the pooled handler behind it. Base URL, key and auth token
     /// are set explicitly, so no <c>ANTHROPIC_*</c> environment variable or profile reaches the client.
     /// </summary>
-    public static IChatClient Create(IHttpClientFactory httpClients, LlmOptions options, string apiKey, string model)
+    public static IChatClient Create(IHttpClientFactory httpClients, LlmOptions options, string apiKey, string model) =>
+        Create(httpClients, ClaudeApiHttp.ClientName, options, apiKey, model, options.ClaudeApiTimeout);
+
+    /// <summary>
+    /// The chat client over the named client <paramref name="clientName"/>, e.g. <see cref="ClaudeApiHttp.NoRetryClientName"/>
+    /// with <see cref="LlmOptions.ClaudeApiTestTimeout"/> for the model test; <paramref name="timeout"/> bounds one call.
+    /// </summary>
+    public static IChatClient Create(
+        IHttpClientFactory httpClients, string clientName, LlmOptions options, string apiKey, string model, TimeSpan timeout)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
-        var anthropic = CreateAnthropic(httpClients, ClaudeApiHttp.ClientName, options, apiKey, options.ClaudeApiTimeout);
+        var anthropic = CreateAnthropic(httpClients, clientName, options, apiKey, timeout);
         return new ChatClientBuilder(anthropic.AsIChatClient(model, options.ClaudeApiMaxOutputTokens))
             .ConfigureOptions(PrepareOptions)
-            .Use(inner => new ClaudeApiErrorClient(inner, anthropic, options.ClaudeApiTimeout))
+            .Use(inner => new ClaudeApiErrorClient(inner, anthropic, timeout))
             .Build();
     }
 
@@ -86,10 +94,10 @@ public static class ClaudeApiHttp
     public const string ClientName = "claude-api";
 
     /// <summary>
-    /// The model list: header filter only. Its <see cref="LlmOptions.CatalogTimeout"/> is shorter than a retry wait, so a
-    /// 429/529 is shown at once ("try again later") instead of timing out mid-wait.
+    /// The model list and the Settings model test: header filter only, so a 429/529/5xx is one attempt and shown at once
+    /// ("try again later") instead of after the chat client's retry waits.
     /// </summary>
-    public const string CatalogClientName = "claude-api-catalog";
+    public const string NoRetryClientName = "claude-api-no-retry";
 }
 
 /// <summary>

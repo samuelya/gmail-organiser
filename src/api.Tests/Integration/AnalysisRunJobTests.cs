@@ -514,7 +514,7 @@ internal sealed class ScriptedLlmFactory(
 
     public IChatClient CreateChatClient(Uri baseUrl, string model) => chat;
 
-    public IChatClient CreateClaudeApiChatClient(string apiKey, string model) => chat;
+    public IChatClient CreateClaudeApiTestChatClient(string apiKey, string model) => chat;
 
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) =>
         embed ?? throw new NotSupportedException();
