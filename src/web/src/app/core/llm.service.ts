@@ -30,7 +30,25 @@ export interface TestModelResult {
   error: string | null;
 }
 
-/** The Ollama endpoints (`/api/llm`) and the Claude API key. */
+/** `ClaudeApiModelDto`: one model of the account, as the Claude API lists it. */
+export interface ClaudeApiModel {
+  id: string;
+  displayName: string;
+  createdAt: string | null;
+}
+
+/**
+ * `ClaudeApiModelsDto` (`GET /api/llm/claude-api/models`), newest first. `error` can be set while
+ * `reachable` is true (e.g. a capped list), so it is shown whenever present.
+ */
+export interface ClaudeApiModels {
+  keySet: boolean;
+  reachable: boolean;
+  error: string | null;
+  models: ClaudeApiModel[];
+}
+
+/** The Ollama endpoints (`/api/llm`) and the Claude API key, models and model test. */
 @Injectable({ providedIn: 'root' })
 export class LlmService {
   private readonly http = inject(HttpClient);
@@ -67,6 +85,23 @@ export class LlmService {
 
   clearClaudeApiKey(): Observable<void> {
     return this.http.delete<void>('/api/llm/claude-api/key');
+  }
+
+  /** The account's Claude models, newest first; a failed listing is `reachable: false` with `error`. */
+  getClaudeApiModels(): Observable<ClaudeApiModels> {
+    return this.http.get<ClaudeApiModels>('/api/llm/claude-api/models');
+  }
+
+  /**
+   * Runs a tiny prompt on a Claude model; unsubscribing aborts the request. No saved key (409) and a
+   * rejected model (400) are shown next to the Test button rather than by the error interceptor.
+   */
+  testClaudeApiModel(model: string): Observable<TestModelResult> {
+    return this.http.post<TestModelResult>(
+      '/api/llm/claude-api/test-model',
+      { model },
+      { context: new HttpContext().set(QUIET_STATUSES, [400, 409]) },
+    );
   }
 }
 
