@@ -16,6 +16,11 @@ What it does and does not do:
 - No model is passed unless you enter one under Settings → Claude review → "Model (optional)"; empty means your subscription's
   default.
 
+**Not the Claude API provider.** This review uses your Claude **subscription** token (`setup-token`) to get a second
+opinion on suggestions the analysis model already made. The **Claude API provider** (Settings → LLM provider) is a
+separate option: it uses an Anthropic **API key**, billed to your API account, to run the analysis itself instead of
+Ollama. You can use either, both or neither.
+
 Pick one mode under **Settings → Claude review → Mode**: **Claude Code (headless)** or **Claude Desktop**.
 
 ## Headless mode (Claude Code in the `api` container)
