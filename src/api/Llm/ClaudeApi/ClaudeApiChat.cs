@@ -28,21 +28,31 @@ public static class ClaudeApiChat
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
-        var http = httpClients.CreateClient(ClaudeApiHttp.ClientName);
+        var anthropic = CreateAnthropic(httpClients, ClaudeApiHttp.ClientName, options, apiKey, options.ClaudeApiTimeout);
+        return new ChatClientBuilder(anthropic.AsIChatClient(model, options.ClaudeApiMaxOutputTokens))
+            .ConfigureOptions(PrepareOptions)
+            .Use(inner => new ClaudeApiErrorClient(inner, anthropic, options.ClaudeApiTimeout))
+            .Build();
+    }
+
+    /// <summary>
+    /// The SDK client over the named client <paramref name="clientName"/>, shared by chat and the model list so both use one
+    /// base-URL rule and the SDK's API version. <paramref name="timeout"/> bounds one call including the named client's retries.
+    /// </summary>
+    public static AnthropicClient CreateAnthropic(
+        IHttpClientFactory httpClients, string clientName, LlmOptions options, string apiKey, TimeSpan timeout)
+    {
+        var http = httpClients.CreateClient(clientName);
         http.Timeout = Timeout.InfiniteTimeSpan;
-        var anthropic = new AnthropicClient
+        return new AnthropicClient
         {
             BaseUrl = options.ClaudeApiBaseUrl ?? EnvironmentUrl.Production,
             ApiKey = apiKey,
             AuthToken = null,
             HttpClient = http,
             MaxRetries = 0,
-            Timeout = options.ClaudeApiTimeout,
+            Timeout = timeout,
         };
-        return new ChatClientBuilder(anthropic.AsIChatClient(model, options.ClaudeApiMaxOutputTokens))
-            .ConfigureOptions(PrepareOptions)
-            .Use(inner => new ClaudeApiErrorClient(inner, anthropic, options.ClaudeApiTimeout))
-            .Build();
     }
 
     /// <summary>
@@ -69,10 +79,17 @@ public static class ClaudeApiChat
     }
 }
 
-/// <summary>The named <c>claude-api</c> client; the SDK's timeout bounds its calls, so its own is infinite.</summary>
+/// <summary>The named Claude API clients; the SDK's timeout bounds their calls, so their own is infinite.</summary>
 public static class ClaudeApiHttp
 {
+    /// <summary>Chat: header filter and <see cref="ClaudeApiRetryHandler"/>.</summary>
     public const string ClientName = "claude-api";
+
+    /// <summary>
+    /// The model list: header filter only. Its <see cref="LlmOptions.CatalogTimeout"/> is shorter than a retry wait, so a
+    /// 429/529 is shown at once ("try again later") instead of timing out mid-wait.
+    /// </summary>
+    public const string CatalogClientName = "claude-api-catalog";
 }
 
 /// <summary>
@@ -162,7 +179,7 @@ internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient an
         {
             return await base.GetResponseAsync(messages, options, cancellationToken);
         }
-        catch (Exception ex) when (Map(ex, cancellationToken) is { } mapped)
+        catch (Exception ex) when (Map(ex, timeout, cancellationToken) is { } mapped)
         {
             throw mapped;
         }
@@ -181,7 +198,7 @@ internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient an
                     yield break;
                 }
             }
-            catch (Exception ex) when (Map(ex, cancellationToken) is { } mapped)
+            catch (Exception ex) when (Map(ex, timeout, cancellationToken) is { } mapped)
             {
                 throw mapped;
             }
@@ -191,7 +208,7 @@ internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient an
     }
 
     /// <summary>The key-free replacement for an SDK error or timeout; <c>null</c> for anything else (e.g. the caller's cancel).</summary>
-    private HttpRequestException? Map(Exception ex, CancellationToken cancellationToken) => ex switch
+    public static HttpRequestException? Map(Exception ex, TimeSpan timeout, CancellationToken cancellationToken) => ex switch
     {
         AnthropicApiException api => new HttpRequestException(Describe(api), null, api.StatusCode),
         AnthropicIOException io => new HttpRequestException("Could not reach the Claude API.", io.InnerException),

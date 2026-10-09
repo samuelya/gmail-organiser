@@ -10,7 +10,7 @@ namespace GmailOrganiser.Tests.Fakes;
 
 /// <summary>
 /// Stands in for the Anthropic Messages API: answers each request with the next queued response (the last one repeats)
-/// and records the request host, path, headers and JSON body. Synthetic content only.
+/// and records the request host, path, query, headers and JSON body. Synthetic content only.
 /// </summary>
 public sealed class FakeAnthropicHandler : HttpMessageHandler
 {
@@ -19,7 +19,7 @@ public sealed class FakeAnthropicHandler : HttpMessageHandler
     private readonly Lock _gate = new();
     private Func<HttpResponseMessage>? _last;
 
-    public sealed record Recorded(string Host, string Path, IReadOnlyDictionary<string, string> Headers, JsonElement Body);
+    public sealed record Recorded(string Host, string Path, IReadOnlyDictionary<string, string> Headers, JsonElement Body, string Query = "");
 
     public IReadOnlyList<Recorded> Requests
     {
@@ -47,6 +47,23 @@ public sealed class FakeAnthropicHandler : HttpMessageHandler
             stop_sequence = (string?)null,
             usage = new { input_tokens = inputTokens, output_tokens = outputTokens },
         });
+
+    /// <summary>One <c>/v1/models</c> page; <c>last_id</c> is the last model's id.</summary>
+    public FakeAnthropicHandler Models(bool hasMore, params (string Id, string DisplayName, string? CreatedAt)[] models) =>
+        Enqueue(HttpStatusCode.OK, new
+        {
+            data = models.Select(m => new { type = "model", id = m.Id, display_name = m.DisplayName, created_at = m.CreatedAt }),
+            has_more = hasMore,
+            first_id = models.FirstOrDefault().Id,
+            last_id = models.LastOrDefault().Id,
+        });
+
+    /// <summary>Throws <paramref name="exception"/> instead of answering, as a refused connection would.</summary>
+    public FakeAnthropicHandler Throw(Exception exception)
+    {
+        _responses.Enqueue(() => throw exception);
+        return this;
+    }
 
     /// <summary>A 200 answer whose body is not a message, as an API change or a broken proxy would send.</summary>
     public FakeAnthropicHandler Unreadable() => Enqueue(HttpStatusCode.OK, new { type = "message", content = "synthetic" });
@@ -77,7 +94,7 @@ public sealed class FakeAnthropicHandler : HttpMessageHandler
         var headers = request.Headers.ToDictionary(h => h.Key.ToLowerInvariant(), h => string.Join(",", h.Value));
         lock (_gate)
         {
-            _requests.Add(new Recorded(request.RequestUri!.Host, request.RequestUri.AbsolutePath, headers, JsonDocument.Parse(body).RootElement.Clone()));
+            _requests.Add(new Recorded(request.RequestUri!.Host, request.RequestUri.AbsolutePath, headers, JsonDocument.Parse(body).RootElement.Clone(), request.RequestUri.Query));
             if (_responses.TryDequeue(out var next))
             {
                 _last = next;

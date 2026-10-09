@@ -10,8 +10,8 @@ namespace GmailOrganiser.Llm;
 public static class LlmEndpoints
 {
     /// <summary>
-    /// Registers the Ollama catalog, the named Ollama and Claude API clients and the client factory; with <see cref="LlmOptions.UseFake"/> the catalog is
-    /// <see cref="FakeOllamaCatalog"/> (chosen at resolution time) and the factory hands out the <c>Llm/Fake</c> clients.
+    /// Registers the Ollama and Claude API catalogs, the named Ollama and Claude API clients and the client factory; with <see cref="LlmOptions.UseFake"/> the catalog is
+    /// <see cref="FakeOllamaCatalog"/> and <see cref="FakeClaudeApiCatalog"/> (chosen at resolution time) and the factory hands out the <c>Llm/Fake</c> clients.
     /// </summary>
     public static IServiceCollection AddLlm(this IServiceCollection services)
     {
@@ -39,11 +39,17 @@ public static class LlmEndpoints
                 var llm = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
                 return new ClaudeApiRetryHandler(llm.ClaudeApiMaxRetries, llm.ClaudeApiTimeout, sp.GetRequiredService<TimeProvider>());
             });
+        services.AddHttpClient(ClaudeApiHttp.CatalogClientName)
+            .AddHttpMessageHandler(() => new ClaudeApiHeaderFilter());
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OllamaCatalog>();
         services.AddScoped<IOllamaCatalog>(sp => UseFake(sp)
             ? new FakeOllamaCatalog()
             : sp.GetRequiredService<OllamaCatalog>());
+        services.AddScoped<ClaudeApiCatalog>();
+        services.AddScoped<IClaudeApiCatalog>(sp => UseFake(sp)
+            ? new FakeClaudeApiCatalog(sp.GetRequiredService<ClaudeApiKeyService>())
+            : sp.GetRequiredService<ClaudeApiCatalog>());
         services.AddHostedService<LlmFakeNotice>();
         services.AddScoped<ILlmClientFactory, LlmClientFactory>();
         services.AddScoped<LlmModelTester>();
@@ -125,11 +131,7 @@ public static class LlmEndpoints
             errors["kind"] = [$"Must be '{ModelKinds.Chat}' or '{ModelKinds.Embedding}'."];
         }
 
-        if (string.IsNullOrWhiteSpace(request.Model) || request.Model.Trim().Length > SettingsValidation.MaxModelNameLength
-            || request.Model.Any(char.IsControl))
-        {
-            errors["model"] = [$"Required; at most {SettingsValidation.MaxModelNameLength} characters, without control characters."];
-        }
+        ModelNameValidation.CheckRequired(errors, "model", request.Model);
 
         if (request.BaseUrl is not null && !SettingsValidation.IsHttpUrl(request.BaseUrl))
         {
