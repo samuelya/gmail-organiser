@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Core;
@@ -64,18 +65,18 @@ public static class ClaudeApiChat
     }
 
     /// <summary>
-    /// Removes the Ollama-only <c>think</c> and <c>num_ctx</c> fields, keeps temperature in Anthropic's 0–1 range, and
-    /// closes every object in a JSON schema (<c>additionalProperties: false</c>), which Anthropic's structured outputs
+    /// Removes the Ollama-only <c>think</c> and <c>num_ctx</c> fields, drops the sampling parameters (temperature, top-p,
+    /// top-k: current Claude models answer HTTP 400 when a request carries them, and model IDs are config, so there is no
+    /// per-model list), and closes every object in a JSON schema (<c>additionalProperties: false</c>), which Anthropic's structured outputs
     /// require. The options are the per-call clone, never a caller's shared instance.
     /// </summary>
     public static void PrepareOptions(ChatOptions options)
     {
         options.AdditionalProperties?.Remove(OllamaRequestOptions.ThinkKey);
         options.AdditionalProperties?.Remove(LlmCallMeter.NumCtxKey);
-        if (options.Temperature > 1)
-        {
-            options.Temperature = 1;
-        }
+        options.Temperature = null;
+        options.TopP = null;
+        options.TopK = null;
 
         if (options.ResponseFormat is ChatResponseFormatJson { Schema: { } schema } json)
         {
@@ -175,8 +176,9 @@ public sealed class ClaudeApiRetryHandler(int maxRetries, TimeSpan budget, TimeP
 
 /// <summary>
 /// Rethrows every SDK error, and the SDK's timeout, as an <see cref="HttpRequestException"/> (with the status code when
-/// there is one), so callers treat it like an unreachable Ollama; messages carry the status and Anthropic's error type,
-/// never the key, a header or the SDK's own text. Owns the <see cref="AnthropicClient"/>.
+/// there is one), so callers treat it like an unreachable Ollama; messages carry the status, Anthropic's error type and,
+/// for a 4xx other than 401/403/429, Anthropic's one-line, truncated error message, never the key, a header or the SDK's own text. Owns the
+/// <see cref="AnthropicClient"/>.
 /// </summary>
 internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient anthropic, TimeSpan timeout) : DelegatingChatClient(inner)
 {
@@ -229,14 +231,76 @@ internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient an
     public static string Describe(AnthropicApiException ex)
     {
         var code = (int)ex.StatusCode;
-        return ex.StatusCode switch
+        if (ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
-            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden =>
-                $"The Claude API rejected the API key (HTTP {code}). Check the key in Settings.",
-            HttpStatusCode.TooManyRequests or (HttpStatusCode)529 =>
-                $"The Claude API is rate limited or overloaded (HTTP {code}); try again later.",
-            _ => $"The Claude API answered HTTP {code}" + (ex.ErrorType is { } type ? $" ({type})." : "."),
-        };
+            return $"The Claude API rejected the API key (HTTP {code}). Check the key in Settings.";
+        }
+
+        if (ex.StatusCode is HttpStatusCode.TooManyRequests or (HttpStatusCode)529)
+        {
+            return $"The Claude API is rate limited or overloaded (HTTP {code}); try again later.";
+        }
+
+        var prefix = $"The Claude API answered HTTP {code}" + (ex.ErrorType is { } type ? $" ({type})" : "");
+        return code is >= 400 and < 500 && ErrorMessage(ex.ResponseBody) is { } message ? $"{prefix}: {message}." : $"{prefix}.";
+    }
+
+    /// <summary>
+    /// Anthropic's <c>error.message</c> from an error body on one line (control characters and whitespace runs become
+    /// single spaces) and truncated; <c>null</c> when the body has none.
+    /// </summary>
+    private static string? ErrorMessage(string? body)
+    {
+        const int MaxLength = 200;
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("error", out var error)
+                || error.ValueKind != JsonValueKind.Object
+                || !error.TryGetProperty("message", out var message)
+                || message.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var line = new StringBuilder();
+            foreach (var c in message.GetString()!)
+            {
+                var blank = char.IsControl(c) || char.IsWhiteSpace(c);
+                if (!blank)
+                {
+                    line.Append(c);
+                }
+                else if (line.Length > 0 && line[^1] != ' ')
+                {
+                    line.Append(' ');
+                }
+            }
+
+            var text = line.ToString().TrimEnd(' ', '.');
+            if (text.Length == 0)
+            {
+                return null;
+            }
+
+            if (text.Length <= MaxLength)
+            {
+                return text;
+            }
+
+            var cut = char.IsHighSurrogate(text[MaxLength - 1]) ? MaxLength - 1 : MaxLength;
+            return text[..cut].TrimEnd() + "…";
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     protected override void Dispose(bool disposing)

@@ -72,7 +72,7 @@ public sealed class ClaudeApiChatTests : IDisposable
         [new(ChatRole.System, "Synthetic system prompt"), new(ChatRole.User, "Synthetic email from shop@example.com")];
 
     [Fact]
-    public async Task An_analysis_call_sends_prompt_schema_and_temperature_without_ollama_options()
+    public async Task An_analysis_call_sends_prompt_and_schema_without_ollama_options_or_temperature()
     {
         api.Message("{}");
         using var chat = Create();
@@ -85,7 +85,7 @@ public sealed class ClaudeApiChatTests : IDisposable
         var body = request.Body;
         body.GetProperty("model").GetString().ShouldBe(Model);
         body.GetProperty("max_tokens").GetInt32().ShouldBe(new LlmOptions().ClaudeApiMaxOutputTokens);
-        body.GetProperty("temperature").GetDouble().ShouldBe(0);
+        body.TryGetProperty("temperature", out _).ShouldBeFalse();
         body.GetProperty("system")[0].GetProperty("text").GetString().ShouldBe("Synthetic system prompt");
         body.GetProperty("messages")[0].GetProperty("content")[0].GetProperty("text").GetString().ShouldNotBeNull().ShouldContain("shop@example.com");
         body.TryGetProperty(OllamaRequestOptions.ThinkKey, out _).ShouldBeFalse();
@@ -116,16 +116,18 @@ public sealed class ClaudeApiChatTests : IDisposable
     }
 
     [Fact]
-    public async Task An_explicit_max_output_tokens_wins_and_temperature_stays_within_one()
+    public async Task An_explicit_max_output_tokens_wins_and_sampling_parameters_are_never_sent()
     {
         api.Message("ok");
         using var chat = Create();
 
-        await chat.GetResponseAsync(Messages(), new ChatOptions { MaxOutputTokens = 64, Temperature = 1.5f }, Ct);
+        await chat.GetResponseAsync(Messages(), new ChatOptions { MaxOutputTokens = 64, Temperature = 0.2f, TopP = 0.9f, TopK = 40 }, Ct);
 
         var body = api.Requests.ShouldHaveSingleItem().Body;
         body.GetProperty("max_tokens").GetInt32().ShouldBe(64);
-        body.GetProperty("temperature").GetDouble().ShouldBe(1);
+        body.TryGetProperty("temperature", out _).ShouldBeFalse();
+        body.TryGetProperty("top_p", out _).ShouldBeFalse();
+        body.TryGetProperty("top_k", out _).ShouldBeFalse();
     }
 
     [Fact]
@@ -170,6 +172,87 @@ public sealed class ClaudeApiChatTests : IDisposable
         ex.ToString().ShouldNotContain(ApiKey);
         ex.ToString().ShouldNotContain("x-api-key", Case.Insensitive);
         api.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_bad_request_shows_anthropics_error_message_and_is_not_retried()
+    {
+        api.Error(HttpStatusCode.BadRequest, "invalid_request_error");
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        ex.Message.ShouldContain("HTTP 400");
+        ex.Message.ShouldContain("synthetic error");
+        ex.ToString().ShouldNotContain(ApiKey);
+        api.Requests.Count.ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, "not_found_error")]
+    [InlineData(HttpStatusCode.RequestEntityTooLarge, "request_too_large")]
+    public async Task Any_other_client_error_shows_anthropics_error_message(HttpStatusCode status, string type)
+    {
+        api.Error(status, type);
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldStartWith($"The Claude API answered HTTP {(int)status}");
+        ex.Message.ShouldEndWith(": synthetic error.");
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("""{"error":{"type":"invalid_request_error"}}""")]
+    [InlineData("""{"error":{"type":"invalid_request_error","message":" \r\n "}}""")]
+    public async Task A_client_error_without_a_message_keeps_the_short_text(string body)
+    {
+        api.ErrorBody(HttpStatusCode.BadRequest, body);
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldStartWith("The Claude API answered HTTP 400");
+        ex.Message.ShouldEndWith(".");
+        ex.Message.ShouldNotContain(":");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "authentication_error")]
+    [InlineData(HttpStatusCode.TooManyRequests, "rate_limit_error")]
+    public async Task Key_and_rate_limit_errors_never_include_the_body(HttpStatusCode status, string type)
+    {
+        api.Error(status, type, ("retry-after", "0"));
+        using var chat = Create(maxRetries: 0);
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldNotContain("synthetic error");
+    }
+
+    [Fact]
+    public async Task An_error_message_is_kept_on_one_line()
+    {
+        api.ErrorBody(HttpStatusCode.BadRequest, JsonSerializer.Serialize(new { type = "error", error = new { type = "invalid_request_error", message = "line one\r\nINFO forged\tline\u0000 two." } }));
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldEndWith("): line one INFO forged line two.");
+    }
+
+    [Fact]
+    public async Task A_long_error_message_is_truncated_without_splitting_a_surrogate_pair()
+    {
+        // 199 letters then an emoji: a cut at 200 chars would land between its two halves.
+        api.ErrorBody(HttpStatusCode.BadRequest, JsonSerializer.Serialize(new { type = "error", error = new { type = "invalid_request_error", message = new string('x', 199) + "\U0001F600" + new string('y', 50) } }));
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldEndWith(new string('x', 199) + "….");
     }
 
     [Fact]
@@ -345,13 +428,15 @@ public sealed class ClaudeApiChatTests : IDisposable
         ClaudeApiRetryHandler.IsRetryable(status).ShouldBe(expected);
 
     [Fact]
-    public void Prepare_options_leaves_a_call_without_ollama_fields_or_schema_alone()
+    public void Prepare_options_drops_sampling_and_leaves_a_call_without_ollama_fields_or_schema_alone()
     {
-        var options = new ChatOptions { Temperature = 0, ResponseFormat = ChatResponseFormat.Text };
+        var options = new ChatOptions { Temperature = 0, TopP = 0.9f, TopK = 40, ResponseFormat = ChatResponseFormat.Text };
 
         ClaudeApiChat.PrepareOptions(options);
 
-        options.Temperature.ShouldBe(0);
+        options.Temperature.ShouldBeNull();
+        options.TopP.ShouldBeNull();
+        options.TopK.ShouldBeNull();
         options.AdditionalProperties.ShouldBeNull();
         options.ResponseFormat.ShouldBe(ChatResponseFormat.Text);
     }
