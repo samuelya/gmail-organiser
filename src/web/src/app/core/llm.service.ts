@@ -1,6 +1,7 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
+import { QUIET_STATUSES } from './error.interceptor';
 
 /** `OllamaModelDto`: one model installed on the Ollama server. */
 export interface OllamaModel {
@@ -52,9 +53,16 @@ export class LlmService {
     });
   }
 
-  /** Saves the Claude API key (write-only: no read returns it); a bad key is a 400 on `apiKey`. */
+  /**
+   * Saves the Claude API key (write-only: no read returns it); a bad key is a 400 on `apiKey`, shown
+   * under the input rather than by the error interceptor.
+   */
   setClaudeApiKey(apiKey: string): Observable<void> {
-    return this.http.put<void>('/api/llm/claude-api/key', { apiKey });
+    return this.http.put<void>(
+      '/api/llm/claude-api/key',
+      { apiKey },
+      { context: new HttpContext().set(QUIET_STATUSES, [400]) },
+    );
   }
 
   clearClaudeApiKey(): Observable<void> {

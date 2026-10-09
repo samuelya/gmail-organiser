@@ -195,6 +195,16 @@ export class SettingsPage implements OnInit {
     }
   }
 
+  /** Scrolls to a card from an in-page link and moves focus to its heading until it is left. */
+  jumpToSection(headingId: string): void {
+    const heading = this.host.nativeElement.querySelector<HTMLElement>(`#${headingId}`);
+    if (!heading) return;
+    heading.scrollIntoView?.({ block: 'start' });
+    heading.setAttribute('tabindex', '-1');
+    heading.addEventListener('blur', () => heading.removeAttribute('tabindex'), { once: true });
+    heading.focus({ preventScroll: true });
+  }
+
   ngOnInit(): void {
     this.settingsApi
       .getSettings()

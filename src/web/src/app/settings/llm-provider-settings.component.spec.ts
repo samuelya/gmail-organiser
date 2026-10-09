@@ -130,13 +130,56 @@ describe('LlmProviderSettingsSection', () => {
     await fixture.whenStable();
     expect(q('llm-provider-error')!.textContent).toContain('Must be ollama or claude_api.');
     expect(emitted).toEqual([]);
+
+    await pick('ollama');
+    expect(q('llm-provider-error')).toBeNull();
+  });
+
+  it('drops a typed key and Replace mode when the pick leaves Claude API', async () => {
+    await render(
+      settingsOf({ llmProvider: 'claude_api', claudeApiKeySet: true, claudeApiKeyHint: '…abcd' }),
+    );
+    q<HTMLButtonElement>('replace-claude-api-key')!.click();
+    await fixture.whenStable();
+    await typeKey(KEY);
+
+    await pick('ollama');
+    await pick('claude_api');
+    expect(fixture.componentInstance.apiKey.value).toBe('');
+    expect(fixture.componentInstance.replacing()).toBe(false);
+    expect(q('claude-api-key-input')).toBeNull();
+    expect(q('claude-api-key-saved')).not.toBeNull();
+  });
+
+  it('asks for a new key when the saved one cannot be read', async () => {
+    await render(
+      settingsOf({ llmProvider: 'claude_api', claudeApiKeySet: true, claudeApiKeyHint: null }),
+    );
+    const text = q('claude-api-key-saved')!.textContent!;
+    expect(text).toContain("can't be read. Replace it.");
+    expect(text).not.toContain('ending');
+  });
+
+  it('says the key state is out of date when the reload fails', async () => {
+    await render(settingsOf({ llmProvider: 'claude_api' }));
+    await typeKey(KEY);
+    q<HTMLButtonElement>('save-claude-api-key')!.click();
+    await fixture.whenStable();
+    http.expectOne(keyUrl).flush(null, { status: 204, statusText: 'No Content' });
+    http.expectOne('/api/settings').flush(null, { status: 503, statusText: 'Service Unavailable' });
+    await fixture.whenStable();
+
+    expect(q('claude-api-key-reload-error')!.textContent).toContain('Reload the page');
+    expect(fixture.componentInstance.apiKey.value).toBe('');
+    expect(emitted).toEqual([]);
+    expect(q<HTMLButtonElement>('save-claude-api-key')!.disabled).toBe(false);
   });
 
   it('saves a key, clears the input and shows the hint, never the key', async () => {
     await render(settingsOf({ llmProvider: 'claude_api', claudeApiModel: 'test-model' }));
     const input = q<HTMLInputElement>('claude-api-key-input')!;
     expect(input.type).toBe('password');
-    expect(input.getAttribute('autocomplete')).toBe('off');
+    expect(input.getAttribute('autocomplete')).toBe('new-password');
     expect(input.value).toBe('');
     expect(q('llm-provider-incomplete')).not.toBeNull();
 
@@ -266,8 +309,11 @@ describe('LlmProviderSettingsSection', () => {
 
   it('links to the Claude review card', async () => {
     await render();
-    expect(q('llm-provider-claude-review')!.querySelector('a')!.getAttribute('href')).toBe(
-      '#settings-claude',
-    );
+    const jumps: string[] = [];
+    fixture.componentInstance.jump.subscribe((id) => jumps.push(id));
+    const link = q('llm-provider-claude-review')!.querySelector('a')!;
+    expect(link.getAttribute('href')).toBe('#settings-claude');
+    link.click();
+    expect(jumps).toEqual(['settings-claude']);
   });
 });

@@ -26,7 +26,11 @@
     <mat-card-content data-testid="section-llm-provider">
       <h2 id="settings-llm-provider" class="section-title">Analysis model provider</h2>
       <p class="section-hint">Which LLM answers the analysis prompts.</p>
-      <app-llm-provider-settings [settings]="llmProvider()" (saved)="llmProvider.set($event)" />
+      <app-llm-provider-settings
+        [settings]="llmProvider()"
+        (saved)="llmProvider.set($event)"
+        (jump)="jumpToSection($event)"
+      />
     </mat-card-content>
   </mat-card>
 
@@ -181,6 +185,7 @@
           [saving]="claudeSaving()"
           [serverErrors]="claudeErrors()"
           (changed)="saveClaude($event)"
+          (jump)="jumpToSection($event)"
         />
       </mat-card-content>
     </mat-card>

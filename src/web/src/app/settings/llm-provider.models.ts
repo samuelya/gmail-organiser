@@ -16,12 +16,3 @@ export interface LlmProviderUpdate {
   llmProvider?: LlmProvider;
   claudeApiModel?: string;
 }
-
-/** Scrolls to a Settings card and moves focus to its heading. */
-export function jumpToSection(id: string): void {
-  const heading = document.getElementById(id);
-  if (!heading) return;
-  heading.scrollIntoView?.({ block: 'start' });
-  heading.setAttribute('tabindex', '-1');
-  heading.focus({ preventScroll: true });
-}

@@ -21,7 +21,7 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { catchError, concatMap, EMPTY, filter, finalize, Observable } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
 import { LlmService } from '../core/llm.service';
-import { jumpToSection, LlmProvider } from './llm-provider.models';
+import { LlmProvider } from './llm-provider.models';
 import { SettingsService } from './settings.service';
 import { SettingsDto } from './settings.models';
 import { problemErrors } from './triage-settings.models';
@@ -80,12 +80,13 @@ export class LlmProviderSettingsSection {
   /** The page's loaded settings; `null` until loaded keeps the section disabled. */
   readonly settings = input<SettingsDto | null>(null);
   readonly saved = output<SettingsDto>();
+  /** Asks the page to scroll to another card, by its heading id. */
+  readonly jump = output<string>();
 
   readonly providers: readonly { value: LlmProvider; label: string }[] = [
     { value: 'ollama', label: 'Ollama (local)' },
     { value: 'claude_api', label: 'Claude API (cloud)' },
   ];
-  readonly jumpTo = jumpToSection;
 
   readonly provider = new FormControl<LlmProvider>('ollama', { nonNullable: true });
   /** The key is kept only here and cleared after every save and on destroy. */
@@ -109,6 +110,8 @@ export class LlmProviderSettingsSection {
   readonly providerSaving = signal(false);
   readonly providerError = signal<string | null>(null);
   readonly keySaving = signal(false);
+  /** Set when a key change was saved but the settings could not be read again. */
+  readonly keyReloadError = signal<string | null>(null);
   /** Shows the key input over a saved key. */
   readonly replacing = signal(false);
   readonly showKeyInput = computed(() => !this.keySet() || this.replacing());
@@ -121,6 +124,11 @@ export class LlmProviderSettingsSection {
       if (saved === null) return;
       this.provider.setValue(saved);
       this.provider.enable();
+    });
+    // A new pick drops the last save error; leaving Claude API drops a typed key and Replace mode.
+    this.provider.valueChanges.pipe(takeUntilDestroyed()).subscribe((value) => {
+      this.providerError.set(null);
+      if (value !== 'claude_api') this.cancelReplace();
     });
     this.destroyRef.onDestroy(() => this.apiKey.reset());
   }
@@ -191,14 +199,22 @@ export class LlmProviderSettingsSection {
     message: string,
     onError: (error: unknown) => void,
   ): void {
+    this.keyReloadError.set(null);
     request
       .pipe(
         concatMap(() => {
           this.apiKey.reset();
           this.replacing.set(false);
           this.snackBar.open(message, undefined, { duration: 3000 });
-          // The error interceptor shows why a reload failed; the key change itself was saved.
-          return this.settingsApi.reloadSettings().pipe(catchError(() => EMPTY));
+          return this.settingsApi.reloadSettings().pipe(
+            catchError(() => {
+              // The change itself was saved; the key state shown here is now out of date.
+              this.keyReloadError.set(
+                'Saved, but the key state could not be loaded. Reload the page to see it.',
+              );
+              return EMPTY;
+            }),
+          );
         }),
         finalize(() => this.keySaving.set(false)),
         takeUntilDestroyed(this.destroyRef),

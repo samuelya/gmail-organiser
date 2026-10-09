@@ -63,7 +63,7 @@
             <input
               matInput
               type="password"
-              autocomplete="off"
+              autocomplete="new-password"
               formControlName="apiKey"
               data-testid="claude-api-key-input"
             />
@@ -101,7 +101,11 @@
         <div class="flex flex-wrap items-center gap-2">
           <span class="flex items-center gap-1" data-testid="claude-api-key-saved">
             <mat-icon aria-hidden="true">key</mat-icon>
-            Key saved, ending {{ keyHint() }}
+            @if (keyHint(); as hint) {
+              Key saved, ending {{ hint }}
+            } @else {
+              A key is saved but can't be read. Replace it.
+            }
           </span>
           <button
             mat-stroked-button
@@ -123,6 +127,11 @@
           </button>
         </div>
       }
+      @if (keyReloadError(); as message) {
+        <p class="help warn" role="alert" data-testid="claude-api-key-reload-error">
+          {{ message }}
+        </p>
+      }
     </fieldset>
   }
 
@@ -134,7 +143,7 @@
 
   <p class="help" data-testid="llm-provider-claude-review">
     This is separate from
-    <a href="#settings-claude" (click)="$event.preventDefault(); jumpTo('settings-claude')"
+    <a href="#settings-claude" (click)="$event.preventDefault(); jump.emit('settings-claude')"
       >Claude review (Send to Claude)</a
     >, which uses Claude Code with your subscription.
   </p>

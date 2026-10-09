@@ -36,7 +36,6 @@ import { catchError, filter, firstValueFrom, of, Subscription, switchMap } from 
 import { ClaudeTestResult } from '../core/claude.models';
 import { ClaudeService } from '../core/claude.service';
 import { openConfirm } from '../core/confirm-dialog';
-import { jumpToSection } from './llm-provider.models';
 import {
   CLAUDE_LIMITS,
   CLAUDE_MODES,
@@ -124,9 +123,10 @@ export class ClaudeSettingsSection {
   readonly serverErrors = input<Record<string, string[]> | null>(null);
 
   readonly changed = output<ClaudeSettingsUpdate>();
+  /** Asks the page to scroll to another card, by its heading id. */
+  readonly jump = output<string>();
 
   readonly modes = CLAUDE_MODES;
-  readonly jumpTo = jumpToSection;
   readonly tokenStatus = CLAUDE_TOKEN_STATUS;
   readonly threshold = CLAUDE_LIMITS.claudeSuggestThreshold;
   readonly numberFields: readonly NumberField[] = [
