@@ -14,6 +14,10 @@
 #
 # When run from the PR's own branch, it first waits (up to 2 min) until the PR head is this
 # checkout's HEAD, so a fresh push is never judged by the previous commit's checks.
+#
+# Green also needs every required check (docs/ci.md "Required checks") to be listed: right after a
+# push only the fast `Secret scan` may have registered, which alone is not green. Override the list
+# with WAIT_CI_REQUIRED="name,name" (empty: no required names).
 set -euo pipefail
 source "$(dirname "$0")/_lib.sh"
 
@@ -28,6 +32,7 @@ while (( $# )); do
   esac
 done
 repo="$OWNER/$REPO"
+IFS=',' read -r -a required <<<"${WAIT_CI_REQUIRED-Secret scan,api,web}"
 start=$(date +%s)
 elapsed() { echo "$(( $(date +%s) - start ))s"; }
 
@@ -70,7 +75,12 @@ while :; do
   pending=$(grep -c $'^pending\t' <<<"$all" || true)
   bad=$(grep -vE $'^(pass|skipping|pending)\t' <<<"$all" || true)
   total=$(grep -c . <<<"$all" || true)
-  summary="$(grep -c $'^pass\t' <<<"$all" || true) passed, $(grep -c $'^skipping\t' <<<"$all" || true) skipped, $pending pending of $total"
+  missing=""
+  for name in ${required[@]+"${required[@]}"}; do
+    [[ -z "$name" ]] && continue
+    cut -f2 <<<"$all" | grep -qxF "$name" || missing+="${missing:+, }$name"
+  done
+  summary="$(grep -c $'^pass\t' <<<"$all" || true) passed, $(grep -c $'^skipping\t' <<<"$all" || true) skipped, $pending pending of $total${missing:+; not yet registered: $missing}"
 
   if [[ -n "$bad" ]]; then
     echo "[$(elapsed)] CI not green on PR #$pr:"
@@ -85,12 +95,16 @@ while :; do
   fi
 
   # Checks take a few seconds to register after a push; treat "none yet" as pending for 90 s.
-  if (( total > 0 && pending == 0 )); then
+  if (( total > 0 && pending == 0 )) && [[ -z "$missing" ]]; then
     echo "[$(elapsed)] CI green on PR #$pr ($summary)."
     exit 0
   fi
   if (( total == 0 && now - start > 90 )); then
     echo "[$(elapsed)] No checks registered on PR #$pr after 90 s. Is the workflow triggered for this PR?"
+    exit 1
+  fi
+  if [[ -n "$missing" ]] && (( pending == 0 && now - start > 180 )); then
+    echo "[$(elapsed)] Required check(s) never registered on PR #$pr: $missing. Renamed job, or a workflow that didn't trigger?"
     exit 1
   fi
 
@@ -102,6 +116,7 @@ while :; do
   if (( now - start >= timeout )); then
     echo "[$(elapsed)] Deadline reached; still pending on PR #$pr:"
     grep $'^pending\t' <<<"$all" | cut -f2 | sed 's/^/  /'
+    [[ -n "$missing" ]] && echo "  not yet registered: $missing"
     echo "Run again: scripts/gh/wait-ci.sh $pr"
     exit 2
   fi
