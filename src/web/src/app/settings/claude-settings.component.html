@@ -1,4 +1,12 @@
 <form [formGroup]="form" (ngSubmit)="save()" class="flex max-w-2xl flex-col gap-4" novalidate>
+  <p class="help" data-testid="claude-review-provider">
+    This is separate from the
+    <a
+      href="#settings-llm-provider"
+      (click)="$event.preventDefault(); jumpTo('settings-llm-provider')"
+      >analysis model provider</a
+    >: Claude review sends only the items you choose, through Claude Code with your subscription.
+  </p>
   <fieldset class="flex flex-col gap-2">
     <legend id="claude-mode" class="mb-1">Mode</legend>
     <mat-radio-group

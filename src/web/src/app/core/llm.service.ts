@@ -29,7 +29,7 @@ export interface TestModelResult {
   error: string | null;
 }
 
-/** The Ollama endpoints (`/api/llm`). */
+/** The Ollama endpoints (`/api/llm`) and the Claude API key. */
 @Injectable({ providedIn: 'root' })
 export class LlmService {
   private readonly http = inject(HttpClient);
@@ -50,6 +50,15 @@ export class LlmService {
       model,
       baseUrl: baseUrl || null,
     });
+  }
+
+  /** Saves the Claude API key (write-only: no read returns it); a bad key is a 400 on `apiKey`. */
+  setClaudeApiKey(apiKey: string): Observable<void> {
+    return this.http.put<void>('/api/llm/claude-api/key', { apiKey });
+  }
+
+  clearClaudeApiKey(): Observable<void> {
+    return this.http.delete<void>('/api/llm/claude-api/key');
   }
 }
 

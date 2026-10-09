@@ -1,6 +1,7 @@
 import { AbstractControl, ValidationErrors } from '@angular/forms';
 import { AppSettings } from '../setup/setup.service';
 import { labelPathError } from '../review/labels.service';
+import type { LlmProviderSettings } from './llm-provider.models';
 import type { RetentionSettingsDto, TaxonomySettings } from './triage-settings.models';
 
 /** `AnalysisGroupingMode` as the API serialises it. */
@@ -36,6 +37,7 @@ export interface AnalysisSettings {
  * fields.
  */
 export type SettingsDto = AppSettings &
+  LlmProviderSettings &
   AnalysisSettings &
   AttachmentsSettingsDto &
   ClaudeSettingsDto &

@@ -2,6 +2,7 @@ import { DOCUMENT } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable, InjectionToken } from '@angular/core';
 import { Observable, of, shareReplay, tap } from 'rxjs';
+import type { LlmProviderUpdate } from '../settings/llm-provider.models';
 import type {
   AnalysisSettingsUpdate,
   AppsScriptUpdate,
@@ -56,7 +57,8 @@ export interface UpdateSettingsRequest
     Partial<RetentionUpdate>,
     TaxonomyUpdate,
     TriageUpdate,
-    LabelSettingsUpdate {
+    LabelSettingsUpdate,
+    LlmProviderUpdate {
   ollamaBaseUrl?: string;
   chatModel?: string;
   embeddingModel?: string;
@@ -116,6 +118,12 @@ export class SetupService {
       .get<AppSettings>('/api/settings')
       .pipe(tap({ error: () => (this.settings$ = null) }), shareReplay(1));
     return this.settings$;
+  }
+
+  /** Drops the shared read and fetches it again, for a change saved outside `PUT /api/settings`. */
+  reloadSettings(): Observable<AppSettings> {
+    this.settings$ = null;
+    return this.getSettings();
   }
 
   saveSettings(request: UpdateSettingsRequest): Observable<AppSettings> {

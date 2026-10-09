@@ -4,6 +4,7 @@ import { AsyncSubject, concatMap, defer, finalize, map, Observable, of, take } f
 import { QUIET_STATUSES } from '../core/error.interceptor';
 import { JobDto } from '../core/jobs.models';
 import { SetupService } from '../setup/setup.service';
+import { LlmProviderUpdate } from './llm-provider.models';
 import {
   PackSettings,
   RetentionStatusDto,
@@ -43,6 +44,16 @@ export class SettingsService {
 
   /** A partial update: fields left out stay unchanged. */
   saveAnalysis(changes: AnalysisSettingsUpdate): Observable<SettingsDto> {
+    return this.setup.saveSettings(changes) as Observable<SettingsDto>;
+  }
+
+  /** Reads the settings again, e.g. after the Claude API key changed. */
+  reloadSettings(): Observable<SettingsDto> {
+    return this.setup.reloadSettings() as Observable<SettingsDto>;
+  }
+
+  /** A partial update of the analysis provider fields: fields left out stay unchanged. */
+  saveLlmProvider(changes: LlmProviderUpdate): Observable<SettingsDto> {
     return this.setup.saveSettings(changes) as Observable<SettingsDto>;
   }
 
