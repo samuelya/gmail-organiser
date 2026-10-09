@@ -72,9 +72,14 @@ public sealed class FakeAnthropicHandler : HttpMessageHandler
     public FakeAnthropicHandler Error(HttpStatusCode status, string type, params (string Name, string Value)[] headers) =>
         Enqueue(status, new { type = "error", error = new { type, message = "synthetic error" } }, headers);
 
-    private FakeAnthropicHandler Enqueue(HttpStatusCode status, object body, params (string Name, string Value)[] headers)
+    /// <summary>An error answer with <paramref name="status"/> and a raw, possibly invalid, <paramref name="json"/> body.</summary>
+    public FakeAnthropicHandler ErrorBody(HttpStatusCode status, string json) => EnqueueRaw(status, json);
+
+    private FakeAnthropicHandler Enqueue(HttpStatusCode status, object body, params (string Name, string Value)[] headers) =>
+        EnqueueRaw(status, JsonSerializer.Serialize(body), headers);
+
+    private FakeAnthropicHandler EnqueueRaw(HttpStatusCode status, string json, params (string Name, string Value)[] headers)
     {
-        var json = JsonSerializer.Serialize(body);
         _responses.Enqueue(() =>
         {
             var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };

@@ -190,16 +190,70 @@ public sealed class ClaudeApiChatTests : IDisposable
     }
 
     [Theory]
-    [InlineData(null)]
+    [InlineData(HttpStatusCode.NotFound, "not_found_error")]
+    [InlineData(HttpStatusCode.RequestEntityTooLarge, "request_too_large")]
+    public async Task Any_other_client_error_shows_anthropics_error_message(HttpStatusCode status, string type)
+    {
+        api.Error(status, type);
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldStartWith($"The Claude API answered HTTP {(int)status}");
+        ex.Message.ShouldEndWith(": synthetic error.");
+    }
+
+    [Theory]
     [InlineData("not json")]
-    [InlineData("[]")]
     [InlineData("""{"error":{"type":"invalid_request_error"}}""")]
-    public void A_body_without_an_error_message_adds_nothing(string? body) =>
-        ClaudeApiChat.ErrorMessage(body).ShouldBeNull();
+    [InlineData("""{"error":{"type":"invalid_request_error","message":" \r\n "}}""")]
+    public async Task A_client_error_without_a_message_keeps_the_short_text(string body)
+    {
+        api.ErrorBody(HttpStatusCode.BadRequest, body);
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldStartWith("The Claude API answered HTTP 400");
+        ex.Message.ShouldEndWith(".");
+        ex.Message.ShouldNotContain(":");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "authentication_error")]
+    [InlineData(HttpStatusCode.TooManyRequests, "rate_limit_error")]
+    public async Task Key_and_rate_limit_errors_never_include_the_body(HttpStatusCode status, string type)
+    {
+        api.Error(status, type, ("retry-after", "0"));
+        using var chat = Create(maxRetries: 0);
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldNotContain("synthetic error");
+    }
 
     [Fact]
-    public void A_long_error_message_is_truncated() =>
-        ClaudeApiChat.ErrorMessage(JsonSerializer.Serialize(new { error = new { message = new string('x', 500) } })).ShouldNotBeNull().Length.ShouldBe(201);
+    public async Task An_error_message_is_kept_on_one_line()
+    {
+        api.ErrorBody(HttpStatusCode.BadRequest, JsonSerializer.Serialize(new { type = "error", error = new { type = "invalid_request_error", message = "line one\r\nINFO forged\tline\u0000 two." } }));
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldEndWith("): line one INFO forged line two.");
+    }
+
+    [Fact]
+    public async Task A_long_error_message_is_truncated_without_splitting_a_surrogate_pair()
+    {
+        // 199 letters then an emoji: a cut at 200 chars would land between its two halves.
+        api.ErrorBody(HttpStatusCode.BadRequest, JsonSerializer.Serialize(new { type = "error", error = new { type = "invalid_request_error", message = new string('x', 199) + "\U0001F600" + new string('y', 50) } }));
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldEndWith(new string('x', 199) + "….");
+    }
 
     [Fact]
     public async Task Anthropic_environment_variables_never_reach_the_request()
