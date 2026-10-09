@@ -116,7 +116,7 @@ public sealed class OllamaThinkRequestTests
     public async Task The_model_test_sends_think_false()
     {
         var stub = ChatStub("""{"ok":true}""");
-        var tester = new LlmModelTester(Factory(stub), Options.Create(new LlmOptions()), TimeProvider.System,
+        var tester = new LlmModelTester(Factory(stub), TestClaudeApiKeys.For(new InMemorySettingsStore()), Options.Create(new LlmOptions()), TimeProvider.System,
             NullLogger<LlmModelTester>.Instance);
 
         var result = await tester.TestAsync(ModelKinds.Chat, Model, BaseUrl, Ct);

@@ -18,8 +18,17 @@ public sealed class LlmModelTesterTests
     private readonly FakeChatClient _chat = new();
     private readonly FakeEmbeddingGenerator _embed = new(dimension: 4);
 
+    // Built, not a literal: a key-shaped literal trips the secret scan.
+    private static readonly string SyntheticKey = new string('k', 30) + "WXYZ";
+
+    private readonly InMemorySettingsStore _settings = new();
+    private readonly FakeLlmClientFactory _factory;
+
+    public LlmModelTesterTests() => _factory = new FakeLlmClientFactory(_chat, _embed);
+
     private LlmModelTester Tester() => new(
-        new FakeLlmClientFactory(_chat, _embed),
+        _factory,
+        TestClaudeApiKeys.For(_settings),
         Options.Create(new LlmOptions()),
         new FakeTimeProvider(),
         NullLogger<LlmModelTester>.Instance);
@@ -101,5 +110,50 @@ public sealed class LlmModelTesterTests
         a.ShouldNotBe(_embed.Vector("world"));
         MathF.Sqrt(a.Sum(x => x * x)).ShouldBe(1f, 1e-5f);
         new FakeEmbeddingGenerator(100).Vector("hello").Length.ShouldBe(100);
+    }
+
+    [Fact]
+    public async Task Claude_api_success_sends_one_json_mode_request_with_the_saved_key()
+    {
+        await TestClaudeApiKeys.For(_settings).SetAsync(SyntheticKey, Ct);
+
+        var result = await Tester().TestClaudeApiAsync("test-model-a", Ct);
+
+        result.Ok.ShouldBeTrue();
+        _factory.ClaudeApiModels.ShouldBe(["test-model-a"]);
+        _chat.Requests.ShouldHaveSingleItem().Options!.ResponseFormat.ShouldBe(ChatResponseFormat.Json);
+        _chat.Disposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Claude_api_without_a_key_is_not_configured()
+    {
+        await Should.ThrowAsync<LlmNotConfiguredException>(() => Tester().TestClaudeApiAsync("test-model-a", Ct));
+
+        _factory.ClaudeApiModels.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Claude_api_error_keeps_the_mapped_message_truncated()
+    {
+        await TestClaudeApiKeys.For(_settings).SetAsync(SyntheticKey, Ct);
+        _chat.Failure = new HttpRequestException(new string('x', 400), null, System.Net.HttpStatusCode.NotFound);
+
+        var result = await Tester().TestClaudeApiAsync("test-missing", Ct);
+
+        result.Ok.ShouldBeFalse();
+        result.Error!.Length.ShouldBeLessThanOrEqualTo(330);
+        result.Error.ShouldStartWith("The model call failed: xxx");
+    }
+
+    [Fact]
+    public async Task Claude_api_other_failure_shows_only_its_type()
+    {
+        await TestClaudeApiKeys.For(_settings).SetAsync(SyntheticKey, Ct);
+        _chat.Failure = new InvalidOperationException($"synthetic {SyntheticKey}");
+
+        var result = await Tester().TestClaudeApiAsync("test-model-a", Ct);
+
+        result.Error.ShouldBe("The model call failed (InvalidOperationException).");
     }
 }
