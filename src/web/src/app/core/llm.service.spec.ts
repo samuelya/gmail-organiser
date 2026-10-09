@@ -2,6 +2,7 @@ import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed } from '@angular/core/testing';
 import { formatBytes, LlmService, modelLabel } from './llm.service';
+import { QUIET_STATUSES } from './error.interceptor';
 
 describe('LlmService', () => {
   let service: LlmService;
@@ -41,6 +42,25 @@ describe('LlmService', () => {
     const req = backend.expectOne('/api/llm/test-model');
     sub.unsubscribe();
     expect(req.cancelled).toBe(true);
+  });
+
+  it('puts the Claude API key and returns nothing', () => {
+    let done = false;
+    service.setClaudeApiKey('test-key-0000000000000000abcd').subscribe(() => (done = true));
+    const req = backend.expectOne('/api/llm/claude-api/key');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({ apiKey: 'test-key-0000000000000000abcd' });
+    // A rejected key is shown under the input, not in the interceptor's snackbar.
+    expect(req.request.context.get(QUIET_STATUSES)).toEqual([400]);
+    req.flush(null, { status: 204, statusText: 'No Content' });
+    expect(done).toBe(true);
+  });
+
+  it('deletes the Claude API key', () => {
+    service.clearClaudeApiKey().subscribe();
+    const req = backend.expectOne('/api/llm/claude-api/key');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null, { status: 204, statusText: 'No Content' });
   });
 
   it('formats sizes and labels', () => {

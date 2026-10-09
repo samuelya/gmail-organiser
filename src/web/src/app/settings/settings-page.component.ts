@@ -40,6 +40,7 @@ import { AttachmentSettingsSection } from './attachment-settings.component';
 import { ClaudeSettingsSection } from './claude-settings.component';
 import { DataSettingsSection } from './data-settings.component';
 import { LabelsSettingsSection } from './labels-settings.component';
+import { LlmProviderSettingsSection } from './llm-provider-settings.component';
 import { PackSettingsSection } from './pack-settings.component';
 import { ProtectionSettingsSection } from './protection-settings.component';
 import { AppsScriptSettingsSection } from './apps-script-settings.component';
@@ -57,6 +58,7 @@ import {
   LabelSettings,
   PromptTemplateDto,
   ProtectionSettings,
+  SettingsDto,
 } from './settings.models';
 import { SettingsService } from './settings.service';
 
@@ -83,6 +85,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     AnalysisSettingsSection,
     AttachmentSettingsSection,
     ClaudeSettingsSection,
+    LlmProviderSettingsSection,
     ProtectionSettingsSection,
     AppsScriptSettingsSection,
     RetentionSettingsSection,
@@ -145,6 +148,9 @@ export class SettingsPage implements OnInit {
   /** `null` until the Ollama URL is saved here: the models section lists against the saved URL. */
   readonly ollamaUrl = signal<string | null>(null);
 
+  /** `null` until loaded; the provider section saves itself and reports each saved settings back. */
+  readonly llmProvider = signal<SettingsDto | null>(null);
+
   /** `null` until loaded; the labels section saves itself. */
   readonly labels = signal<LabelSettings | null>(null);
 
@@ -189,6 +195,16 @@ export class SettingsPage implements OnInit {
     }
   }
 
+  /** Scrolls to a card from an in-page link and moves focus to its heading until it is left. */
+  jumpToSection(headingId: string): void {
+    const heading = this.host.nativeElement.querySelector<HTMLElement>(`#${headingId}`);
+    if (!heading) return;
+    heading.scrollIntoView?.({ block: 'start' });
+    heading.setAttribute('tabindex', '-1');
+    heading.addEventListener('blur', () => heading.removeAttribute('tabindex'), { once: true });
+    heading.focus({ preventScroll: true });
+  }
+
   ngOnInit(): void {
     this.settingsApi
       .getSettings()
@@ -203,6 +219,7 @@ export class SettingsPage implements OnInit {
             deleteLabelName: settings.deleteLabelName,
             documentTypeParent: settings.documentTypeParent ?? null,
           });
+          this.llmProvider.set(settings);
           this.analysis.set(settings);
           this.attachments.set(attachmentsOf(settings));
           this.claude.set(claudeOf(settings));

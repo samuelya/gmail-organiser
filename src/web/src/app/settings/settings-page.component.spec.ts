@@ -52,6 +52,10 @@ const settings = (over: Partial<SettingsDto> = {}): SettingsDto => ({
   taxonomyMaxSenders: 80,
   taxonomyMaxLabels: 25,
   analysisPromptTemplate: null,
+  llmProvider: 'ollama',
+  claudeApiModel: null,
+  claudeApiKeySet: false,
+  claudeApiKeyHint: null,
   ...over,
 });
 
@@ -187,6 +191,7 @@ describe('SettingsPage', () => {
     expect(headings).toEqual([
       'Google',
       'Gmail connection',
+      'Analysis model provider',
       'Ollama',
       'Fetch',
       'Labels',
@@ -209,6 +214,15 @@ describe('SettingsPage', () => {
   it('shows the api version from /healthz in the footer', async () => {
     const { q } = await render();
     expect(q('app-version')!.textContent!.trim()).toBe(`Gmail Organiser v${VERSION}`);
+  });
+
+  it('jumping to a card focuses its heading and leaves no tabindex behind', async () => {
+    const { fixture, el } = await render();
+    fixture.componentInstance.jumpToSection('settings-llm-provider');
+    const heading = el.querySelector<HTMLElement>('#settings-llm-provider')!;
+    expect(document.activeElement).toBe(heading);
+    heading.blur();
+    expect(heading.hasAttribute('tabindex')).toBe(false);
   });
 
   it('callback connected: shows the result on the Gmail card, scrolls to it, clears the params', async () => {

@@ -100,6 +100,9 @@ const SUGGEST_FIELDS = ['claudeSuggestLowConfidence', 'claudeSuggestNewLabels'] 
     .warn {
       color: var(--mat-sys-error);
     }
+    a {
+      color: inherit;
+    }
     .snippet {
       font-family: monospace;
     }
@@ -120,6 +123,8 @@ export class ClaudeSettingsSection {
   readonly serverErrors = input<Record<string, string[]> | null>(null);
 
   readonly changed = output<ClaudeSettingsUpdate>();
+  /** Asks the page to scroll to another card, by its heading id. */
+  readonly jump = output<string>();
 
   readonly modes = CLAUDE_MODES;
   readonly tokenStatus = CLAUDE_TOKEN_STATUS;

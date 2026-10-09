@@ -1,0 +1,150 @@
+<div class="flex max-w-2xl flex-col gap-4">
+  <form
+    [formGroup]="providerForm"
+    (ngSubmit)="saveProvider()"
+    class="flex flex-col gap-2"
+    novalidate
+  >
+    <fieldset class="flex flex-col gap-2">
+      <legend id="llm-provider-label" class="mb-1">Analysis runs on</legend>
+      <mat-radio-group
+        formControlName="provider"
+        aria-labelledby="llm-provider-label"
+        class="flex flex-col gap-1"
+        data-testid="llm-provider"
+      >
+        @for (p of providers; track p.value) {
+          <mat-radio-button [value]="p.value" [attr.data-testid]="'llm-provider-' + p.value">
+            {{ p.label }}
+          </mat-radio-button>
+        }
+      </mat-radio-group>
+    </fieldset>
+    @if (providerError(); as message) {
+      <p class="help warn" role="alert" data-testid="llm-provider-error">{{ message }}</p>
+    }
+    <div>
+      <button
+        mat-flat-button
+        type="submit"
+        [disabled]="provider.disabled || providerSaving() || selected() === savedProvider()"
+        data-testid="save-llm-provider"
+      >
+        Save
+      </button>
+    </div>
+  </form>
+
+  @if (selected() === 'claude_api') {
+    <div class="banner flex items-start gap-3 p-4" role="note" data-testid="llm-provider-privacy">
+      <mat-icon aria-hidden="true">cloud_upload</mat-icon>
+      <p class="m-0">
+        With the Claude API, the email content sent for analysis (sender, subject, snippet and body
+        excerpt up to the body limit) leaves this machine and is processed by Anthropic under your
+        API account. Ollama keeps everything local.
+      </p>
+    </div>
+    <p class="help" data-testid="llm-provider-ollama-still">
+      Embeddings (memory similarity), the triage model and the vision model still use Ollama.
+      Without an Ollama embedding model, exact-sender memory still works.
+    </p>
+
+    <fieldset class="flex flex-col gap-2" data-testid="claude-api-key">
+      <legend class="mb-1">Claude API key</legend>
+      @if (showKeyInput()) {
+        <form
+          [formGroup]="keyForm"
+          (ngSubmit)="saveKey()"
+          class="flex flex-wrap items-start gap-2"
+          novalidate
+        >
+          <mat-form-field class="min-w-0 flex-1 basis-72">
+            <mat-label>API key</mat-label>
+            <input
+              matInput
+              type="password"
+              autocomplete="new-password"
+              formControlName="apiKey"
+              data-testid="claude-api-key-input"
+            />
+            @if (apiKey.hasError('server')) {
+              <mat-error data-testid="claude-api-key-error">{{
+                apiKey.getError('server')
+              }}</mat-error>
+            } @else if (apiKey.hasError('required')) {
+              <mat-error>Enter the API key.</mat-error>
+            }
+            <mat-hint>Stored encrypted; it is never shown again.</mat-hint>
+          </mat-form-field>
+          <div class="flex min-h-14 items-center gap-2">
+            <button
+              mat-flat-button
+              type="submit"
+              [disabled]="keySaving()"
+              data-testid="save-claude-api-key"
+            >
+              Save key
+            </button>
+            @if (replacing()) {
+              <button
+                mat-button
+                type="button"
+                (click)="cancelReplace()"
+                data-testid="cancel-replace-claude-api-key"
+              >
+                Cancel
+              </button>
+            }
+          </div>
+        </form>
+      } @else {
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="flex items-center gap-1" data-testid="claude-api-key-saved">
+            <mat-icon aria-hidden="true">key</mat-icon>
+            @if (keyHint(); as hint) {
+              Key saved, ending {{ hint }}
+            } @else {
+              A key is saved but can't be read. Replace it.
+            }
+          </span>
+          <button
+            mat-stroked-button
+            type="button"
+            (click)="replaceKey()"
+            [disabled]="keySaving()"
+            data-testid="replace-claude-api-key"
+          >
+            Replace
+          </button>
+          <button
+            mat-button
+            type="button"
+            (click)="removeKey()"
+            [disabled]="keySaving()"
+            data-testid="remove-claude-api-key"
+          >
+            Remove
+          </button>
+        </div>
+      }
+      @if (keyReloadError(); as message) {
+        <p class="help warn" role="alert" data-testid="claude-api-key-reload-error">
+          {{ message }}
+        </p>
+      }
+    </fieldset>
+  }
+
+  @if (incomplete()) {
+    <p class="help warn" role="alert" data-testid="llm-provider-incomplete">
+      Analysis will fail until a key and a model are set.
+    </p>
+  }
+
+  <p class="help" data-testid="llm-provider-claude-review">
+    This is separate from
+    <a href="#settings-claude" (click)="$event.preventDefault(); jump.emit('settings-claude')"
+      >Claude review (Send to Claude)</a
+    >, which uses Claude Code with your subscription.
+  </p>
+</div>
