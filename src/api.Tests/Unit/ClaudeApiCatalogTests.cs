@@ -35,7 +35,7 @@ public sealed class ClaudeApiCatalogTests : IDisposable
             })
             .Build();
         var collection = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddLlm();
-        collection.AddHttpClient(ClaudeApiHttp.CatalogClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+        collection.AddHttpClient(ClaudeApiHttp.NoRetryClientName).ConfigurePrimaryHttpMessageHandler(() => api);
         services = collection.BuildServiceProvider();
         var keys = TestClaudeApiKeys.For(settings);
         if (withKey)

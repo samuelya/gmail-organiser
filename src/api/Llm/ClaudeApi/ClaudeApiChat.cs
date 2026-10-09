@@ -28,8 +28,8 @@ public static class ClaudeApiChat
         Create(httpClients, ClaudeApiHttp.ClientName, options, apiKey, model, options.ClaudeApiTimeout);
 
     /// <summary>
-    /// The chat client over the named client <paramref name="clientName"/>, e.g. <see cref="ClaudeApiHttp.TestClientName"/>
-    /// with <see cref="ClaudeApiHttp.TestTimeout"/> for the model test; <paramref name="timeout"/> bounds one call.
+    /// The chat client over the named client <paramref name="clientName"/>, e.g. <see cref="ClaudeApiHttp.NoRetryClientName"/>
+    /// with <see cref="LlmOptions.ClaudeApiTestTimeout"/> for the model test; <paramref name="timeout"/> bounds one call.
     /// </summary>
     public static IChatClient Create(
         IHttpClientFactory httpClients, string clientName, LlmOptions options, string apiKey, string model, TimeSpan timeout)
@@ -94,19 +94,10 @@ public static class ClaudeApiHttp
     public const string ClientName = "claude-api";
 
     /// <summary>
-    /// The model list: header filter only. Its <see cref="LlmOptions.CatalogTimeout"/> is shorter than a retry wait, so a
-    /// 429/529 is shown at once ("try again later") instead of timing out mid-wait.
+    /// The model list and the Settings model test: header filter only, so a 429/529/5xx is one attempt and shown at once
+    /// ("try again later") instead of after the chat client's retry waits.
     /// </summary>
-    public const string CatalogClientName = "claude-api-catalog";
-
-    /// <summary>
-    /// The Settings model test: header filter only, so a 429/529/5xx is one attempt and shown at once instead of after
-    /// the chat client's retry waits.
-    /// </summary>
-    public const string TestClientName = "claude-api-test";
-
-    /// <summary>Bounds one model test.</summary>
-    public static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
+    public const string NoRetryClientName = "claude-api-no-retry";
 }
 
 /// <summary>

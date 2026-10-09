@@ -22,13 +22,35 @@ public sealed class ClaudeApiChatTests : IDisposable
     private const string ApiKey = "sk-test-0000-synthetic";
 
     private readonly FakeAnthropicHandler api = new();
-    private ServiceProvider? services;
+    private readonly List<ServiceProvider> providers = [];
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public void Dispose() => services?.Dispose();
+    public void Dispose()
+    {
+        foreach (var provider in providers)
+        {
+            provider.Dispose();
+        }
+    }
 
     private IChatClient Create(int maxRetries = 3, Dictionary<string, string?>? settings = null, TimeProvider? time = null, HttpMessageHandler? handler = null)
+    {
+        var provider = BuildServices(maxRetries, settings, time, handler);
+        var options = provider.GetRequiredService<IOptions<LlmOptions>>().Value;
+        return ClaudeApiChat.Create(provider.GetRequiredService<IHttpClientFactory>(), options, ApiKey, Model);
+    }
+
+    /// <summary>The model test's client, as <see cref="LlmClientFactory"/> builds it, over its own services.</summary>
+    private IChatClient CreateTest(Dictionary<string, string?>? settings = null, HttpMessageHandler? handler = null)
+    {
+        var provider = BuildServices(3, settings, null, handler);
+        var options = provider.GetRequiredService<IOptions<LlmOptions>>().Value;
+        return ClaudeApiChat.Create(
+            provider.GetRequiredService<IHttpClientFactory>(), ClaudeApiHttp.NoRetryClientName, options, ApiKey, Model, options.ClaudeApiTestTimeout);
+    }
+
+    private ServiceProvider BuildServices(int maxRetries, Dictionary<string, string?>? settings, TimeProvider? time, HttpMessageHandler? handler)
     {
         settings ??= [];
         settings["Llm:ClaudeApiMaxRetries"] = maxRetries.ToString(CultureInfo.InvariantCulture);
@@ -40,16 +62,11 @@ public sealed class ClaudeApiChatTests : IDisposable
         }
 
         collection.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
-        collection.AddHttpClient(ClaudeApiHttp.TestClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
-        services = collection.BuildServiceProvider();
-        var options = services.GetRequiredService<IOptions<LlmOptions>>().Value;
-        return ClaudeApiChat.Create(services.GetRequiredService<IHttpClientFactory>(), options, ApiKey, Model);
+        collection.AddHttpClient(ClaudeApiHttp.NoRetryClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
+        var provider = collection.BuildServiceProvider();
+        providers.Add(provider);
+        return provider;
     }
-
-    /// <summary>The model test's client over the same services as the last <see cref="Create"/>.</summary>
-    private IChatClient CreateTest(TimeSpan? timeout = null) => ClaudeApiChat.Create(
-        services!.GetRequiredService<IHttpClientFactory>(), ClaudeApiHttp.TestClientName,
-        services!.GetRequiredService<IOptions<LlmOptions>>().Value, ApiKey, Model, timeout ?? ClaudeApiHttp.TestTimeout);
 
     private static List<ChatMessage> Messages() =>
         [new(ChatRole.System, "Synthetic system prompt"), new(ChatRole.User, "Synthetic email from shop@example.com")];
@@ -246,9 +263,7 @@ public sealed class ClaudeApiChatTests : IDisposable
     [Fact]
     public async Task The_model_test_client_times_out_with_its_own_timeout()
     {
-        ClaudeApiHttp.TestTimeout.ShouldBe(TimeSpan.FromSeconds(15));
-        using var chat = Create(handler: new HangingHandler());
-        using var test = CreateTest(TimeSpan.FromSeconds(1));
+        using var test = CreateTest(new() { ["Llm:ClaudeApiTestTimeoutSeconds"] = "1" }, new HangingHandler());
 
         var ex = await Should.ThrowAsync<HttpRequestException>(() => test.GetResponseAsync(Messages(), cancellationToken: Ct));
 

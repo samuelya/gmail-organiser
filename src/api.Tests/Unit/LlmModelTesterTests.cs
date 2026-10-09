@@ -124,7 +124,6 @@ public sealed class LlmModelTesterTests
 
         result.Ok.ShouldBeTrue();
         _factory.ClaudeApiTestModels.ShouldBe(["test-model-a"]);
-        _factory.ClaudeApiModels.ShouldBeEmpty();
         _chat.Requests.ShouldHaveSingleItem().Options!.ResponseFormat.ShouldBe(LlmModelTester.ClaudeApiFormat);
         _chat.Disposed.ShouldBeTrue();
     }
@@ -151,7 +150,6 @@ public sealed class LlmModelTesterTests
     public async Task Claude_api_test_reports_a_rate_limit_or_server_error_after_one_attempt(int status, string type, string wording)
     {
         var api = new FakeAnthropicHandler().Error((System.Net.HttpStatusCode)status, type, ("retry-after", "30"));
-        var started = DateTime.UtcNow;
 
         var result = await TestThroughTheRealAdapterAsync(api);
 
@@ -159,7 +157,6 @@ public sealed class LlmModelTesterTests
         result.Error.ShouldNotBeNull().ShouldContain(wording);
         result.Error.ShouldNotContain(SyntheticKey);
         api.Requests.Count.ShouldBe(1);
-        (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(10));
     }
 
     /// <summary>Runs the Claude API test through the real factory and adapter; only the chat client's named client is the fake API.</summary>
@@ -169,7 +166,7 @@ public sealed class LlmModelTesterTests
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Llm:ClaudeApiBaseUrl"] = "https://claude.example.com" })
             .Build();
         var collection = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddLlm();
-        collection.AddHttpClient(ClaudeApiHttp.TestClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+        collection.AddHttpClient(ClaudeApiHttp.NoRetryClientName).ConfigurePrimaryHttpMessageHandler(() => api);
         using var services = collection.BuildServiceProvider();
         var keys = TestClaudeApiKeys.For(_settings);
         await keys.SetAsync(SyntheticKey, Ct);

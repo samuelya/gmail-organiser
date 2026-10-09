@@ -183,8 +183,7 @@ public sealed class ClaudeApiEndpointsTests(ApiFactory factory, PostgresFixture 
             b.ConfigureServices(s =>
             {
                 s.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => api);
-                s.AddHttpClient(ClaudeApiHttp.CatalogClientName).ConfigurePrimaryHttpMessageHandler(() => api);
-                s.AddHttpClient(ClaudeApiHttp.TestClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+                s.AddHttpClient(ClaudeApiHttp.NoRetryClientName).ConfigurePrimaryHttpMessageHandler(() => api);
             });
         });
 

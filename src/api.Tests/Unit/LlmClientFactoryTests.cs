@@ -182,6 +182,7 @@ public sealed class LlmClientFactoryTests
     [Theory]
     [InlineData("Llm:ClaudeApiMaxRetries", "11", "Llm__ClaudeApiMaxRetries")]
     [InlineData("Llm:ClaudeApiTimeoutSeconds", "0", "Llm__ClaudeApiTimeoutSeconds")]
+    [InlineData("Llm:ClaudeApiTestTimeoutSeconds", "0", "Llm__ClaudeApiTestTimeoutSeconds")]
     [InlineData("Llm:ClaudeApiMaxOutputTokens", "0", "Llm__ClaudeApiMaxOutputTokens")]
     [InlineData("Llm:ClaudeApiMaxOutputTokens", "8193", "Llm__ClaudeApiMaxOutputTokens")]
     [InlineData("Llm:ClaudeApiBaseUrl", "not-a-url", "Llm__ClaudeApiBaseUrl")]
@@ -193,6 +194,20 @@ public sealed class LlmClientFactoryTests
 
         ex.Message.ShouldContain(expected);
     }
+
+    [Theory]
+    [InlineData(15, 120, 15)]
+    [InlineData(15, 5, 5)]
+    [InlineData(60, 120, 60)]
+    public void The_model_test_timeout_is_never_longer_than_a_claude_api_call(int testSeconds, int callSeconds, int expected)
+    {
+        var options = new LlmOptions { ClaudeApiTestTimeoutSeconds = testSeconds, ClaudeApiTimeoutSeconds = callSeconds };
+
+        options.ClaudeApiTestTimeout.ShouldBe(TimeSpan.FromSeconds(expected));
+    }
+
+    [Fact]
+    public void The_model_test_timeout_defaults_to_15_s() => new LlmOptions().ClaudeApiTestTimeout.ShouldBe(TimeSpan.FromSeconds(15));
 
     private static ServiceProvider LlmServices(string modelTimeoutSeconds, string key = "Llm:ModelTimeoutSeconds")
     {
