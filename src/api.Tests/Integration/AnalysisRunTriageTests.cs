@@ -27,7 +27,7 @@ public sealed class AnalysisRunTriageTests : IClassFixture<ApiFactory>, IAsyncLi
         h = new AnalysisRunHarness(factory, postgres)
         {
             ConfigureServices = services => services.AddScoped<ILlmClientFactory>(
-                _ => new ByModelLlmFactory(new ScriptedLlmFactory(h!.Chat), new Dictionary<string, IChatClient> { [TriageModel] = triage })),
+                sp => new ByModelLlmFactory(new ScriptedLlmFactory(sp, h!.Chat), new Dictionary<string, IChatClient> { [TriageModel] = triage })),
         };
     }
 
@@ -271,6 +271,10 @@ public sealed class AnalysisRunTriageTests : IClassFixture<ApiFactory>, IAsyncLi
     private sealed class ByModelLlmFactory(ILlmClientFactory inner, IReadOnlyDictionary<string, IChatClient> byModel) : ILlmClientFactory
     {
         public Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default) => inner.CreateChatClientAsync(ct);
+
+        public Task<ChatConfiguration> EnsureChatConfiguredAsync(CancellationToken ct = default) => inner.EnsureChatConfiguredAsync(ct);
+
+        public IChatClient CreateChatClient(ChatConfiguration chat) => inner.CreateChatClient(chat);
 
         public Task<IEmbeddingGenerator<string, Embedding<float>>> CreateEmbeddingGeneratorAsync(CancellationToken ct = default) =>
             inner.CreateEmbeddingGeneratorAsync(ct);

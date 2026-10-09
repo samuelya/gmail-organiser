@@ -25,7 +25,6 @@ public sealed partial class TaxonomyProposeJob(
     LabelCatalog catalog,
     LabelPlanService plans,
     ILlmClientFactory llm,
-    ISettingsStore settingsStore,
     TimeProvider time,
     ILogger<TaxonomyProposeJob> logger) : IJobHandler
 {
@@ -41,8 +40,18 @@ public sealed partial class TaxonomyProposeJob(
 
     public async Task RunAsync(JobContext ctx, CancellationToken ct)
     {
-        var settings = await settingsStore.GetAsync(ct);
-        var model = settings.ActiveChatModel ?? throw new JobRefusedException(new LlmNotConfiguredException(ModelKinds.Chat).Message);
+        // The model and the Claude key are checked before any profiling; a key cleared after queuing is a refusal, not a crash.
+        ChatConfiguration chatConfig;
+        try
+        {
+            chatConfig = await llm.EnsureChatConfiguredAsync(ct);
+        }
+        catch (LlmNotConfiguredException ex)
+        {
+            throw new JobRefusedException(ex.Message);
+        }
+
+        var (settings, model) = (chatConfig.Settings, chatConfig.Model);
         var userLabels = (await catalog.RefreshAsync(ct)).Where(l => l.Type == GmailLabelType.User).ToList();
         var senders = await TopSendersAsync(settings, ct);
 
@@ -74,7 +83,7 @@ public sealed partial class TaxonomyProposeJob(
         var messages = TaxonomyPrompt.Build(
             lines, [.. userLabels.Select(l => l.Name).Order(StringComparer.OrdinalIgnoreCase)], settings.DocumentTypeParent, maxLabels);
         string? answer;
-        using (var chat = await llm.CreateChatClientAsync(ct))
+        using (var chat = llm.CreateChatClient(chatConfig))
         {
             var (response, _) = await _meter.GetResponseAsync(
                 chat, messages, TaxonomyPrompt.CreateOptions(settings.LlmNumCtx), model, settings.MeterNumCtx, lines.Count, ct);

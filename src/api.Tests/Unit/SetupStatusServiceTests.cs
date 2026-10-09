@@ -267,6 +267,7 @@ public sealed class SetupStatusServiceTests
         tokens,
         accountGuard,
         ollama,
+        FakeLlmClientFactory.Checks(settings),
         new GoogleClientService(
             settings, new EphemeralDataProtectionProvider(), Options.Create(env), NullLogger<GoogleClientService>.Instance),
         Options.Create(new GmailOptions { UseFake = useFakeGmail }),

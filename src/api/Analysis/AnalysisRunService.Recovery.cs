@@ -83,7 +83,7 @@ public sealed partial class AnalysisRunService
     /// re-queued with the new cursor, so the run keeps one job; a new job is made only when the old one can't be
     /// resumed. The run is queued again, its error cleared; the handler sets it running.
     /// </summary>
-    /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set.</exception>
     public async Task<(ResumeRunResult Result, JobDto? Job)> ResumeAsync(Guid id, CancellationToken ct)
     {
         await SyncEndedJobsAsync(ct);

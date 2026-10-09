@@ -3,11 +3,9 @@ using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
-using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
 using GmailOrganiser.Tests.Fakes;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -183,9 +181,8 @@ public sealed class AnalysisRunConsistencyTests(ApiFactory factory, PostgresFixt
         await using var db = postgres.CreateDbContext();
         var settings = new InMemorySettingsStore();
         settings.Current = settings.Current with { ChatModel = AnalysisRunHarness.ChatModel };
-        var claudeApiKey = new ClaudeApiKeyService(
-            settings, new EphemeralDataProtectionProvider(), Microsoft.Extensions.Logging.Abstractions.NullLogger<ClaudeApiKeyService>.Instance);
-        var service = new AnalysisRunService(db, new ThrowingJobService(), settings, claudeApiKey, new SenderStatsUpdater(db, TimeProvider.System),
+        var service = new AnalysisRunService(db, new ThrowingJobService(), settings, FakeLlmClientFactory.Checks(settings),
+            new SenderStatsUpdater(db, TimeProvider.System),
             new LabelCatalog(new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(), TimeProvider.System),
             TimeProvider.System, Microsoft.Extensions.Logging.Abstractions.NullLogger<AnalysisRunService>.Instance);
 

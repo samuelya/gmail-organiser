@@ -29,6 +29,7 @@ public sealed class SetupStatusService(
     ITokenStore tokens,
     IAccountGuard accountGuard,
     IOllamaCatalog ollama,
+    ILlmClientFactory llm,
     GoogleClientService googleClient,
     IOptions<GmailOptions> gmail,
     TimeProvider time,
@@ -36,6 +37,19 @@ public sealed class SetupStatusService(
 {
     /// <summary>How long the status waits for Ollama before reporting it unreachable.</summary>
     public static readonly TimeSpan OllamaPingTimeout = TimeSpan.FromSeconds(2);
+
+    private async Task<bool> ChatConfiguredAsync(CancellationToken ct)
+    {
+        try
+        {
+            await llm.EnsureChatConfiguredAsync(ct);
+            return true;
+        }
+        catch (LlmNotConfiguredException)
+        {
+            return false;
+        }
+    }
 
     public async Task<SetupStatusDto> GetAsync(CancellationToken ct = default)
     {
@@ -50,7 +64,8 @@ public sealed class SetupStatusService(
             || (!string.IsNullOrWhiteSpace(client.ClientId) && !string.IsNullOrWhiteSpace(client.ClientSecret));
 
         var gmailConnected = token is not null && !token.ReauthRequired;
-        var chatModelSelected = !string.IsNullOrWhiteSpace(current.ActiveChatModel);
+        // The same check as every run start, so setup never reads complete while starting a run would be refused.
+        var chatModelSelected = await ChatConfiguredAsync(ct);
         var complete = gmailConnected && chatModelSelected;
 
         // A token row needing re-auth was connected once, so it still counts: this also backfills installs that completed

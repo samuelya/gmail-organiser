@@ -2,9 +2,7 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
-using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Rules.Taxonomy;
-using GmailOrganiser.Settings;
 using Google;
 using Microsoft.AspNetCore.Http.HttpResults;
 
@@ -31,9 +29,9 @@ public static class LabelPlanEndpoints
     /// already queued, running or paused.
     /// </summary>
     private static async Task<Results<Accepted<JobDto>, ProblemHttpResult>> ProposeTaxonomyAsync(
-        IJobService jobs, ISettingsStore settings, ClaudeApiKeyService claudeApiKey, CancellationToken ct)
+        IJobService jobs, ILlmClientFactory llm, CancellationToken ct)
     {
-        await ActiveChat.RequireAsync(settings, claudeApiKey, ct);
+        await llm.EnsureChatConfiguredAsync(ct);
         var (job, created) = await jobs.EnqueueAsync(TaxonomyProposeJob.JobType, TaxonomyProposeJob.Queue, ct: ct);
         return created
             ? TypedResults.Accepted($"/api/jobs/{job.Id}", job)

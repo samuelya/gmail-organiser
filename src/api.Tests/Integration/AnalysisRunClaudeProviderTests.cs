@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Llm.Fake;
+using GmailOrganiser.Rules.Taxonomy;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Mvc;
@@ -40,7 +42,7 @@ public sealed class AnalysisRunClaudeProviderTests : IClassFixture<ApiFactory>, 
         active = chat;
         h = new AnalysisRunHarness(factory, postgres)
         {
-            ConfigureServices = services => services.AddScoped<ILlmClientFactory>(_ => new ScriptedLlmFactory(active)),
+            ConfigureServices = services => services.AddScoped<ILlmClientFactory>(sp => new ScriptedLlmFactory(sp, active)),
         };
     }
 
@@ -89,6 +91,21 @@ public sealed class AnalysisRunClaudeProviderTests : IClassFixture<ApiFactory>, 
     }
 
     [Fact]
+    public async Task Taxonomy_job_whose_key_was_cleared_after_queuing_is_refused_before_asking_the_model()
+    {
+        (await h.PostWithoutBodyAsync("/api/rules/labels/taxonomy")).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await UseClaudeAsync(Model, withKey: false);
+
+        await h.RunNextAsync();
+
+        await using var db = postgres.CreateDbContext();
+        var job = await db.Jobs.AsNoTracking().SingleAsync(j => j.Type == TaxonomyProposeJob.JobType, Ct);
+        job.Status.ShouldBe(JobStatus.Failed);
+        job.Error.ShouldBe(LlmClientFactory.NoClaudeApiKeyMessage);
+        chat.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task Claude_api_failure_keeps_its_own_message_on_the_run()
     {
         const string message = "The Claude API is overloaded (HTTP 529). Try again later.";
@@ -100,6 +117,19 @@ public sealed class AnalysisRunClaudeProviderTests : IClassFixture<ApiFactory>, 
         var done = await h.GetRunAsync(run.Id);
         done.Status.ShouldBe("failed");
         done.Error.ShouldBe(message);
+    }
+
+    [Fact]
+    public async Task An_unmapped_cancellation_on_the_claude_path_says_the_call_was_cancelled_or_timed_out()
+    {
+        active = new ThrowingChatClient(new TaskCanceledException());
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        done.Status.ShouldBe("failed");
+        done.Error.ShouldBe("The Claude API call was cancelled or timed out before it answered.");
     }
 
     private async Task UseClaudeAsync(string? model, bool withKey)

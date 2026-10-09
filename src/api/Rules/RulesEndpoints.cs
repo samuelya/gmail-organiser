@@ -183,9 +183,8 @@ public static class RulesEndpoints
             { Outcome: SummaryOutcome.Ok, Review: { } review } => TypedResults.Ok(review),
             { Outcome: SummaryOutcome.NoFindings } => TypedResults.Problem(
                 statusCode: StatusCodes.Status409Conflict, title: "Nothing to summarise", detail: "The review has no findings."),
-            { Outcome: SummaryOutcome.NotConfigured } => TypedResults.Problem(
-                statusCode: StatusCodes.Status503ServiceUnavailable, title: "LLM not configured",
-                detail: "No chat model is selected. Choose one in Settings."),
+            { Outcome: SummaryOutcome.NotConfigured, Detail: var detail } => TypedResults.Problem(
+                statusCode: StatusCodes.Status503ServiceUnavailable, title: "LLM not configured", detail: detail),
             _ => TypedResults.NotFound(),
         };
 

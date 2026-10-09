@@ -3,7 +3,6 @@ using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
-using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Memory;
 using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
@@ -55,7 +54,6 @@ public sealed partial class ReviewService(
     AnalysisRunService runs,
     LabelCatalog labels,
     ISettingsStore settingsStore,
-    ClaudeApiKeyService claudeApiKey,
     TimeProvider time,
     ILogger<ReviewService> logger)
 {
@@ -328,7 +326,7 @@ public sealed partial class ReviewService(
     /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set; nothing is reset.</exception>
     public async Task<(ReviewResult Result, AnalysisRunDto? Run)> AnalyseIndividuallyAsync(Guid[] suggestionIds, CancellationToken ct)
     {
-        await ActiveChat.RequireAsync(settingsStore, claudeApiKey, ct);
+        var settings = await runs.RequireChatModelAsync(ct);
 
         var found = await db.Suggestions.AsNoTracking()
             .Where(s => suggestionIds.Contains(s.Id))
@@ -348,7 +346,8 @@ public sealed partial class ReviewService(
             return (ReviewResult.Conflict, null);
         }
 
-        var run = await runs.StartAsync(AnalysisScope.Messages, null, messageIds, messageIds.Length, AnalysisGroupingMode.Off, ct);
+        var run = await runs.StartAsync(
+            settings, AnalysisScope.Messages, null, messageIds, messageIds.Length, AnalysisGroupingMode.Off, ct);
         return (ReviewResult.Ok, run);
     }
 
