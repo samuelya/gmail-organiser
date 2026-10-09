@@ -382,23 +382,31 @@ public sealed partial class AnalysisRunJob
 
     private Task<(string Text, LlmUsage Usage)> ChatAsync(
         RunContext context, IChatClient chat, string? model, IList<ChatMessage> messages, int groupSize, CancellationToken ct) =>
-        ChatAsync(context.Settings, chat, model, messages, AnalysisPromptBuilder.CreateOptions(context.Settings.LlmNumCtx), groupSize, ct);
+        ChatAsync(context.Settings, chat, model, messages, AnalysisPromptBuilder.CreateOptions(context.Settings.LlmNumCtx), groupSize, ct,
+            onOllama: ReferenceEquals(chat, context.Triage));
 
-    /// <summary>One metered chat call; an unreachable or timed-out model becomes <see cref="AnalysisModelUnavailableException"/>.</summary>
+    /// <summary>
+    /// One metered chat call; an unreachable or timed-out model becomes <see cref="AnalysisModelUnavailableException"/>.
+    /// <paramref name="onOllama"/> marks a call that goes to Ollama whatever the provider (the triage model): it keeps the
+    /// <c>num_ctx</c> limit and the Ollama error text. The Claude API client's errors are already key-free and say what failed.
+    /// </summary>
     private async Task<(string Text, LlmUsage Usage)> ChatAsync(
         AppSettings settings, IChatClient chat, string? model, IList<ChatMessage> messages, ChatOptions options, int groupSize,
-        CancellationToken ct)
+        CancellationToken ct, bool onOllama = false)
     {
+        onOllama |= settings.LlmProvider == LlmProvider.Ollama;
         try
         {
-            var (response, usage) = await _meter.GetResponseAsync(chat, messages, options, model, settings.LlmNumCtx, groupSize, ct);
+            var limit = onOllama ? settings.LlmNumCtx : settings.MeterNumCtx;
+            var (response, usage) = await _meter.GetResponseAsync(chat, messages, options, model, limit, groupSize, ct);
             return (response.Text, usage);
         }
         catch (Exception ex) when (ex is HttpRequestException or TimeoutException or OllamaSharp.Models.Exceptions.OllamaException
             || (ex is TaskCanceledException && !ct.IsCancellationRequested))
         {
             throw new AnalysisModelUnavailableException(
-                OllamaErrors.Describe(ex, OllamaHttp.Parse(settings.OllamaBaseUrl), llmOptions.Value.ModelTimeout), ex);
+                onOllama ? OllamaErrors.Describe(ex, OllamaHttp.Parse(settings.OllamaBaseUrl), llmOptions.Value.ModelTimeout) : ex.Message,
+                ex);
         }
     }
 

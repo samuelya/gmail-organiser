@@ -50,7 +50,7 @@ public sealed class SetupStatusService(
             || (!string.IsNullOrWhiteSpace(client.ClientId) && !string.IsNullOrWhiteSpace(client.ClientSecret));
 
         var gmailConnected = token is not null && !token.ReauthRequired;
-        var chatModelSelected = !string.IsNullOrWhiteSpace(current.ChatModel);
+        var chatModelSelected = !string.IsNullOrWhiteSpace(current.ActiveChatModel);
         var complete = gmailConnected && chatModelSelected;
 
         // A token row needing re-auth was connected once, so it still counts: this also backfills installs that completed

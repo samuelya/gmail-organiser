@@ -21,7 +21,7 @@ public sealed partial class AnalysisRunJob
     private async Task RunPoliciesAsync(JobContext ctx, AnalysisRunRow run, AnalysisRunCursor cursor, CancellationToken ct)
     {
         var settings = await settingsStore.GetAsync(ct);
-        var model = settings.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
+        var model = settings.ActiveChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
         var senders = cursor.Senders ?? throw new JobRefusedException("The top senders run has no frozen senders.");
 
         run.Status = AnalysisRunStatus.Running;

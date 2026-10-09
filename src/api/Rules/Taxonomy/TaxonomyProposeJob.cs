@@ -42,7 +42,7 @@ public sealed partial class TaxonomyProposeJob(
     public async Task RunAsync(JobContext ctx, CancellationToken ct)
     {
         var settings = await settingsStore.GetAsync(ct);
-        var model = settings.ChatModel ?? throw new JobRefusedException(new LlmNotConfiguredException(ModelKinds.Chat).Message);
+        var model = settings.ActiveChatModel ?? throw new JobRefusedException(new LlmNotConfiguredException(ModelKinds.Chat).Message);
         var userLabels = (await catalog.RefreshAsync(ct)).Where(l => l.Type == GmailLabelType.User).ToList();
         var senders = await TopSendersAsync(settings, ct);
 
@@ -77,7 +77,7 @@ public sealed partial class TaxonomyProposeJob(
         using (var chat = await llm.CreateChatClientAsync(ct))
         {
             var (response, _) = await _meter.GetResponseAsync(
-                chat, messages, TaxonomyPrompt.CreateOptions(settings.LlmNumCtx), model, settings.LlmNumCtx, lines.Count, ct);
+                chat, messages, TaxonomyPrompt.CreateOptions(settings.LlmNumCtx), model, settings.MeterNumCtx, lines.Count, ct);
             answer = response.Text;
         }
 

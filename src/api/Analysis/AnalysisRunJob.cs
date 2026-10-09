@@ -119,7 +119,7 @@ public sealed partial class AnalysisRunJob(
     private async Task RunCoreAsync(JobContext ctx, AnalysisRunRow run, AnalysisRunCursor cursor, CancellationToken ct)
     {
         var settings = await settingsStore.GetAsync(ct);
-        var model = settings.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
+        var model = settings.ActiveChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
         var builder = new AnalysisPromptBuilder(PromptTemplate.FromSettings(settings.AnalysisPromptTemplate));
 
         if (run.StartedAt is null)

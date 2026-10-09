@@ -50,7 +50,7 @@ public sealed class FilterReviewSummariser(
             return new SummaryResult(SummaryOutcome.NoFindings);
         }
 
-        if ((await settings.GetAsync(ct)).ChatModel is not { } model)
+        if ((await settings.GetAsync(ct)).ActiveChatModel is not { } model)
         {
             return new SummaryResult(SummaryOutcome.NotConfigured);
         }

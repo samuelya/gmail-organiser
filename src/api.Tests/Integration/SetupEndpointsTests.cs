@@ -101,6 +101,22 @@ public sealed class SetupEndpointsTests(ApiFactory factory, PostgresFixture post
     }
 
     [Fact]
+    public async Task Claude_api_model_without_an_ollama_chat_model_counts_as_selected()
+    {
+        await using var host = Host(new StubOllamaHandler { Failure = new HttpRequestException("synthetic refusal") }, b => b.UseSetting("GMAIL_FAKE", "true"));
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(
+                s => s with { LlmProvider = LlmProvider.ClaudeApi, ClaudeApiModel = "test-model-a", ChatModel = null }, Ct);
+        }
+
+        var json = await GetStatusAsync(host);
+
+        json["chatModelSelected"].ShouldBeTrue();
+        json["complete"].ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task A_failed_settings_update_leaves_no_tracked_settings_row()
     {
         await using var scope = factory.Services.CreateAsyncScope();

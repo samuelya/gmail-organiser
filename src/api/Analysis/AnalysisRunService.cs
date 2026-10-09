@@ -3,6 +3,7 @@ using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Policies;
 using GmailOrganiser.Review;
 using GmailOrganiser.Senders;
@@ -39,6 +40,7 @@ public sealed partial class AnalysisRunService(
     AppDbContext db,
     IJobService jobs,
     ISettingsStore settingsStore,
+    ClaudeApiKeyService claudeApiKey,
     SenderStatsUpdater senderStats,
     LabelCatalog labelCatalog,
     TimeProvider time,
@@ -168,18 +170,9 @@ public sealed partial class AnalysisRunService(
         return (CompareRunResult.Ok, ToDto(run));
     }
 
-    /// <summary>The settings, once a chat model is selected; shared by the run starters so they cannot drift apart.</summary>
-    /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
-    private async Task<AppSettings> RequireChatModelAsync(CancellationToken ct)
-    {
-        var settings = await settingsStore.GetAsync(ct);
-        if (string.IsNullOrWhiteSpace(settings.ChatModel))
-        {
-            throw new LlmNotConfiguredException(ModelKinds.Chat);
-        }
-
-        return settings;
-    }
+    /// <summary>The settings, once the active provider can chat; shared by the run starters so they cannot drift apart.</summary>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set.</exception>
+    private Task<AppSettings> RequireChatModelAsync(CancellationToken ct) => ActiveChat.RequireAsync(settingsStore, claudeApiKey, ct);
 
     /// <summary>Stores the queued run and enqueues its job in one transaction, so a failed enqueue leaves no run behind.</summary>
     private async Task EnqueueAsync(AnalysisRunRow run, AnalysisRunCursor cursor, CancellationToken ct)

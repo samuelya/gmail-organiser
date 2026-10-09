@@ -1,6 +1,8 @@
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Jobs;
+using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Rules.Taxonomy;
 using GmailOrganiser.Settings;
 using Google;
@@ -25,17 +27,13 @@ public static class LabelPlanEndpoints
 
     /// <summary>
     /// Queues the taxonomy proposal (#366), whose result is the new draft plan: 202 with the job; 409 when no chat
-    /// model is chosen or a proposal is already queued, running or paused.
+    /// model or Claude API key is set (<see cref="LlmNotConfiguredException"/>, "LLM not configured") or a proposal is
+    /// already queued, running or paused.
     /// </summary>
     private static async Task<Results<Accepted<JobDto>, ProblemHttpResult>> ProposeTaxonomyAsync(
-        IJobService jobs, ISettingsStore settings, CancellationToken ct)
+        IJobService jobs, ISettingsStore settings, ClaudeApiKeyService claudeApiKey, CancellationToken ct)
     {
-        if ((await settings.GetAsync(ct)).ChatModel is null)
-        {
-            return TypedResults.Problem(
-                statusCode: StatusCodes.Status409Conflict, title: "No chat model", detail: "Choose a chat model in Settings first.");
-        }
-
+        await ActiveChat.RequireAsync(settings, claudeApiKey, ct);
         var (job, created) = await jobs.EnqueueAsync(TaxonomyProposeJob.JobType, TaxonomyProposeJob.Queue, ct: ct);
         return created
             ? TypedResults.Accepted($"/api/jobs/{job.Id}", job)
