@@ -1,3 +1,6 @@
+using System.Text.Json;
+using GmailOrganiser.Llm;
+
 namespace GmailOrganiser.Settings;
 
 public sealed record SettingsDto(
@@ -47,10 +50,15 @@ public sealed record SettingsDto(
     bool TaxonomyLocked,
     int AnalysisMaxNewLabelsPerRun,
     IReadOnlyList<string> AnalysisBlockedLabels,
-    RetentionSettingsDto Retention)
+    RetentionSettingsDto Retention,
+    LlmProvider LlmProvider,
+    string? ClaudeApiModel,
+    bool ClaudeApiKeySet,
+    string? ClaudeApiKeyHint)
 {
     /// <param name="claudeTokenSet">Whether <c>CLAUDE_CODE_OAUTH_TOKEN</c> is set; the token itself is never returned.</param>
-    public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet) => new(
+    /// <param name="claudeApiKeyHint">The saved Claude API key's hint (<c>null</c>: not set); the key itself is never returned.</param>
+    public static SettingsDto From(AppSettings s, GoogleClientCredentials google, bool claudeTokenSet, string? claudeApiKeyHint) => new(
         s.OllamaBaseUrl,
         s.ChatModel,
         s.EmbeddingModel,
@@ -97,14 +105,18 @@ public sealed record SettingsDto(
         s.TaxonomyLocked,
         s.AnalysisMaxNewLabelsPerRun,
         s.AnalysisBlockedLabels,
-        RetentionSettingsDto.From(s.Retention));
+        RetentionSettingsDto.From(s.Retention),
+        s.LlmProvider,
+        s.ClaudeApiModel,
+        claudeApiKeyHint is not null,
+        claudeApiKeyHint);
 }
 
 /// <summary>Never carries the secret itself.</summary>
 public sealed record GoogleClientDto(string? ClientId, bool SecretSet, bool LockedByEnv);
 
 /// <summary>
-/// Partial update: <c>null</c> leaves a value unchanged; an empty model name (including <see cref="ClaudeModel"/>) or a
+/// Partial update: <c>null</c> leaves a value unchanged; an empty model name (including <see cref="ClaudeModel"/> and <see cref="ClaudeApiModel"/>) or a
 /// blank prompt template or <see cref="DocumentTypeParent"/> clears it. <see cref="AppsScript"/> replaces the whole saved block
 /// (see <see cref="UpdateAppsScriptSettingsRequest"/>), and <see cref="AnalysisBlockedLabels"/> the whole list.
 /// </summary>
@@ -153,7 +165,9 @@ public sealed record UpdateSettingsRequest(
     bool? TaxonomyLocked = null,
     int? AnalysisMaxNewLabelsPerRun = null,
     IReadOnlyList<string?>? AnalysisBlockedLabels = null,
-    UpdateRetentionSettingsRequest? Retention = null);
+    UpdateRetentionSettingsRequest? Retention = null,
+    JsonElement? LlmProvider = null,
+    string? ClaudeApiModel = null);
 
 /// <summary>
 /// Partial update of <see cref="AttachmentSettings"/>: <c>null</c> leaves a value unchanged, and <see cref="Types"/>

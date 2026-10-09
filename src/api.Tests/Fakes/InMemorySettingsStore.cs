@@ -9,6 +9,12 @@ public sealed class InMemorySettingsStore(AppSettings? initial = null) : ISettin
 
     public Task<AppSettings> GetAsync(CancellationToken ct = default) => Task.FromResult(Current);
 
-    public Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> change, CancellationToken ct = default) =>
-        Task.FromResult(Current = change(Current));
+    /// <summary>How many times <see cref="UpdateAsync"/> ran (each is a locked write in the real store).</summary>
+    public int UpdateCount { get; private set; }
+
+    public Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> change, CancellationToken ct = default)
+    {
+        UpdateCount++;
+        return Task.FromResult(Current = change(Current));
+    }
 }

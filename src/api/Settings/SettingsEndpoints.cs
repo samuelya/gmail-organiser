@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis.Attachments;
+using GmailOrganiser.Llm.ClaudeApi;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.DataProtection.Repositories;
@@ -42,14 +43,16 @@ public static class SettingsEndpoints
     }
 
     private static async Task<Ok<SettingsDto>> GetAsync(
-        ISettingsStore store, GoogleClientService google, IOptions<SettingsEnvOptions> env, CancellationToken ct)
+        ISettingsStore store, GoogleClientService google, ClaudeApiKeyService claudeApiKey,
+        IOptions<SettingsEnvOptions> env, CancellationToken ct)
     {
         var settings = await store.GetAsync(ct);
-        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
+        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet, await claudeApiKey.HintAsync(settings, ct)));
     }
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem>> UpdateAsync(
-        UpdateSettingsRequest request, ISettingsStore store, GoogleClientService google, IOptions<SettingsEnvOptions> env, CancellationToken ct)
+        UpdateSettingsRequest request, ISettingsStore store, GoogleClientService google, ClaudeApiKeyService claudeApiKey,
+        IOptions<SettingsEnvOptions> env, CancellationToken ct)
     {
         var errors = SettingsValidation.Validate(request, await store.GetAsync(ct));
         if (errors.Count > 0)
@@ -71,16 +74,16 @@ public static class SettingsEndpoints
             return TypedResults.ValidationProblem(clash);
         }
 
-        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
+        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet, await claudeApiKey.HintAsync(settings, ct)));
     }
 
     /// <summary>Applies a validated request; omitted fields keep their saved value.</summary>
     private static AppSettings Merge(AppSettings s, UpdateSettingsRequest request) => s with
     {
         OllamaBaseUrl = request.OllamaBaseUrl?.Trim() ?? s.OllamaBaseUrl,
-        ChatModel = request.ChatModel is null ? s.ChatModel : SettingsValidation.NormaliseModelName(request.ChatModel),
-        EmbeddingModel = request.EmbeddingModel is null ? s.EmbeddingModel : SettingsValidation.NormaliseModelName(request.EmbeddingModel),
-        VisionModel = request.VisionModel is null ? s.VisionModel : SettingsValidation.NormaliseModelName(request.VisionModel),
+        ChatModel = request.ChatModel is null ? s.ChatModel : ModelNameValidation.Normalise(request.ChatModel),
+        EmbeddingModel = request.EmbeddingModel is null ? s.EmbeddingModel : ModelNameValidation.Normalise(request.EmbeddingModel),
+        VisionModel = request.VisionModel is null ? s.VisionModel : ModelNameValidation.Normalise(request.VisionModel),
         SetupWizardSeen = request.SetupWizardSeen ?? s.SetupWizardSeen,
         FetchChunkSize = request.FetchChunkSize ?? s.FetchChunkSize,
         AnalysisDefaultCount = request.AnalysisDefaultCount ?? s.AnalysisDefaultCount,
@@ -110,7 +113,7 @@ public static class SettingsEndpoints
         ClaudeMaxTurns = request.ClaudeMaxTurns ?? s.ClaudeMaxTurns,
         RulesStaleFilterDays = request.RulesStaleFilterDays ?? s.RulesStaleFilterDays,
         LlmNumCtx = request.LlmNumCtx ?? s.LlmNumCtx,
-        TriageModel = request.TriageModel is null ? s.TriageModel : SettingsValidation.NormaliseModelName(request.TriageModel),
+        TriageModel = request.TriageModel is null ? s.TriageModel : ModelNameValidation.Normalise(request.TriageModel),
         TriageConfidenceThreshold = request.TriageConfidenceThreshold ?? s.TriageConfidenceThreshold,
         TaxonomyMaxSenders = request.TaxonomyMaxSenders ?? s.TaxonomyMaxSenders,
         TaxonomyMaxLabels = request.TaxonomyMaxLabels ?? s.TaxonomyMaxLabels,
@@ -119,7 +122,7 @@ public static class SettingsEndpoints
         AnalysisBlockedLabels = request.AnalysisBlockedLabels is { } blocked
             ? [.. blocked.OfType<string>().Select(n => n.Trim()).Distinct(StringComparer.OrdinalIgnoreCase)]
             : s.AnalysisBlockedLabels,
-        ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : SettingsValidation.NormaliseModelName(request.ClaudeModel),
+        ClaudeModel = request.ClaudeModel is null ? s.ClaudeModel : ModelNameValidation.Normalise(request.ClaudeModel),
         Protection = request.Protection is { } protection ? Apply(s.Protection, protection) : s.Protection,
         ActionLabelName = request.ActionLabelName?.Trim() ?? s.ActionLabelName,
         DeleteLabelName = request.DeleteLabelName?.Trim() ?? s.DeleteLabelName,
@@ -128,6 +131,8 @@ public static class SettingsEndpoints
             : SettingsValidation.NormaliseDocumentTypeParent(request.DocumentTypeParent),
         AppsScript = request.AppsScript is { } appsScript ? SettingsValidation.NormaliseAppsScript(appsScript, s.AppsScript) : s.AppsScript,
         Retention = request.Retention?.Apply(s.Retention) ?? s.Retention,
+        LlmProvider = request.LlmProvider is { } provider ? ClaudeApiValidation.ParseProvider(provider)!.Value : s.LlmProvider,
+        ClaudeApiModel = request.ClaudeApiModel is null ? s.ClaudeApiModel : ModelNameValidation.Normalise(request.ClaudeApiModel),
     };
 
     /// <summary>Applies a validated request; listed types change, the others keep their saved value.</summary>
@@ -159,7 +164,8 @@ public static class SettingsEndpoints
     };
 
     private static async Task<Results<Ok<SettingsDto>, ValidationProblem, ProblemHttpResult>> SetGoogleClientAsync(
-        GoogleClientRequest request, ISettingsStore store, GoogleClientService google, IOptions<SettingsEnvOptions> env, CancellationToken ct)
+        GoogleClientRequest request, ISettingsStore store, GoogleClientService google, ClaudeApiKeyService claudeApiKey,
+        IOptions<SettingsEnvOptions> env, CancellationToken ct)
     {
         var errors = SettingsValidation.Validate(request);
         if (errors.Count > 0)
@@ -176,7 +182,7 @@ public static class SettingsEndpoints
         }
 
         var settings = await store.GetAsync(ct);
-        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet));
+        return TypedResults.Ok(SettingsDto.From(settings, google.Resolve(settings), env.Value.ClaudeCodeOAuthTokenSet, await claudeApiKey.HintAsync(settings, ct)));
     }
 
     private static async Task<Results<Ok<PurgeResponse>, ValidationProblem, ProblemHttpResult>> PurgeAsync(

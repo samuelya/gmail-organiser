@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using GmailOrganiser.Analysis.Attachments;
+using GmailOrganiser.Llm;
 
 namespace GmailOrganiser.Settings;
 
@@ -149,6 +151,23 @@ public sealed record AppSettings
 
     /// <summary>Label names the analysis never uses, as any level of a label path (#367); user data, empty by default.</summary>
     public IReadOnlyList<string> AnalysisBlockedLabels { get; init; } = [];
+
+    /// <summary>Who answers the analysis prompts (#484); switching needs no key or model (the client factory refuses at call time).</summary>
+    public LlmProvider LlmProvider { get; init; } = LlmProvider.Ollama;
+
+    /// <summary>The Claude API model for <see cref="LlmProvider.ClaudeApi"/>; <c>null</c> when none is chosen.</summary>
+    public string? ClaudeApiModel { get; init; }
+
+    /// <summary>Data Protection ciphertext of the Claude API key; never returned by the API.</summary>
+    public string? ClaudeApiKeyProtected { get; init; }
+
+    /// <summary>The chat model of the active <see cref="LlmProvider"/>; not stored.</summary>
+    [JsonIgnore]
+    public string? ActiveChatModel => LlmProvider == LlmProvider.ClaudeApi ? ClaudeApiModel : ChatModel;
+
+    /// <summary>The <c>num_ctx</c> the call meter records: <see cref="LlmNumCtx"/> for Ollama, 0 for the Claude API; not stored.</summary>
+    [JsonIgnore]
+    public int MeterNumCtx => LlmProvider == LlmProvider.ClaudeApi ? 0 : LlmNumCtx;
 
     /// <summary>Data Protection ciphertext of the <c>/mcp</c> bearer token (#164); never returned by the settings API.</summary>
     public string? McpTokenProtected { get; init; }
