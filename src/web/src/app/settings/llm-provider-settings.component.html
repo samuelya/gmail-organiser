@@ -158,7 +158,7 @@
             mat-stroked-button
             type="button"
             (click)="testModel()"
-            [disabled]="!modelValue() || modelTest()?.state === 'running'"
+            [disabled]="!modelValue() || modelTest().state === 'running'"
             data-testid="test-claude-api-model"
           >
             Test
@@ -168,19 +168,18 @@
       @if (models()?.error; as message) {
         <p class="help warn" role="alert" data-testid="claude-api-models-error">{{ message }}</p>
       }
-      @if (modelTest(); as test) {
-        @if (test.state === 'running') {
-          <p class="help" role="status" data-testid="claude-api-model-testing">Testing…</p>
-        } @else if (test.state === 'ok') {
-          <p class="help flex items-center gap-1" role="status" data-testid="claude-api-model-ok">
-            <mat-icon aria-hidden="true">check_circle</mat-icon>
-            OK in {{ test.elapsedMs }} ms
-          </p>
-        } @else {
-          <p class="help warn" role="alert" data-testid="claude-api-model-error">
-            {{ test.message }}
-          </p>
-        }
+      @let test = modelTest();
+      @if (test.state === 'running') {
+        <p class="help" role="status" data-testid="claude-api-model-testing">Testing…</p>
+      } @else if (test.state === 'ok') {
+        <p class="help flex items-center gap-1" role="status" data-testid="claude-api-model-ok">
+          <mat-icon aria-hidden="true">check_circle</mat-icon>
+          Answered in {{ test.seconds }} s
+        </p>
+      } @else if (test.state === 'error') {
+        <p class="help warn" role="alert" data-testid="claude-api-model-error">
+          {{ test.error }}
+        </p>
       }
     </div>
   }

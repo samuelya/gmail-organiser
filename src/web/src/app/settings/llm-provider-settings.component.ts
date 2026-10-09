@@ -9,7 +9,7 @@ import {
   output,
   signal,
 } from '@angular/core';
-import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
@@ -31,13 +31,13 @@ import {
   map,
   Observable,
   of,
-  Subject,
   Subscription,
   switchMap,
 } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
-import { LlmService } from '../core/llm.service';
-import { ClaudeApiModels, LlmProvider, LlmProviderUpdate } from './llm-provider.models';
+import { ClaudeApiModels, LlmService } from '../core/llm.service';
+import { ModelTest, testSeconds } from '../setup/steps/models-step.component';
+import { LlmProvider, LlmProviderUpdate } from './llm-provider.models';
 import { SettingsService } from './settings.service';
 import { SettingsDto } from './settings.models';
 import { problemErrors } from './triage-settings.models';
@@ -46,9 +46,7 @@ import { problemErrors } from './triage-settings.models';
 const NOT_SAVED = 'Not saved. Try again.';
 const NO_KEY = 'Save an API key first.';
 
-/** A Claude model test: running, or its outcome. */
-type ModelTest =
-  { state: 'running' } | { state: 'ok'; elapsedMs: number } | { state: 'error'; message: string };
+const IDLE: ModelTest = { state: 'idle' };
 
 /**
  * The Settings page's analysis model provider (#490): Ollama on this machine or the Claude API, and
@@ -145,29 +143,37 @@ export class LlmProviderSettingsSection {
   readonly replacing = signal(false);
   readonly showKeyInput = computed(() => !this.keySet() || this.replacing());
 
-  /** The last model list; `null` while none is loaded (no key, or Ollama picked). */
+  /**
+   * The last model list, kept while a reload runs and across provider switches; `null` until one is
+   * loaded and again once the key is removed.
+   */
   readonly models = signal<ClaudeApiModels | null>(null);
   readonly modelsLoading = signal(false);
   /** Bumped to load the list again (Refresh, a key save or replace). */
   private readonly modelsReload = signal(0);
-  private readonly modelsLoad = new Subject<boolean>();
-  /** The list as options; a saved model the account no longer lists stays, marked. */
+  /** The reload count of the reachable list in `models`, so a provider switch doesn't load again. */
+  private modelsLoadedAt: number | null = null;
+  /**
+   * The list as options. The saved model and the current (unsaved) pick stay even when the list
+   * doesn't have them, so the select never blanks; one the account no longer lists is marked.
+   */
   readonly modelOptions = computed(() => {
     const list = this.models();
     const options = (list?.models ?? []).map((m) => ({
       value: m.id,
       label: `${m.displayName} (${m.id})`,
     }));
-    const saved = this.savedModel();
-    if (saved && !options.some((o) => o.value === saved)) {
-      options.push({ value: saved, label: list?.reachable ? `${saved} (not available)` : saved });
+    for (const extra of [this.savedModel(), this.modelValue()]) {
+      if (extra && !options.some((o) => o.value === extra)) {
+        options.push({ value: extra, label: list?.reachable ? `${extra} (not available)` : extra });
+      }
     }
     return options;
   });
   readonly modelSelectable = computed(
     () => this.keySet() && !this.modelsLoading() && this.models()?.reachable === true,
   );
-  readonly modelTest = signal<ModelTest | null>(null);
+  readonly modelTest = signal<ModelTest>(IDLE);
   private testRun: Subscription | null = null;
   /** Save sends what differs from the saved settings: the provider, and the model on Claude API. */
   readonly changes = computed<LlmProviderUpdate>(() => {
@@ -193,21 +199,28 @@ export class LlmProviderSettingsSection {
     });
     // Likewise only a change of the saved model resets the select.
     effect(() => this.model.setValue(this.savedModel()));
+    // No events: a load finishing must not look like a new pick and cancel a running test.
     effect(() => {
-      if (this.modelSelectable()) this.model.enable();
-      else this.model.disable();
+      if (this.modelSelectable()) this.model.enable({ emitEvent: false });
+      else this.model.disable({ emitEvent: false });
     });
-    // One load per change of pick, key state or reload; switchMap drops a list no longer wanted.
-    effect(() => {
-      this.modelsReload();
-      this.modelsLoad.next(this.selected() === 'claude_api' && this.keySet());
-    });
-    this.modelsLoad
+    // A load per Refresh or key change; a switch back to Claude API reuses a reachable list, and
+    // switchMap drops a list no longer wanted (Ollama picked, key removed).
+    toObservable(
+      computed(() => ({
+        reload: this.modelsReload(),
+        load: this.selected() === 'claude_api' && this.keySet(),
+      })),
+    )
       .pipe(
-        switchMap((load) => {
-          this.models.set(null);
-          this.modelsLoading.set(load);
-          if (!load) return of(null);
+        switchMap(({ reload, load }) => {
+          this.modelsLoading.set(false);
+          if (!this.keySet()) {
+            this.models.set(null);
+            this.modelsLoadedAt = null;
+          }
+          if (!load || this.modelsLoadedAt === reload) return EMPTY;
+          this.modelsLoading.set(true);
           return this.llm.getClaudeApiModels().pipe(
             // The error interceptor shows why the request itself failed.
             catchError(() =>
@@ -223,7 +236,10 @@ export class LlmProviderSettingsSection {
         }),
         takeUntilDestroyed(),
       )
-      .subscribe((list) => this.models.set(list));
+      .subscribe((list) => {
+        this.models.set(list);
+        this.modelsLoadedAt = list.reachable ? this.modelsReload() : null;
+      });
     this.model.valueChanges.pipe(takeUntilDestroyed()).subscribe(() => this.cancelTest());
     // A new pick drops the last save error; leaving Claude API drops a typed key and Replace mode.
     this.provider.valueChanges.pipe(takeUntilDestroyed()).subscribe((value) => {
@@ -245,25 +261,18 @@ export class LlmProviderSettingsSection {
 
   testModel(): void {
     const model = this.model.value;
-    if (!model || this.modelTest()?.state === 'running') return;
+    if (!model || this.modelTest().state === 'running') return;
     this.modelTest.set({ state: 'running' });
     this.testRun = this.llm
       .testClaudeApiModel(model)
       .pipe(
         map((result): ModelTest =>
           result.ok
-            ? { state: 'ok', elapsedMs: result.elapsedMs }
-            : { state: 'error', message: result.error ?? 'The model test failed.' },
+            ? { state: 'ok', seconds: testSeconds(result.elapsedMs) }
+            : { state: 'error', error: result.error ?? 'The model test failed.' },
         ),
-        catchError((error: unknown) =>
-          of<ModelTest>({
-            state: 'error',
-            message:
-              error instanceof HttpErrorResponse && error.status === 409
-                ? NO_KEY
-                : (problemErrors(error)['model']?.[0] ?? 'The model test failed. Try again.'),
-          }),
-        ),
+        // 409 and 400 are quiet and shown here; the error interceptor reports any other failure.
+        catchError((error: unknown) => of(testFailure(error))),
       )
       .subscribe((outcome) => this.modelTest.set(outcome));
   }
@@ -336,7 +345,7 @@ export class LlmProviderSettingsSection {
   private cancelTest(): void {
     this.testRun?.unsubscribe();
     this.testRun = null;
-    this.modelTest.set(null);
+    this.modelTest.set(IDLE);
   }
 
   /** Runs a key change, then reads the settings again for the new key state and hint. */
@@ -373,4 +382,17 @@ export class LlmProviderSettingsSection {
         error: onError,
       });
   }
+}
+
+/** A failed model test request as shown next to Test; idle when the error interceptor reported it. */
+function testFailure(error: unknown): ModelTest {
+  if (!(error instanceof HttpErrorResponse)) return IDLE;
+  if (error.status === 409) return { state: 'error', error: NO_KEY };
+  if (error.status === 400) {
+    return {
+      state: 'error',
+      error: problemErrors(error)['model']?.[0] ?? 'The model test failed.',
+    };
+  }
+  return IDLE;
 }

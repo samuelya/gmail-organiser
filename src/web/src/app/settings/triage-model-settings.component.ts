@@ -29,7 +29,7 @@ import {
   switchMap,
 } from 'rxjs';
 import { LlmModels, LlmService } from '../core/llm.service';
-import { ModelTest, modelOptions } from '../setup/steps/models-step.component';
+import { ModelTest, modelOptions, testSeconds } from '../setup/steps/models-step.component';
 import { SettingsService } from './settings.service';
 import { SettingsDto } from './settings.models';
 import {
@@ -259,7 +259,7 @@ export class TriageModelSettingsSection implements OnInit {
       next: (result) =>
         this.testRun.set(
           result.ok
-            ? { state: 'ok', seconds: (result.elapsedMs / 1000).toFixed(1) }
+            ? { state: 'ok', seconds: testSeconds(result.elapsedMs) }
             : { state: 'error', error: result.error ?? 'The model test failed.' },
         ),
       error: () => this.testRun.set({ state: 'error', error: 'The model test request failed.' }),

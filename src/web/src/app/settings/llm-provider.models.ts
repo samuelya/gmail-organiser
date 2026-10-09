@@ -16,21 +16,3 @@ export interface LlmProviderUpdate {
   llmProvider?: LlmProvider;
   claudeApiModel?: string;
 }
-
-/** `ClaudeApiModelDto`: one model of the account, as the Claude API lists it. */
-export interface ClaudeApiModel {
-  id: string;
-  displayName: string;
-  createdAt: string | null;
-}
-
-/**
- * `ClaudeApiModelsDto` (`GET /api/llm/claude-api/models`), newest first. `error` can be set while
- * `reachable` is true (e.g. a capped list), so it is shown whenever present.
- */
-export interface ClaudeApiModels {
-  keySet: boolean;
-  reachable: boolean;
-  error: string | null;
-  models: ClaudeApiModel[];
-}

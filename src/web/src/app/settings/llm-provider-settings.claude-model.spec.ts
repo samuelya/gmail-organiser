@@ -3,7 +3,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { ClaudeApiModels, LlmProviderSettings } from './llm-provider.models';
+import { ClaudeApiModels } from '../core/llm.service';
+import { LlmProviderSettings } from './llm-provider.models';
 import { LlmProviderSettingsSection } from './llm-provider-settings.component';
 import { SettingsDto } from './settings.models';
 
@@ -146,7 +147,7 @@ describe('LlmProviderSettingsSection Claude model', () => {
     expect(q<HTMLButtonElement>('test-claude-api-model')!.disabled).toBe(true);
     req.flush({ ok: true, elapsedMs: 420, error: null });
     await fixture.whenStable();
-    expect(q('claude-api-model-ok')!.textContent).toContain('OK in 420 ms');
+    expect(q('claude-api-model-ok')!.textContent).toContain('Answered in 0.4 s');
 
     // Another pick drops the old result.
     await choose('test-model-b');
@@ -186,7 +187,70 @@ describe('LlmProviderSettingsSection Claude model', () => {
     q('llm-provider-ollama')!.querySelector('input')!.click();
     await fixture.whenStable();
     expect(req.cancelled).toBe(true);
-    expect(section().modelTest()).toBeNull();
+    expect(section().modelTest()).toEqual({ state: 'idle' });
+  });
+
+  it('keeps a running test when the list finishes loading', async () => {
+    await render(settingsOf({ claudeApiModel: 'test-model-a' }));
+    await click('test-claude-api-model');
+    const req = http.expectOne(testUrl);
+    await flush();
+    expect(req.cancelled).toBe(false);
+    req.flush({ ok: true, elapsedMs: 1200, error: null });
+    await fixture.whenStable();
+    expect(q('claude-api-model-ok')!.textContent).toContain('Answered in 1.2 s');
+  });
+
+  it('keeps an unsaved pick as an option while the list reloads', async () => {
+    await render(settingsOf());
+    await flush();
+    await choose('test-model-a');
+    await click('refresh-claude-api-models');
+    const req = http.expectOne(modelsUrl);
+    expect(
+      section()
+        .modelOptions()
+        .map((o) => o.value),
+    ).toContain('test-model-a');
+    req.flush(listOf({ models: [] }));
+    await fixture.whenStable();
+    expect(section().model.value).toBe('test-model-a');
+    expect(section().modelOptions()).toEqual([
+      { value: 'test-model-a', label: 'test-model-a (not available)' },
+    ]);
+  });
+
+  it('reuses the list when switching back to Claude API', async () => {
+    await render(settingsOf());
+    await flush();
+    q('llm-provider-ollama')!.querySelector('input')!.click();
+    await fixture.whenStable();
+    q('llm-provider-claude_api')!.querySelector('input')!.click();
+    await fixture.whenStable();
+    http.expectNone(modelsUrl);
+    expect(section().modelOptions()).toHaveLength(2);
+  });
+
+  it('loads again on a switch back after an unreachable list', async () => {
+    await render(settingsOf());
+    await flush(listOf({ reachable: false, error: 'Could not reach the Claude API.', models: [] }));
+    q('llm-provider-ollama')!.querySelector('input')!.click();
+    await fixture.whenStable();
+    q('llm-provider-claude_api')!.querySelector('input')!.click();
+    await fixture.whenStable();
+    await flush();
+    expect(section().modelOptions()).toHaveLength(2);
+  });
+
+  it('leaves a failed test request to the error interceptor', async () => {
+    await render(settingsOf());
+    await flush();
+    await choose('test-model-a');
+    await click('test-claude-api-model');
+    http.expectOne(testUrl).flush(null, { status: 502, statusText: 'Bad Gateway' });
+    await fixture.whenStable();
+    expect(q('claude-api-model-error')).toBeNull();
+    expect(section().modelTest()).toEqual({ state: 'idle' });
   });
 
   it('saves the model with one Save, then the incomplete line goes', async () => {

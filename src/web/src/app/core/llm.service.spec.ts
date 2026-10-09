@@ -68,12 +68,12 @@ describe('LlmService', () => {
     expect(backend.expectOne('/api/llm/claude-api/models').request.method).toBe('GET');
   });
 
-  it('posts a Claude API model test with a quiet 409', () => {
+  it('posts a Claude API model test with a quiet 400 and 409', () => {
     const sub = service.testClaudeApiModel('test-model-a').subscribe();
     const req = backend.expectOne('/api/llm/claude-api/test-model');
     expect(req.request.method).toBe('POST');
     expect(req.request.body).toEqual({ model: 'test-model-a' });
-    expect(req.request.context.get(QUIET_STATUSES)).toEqual([409]);
+    expect(req.request.context.get(QUIET_STATUSES)).toEqual([400, 409]);
     sub.unsubscribe();
     expect(req.cancelled).toBe(true);
   });

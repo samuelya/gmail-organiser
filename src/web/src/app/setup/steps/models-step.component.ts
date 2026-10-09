@@ -39,6 +39,11 @@ export type ModelTest =
 
 const IDLE: ModelTest = { state: 'idle' };
 
+/** A test's `elapsedMs` as the seconds shown after it ("1.2"). */
+export function testSeconds(elapsedMs: number): string {
+  return (elapsedMs / 1000).toFixed(1);
+}
+
 /**
  * Chat and embedding model pickers, filled from the Ollama capabilities, each with its own
  * cancellable "Test model". The embedding model is optional. Has no stepper code, so the
@@ -154,7 +159,7 @@ export class ModelsStep implements OnInit {
       next: (result) =>
         state.set(
           result.ok
-            ? { state: 'ok', seconds: (result.elapsedMs / 1000).toFixed(1) }
+            ? { state: 'ok', seconds: testSeconds(result.elapsedMs) }
             : { state: 'error', error: result.error ?? 'The model test failed.' },
         ),
       error: () => state.set({ state: 'error', error: 'The model test request failed.' }),
