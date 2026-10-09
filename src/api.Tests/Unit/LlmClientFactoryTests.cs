@@ -1,4 +1,6 @@
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.ClaudeApi;
+using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.Extensions.AI;
@@ -13,11 +15,97 @@ public sealed class LlmClientFactoryTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static (LlmClientFactory Factory, InMemorySettingsStore Settings, StubHttpClientFactory Http) Create()
+    private static (LlmClientFactory Factory, InMemorySettingsStore Settings, StubHttpClientFactory Http) Create(
+        HttpMessageHandler? handler = null, bool useFake = false)
     {
         var settings = new InMemorySettingsStore();
-        var http = new StubHttpClientFactory(new StubOllamaHandler());
-        return (new LlmClientFactory(http, settings, Options.Create(new LlmOptions())), settings, http);
+        var http = new StubHttpClientFactory(handler ?? new StubOllamaHandler());
+        var options = Options.Create(new LlmOptions { UseFake = useFake });
+        return (new LlmClientFactory(http, settings, TestClaudeApiKeys.For(settings), options), settings, http);
+    }
+
+    private static async Task<(LlmClientFactory Factory, InMemorySettingsStore Settings, StubHttpClientFactory Http)> CreateClaudeApi(
+        FakeAnthropicHandler api, string? model, string? apiKey, bool useFake = false)
+    {
+        var (factory, settings, http) = Create(api, useFake);
+        settings.Current = settings.Current with { ChatModel = "test-chat:1b", LlmProvider = LlmProvider.ClaudeApi, ClaudeApiModel = model };
+        if (apiKey is not null)
+        {
+            await TestClaudeApiKeys.For(settings).SetAsync(apiKey, Ct);
+        }
+
+        return (factory, settings, http);
+    }
+
+    [Fact]
+    public async Task Claude_api_without_a_model_throws_not_configured_even_with_an_ollama_model()
+    {
+        var (factory, _, _) = await CreateClaudeApi(new FakeAnthropicHandler(), model: null, apiKey: "sk-test-synthetic");
+
+        var ex = await Should.ThrowAsync<LlmNotConfiguredException>(() => factory.CreateChatClientAsync(Ct));
+
+        ex.Kind.ShouldBe(ModelKinds.Chat);
+    }
+
+    [Fact]
+    public async Task Claude_api_without_a_key_throws_not_configured_with_a_key_message()
+    {
+        var (factory, _, _) = await CreateClaudeApi(new FakeAnthropicHandler(), "test-model-a", apiKey: null);
+
+        var ex = await Should.ThrowAsync<LlmNotConfiguredException>(() => factory.CreateChatClientAsync(Ct));
+
+        ex.Kind.ShouldBe(ModelKinds.Chat);
+        ex.Message.ShouldBe("No Claude API key is set. Add one in Settings.");
+    }
+
+    [Fact]
+    public async Task Claude_api_with_a_blank_saved_key_throws_not_configured()
+    {
+        var (factory, _, _) = await CreateClaudeApi(new FakeAnthropicHandler(), "test-model-a", apiKey: "   ");
+
+        var ex = await Should.ThrowAsync<LlmNotConfiguredException>(() => factory.CreateChatClientAsync(Ct));
+
+        ex.Message.ShouldBe("No Claude API key is set. Add one in Settings.");
+    }
+
+    [Theory]
+    [InlineData("", "test-model-a")]
+    [InlineData("sk-test-synthetic", " ")]
+    public void An_explicit_claude_api_client_rejects_a_blank_key_or_model(string apiKey, string model)
+    {
+        var (factory, _, _) = Create(new FakeAnthropicHandler());
+
+        Should.Throw<ArgumentException>(() => factory.CreateClaudeApiChatClient(apiKey, model));
+    }
+
+    [Fact]
+    public async Task Claude_api_calls_the_messages_api_with_the_saved_key_and_model()
+    {
+        var api = new FakeAnthropicHandler().Message("ok");
+        var (factory, _, http) = await CreateClaudeApi(api, "test-model-a", "sk-test-synthetic");
+
+        using var chat = await factory.CreateChatClientAsync(Ct);
+        var response = await chat.GetResponseAsync("Synthetic prompt", cancellationToken: Ct);
+
+        response.Text.ShouldBe("ok");
+        http.Names.ShouldBe([ClaudeApiHttp.ClientName]);
+        var request = api.Requests.ShouldHaveSingleItem();
+        request.Headers["x-api-key"].ShouldBe("sk-test-synthetic");
+        request.Body.GetProperty("model").GetString().ShouldBe("test-model-a");
+    }
+
+    [Fact]
+    public async Task With_llm_fake_both_claude_api_paths_return_the_fake_client()
+    {
+        var api = new FakeAnthropicHandler();
+        var (factory, _, http) = await CreateClaudeApi(api, "test-model-a", apiKey: null, useFake: true);
+
+        using var fromSettings = await factory.CreateChatClientAsync(Ct);
+        using var explicitClient = factory.CreateClaudeApiChatClient("sk-test-synthetic", "test-model-a");
+
+        fromSettings.ShouldBeOfType<FakeChatClient>();
+        explicitClient.ShouldBeOfType<FakeChatClient>();
+        http.Names.ShouldBeEmpty();
     }
 
     [Fact]
@@ -91,10 +179,25 @@ public sealed class LlmClientFactoryTests
         services.GetRequiredService<IOptions<LlmOptions>>().Value.ModelTimeout.ShouldBe(TimeSpan.FromMinutes(10));
     }
 
-    private static ServiceProvider LlmServices(string modelTimeoutSeconds)
+    [Theory]
+    [InlineData("Llm:ClaudeApiMaxRetries", "11", "Llm__ClaudeApiMaxRetries")]
+    [InlineData("Llm:ClaudeApiTimeoutSeconds", "0", "Llm__ClaudeApiTimeoutSeconds")]
+    [InlineData("Llm:ClaudeApiMaxOutputTokens", "0", "Llm__ClaudeApiMaxOutputTokens")]
+    [InlineData("Llm:ClaudeApiMaxOutputTokens", "8193", "Llm__ClaudeApiMaxOutputTokens")]
+    [InlineData("Llm:ClaudeApiBaseUrl", "not-a-url", "Llm__ClaudeApiBaseUrl")]
+    public void Out_of_range_claude_api_options_fail_validation(string key, string value, string expected)
+    {
+        using var services = LlmServices(value, key);
+
+        var ex = Should.Throw<OptionsValidationException>(() => services.GetRequiredService<IOptions<LlmOptions>>().Value);
+
+        ex.Message.ShouldContain(expected);
+    }
+
+    private static ServiceProvider LlmServices(string modelTimeoutSeconds, string key = "Llm:ModelTimeoutSeconds")
     {
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Llm:ModelTimeoutSeconds"] = modelTimeoutSeconds })
+            .AddInMemoryCollection(new Dictionary<string, string?> { [key] = modelTimeoutSeconds })
             .Build();
         return new ServiceCollection()
             .AddSingleton<IConfiguration>(configuration)

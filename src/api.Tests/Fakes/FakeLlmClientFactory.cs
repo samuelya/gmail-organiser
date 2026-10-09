@@ -4,12 +4,13 @@ using Microsoft.Extensions.AI;
 
 namespace GmailOrganiser.Tests.Fakes;
 
-/// <summary>Hands out the given fakes (never disposes them for real) and records the requested server and model.</summary>
+/// <summary>Hands out the given fakes (never disposes them for real) and records the requested server and model (or Claude API model).</summary>
 public sealed class FakeLlmClientFactory(FakeChatClient? chat = null, FakeEmbeddingGenerator? embed = null) : ILlmClientFactory
 {
     public FakeChatClient Chat { get; } = chat ?? new FakeChatClient();
     public FakeEmbeddingGenerator Embeddings { get; } = embed ?? new FakeEmbeddingGenerator();
     public List<(Uri BaseUrl, string Model)> Targets { get; } = [];
+    public List<string> ClaudeApiModels { get; } = [];
 
     public Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default) => Task.FromResult<IChatClient>(Chat);
 
@@ -19,6 +20,12 @@ public sealed class FakeLlmClientFactory(FakeChatClient? chat = null, FakeEmbedd
     public IChatClient CreateChatClient(Uri baseUrl, string model)
     {
         Targets.Add((baseUrl, model));
+        return Chat;
+    }
+
+    public IChatClient CreateClaudeApiChatClient(string apiKey, string model)
+    {
+        ClaudeApiModels.Add(model);
         return Chat;
     }
 

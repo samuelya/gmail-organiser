@@ -1,3 +1,4 @@
+using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Settings;
 using Microsoft.Extensions.AI;
@@ -12,7 +13,8 @@ namespace GmailOrganiser.Llm;
 /// </summary>
 public interface ILlmClientFactory
 {
-    /// <exception cref="LlmNotConfiguredException">No chat model is chosen.</exception>
+    /// <summary>A chat client for the provider chosen in Settings (Ollama or the Claude API).</summary>
+    /// <exception cref="LlmNotConfiguredException">No chat model is chosen, or no Claude API key is set.</exception>
     Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default);
 
     /// <exception cref="LlmNotConfiguredException">No embedding model is chosen.</exception>
@@ -21,6 +23,9 @@ public interface ILlmClientFactory
     /// <summary>A client for an explicit server and model, e.g. to test them before saving.</summary>
     IChatClient CreateChatClient(Uri baseUrl, string model);
 
+    /// <summary>A Claude API client for an explicit key and model, e.g. to test them before saving.</summary>
+    IChatClient CreateClaudeApiChatClient(string apiKey, string model);
+
     /// <summary>A generator for an explicit server and model, e.g. to test them before saving.</summary>
     IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model);
 }
@@ -28,16 +33,35 @@ public interface ILlmClientFactory
 public sealed class LlmClientFactory(
     IHttpClientFactory httpClients,
     ISettingsStore settings,
+    ClaudeApiKeyService claudeApiKey,
     IOptions<LlmOptions> options) : ILlmClientFactory
 {
+    public const string NoClaudeApiKeyMessage = "No Claude API key is set. Add one in Settings.";
+
     /// <summary>Vector size of the <c>LLM_FAKE=true</c> embeddings.</summary>
     public const int FakeEmbeddingDimension = 768;
 
     public async Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default)
     {
         var s = await settings.GetAsync(ct);
-        var model = s.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
-        return UseFake ? CreateFakeChatClient() : CreateChatClient(OllamaHttp.Parse(s.OllamaBaseUrl), model);
+        var model = string.IsNullOrWhiteSpace(s.ActiveChatModel) ? throw new LlmNotConfiguredException(ModelKinds.Chat) : s.ActiveChatModel;
+        if (UseFake)
+        {
+            return CreateFakeChatClient();
+        }
+
+        if (s.LlmProvider == LlmProvider.ClaudeApi)
+        {
+            var apiKey = await claudeApiKey.GetAsync(s, ct);
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                throw new LlmNotConfiguredException(ModelKinds.Chat, NoClaudeApiKeyMessage);
+            }
+
+            return CreateClaudeApiChatClient(apiKey, model);
+        }
+
+        return CreateChatClient(OllamaHttp.Parse(s.OllamaBaseUrl), model);
     }
 
     public async Task<IEmbeddingGenerator<string, Embedding<float>>> CreateEmbeddingGeneratorAsync(CancellationToken ct = default)
@@ -49,6 +73,9 @@ public sealed class LlmClientFactory(
 
     public IChatClient CreateChatClient(Uri baseUrl, string model) =>
         UseFake ? CreateFakeChatClient() : CreateOllamaChatClient(baseUrl, model);
+
+    public IChatClient CreateClaudeApiChatClient(string apiKey, string model) =>
+        UseFake ? CreateFakeChatClient() : ClaudeApiChat.Create(httpClients, options.Value, apiKey, model);
 
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) =>
         UseFake ? CreateFakeEmbeddingGenerator() : Create(baseUrl, model);
@@ -74,9 +101,12 @@ public sealed class LlmClientFactory(
         new(OllamaHttp.Create(httpClients, baseUrl, options.Value.ModelTimeout), model);
 }
 
-/// <summary>No model of <see cref="Kind"/> is chosen in Settings; endpoints map it to 409 ProblemDetails.</summary>
-public sealed class LlmNotConfiguredException(string kind)
-    : InvalidOperationException($"No {kind} model is selected. Choose one in Settings.")
+/// <summary>
+/// No model of <see cref="Kind"/> is chosen in Settings, or another setting it needs is missing (<paramref name="message"/>);
+/// endpoints map it to 409 ProblemDetails.
+/// </summary>
+public sealed class LlmNotConfiguredException(string kind, string? message = null)
+    : InvalidOperationException(message ?? $"No {kind} model is selected. Choose one in Settings.")
 {
     public string Kind { get; } = kind;
 }

@@ -4,7 +4,7 @@ using Microsoft.Extensions.AI;
 namespace GmailOrganiser.Llm;
 
 /// <summary>
-/// HTTP timeouts for Ollama, bound from the <c>Llm</c> configuration section; <c>LLM_FAKE</c> (from <c>.env</c>)
+/// HTTP timeouts for Ollama and the Claude API, bound from the <c>Llm</c> configuration section; <c>LLM_FAKE</c> (from <c>.env</c>)
 /// overrides <see cref="UseFake"/>.
 /// </summary>
 public sealed class LlmOptions
@@ -22,8 +22,31 @@ public sealed class LlmOptions
     [Range(1, 3600, ErrorMessage = "Llm:ModelTimeoutSeconds (Llm__ModelTimeoutSeconds) must be a whole number of seconds from 1 to 3600.")]
     public int ModelTimeoutSeconds { get; set; } = 180;
 
+    /// <summary>Bounds one Claude API chat call, including its retries.</summary>
+    [Range(1, 3600, ErrorMessage = "Llm:ClaudeApiTimeoutSeconds (Llm__ClaudeApiTimeoutSeconds) must be a whole number of seconds from 1 to 3600.")]
+    public int ClaudeApiTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>Retries of a Claude API call answered 429, 529 or another 5xx.</summary>
+    [Range(0, 10, ErrorMessage = "Llm:ClaudeApiMaxRetries (Llm__ClaudeApiMaxRetries) must be a whole number from 0 to 10.")]
+    public int ClaudeApiMaxRetries { get; set; } = 3;
+
+    /// <summary>
+    /// Anthropic's required <c>max_tokens</c>, sent when the call sets no <see cref="ChatOptions.MaxOutputTokens"/>. At most
+    /// <see cref="MaxNonStreamingOutputTokens"/>: calls are non-streaming, and the SDK refuses more for some models.
+    /// </summary>
+    [Range(1, MaxNonStreamingOutputTokens, ErrorMessage = "Llm:ClaudeApiMaxOutputTokens (Llm__ClaudeApiMaxOutputTokens) must be a whole number from 1 to 8192.")]
+    public int ClaudeApiMaxOutputTokens { get; set; } = 8192;
+
+    /// <summary>The SDK's lowest non-streaming <c>max_tokens</c> limit (<c>ClientOptions.TimeoutFromMaxTokens</c>).</summary>
+    public const int MaxNonStreamingOutputTokens = 8192;
+
+    /// <summary>Claude API base URL; empty means the SDK's production URL. Never read from <c>ANTHROPIC_BASE_URL</c>.</summary>
+    [Url(ErrorMessage = "Llm:ClaudeApiBaseUrl (Llm__ClaudeApiBaseUrl) must be an http or https URL.")]
+    public string? ClaudeApiBaseUrl { get; set; }
+
     public TimeSpan CatalogTimeout => TimeSpan.FromSeconds(Math.Max(1, CatalogTimeoutSeconds));
     public TimeSpan ModelTimeout => TimeSpan.FromSeconds(ModelTimeoutSeconds);
+    public TimeSpan ClaudeApiTimeout => TimeSpan.FromSeconds(ClaudeApiTimeoutSeconds);
 }
 
 /// <summary>Request fields every Ollama chat call carries, applied once in <see cref="LlmClientFactory"/>.</summary>

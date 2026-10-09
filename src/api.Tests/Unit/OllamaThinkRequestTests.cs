@@ -31,8 +31,11 @@ public sealed class OllamaThinkRequestTests
             done = true,
         });
 
-    private static LlmClientFactory Factory(StubOllamaHandler stub) =>
-        new(new StubHttpClientFactory(stub), new InMemorySettingsStore(), Options.Create(new LlmOptions()));
+    private static LlmClientFactory Factory(StubOllamaHandler stub)
+    {
+        var settings = new InMemorySettingsStore();
+        return new(new StubHttpClientFactory(stub), settings, TestClaudeApiKeys.For(settings), Options.Create(new LlmOptions()));
+    }
 
     private static async Task<JsonElement> SendAsync(ChatOptions options)
     {

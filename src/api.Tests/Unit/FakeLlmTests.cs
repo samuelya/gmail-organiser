@@ -133,7 +133,7 @@ public sealed class FakeLlmTests
             EmbeddingModel = FakeOllamaCatalog.EmbeddingModel,
         };
         var handler = new StubOllamaHandler();
-        var factory = new LlmClientFactory(new StubHttpClientFactory(handler), settings, Options.Create(new LlmOptions { UseFake = true }));
+        var factory = new LlmClientFactory(new StubHttpClientFactory(handler), settings, TestClaudeApiKeys.For(settings), Options.Create(new LlmOptions { UseFake = true }));
 
         using var chat = await factory.CreateChatClientAsync(Ct);
         using var embed = await factory.CreateEmbeddingGeneratorAsync(Ct);
@@ -150,8 +150,9 @@ public sealed class FakeLlmTests
     [InlineData(false, "synthetic-embed-model")]
     public void Embedding_generator_reports_the_model_that_makes_the_vectors(bool fake, string expected)
     {
+        var settings = new InMemorySettingsStore();
         var factory = new LlmClientFactory(
-            new StubHttpClientFactory(new StubOllamaHandler()), new InMemorySettingsStore(), Options.Create(new LlmOptions { UseFake = fake }));
+            new StubHttpClientFactory(new StubOllamaHandler()), settings, TestClaudeApiKeys.For(settings), Options.Create(new LlmOptions { UseFake = fake }));
 
         using var embed = factory.CreateEmbeddingGenerator(new Uri("http://unused.example.com:11434"), "synthetic-embed-model");
 
