@@ -1,5 +1,6 @@
 <div class="flex max-w-2xl flex-col gap-4">
   <form
+    id="llm-provider-form"
     [formGroup]="providerForm"
     (ngSubmit)="saveProvider()"
     class="flex flex-col gap-2"
@@ -20,19 +21,6 @@
         }
       </mat-radio-group>
     </fieldset>
-    @if (providerError(); as message) {
-      <p class="help warn" role="alert" data-testid="llm-provider-error">{{ message }}</p>
-    }
-    <div>
-      <button
-        mat-flat-button
-        type="submit"
-        [disabled]="provider.disabled || providerSaving() || selected() === savedProvider()"
-        data-testid="save-llm-provider"
-      >
-        Save
-      </button>
-    </div>
   </form>
 
   @if (selected() === 'claude_api') {
@@ -133,7 +121,84 @@
         </p>
       }
     </fieldset>
+
+    <div class="flex flex-col gap-2" data-testid="claude-api-model">
+      @if (modelsLoading()) {
+        <mat-progress-bar
+          mode="indeterminate"
+          aria-label="Loading the Claude models"
+          data-testid="claude-api-models-loading"
+        />
+      }
+      <div class="flex flex-wrap items-start gap-2">
+        <mat-form-field class="min-w-0 flex-1 basis-72">
+          <mat-label>Claude model</mat-label>
+          <mat-select [formControl]="model" data-testid="claude-api-model-select">
+            @for (option of modelOptions(); track option.value) {
+              <mat-option [value]="option.value">{{ option.label }}</mat-option>
+            }
+          </mat-select>
+          @if (!keySet()) {
+            <mat-hint data-testid="claude-api-model-no-key">Save an API key first.</mat-hint>
+          }
+        </mat-form-field>
+        <div class="flex min-h-14 items-center gap-2">
+          <button
+            mat-icon-button
+            type="button"
+            (click)="refreshModels()"
+            [disabled]="!keySet() || modelsLoading()"
+            aria-label="Refresh the Claude models"
+            matTooltip="Refresh the Claude models"
+            data-testid="refresh-claude-api-models"
+          >
+            <mat-icon aria-hidden="true">refresh</mat-icon>
+          </button>
+          <button
+            mat-stroked-button
+            type="button"
+            (click)="testModel()"
+            [disabled]="!modelValue() || modelTest()?.state === 'running'"
+            data-testid="test-claude-api-model"
+          >
+            Test
+          </button>
+        </div>
+      </div>
+      @if (models()?.error; as message) {
+        <p class="help warn" role="alert" data-testid="claude-api-models-error">{{ message }}</p>
+      }
+      @if (modelTest(); as test) {
+        @if (test.state === 'running') {
+          <p class="help" role="status" data-testid="claude-api-model-testing">Testing…</p>
+        } @else if (test.state === 'ok') {
+          <p class="help flex items-center gap-1" role="status" data-testid="claude-api-model-ok">
+            <mat-icon aria-hidden="true">check_circle</mat-icon>
+            OK in {{ test.elapsedMs }} ms
+          </p>
+        } @else {
+          <p class="help warn" role="alert" data-testid="claude-api-model-error">
+            {{ test.message }}
+          </p>
+        }
+      }
+    </div>
   }
+
+  @if (providerError(); as message) {
+    <p class="help warn" role="alert" data-testid="llm-provider-error">{{ message }}</p>
+  }
+  <div>
+    <button
+      mat-flat-button
+      type="submit"
+      form="llm-provider-form"
+      [disabled]="provider.disabled || providerSaving() || !dirty()"
+      data-testid="save-llm-provider"
+    >
+      Save
+    </button>
+  </div>
 
   @if (incomplete()) {
     <p class="help warn" role="alert" data-testid="llm-provider-incomplete">

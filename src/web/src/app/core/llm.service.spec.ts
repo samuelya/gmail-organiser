@@ -63,6 +63,21 @@ describe('LlmService', () => {
     req.flush(null, { status: 204, statusText: 'No Content' });
   });
 
+  it('lists the Claude API models', () => {
+    service.getClaudeApiModels().subscribe();
+    expect(backend.expectOne('/api/llm/claude-api/models').request.method).toBe('GET');
+  });
+
+  it('posts a Claude API model test with a quiet 409', () => {
+    const sub = service.testClaudeApiModel('test-model-a').subscribe();
+    const req = backend.expectOne('/api/llm/claude-api/test-model');
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual({ model: 'test-model-a' });
+    expect(req.request.context.get(QUIET_STATUSES)).toEqual([409]);
+    sub.unsubscribe();
+    expect(req.cancelled).toBe(true);
+  });
+
   it('formats sizes and labels', () => {
     expect(formatBytes(4_700_000_000)).toBe('4.7 GB');
     expect(formatBytes(274_000_000)).toBe('274 MB');

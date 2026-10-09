@@ -1,6 +1,7 @@
 import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
+import { ClaudeApiModels } from '../settings/llm-provider.models';
 import { QUIET_STATUSES } from './error.interceptor';
 
 /** `OllamaModelDto`: one model installed on the Ollama server. */
@@ -30,7 +31,7 @@ export interface TestModelResult {
   error: string | null;
 }
 
-/** The Ollama endpoints (`/api/llm`) and the Claude API key. */
+/** The Ollama endpoints (`/api/llm`) and the Claude API key, models and model test. */
 @Injectable({ providedIn: 'root' })
 export class LlmService {
   private readonly http = inject(HttpClient);
@@ -67,6 +68,23 @@ export class LlmService {
 
   clearClaudeApiKey(): Observable<void> {
     return this.http.delete<void>('/api/llm/claude-api/key');
+  }
+
+  /** The account's Claude models, newest first; a failed listing is `reachable: false` with `error`. */
+  getClaudeApiModels(): Observable<ClaudeApiModels> {
+    return this.http.get<ClaudeApiModels>('/api/llm/claude-api/models');
+  }
+
+  /**
+   * Runs a tiny prompt on a Claude model; unsubscribing aborts the request. No saved key is a 409,
+   * shown next to the Test button rather than by the error interceptor.
+   */
+  testClaudeApiModel(model: string): Observable<TestModelResult> {
+    return this.http.post<TestModelResult>(
+      '/api/llm/claude-api/test-model',
+      { model },
+      { context: new HttpContext().set(QUIET_STATUSES, [409]) },
+    );
   }
 }
 
