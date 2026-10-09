@@ -24,14 +24,22 @@ public static class ClaudeApiChat
     /// The client disposes its <see cref="HttpClient"/>, never the pooled handler behind it. Base URL, key and auth token
     /// are set explicitly, so no <c>ANTHROPIC_*</c> environment variable or profile reaches the client.
     /// </summary>
-    public static IChatClient Create(IHttpClientFactory httpClients, LlmOptions options, string apiKey, string model)
+    public static IChatClient Create(IHttpClientFactory httpClients, LlmOptions options, string apiKey, string model) =>
+        Create(httpClients, ClaudeApiHttp.ClientName, options, apiKey, model, options.ClaudeApiTimeout);
+
+    /// <summary>
+    /// The chat client over the named client <paramref name="clientName"/>, e.g. <see cref="ClaudeApiHttp.TestClientName"/>
+    /// with <see cref="ClaudeApiHttp.TestTimeout"/> for the model test; <paramref name="timeout"/> bounds one call.
+    /// </summary>
+    public static IChatClient Create(
+        IHttpClientFactory httpClients, string clientName, LlmOptions options, string apiKey, string model, TimeSpan timeout)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
-        var anthropic = CreateAnthropic(httpClients, ClaudeApiHttp.ClientName, options, apiKey, options.ClaudeApiTimeout);
+        var anthropic = CreateAnthropic(httpClients, clientName, options, apiKey, timeout);
         return new ChatClientBuilder(anthropic.AsIChatClient(model, options.ClaudeApiMaxOutputTokens))
             .ConfigureOptions(PrepareOptions)
-            .Use(inner => new ClaudeApiErrorClient(inner, anthropic, options.ClaudeApiTimeout))
+            .Use(inner => new ClaudeApiErrorClient(inner, anthropic, timeout))
             .Build();
     }
 
@@ -90,6 +98,15 @@ public static class ClaudeApiHttp
     /// 429/529 is shown at once ("try again later") instead of timing out mid-wait.
     /// </summary>
     public const string CatalogClientName = "claude-api-catalog";
+
+    /// <summary>
+    /// The Settings model test: header filter only, so a 429/529/5xx is one attempt and shown at once instead of after
+    /// the chat client's retry waits.
+    /// </summary>
+    public const string TestClientName = "claude-api-test";
+
+    /// <summary>Bounds one model test.</summary>
+    public static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
 }
 
 /// <summary>

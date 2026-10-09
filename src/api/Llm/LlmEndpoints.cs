@@ -41,6 +41,8 @@ public static class LlmEndpoints
             });
         services.AddHttpClient(ClaudeApiHttp.CatalogClientName)
             .AddHttpMessageHandler(() => new ClaudeApiHeaderFilter());
+        services.AddHttpClient(ClaudeApiHttp.TestClientName)
+            .AddHttpMessageHandler(() => new ClaudeApiHeaderFilter());
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OllamaCatalog>();
         services.AddScoped<IOllamaCatalog>(sp => UseFake(sp)

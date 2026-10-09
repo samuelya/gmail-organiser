@@ -123,7 +123,8 @@ public sealed class LlmModelTesterTests
         var result = await Tester().TestClaudeApiAsync("test-model-a", Ct);
 
         result.Ok.ShouldBeTrue();
-        _factory.ClaudeApiModels.ShouldBe(["test-model-a"]);
+        _factory.ClaudeApiTestModels.ShouldBe(["test-model-a"]);
+        _factory.ClaudeApiModels.ShouldBeEmpty();
         _chat.Requests.ShouldHaveSingleItem().Options!.ResponseFormat.ShouldBe(LlmModelTester.ClaudeApiFormat);
         _chat.Disposed.ShouldBeTrue();
     }
@@ -132,19 +133,8 @@ public sealed class LlmModelTesterTests
     public async Task Claude_api_test_through_the_real_adapter_sends_a_closed_schema_and_passes()
     {
         var api = new FakeAnthropicHandler().Message("""{"ok":true}""");
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Llm:ClaudeApiBaseUrl"] = "https://claude.example.com" })
-            .Build();
-        var collection = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddLlm();
-        collection.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => api);
-        using var services = collection.BuildServiceProvider();
-        var keys = TestClaudeApiKeys.For(_settings);
-        await keys.SetAsync(SyntheticKey, Ct);
-        var options = services.GetRequiredService<IOptions<LlmOptions>>();
-        var factory = new LlmClientFactory(services.GetRequiredService<IHttpClientFactory>(), _settings, keys, options);
-        var tester = new LlmModelTester(factory, keys, options, new FakeTimeProvider(), NullLogger<LlmModelTester>.Instance);
 
-        var result = await tester.TestClaudeApiAsync("test-model-a", Ct);
+        var result = await TestThroughTheRealAdapterAsync(api);
 
         result.Error.ShouldBeNull();
         result.Ok.ShouldBeTrue();
@@ -154,12 +144,47 @@ public sealed class LlmModelTesterTests
         format.GetProperty("schema").GetProperty("additionalProperties").GetBoolean().ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData(429, "rate_limit_error", "rate limited or overloaded (HTTP 429)")]
+    [InlineData(529, "overloaded_error", "rate limited or overloaded (HTTP 529)")]
+    [InlineData(500, "api_error", "answered HTTP 500 (ApiError)")]
+    public async Task Claude_api_test_reports_a_rate_limit_or_server_error_after_one_attempt(int status, string type, string wording)
+    {
+        var api = new FakeAnthropicHandler().Error((System.Net.HttpStatusCode)status, type, ("retry-after", "30"));
+        var started = DateTime.UtcNow;
+
+        var result = await TestThroughTheRealAdapterAsync(api);
+
+        result.Ok.ShouldBeFalse();
+        result.Error.ShouldNotBeNull().ShouldContain(wording);
+        result.Error.ShouldNotContain(SyntheticKey);
+        api.Requests.Count.ShouldBe(1);
+        (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>Runs the Claude API test through the real factory and adapter; only the chat client's named client is the fake API.</summary>
+    private async Task<TestModelResultDto> TestThroughTheRealAdapterAsync(FakeAnthropicHandler api)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Llm:ClaudeApiBaseUrl"] = "https://claude.example.com" })
+            .Build();
+        var collection = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddLlm();
+        collection.AddHttpClient(ClaudeApiHttp.TestClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+        using var services = collection.BuildServiceProvider();
+        var keys = TestClaudeApiKeys.For(_settings);
+        await keys.SetAsync(SyntheticKey, Ct);
+        var options = services.GetRequiredService<IOptions<LlmOptions>>();
+        var factory = new LlmClientFactory(services.GetRequiredService<IHttpClientFactory>(), _settings, keys, options);
+        var tester = new LlmModelTester(factory, keys, options, new FakeTimeProvider(), NullLogger<LlmModelTester>.Instance);
+        return await tester.TestClaudeApiAsync("test-model-a", Ct);
+    }
+
     [Fact]
     public async Task Claude_api_without_a_key_is_not_configured()
     {
         await Should.ThrowAsync<LlmNotConfiguredException>(() => Tester().TestClaudeApiAsync("test-model-a", Ct));
 
-        _factory.ClaudeApiModels.ShouldBeEmpty();
+        _factory.ClaudeApiTestModels.ShouldBeEmpty();
     }
 
     [Fact]

@@ -40,10 +40,16 @@ public sealed class ClaudeApiChatTests : IDisposable
         }
 
         collection.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
+        collection.AddHttpClient(ClaudeApiHttp.TestClientName).ConfigurePrimaryHttpMessageHandler(() => handler ?? api);
         services = collection.BuildServiceProvider();
         var options = services.GetRequiredService<IOptions<LlmOptions>>().Value;
         return ClaudeApiChat.Create(services.GetRequiredService<IHttpClientFactory>(), options, ApiKey, Model);
     }
+
+    /// <summary>The model test's client over the same services as the last <see cref="Create"/>.</summary>
+    private IChatClient CreateTest(TimeSpan? timeout = null) => ClaudeApiChat.Create(
+        services!.GetRequiredService<IHttpClientFactory>(), ClaudeApiHttp.TestClientName,
+        services!.GetRequiredService<IOptions<LlmOptions>>().Value, ApiKey, Model, timeout ?? ClaudeApiHttp.TestTimeout);
 
     private static List<ChatMessage> Messages() =>
         [new(ChatRole.System, "Synthetic system prompt"), new(ChatRole.User, "Synthetic email from shop@example.com")];
@@ -217,6 +223,36 @@ public sealed class ClaudeApiChatTests : IDisposable
         ex.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
         ex.Message.ShouldContain("rate limited or overloaded");
         api.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task The_model_test_client_sends_one_attempt_while_the_chat_client_still_retries()
+    {
+        api.Error(HttpStatusCode.TooManyRequests, "rate_limit_error", ("retry-after", "30"));
+        using var chat = Create(time: new FakeTimeProvider());
+        using var test = CreateTest();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => test.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        ex.Message.ShouldBe("The Claude API is rate limited or overloaded (HTTP 429); try again later.");
+        api.Requests.Count.ShouldBe(1);
+
+        api.Error(HttpStatusCode.TooManyRequests, "rate_limit_error", ("retry-after", "0")).Message("ok");
+        (await chat.GetResponseAsync(Messages(), cancellationToken: Ct)).Text.ShouldBe("ok");
+        api.Requests.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task The_model_test_client_times_out_with_its_own_timeout()
+    {
+        ClaudeApiHttp.TestTimeout.ShouldBe(TimeSpan.FromSeconds(15));
+        using var chat = Create(handler: new HangingHandler());
+        using var test = CreateTest(TimeSpan.FromSeconds(1));
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => test.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldBe("No answer from the Claude API within 1 s.");
     }
 
     [Fact]

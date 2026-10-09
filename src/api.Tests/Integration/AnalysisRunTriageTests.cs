@@ -284,6 +284,8 @@ public sealed class AnalysisRunTriageTests : IClassFixture<ApiFactory>, IAsyncLi
 
         public IChatClient CreateClaudeApiChatClient(string apiKey, string model) => inner.CreateClaudeApiChatClient(apiKey, model);
 
+        public IChatClient CreateClaudeApiTestChatClient(string apiKey, string model) => inner.CreateClaudeApiTestChatClient(apiKey, model);
+
         public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) =>
             inner.CreateEmbeddingGenerator(baseUrl, model);
     }

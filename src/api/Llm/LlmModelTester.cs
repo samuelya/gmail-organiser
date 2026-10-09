@@ -48,7 +48,7 @@ public sealed class LlmModelTester(
         return await MeasureAsync(
             async () =>
             {
-                using var client = factory.CreateClaudeApiChatClient(apiKey, model);
+                using var client = factory.CreateClaudeApiTestChatClient(apiKey, model);
                 return await AskForJsonAsync(client, ClaudeApiFormat, ct);
             },
             ex =>

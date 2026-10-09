@@ -36,6 +36,12 @@ public interface ILlmClientFactory
     /// <summary>A Claude API client for an explicit key and model, e.g. to test them before saving.</summary>
     IChatClient CreateClaudeApiChatClient(string apiKey, string model);
 
+    /// <summary>
+    /// A Claude API client for the Settings model test: one attempt (no retries) within <see cref="ClaudeApiHttp.TestTimeout"/>,
+    /// so a rate limit or overload is reported at once.
+    /// </summary>
+    IChatClient CreateClaudeApiTestChatClient(string apiKey, string model);
+
     /// <summary>A generator for an explicit server and model, e.g. to test them before saving.</summary>
     IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model);
 }
@@ -88,6 +94,10 @@ public sealed class LlmClientFactory(
 
     public IChatClient CreateClaudeApiChatClient(string apiKey, string model) =>
         UseFake ? CreateFakeChatClient() : ClaudeApiChat.Create(httpClients, options.Value, apiKey, model);
+
+    public IChatClient CreateClaudeApiTestChatClient(string apiKey, string model) => UseFake
+        ? CreateFakeChatClient()
+        : ClaudeApiChat.Create(httpClients, ClaudeApiHttp.TestClientName, options.Value, apiKey, model, ClaudeApiHttp.TestTimeout);
 
     public IEmbeddingGenerator<string, Embedding<float>> CreateEmbeddingGenerator(Uri baseUrl, string model) =>
         UseFake ? CreateFakeEmbeddingGenerator() : Create(baseUrl, model);

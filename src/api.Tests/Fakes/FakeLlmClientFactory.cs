@@ -19,6 +19,8 @@ public sealed class FakeLlmClientFactory(
     public List<(Uri BaseUrl, string Model)> Targets { get; } = [];
     public List<string> ClaudeApiModels { get; } = [];
 
+    public List<string> ClaudeApiTestModels { get; } = [];
+
     /// <summary>A real factory (without <c>LLM_FAKE</c>) whose start check reads <paramref name="settings"/>.</summary>
     public static LlmClientFactory Checks(ISettingsStore settings) => new(
         new StubHttpClientFactory(new StubOllamaHandler()), settings, TestClaudeApiKeys.For(settings), Options.Create(new LlmOptions()));
@@ -45,6 +47,12 @@ public sealed class FakeLlmClientFactory(
     public IChatClient CreateClaudeApiChatClient(string apiKey, string model)
     {
         ClaudeApiModels.Add(model);
+        return Chat;
+    }
+
+    public IChatClient CreateClaudeApiTestChatClient(string apiKey, string model)
+    {
+        ClaudeApiTestModels.Add(model);
         return Chat;
     }
 
