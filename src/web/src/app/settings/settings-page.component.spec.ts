@@ -17,7 +17,6 @@ import {
 import { connectErrorMessage } from '../setup/steps/connect-gmail-step.component';
 import { SettingsPage } from './settings-page.component';
 import { AttachmentSettings, ClaudeSettings, SettingsDto } from './settings.models';
-
 const EMAIL = 'user@example.com';
 const URL_SAVED = 'http://ollama.example.com:11434';
 const URL_NEW = 'http://ollama-2.example.com:11434';
@@ -52,6 +51,10 @@ const settings = (over: Partial<SettingsDto> = {}): SettingsDto => ({
   taxonomyMaxSenders: 80,
   taxonomyMaxLabels: 25,
   analysisPromptTemplate: null,
+  llmProvider: 'ollama',
+  claudeApiModel: null,
+  claudeApiKeySet: false,
+  claudeApiKeyHint: null,
   ...over,
 });
 
@@ -187,6 +190,7 @@ describe('SettingsPage', () => {
     expect(headings).toEqual([
       'Google',
       'Gmail connection',
+      'Analysis model provider',
       'Ollama',
       'Fetch',
       'Labels',

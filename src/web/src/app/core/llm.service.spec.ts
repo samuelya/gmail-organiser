@@ -43,6 +43,23 @@ describe('LlmService', () => {
     expect(req.cancelled).toBe(true);
   });
 
+  it('puts the Claude API key and returns nothing', () => {
+    let done = false;
+    service.setClaudeApiKey('test-key-0000000000000000abcd').subscribe(() => (done = true));
+    const req = backend.expectOne('/api/llm/claude-api/key');
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({ apiKey: 'test-key-0000000000000000abcd' });
+    req.flush(null, { status: 204, statusText: 'No Content' });
+    expect(done).toBe(true);
+  });
+
+  it('deletes the Claude API key', () => {
+    service.clearClaudeApiKey().subscribe();
+    const req = backend.expectOne('/api/llm/claude-api/key');
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null, { status: 204, statusText: 'No Content' });
+  });
+
   it('formats sizes and labels', () => {
     expect(formatBytes(4_700_000_000)).toBe('4.7 GB');
     expect(formatBytes(274_000_000)).toBe('274 MB');
