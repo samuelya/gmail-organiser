@@ -1,7 +1,12 @@
 # Ollama setup
 
-Gmail Organiser uses [Ollama](https://ollama.com/) for every LLM call. Ollama runs on your **host** machine, not in
-Docker, so it can use your GPU. Nothing leaves your machine.
+Gmail Organiser uses [Ollama](https://ollama.com/) for every LLM call by default. Ollama runs on your **host** machine,
+not in Docker, so it can use your GPU. Nothing leaves your machine.
+
+With the **Claude API provider** (Settings → LLM provider) the analysis chat calls go to Anthropic instead, but Ollama
+is still needed for the embedding model (memory similarity) and for the optional triage and vision models. With the
+Claude API, the email content sent for analysis (sender, subject, snippet and body excerpt up to the body limit) leaves
+this machine and is processed by Anthropic under your API account.
 
 ## 1. Install Ollama
 

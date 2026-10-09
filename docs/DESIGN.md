@@ -4,7 +4,7 @@
 
 ## 1. Goal
 
-A self-hosted, single-user tool that uses a **local LLM (via Ollama)** to organise a large Gmail mailbox, with a human approving every change:
+A self-hosted, single-user tool that uses a **local LLM (via Ollama)** by default to organise a large Gmail mailbox, with a human approving every change. The **Claude API** (with the owner's own API key) is an opt-in alternative for the chat model:
 
 1. Suggest labels for emails in batches → user approves → labels applied → next batch.
 2. Turn approved decisions into **Gmail filters** so new mail is organised automatically.
@@ -28,7 +28,7 @@ Will be published as a **public GitHub project**: no personal data, no hardcoded
 | Backend | .NET 10 (LTS) ASP.NET Core Web API |
 | Frontend | Angular 22 + Angular Material + Tailwind CSS, original code (admin-style layout inspired by common dashboard templates; no third-party template code) |
 | Database | PostgreSQL 17 + `pgvector` (relational data + similarity memory) |
-| LLM | Ollama, **running on the host** (not in Docker) so Apple Silicon GPU/MLX models work. URL + chat model + embedding model selectable in Settings |
+| LLM | Ollama, **running on the host** (not in Docker) so Apple Silicon GPU/MLX models work. URL + chat model + embedding model selectable in Settings. **Provider choice** for the chat model: Ollama (default) or the Claude API with the owner's own API key (encrypted at rest, write-only in the UI) |
 | Hosting | `docker compose`: `web`, `api`, `db`. Only `web` is published, on `127.0.0.1:${WEB_PORT}` (default 5180); `api` and `db` stay on the compose network. A dev override publishes `db` on `127.0.0.1` for the IDE-run API |
 | App login | None (localhost only). "Sign in with Google" only connects Gmail |
 | Accounts | One Gmail account per install |
@@ -36,7 +36,7 @@ Will be published as a **public GitHub project**: no personal data, no hardcoded
 | Time-based archiving | Stays in **Google Apps Script** (runs in Google's cloud even when the PC is off). Tool ships a generalised, configurable version of the script and can create filters that feed it |
 | Scope | Inbox first, then All Mail including already-labelled mail |
 | Volume | Designed for 100k+ messages: resumable background jobs, progress tracking |
-| Claude integration | Optional second opinion. Local LLM does everything; user can send any item to Claude for review. Runs Claude Code headlessly in the `api` container with the user's own `setup-token` (subscription, one-click); Claude Desktop via MCP as manual fallback. No API key |
+| Claude integration | Optional second opinion. Local LLM does everything; user can send any item to Claude for review. Runs Claude Code headlessly in the `api` container with the user's own `setup-token` (subscription, one-click); Claude Desktop via MCP as manual fallback. No API key for the review (the Claude API provider is a separate LLM setting) |
 
 ## 3. Requirement review — changes / additions I recommend
 
@@ -73,7 +73,7 @@ Will be published as a **public GitHub project**: no personal data, no hardcoded
 - **Gmail** – OAuth, sync (full + incremental via `history.list`), label/filter CRUD, batch modify, trash, unsubscribe. Rate-limit aware (Gmail quota ≈ 250 units/user/s; `messages.get` = 5 units → use batch requests + backoff).
 - **Fetch** – background metadata fetch in chunks (mailbox, per sender, incremental); bodies fetched **only when an email is analysed**.
 - **Senders** – per-sender stats and analysis progress; signals for clean-up (volume, read rate, has-unsubscribe, category).
-- **Llm** – Ollama client (via `Microsoft.Extensions.AI` / OllamaSharp), structured JSON output with schema validation, prompt templates stored as editable files, model list from Ollama `/api/tags`.
+- **Llm** – Ollama client (via `Microsoft.Extensions.AI` / OllamaSharp), structured JSON output with schema validation, prompt templates stored as editable files, model list from Ollama `/api/tags`. `ILlmClientFactory` picks the Ollama or the Anthropic chat client from the `LlmProvider` setting; embeddings, triage and vision always stay on Ollama.
 - **Memory** – stores approved/rejected decisions + embeddings; retrieves similar past decisions to include in prompts (few-shot from the user's own choices).
 - **Analysis** – user-started runs (count + scope), run queue, per-email status tracking.
 - **Review** – approval workflow, apply to rest of sender, apply + undo.
@@ -109,6 +109,7 @@ Every fetched email has an **analysis status**:
 - Runs are queued and processed one at a time so the local LLM is never overloaded. A run can be cancelled; finished emails keep their results.
 - An email that has been analysed is **never re-analysed automatically**. A **Re-analyse** action (on selected emails or a sender) resets them, e.g. after switching model or rejecting a suggestion.
 - For efficiency, emails from the same sender in one run are sent to the LLM together (several per prompt), but each email gets **its own** suggestion and status.
+- Analysis calls go to the chosen provider (Ollama or the Claude API); token usage per run is recorded for both.
 
 **LLM input:** sender info, subject/snippet/cleaned body (truncated), current label tree, and similar past decisions from memory.
 **LLM output (JSON per email):** `topicLabel` (the sender organisation, e.g. `Finance/<Bank>`), `documentTypeLabel` (optional second label under the document-type parent), `isNewLabel`, `needsAction` (bool), `toBeDeleted` (bool), `unsubscribeSuggested`, `confidence`, `reason`, plus a sender-level `filterCriteria` suggestion.
@@ -149,7 +150,7 @@ For the already-labelled phase, suggestions are different: *merge labels*, *move
 - The portal's Settings page generates the config block for copy-paste; install steps in the docs. When the portal is running, its incremental fetch also detects the removed `Action/ToDo` label and archives immediately.
 
 ### 6.7 Claude review (optional)
-The local LLM handles everything by default. For any item the user can either **accept the local suggestion** or **Send to Claude** for a second opinion, using their own Claude subscription. Everything runs locally; nothing is hosted.
+The local LLM handles everything by default. For any item the user can either **accept the local suggestion** or **Send to Claude** for a second opinion, using their own Claude subscription. For the review feature and with the default Ollama provider everything runs locally; nothing is hosted. The Claude API provider (§2, LLM row) is a separate setting, not this review: with it, the email content sent for analysis (sender, subject, snippet and body excerpt up to the body limit) leaves this machine and is processed by Anthropic under your API account.
 
 **Reviewer modes** (chosen in Settings; feature is off until one is configured)
 | Mode | How | One-click? |
@@ -217,7 +218,7 @@ Email bodies are **not** stored; they are fetched when an email is analysed and 
 6. **Clean-up** – everything labelled `To-Be-Deleted`, grouped by sender; remove from list, Delete (→ Trash), Unsubscribe.
 7. **Rules** – existing filters with findings, proposed filters, label tree editor.
 8. **History** – action log with undo.
-9. **Settings** – models, fetch chunk size, default analysis count, label names (`Action/ToDo`, `To-Be-Deleted`), document-type parent (empty = off), protection rules, prompt templates, purge data.
+9. **Settings** – LLM provider (Ollama / Claude API: key, model, test, privacy notice), models, fetch chunk size, default analysis count, label names (`Action/ToDo`, `To-Be-Deleted`), document-type parent (empty = off), protection rules, prompt templates, purge data.
 10. **Claude review** (in Settings + review UI) – choose mode (headless Claude Code / Claude Desktop), test connection, Claude Desktop config snippet; "Send to Claude" buttons in review screens; Claude's verdicts shown beside local suggestions.
 
 Light/dark theme, collapsible side nav, responsive.
