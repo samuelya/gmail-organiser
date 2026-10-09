@@ -1,3 +1,4 @@
+using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
@@ -39,6 +40,7 @@ public static class LlmEndpoints
         services.AddHostedService<LlmFakeNotice>();
         services.AddScoped<ILlmClientFactory, LlmClientFactory>();
         services.AddScoped<LlmModelTester>();
+        services.AddScoped<ClaudeApiKeyService>();
         return services;
     }
 
@@ -69,6 +71,7 @@ public static class LlmEndpoints
         var group = endpoints.MapGroup("/api/llm").WithTags("Llm");
         group.MapGet("/models", GetModelsAsync);
         group.MapPost("/test-model", TestModelAsync);
+        endpoints.MapClaudeApiEndpoints();
         return endpoints;
     }
 

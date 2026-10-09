@@ -101,9 +101,9 @@ public static class SettingsValidation
             errors["ollamaBaseUrl"] = ["Must be an absolute http or https URL."];
         }
 
-        CheckModelName(errors, "chatModel", request.ChatModel);
-        CheckModelName(errors, "embeddingModel", request.EmbeddingModel);
-        CheckModelName(errors, "visionModel", request.VisionModel);
+        ModelNameValidation.Check(errors, "chatModel", request.ChatModel);
+        ModelNameValidation.Check(errors, "embeddingModel", request.EmbeddingModel);
+        ModelNameValidation.Check(errors, "visionModel", request.VisionModel);
         if (request.FetchChunkSize is < MinFetchChunkSize or > MaxFetchChunkSize)
         {
             errors["fetchChunkSize"] = [$"Must be between {MinFetchChunkSize} and {MaxFetchChunkSize}."];
@@ -127,14 +127,14 @@ public static class SettingsValidation
             errors["analysisGroupingMode"] = ["Must be off, sender_subject or auto."];
         }
 
-        CheckModelName(errors, "claudeModel", request.ClaudeModel);
+        ModelNameValidation.Check(errors, "claudeModel", request.ClaudeModel);
         CheckRange(errors, "claudeSuggestThreshold", request.ClaudeSuggestThreshold, MinClaudeSuggestThreshold, MaxClaudeSuggestThreshold);
         CheckRange(errors, "claudeRunTimeoutSeconds", request.ClaudeRunTimeoutSeconds, MinClaudeRunTimeoutSeconds, MaxClaudeRunTimeoutSeconds);
         CheckRange(errors, "claudeMaxItemsPerRun", request.ClaudeMaxItemsPerRun, MinClaudeMaxItemsPerRun, MaxClaudeMaxItemsPerRun);
         CheckRange(errors, "claudeMaxTurns", request.ClaudeMaxTurns, MinClaudeMaxTurns, MaxClaudeMaxTurns);
         CheckRange(errors, "rulesStaleFilterDays", request.RulesStaleFilterDays, MinRulesStaleFilterDays, MaxRulesStaleFilterDays);
         CheckRange(errors, "llmNumCtx", request.LlmNumCtx, MinLlmNumCtx, MaxLlmNumCtx);
-        CheckModelName(errors, "triageModel", request.TriageModel);
+        ModelNameValidation.Check(errors, "triageModel", request.TriageModel);
         CheckRange(errors, "triageConfidenceThreshold", request.TriageConfidenceThreshold, MinTriageConfidenceThreshold, MaxTriageConfidenceThreshold);
         CheckRange(errors, "taxonomyMaxSenders", request.TaxonomyMaxSenders, MinTaxonomyMaxSenders, MaxTaxonomyMaxSenders);
         CheckRange(errors, "taxonomyMaxLabels", request.TaxonomyMaxLabels, MinTaxonomyMaxLabels, MaxTaxonomyMaxLabels);
@@ -183,6 +183,7 @@ public static class SettingsValidation
             ValidateAllowlistedDomains(errors, domains);
         }
 
+        Llm.ClaudeApi.ClaudeApiValidation.Check(errors, request);
         ValidateLabelNames(errors, request, current ?? new AppSettings());
         return errors;
     }
@@ -212,9 +213,6 @@ public static class SettingsValidation
         && Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri)
         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
         && !string.IsNullOrEmpty(uri.Host);
-
-    /// <summary>Trims a model name; an empty name clears the setting.</summary>
-    public static string? NormaliseModelName(string value) => value.Trim() is { Length: > 0 } name ? name : null;
 
     /// <summary>Trims a prompt template; a blank template clears the override so the built-in one applies.</summary>
     public static string? NormalisePromptTemplate(string value) => value.Trim() is { Length: > 0 } template ? template : null;
@@ -494,14 +492,6 @@ public static class SettingsValidation
         if (value is { } v && (!double.IsFinite(v) || v < min || v > max))
         {
             errors[field] = [string.Create(CultureInfo.InvariantCulture, $"Must be a number between {min} and {max}.")];
-        }
-    }
-
-    private static void CheckModelName(Dictionary<string, string[]> errors, string field, string? value)
-    {
-        if (value is not null && (value.Trim().Length > MaxModelNameLength || value.Any(char.IsControl)))
-        {
-            errors[field] = [$"Must be at most {MaxModelNameLength} characters, without control characters."];
         }
     }
 }
