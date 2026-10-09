@@ -1,3 +1,4 @@
+using GmailOrganiser.Settings;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace GmailOrganiser.Llm.ClaudeApi;
@@ -43,9 +44,11 @@ public static class ClaudeApiEndpoints
     private static async Task<Results<Ok<TestModelResultDto>, ValidationProblem>> TestModelAsync(
         TestClaudeApiModelRequest request, LlmModelTester tester, CancellationToken ct)
     {
-        if (!LlmEndpoints.IsValidModel(request.Model))
+        var errors = new Dictionary<string, string[]>();
+        ModelNameValidation.CheckRequired(errors, "model", request.Model);
+        if (errors.Count > 0)
         {
-            return TypedResults.ValidationProblem(new Dictionary<string, string[]> { ["model"] = [LlmEndpoints.ModelError] });
+            return TypedResults.ValidationProblem(errors);
         }
 
         return TypedResults.Ok(await tester.TestClaudeApiAsync(request.Model!.Trim(), ct));

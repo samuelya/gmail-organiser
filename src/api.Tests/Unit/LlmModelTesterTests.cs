@@ -1,8 +1,11 @@
 using System.Net.Sockets;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -121,8 +124,34 @@ public sealed class LlmModelTesterTests
 
         result.Ok.ShouldBeTrue();
         _factory.ClaudeApiModels.ShouldBe(["test-model-a"]);
-        _chat.Requests.ShouldHaveSingleItem().Options!.ResponseFormat.ShouldBe(ChatResponseFormat.Json);
+        _chat.Requests.ShouldHaveSingleItem().Options!.ResponseFormat.ShouldBe(LlmModelTester.ClaudeApiFormat);
         _chat.Disposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Claude_api_test_through_the_real_adapter_sends_a_closed_schema_and_passes()
+    {
+        var api = new FakeAnthropicHandler().Message("""{"ok":true}""");
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Llm:ClaudeApiBaseUrl"] = "https://claude.example.com" })
+            .Build();
+        var collection = new ServiceCollection().AddSingleton<IConfiguration>(configuration).AddLlm();
+        collection.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+        using var services = collection.BuildServiceProvider();
+        var keys = TestClaudeApiKeys.For(_settings);
+        await keys.SetAsync(SyntheticKey, Ct);
+        var options = services.GetRequiredService<IOptions<LlmOptions>>();
+        var factory = new LlmClientFactory(services.GetRequiredService<IHttpClientFactory>(), _settings, keys, options);
+        var tester = new LlmModelTester(factory, keys, options, new FakeTimeProvider(), NullLogger<LlmModelTester>.Instance);
+
+        var result = await tester.TestClaudeApiAsync("test-model-a", Ct);
+
+        result.Error.ShouldBeNull();
+        result.Ok.ShouldBeTrue();
+        var format = api.Requests.ShouldHaveSingleItem().Body.GetProperty("output_config").GetProperty("format");
+        format.GetProperty("type").GetString().ShouldBe("json_schema");
+        format.GetProperty("schema").GetProperty("properties").TryGetProperty("ok", out _).ShouldBeTrue();
+        format.GetProperty("schema").GetProperty("additionalProperties").GetBoolean().ShouldBeFalse();
     }
 
     [Fact]

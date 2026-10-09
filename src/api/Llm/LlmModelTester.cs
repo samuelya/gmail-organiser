@@ -16,6 +16,14 @@ public sealed class LlmModelTester(
     public const string ChatPrompt = """Reply with exactly this JSON and nothing else: {"ok":true}""";
     public const string EmbeddingInput = "hello";
 
+    /// <summary>
+    /// The Claude API test asks for <c>{"ok": bool}</c> by schema, as every other Claude call does: without one the adapter
+    /// sends no output format and the reply may come back fenced, which is not a JSON object.
+    /// </summary>
+    public static readonly ChatResponseFormat ClaudeApiFormat = ChatResponseFormat.ForJsonSchema(
+        JsonDocument.Parse("""{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}""").RootElement.Clone(),
+        "model_test");
+
     /// <param name="kind">A validated <see cref="ModelKinds"/> value.</param>
     public Task<TestModelResultDto> TestAsync(string kind, string model, Uri baseUrl, CancellationToken ct) =>
         MeasureAsync(
@@ -41,7 +49,7 @@ public sealed class LlmModelTester(
             async () =>
             {
                 using var client = factory.CreateClaudeApiChatClient(apiKey, model);
-                return await AskForJsonAsync(client, ct);
+                return await AskForJsonAsync(client, ClaudeApiFormat, ct);
             },
             ex =>
             {
@@ -71,14 +79,14 @@ public sealed class LlmModelTester(
     private async Task<string?> TestChatAsync(Uri baseUrl, string model, CancellationToken ct)
     {
         using var client = factory.CreateChatClient(baseUrl, model);
-        return await AskForJsonAsync(client, ct);
+        return await AskForJsonAsync(client, ChatResponseFormat.Json, ct);
     }
 
-    private static async Task<string?> AskForJsonAsync(IChatClient client, CancellationToken ct)
+    private static async Task<string?> AskForJsonAsync(IChatClient client, ChatResponseFormat format, CancellationToken ct)
     {
         var response = await client.GetResponseAsync(
             [new ChatMessage(ChatRole.User, ChatPrompt)],
-            new ChatOptions { ResponseFormat = ChatResponseFormat.Json, Temperature = 0 },
+            new ChatOptions { ResponseFormat = format, Temperature = 0 },
             ct);
         return IsJsonObject(response.Text) ? null : "The model answered, but not with a JSON object.";
     }

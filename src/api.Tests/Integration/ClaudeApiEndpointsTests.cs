@@ -79,7 +79,7 @@ public sealed class ClaudeApiEndpointsTests(ApiFactory factory, PostgresFixture 
         (await response.Content.ReadAsStringAsync(Ct)).ShouldNotContain(SyntheticKey);
         var models = (await response.Content.ReadFromJsonAsync<ClaudeApiModelsDto>(Ct)).ShouldNotBeNull();
         models.Reachable.ShouldBeFalse();
-        models.Error.ShouldBe(ClaudeApiCatalog.RejectedKeyError);
+        models.Error.ShouldBe("The Claude API rejected the API key (HTTP 401). Check the key in Settings.");
     }
 
     [Fact]
@@ -165,7 +165,11 @@ public sealed class ClaudeApiEndpointsTests(ApiFactory factory, PostgresFixture 
             b.UseSetting(LlmOptions.FakeEnvironmentKey, fake ? "true" : "false");
             b.UseSetting("Llm:ClaudeApiMaxRetries", "0");
             b.UseSetting("Llm:ClaudeApiBaseUrl", "https://claude.example.com");
-            b.ConfigureServices(s => s.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => api));
+            b.ConfigureServices(s =>
+            {
+                s.AddHttpClient(ClaudeApiHttp.ClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+                s.AddHttpClient(ClaudeApiHttp.CatalogClientName).ConfigurePrimaryHttpMessageHandler(() => api);
+            });
         });
 
     private static async Task SetKeyAsync(WebApplicationFactory<Program> host)

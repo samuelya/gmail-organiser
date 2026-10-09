@@ -39,6 +39,8 @@ public static class LlmEndpoints
                 var llm = sp.GetRequiredService<IOptions<LlmOptions>>().Value;
                 return new ClaudeApiRetryHandler(llm.ClaudeApiMaxRetries, llm.ClaudeApiTimeout, sp.GetRequiredService<TimeProvider>());
             });
+        services.AddHttpClient(ClaudeApiHttp.CatalogClientName)
+            .AddHttpMessageHandler(() => new ClaudeApiHeaderFilter());
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OllamaCatalog>();
         services.AddScoped<IOllamaCatalog>(sp => UseFake(sp)
@@ -121,12 +123,6 @@ public static class LlmEndpoints
 
     private static Dictionary<string, string[]> BaseUrlError => new() { ["baseUrl"] = ["Must be an absolute http or https URL."] };
 
-    /// <summary>The rule for a model name to test: required, at most the settings length, no control characters.</summary>
-    internal static bool IsValidModel(string? model) =>
-        !string.IsNullOrWhiteSpace(model) && model.Trim().Length <= SettingsValidation.MaxModelNameLength && !model.Any(char.IsControl);
-
-    internal static string ModelError => $"Required; at most {SettingsValidation.MaxModelNameLength} characters, without control characters.";
-
     private static Dictionary<string, string[]> Validate(TestModelRequest request)
     {
         var errors = new Dictionary<string, string[]>();
@@ -135,10 +131,7 @@ public static class LlmEndpoints
             errors["kind"] = [$"Must be '{ModelKinds.Chat}' or '{ModelKinds.Embedding}'."];
         }
 
-        if (!IsValidModel(request.Model))
-        {
-            errors["model"] = [ModelError];
-        }
+        ModelNameValidation.CheckRequired(errors, "model", request.Model);
 
         if (request.BaseUrl is not null && !SettingsValidation.IsHttpUrl(request.BaseUrl))
         {

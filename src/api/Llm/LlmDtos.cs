@@ -56,7 +56,8 @@ public sealed record ClaudeApiModelDto(string Id, string DisplayName, DateTimeOf
 
 /// <summary>
 /// The Claude API models, newest first. No key is <c>KeySet = false</c> with no models; a failed call is
-/// <c>Reachable = false</c> with a readable <see cref="Error"/>, never a 500.
+/// <c>Reachable = false</c> with a readable <see cref="Error"/>, never a 500. A list cut short at the page cap is
+/// <c>Reachable = true</c> with a note in <see cref="Error"/>.
 /// </summary>
 public sealed record ClaudeApiModelsDto(bool KeySet, bool Reachable, string? Error, IReadOnlyList<ClaudeApiModelDto> Models)
 {
@@ -65,10 +66,10 @@ public sealed record ClaudeApiModelsDto(bool KeySet, bool Reachable, string? Err
     public static ClaudeApiModelsDto Unreachable(string error) => new(true, false, error, []);
 
     /// <summary>Newest first; ties (and models without a date, last) by id.</summary>
-    public static ClaudeApiModelsDto Listed(IEnumerable<ClaudeApiModelDto> models) => new(
+    public static ClaudeApiModelsDto Listed(IEnumerable<ClaudeApiModelDto> models, string? note = null) => new(
         true,
         true,
-        null,
+        note,
         [.. models.OrderByDescending(m => m.CreatedAt.HasValue).ThenByDescending(m => m.CreatedAt).ThenBy(m => m.Id, StringComparer.Ordinal)]);
 }
 
