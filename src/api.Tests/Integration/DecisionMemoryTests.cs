@@ -312,7 +312,7 @@ public sealed class DecisionMemoryTests(PostgresFixture postgres) : IAsyncLifeti
         db.Messages.Add(message);
         await db.SaveChangesAsync(Ct);
         var factory = new LlmClientFactory(
-            new StubHttpClientFactory(new StubOllamaHandler()), settings, Options.Create(new LlmOptions { UseFake = true }));
+            new StubHttpClientFactory(new StubOllamaHandler()), settings, TestClaudeApiKeys.For(settings), Options.Create(new LlmOptions { UseFake = true }));
         var memory = new DecisionMemory(db, factory, settings, NullLogger<DecisionMemory>.Instance);
         var decision = Decision(Shop, "Shopping", DecisionOutcome.Approved, Now);
 

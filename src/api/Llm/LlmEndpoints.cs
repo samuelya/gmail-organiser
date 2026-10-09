@@ -10,7 +10,7 @@ namespace GmailOrganiser.Llm;
 public static class LlmEndpoints
 {
     /// <summary>
-    /// Registers the Ollama catalog and client factory; with <see cref="LlmOptions.UseFake"/> the catalog is
+    /// Registers the Ollama catalog, the named Ollama and Claude API clients and the client factory; with <see cref="LlmOptions.UseFake"/> the catalog is
     /// <see cref="FakeOllamaCatalog"/> (chosen at resolution time) and the factory hands out the <c>Llm/Fake</c> clients.
     /// </summary>
     public static IServiceCollection AddLlm(this IServiceCollection services)
@@ -32,6 +32,9 @@ public static class LlmEndpoints
             .ValidateDataAnnotations()
             .ValidateOnStart();
         services.AddHttpClient(OllamaHttp.ClientName);
+        services.AddHttpClient(ClaudeApiHttp.ClientName)
+            .AddHttpMessageHandler(sp => new ClaudeApiRetryHandler(
+                sp.GetRequiredService<IOptions<LlmOptions>>().Value.ClaudeApiMaxRetries, sp.GetRequiredService<TimeProvider>()));
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OllamaCatalog>();
         services.AddScoped<IOllamaCatalog>(sp => UseFake(sp)
