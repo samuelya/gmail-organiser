@@ -4,12 +4,14 @@ using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Llm.Fake;
 using GmailOrganiser.Rules;
 using GmailOrganiser.Rules.Prompts;
 using GmailOrganiser.Rules.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
@@ -83,7 +85,7 @@ public sealed class FilterReviewSummaryTests(ApiFactory factory, PostgresFixture
         }
 
         host = factory.WithWebHostBuilder(b => b.UseSetting("GMAIL_FAKE", "true").ConfigureTestServices(services =>
-            services.AddScoped<ILlmClientFactory>(_ => new FakeLlmClientFactory(chat))));
+            services.AddScoped<ILlmClientFactory>(sp => new FakeLlmClientFactory(chat, checks: FakeLlmClientFactory.Checks(sp)))));
         await SetChatModelAsync(ChatModel);
     }
 
@@ -190,6 +192,23 @@ public sealed class FilterReviewSummaryTests(ApiFactory factory, PostgresFixture
 
         await SetChatModelAsync(null);
         (await PostAsync($"/api/rules/filters/reviews/{reviewId}/summary")).StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+        chat.Requests.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_claude_model_without_a_key_is_refused_with_the_key_message()
+    {
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(
+                x => x with { LlmProvider = LlmProvider.ClaudeApi, ClaudeApiModel = ChatModel }, Ct);
+            await scope.ServiceProvider.GetRequiredService<ClaudeApiKeyService>().ClearAsync(Ct);
+        }
+
+        var response = await PostAsync($"/api/rules/filters/reviews/{reviewId}/summary");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+        (await response.Content.ReadFromJsonAsync<ProblemDetails>(Ct))!.Detail.ShouldBe(LlmClientFactory.NoClaudeApiKeyMessage);
         chat.Requests.ShouldBeEmpty();
     }
 

@@ -27,7 +27,7 @@ public sealed class AnalysisRunUsageTests : IClassFixture<ApiFactory>, IAsyncLif
     {
         h = new AnalysisRunHarness(factory, postgres)
         {
-            ConfigureServices = services => services.AddScoped<ILlmClientFactory>(_ => new ScriptedLlmFactory(chat)),
+            ConfigureServices = services => services.AddScoped<ILlmClientFactory>(sp => new ScriptedLlmFactory(sp, chat)),
         };
     }
 

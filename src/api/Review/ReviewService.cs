@@ -323,13 +323,10 @@ public sealed partial class ReviewService(
     /// Resets the messages of the pending or rejected suggestions to not analysed (the re-analyse path) and queues one
     /// <see cref="AnalysisScope.Messages"/> run without grouping.
     /// </summary>
-    /// <exception cref="LlmNotConfiguredException">No chat model is selected; nothing is reset.</exception>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set; nothing is reset.</exception>
     public async Task<(ReviewResult Result, AnalysisRunDto? Run)> AnalyseIndividuallyAsync(Guid[] suggestionIds, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace((await settingsStore.GetAsync(ct)).ChatModel))
-        {
-            throw new LlmNotConfiguredException(ModelKinds.Chat);
-        }
+        var settings = await runs.RequireChatModelAsync(ct);
 
         var found = await db.Suggestions.AsNoTracking()
             .Where(s => suggestionIds.Contains(s.Id))
@@ -349,7 +346,8 @@ public sealed partial class ReviewService(
             return (ReviewResult.Conflict, null);
         }
 
-        var run = await runs.StartAsync(AnalysisScope.Messages, null, messageIds, messageIds.Length, AnalysisGroupingMode.Off, ct);
+        var run = await runs.StartAsync(
+            settings, AnalysisScope.Messages, null, messageIds, messageIds.Length, AnalysisGroupingMode.Off, ct);
         return (ReviewResult.Ok, run);
     }
 

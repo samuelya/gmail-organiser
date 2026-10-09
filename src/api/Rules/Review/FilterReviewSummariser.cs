@@ -1,7 +1,6 @@
 using GmailOrganiser.Data;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Rules.Prompts;
-using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Rules.Review;
@@ -14,12 +13,13 @@ public enum SummaryOutcome
     /// <summary>The review has no findings to summarise.</summary>
     NoFindings,
 
-    /// <summary>No chat model is chosen in Settings.</summary>
+    /// <summary>No chat model is chosen in Settings, or no usable Claude API key is set (see <see cref="SummaryResult.Detail"/>).</summary>
     NotConfigured,
 }
 
 /// <param name="Review">Set for <see cref="SummaryOutcome.Ok"/>, also when the model failed (see <see cref="FilterReviewDto.SummaryError"/>).</param>
-public sealed record SummaryResult(SummaryOutcome Outcome, FilterReviewDto? Review = null);
+/// <param name="Detail">For <see cref="SummaryOutcome.NotConfigured"/>: what is missing (no chat model, or no Claude API key).</param>
+public sealed record SummaryResult(SummaryOutcome Outcome, FilterReviewDto? Review = null, string? Detail = null);
 
 /// <summary>
 /// Writes the local chat model's plain-text reading of a filter review's findings (DESIGN §6.5) to the review. A model
@@ -30,7 +30,6 @@ public sealed class FilterReviewSummariser(
     FilterSnapshot snapshot,
     FilterReviewService reviews,
     ILlmClientFactory llm,
-    ISettingsStore settings,
     TimeProvider time,
     ILogger<FilterReviewSummariser> logger)
 {
@@ -50,10 +49,18 @@ public sealed class FilterReviewSummariser(
             return new SummaryResult(SummaryOutcome.NoFindings);
         }
 
-        if ((await settings.GetAsync(ct)).ChatModel is not { } model)
+        // The shared start check: a Claude provider without a usable key says so, not "choose a model".
+        ChatConfiguration chatConfig;
+        try
         {
-            return new SummaryResult(SummaryOutcome.NotConfigured);
+            chatConfig = await llm.EnsureChatConfiguredAsync(ct);
         }
+        catch (LlmNotConfiguredException ex)
+        {
+            return new SummaryResult(SummaryOutcome.NotConfigured, Detail: ex.Message);
+        }
+
+        var model = chatConfig.Model;
 
         // Without the label catalog every label would read as deleted and the model would call the fixes broken.
         if (await snapshot.TryLabelNamesAsync(ct) is not { } names)
@@ -70,7 +77,7 @@ public sealed class FilterReviewSummariser(
 
         try
         {
-            using var chat = await llm.CreateChatClientAsync(ct);
+            using var chat = llm.CreateChatClient(chatConfig);
             using var timeout = new CancellationTokenSource(Timeout, time);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
             var response = await chat.GetResponseAsync(messages, RulesSummaryPromptBuilder.CreateOptions(), linked.Token);
@@ -86,10 +93,6 @@ public sealed class FilterReviewSummariser(
                 review.SummarisedAt = time.GetUtcNow();
                 review.SummaryError = null;
             }
-        }
-        catch (LlmNotConfiguredException)
-        {
-            return new SummaryResult(SummaryOutcome.NotConfigured);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {

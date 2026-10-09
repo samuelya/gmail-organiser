@@ -70,7 +70,6 @@ public sealed partial class AnalysisRunJob(
     AppDbContext db,
     ILlmClientFactory llm,
     IGmailClient gmail,
-    ISettingsStore settingsStore,
     AnalysisGrouper grouper,
     IAnalysisShortCircuit shortCircuit,
     IDecisionMemory memory,
@@ -118,8 +117,9 @@ public sealed partial class AnalysisRunJob(
 
     private async Task RunCoreAsync(JobContext ctx, AnalysisRunRow run, AnalysisRunCursor cursor, CancellationToken ct)
     {
-        var settings = await settingsStore.GetAsync(ct);
-        var model = settings.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
+        // One settings read names the run's model and builds its client, so a provider switch meanwhile cannot mix them.
+        var chatConfig = await llm.EnsureChatConfiguredAsync(ct);
+        var (settings, model) = (chatConfig.Settings, chatConfig.Model);
         var builder = new AnalysisPromptBuilder(PromptTemplate.FromSettings(settings.AnalysisPromptTemplate));
 
         if (run.StartedAt is null)
@@ -138,7 +138,7 @@ public sealed partial class AnalysisRunJob(
         var (labelTree, labels) = await UserLabelsAsync(settings, ct);
         var work = await PlanAsync(run, cursor, settings, labels, ct);
         cursor = work.Cursor;
-        using var chat = await llm.CreateChatClientAsync(ct);
+        using var chat = llm.CreateChatClient(chatConfig);
         var compare = run.Kind == AnalysisRunKind.Compare;
         // A compare run measures the prompt with the chat model, so no triage model answers for it; a triage model
         // that names the chat model would only ask the same prompt twice.
@@ -159,7 +159,8 @@ public sealed partial class AnalysisRunJob(
 
         // A compare run's hints leave out decisions about every message it re-analyses, not just the current group's.
         var context = new RunContext(
-            run, settings, builder, chat, triage, labelTree, new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
+            run, settings, builder, ActiveChat(chat, chatConfig), triage is null ? null : OllamaChat(triage, settings), labelTree,
+            new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
             compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies, ApprovedLabelSet.From(settings, admitted));
 
         var prepared = new Dictionary<MessageGroup, PreparedGroup>(ReferenceEqualityComparer.Instance);
@@ -449,8 +450,8 @@ public sealed partial class AnalysisRunJob(
         AnalysisRunRow Run,
         AppSettings Settings,
         AnalysisPromptBuilder Builder,
-        IChatClient Chat,
-        IChatClient? Triage,
+        MeteredChat Chat,
+        MeteredChat? Triage,
         IReadOnlyList<string> LabelTree,
         LabelTreeIndex LabelIndex,
         PersonalLabels Labels,

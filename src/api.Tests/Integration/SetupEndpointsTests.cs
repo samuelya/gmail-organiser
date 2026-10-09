@@ -3,6 +3,7 @@ using System.Text.Json;
 using GmailOrganiser.Data;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Llm;
+using GmailOrganiser.Llm.ClaudeApi;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.AspNetCore.Hosting;
@@ -98,6 +99,27 @@ public sealed class SetupEndpointsTests(ApiFactory factory, PostgresFixture post
         json["completedOnce"].ShouldBeTrue();
         await using var check = host.Services.CreateAsyncScope();
         (await check.ServiceProvider.GetRequiredService<ISettingsStore>().GetAsync(Ct)).SetupCompletedOnce.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Claude_api_model_counts_as_selected_only_with_a_key(bool withKey)
+    {
+        await using var host = Host(new StubOllamaHandler { Failure = new HttpRequestException("synthetic refusal") }, b => b.UseSetting("GMAIL_FAKE", "true"));
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(
+                s => s with { LlmProvider = LlmProvider.ClaudeApi, ClaudeApiModel = "test-model-a", ChatModel = null }, Ct);
+            var keys = scope.ServiceProvider.GetRequiredService<ClaudeApiKeyService>();
+            await (withKey ? keys.SetAsync("synthetic-test-key-0000", Ct) : keys.ClearAsync(Ct));
+        }
+
+        var json = await GetStatusAsync(host);
+
+        // Without a key every run start is refused, so setup must not read complete either.
+        json["chatModelSelected"].ShouldBe(withKey);
+        json["complete"].ShouldBe(withKey);
     }
 
     [Fact]

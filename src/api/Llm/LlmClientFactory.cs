@@ -17,6 +17,16 @@ public interface ILlmClientFactory
     /// <exception cref="LlmNotConfiguredException">No chat model is chosen, or no Claude API key is set.</exception>
     Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// The one "can the active provider chat" check, shared by the client and every starter so nothing is queued that would
+    /// fail in the background: a chat model is chosen and, for the Claude API outside <c>LLM_FAKE</c>, a readable key is set.
+    /// </summary>
+    /// <exception cref="LlmNotConfiguredException">No chat model is chosen, or no usable Claude API key is set.</exception>
+    Task<ChatConfiguration> EnsureChatConfiguredAsync(CancellationToken ct = default);
+
+    /// <summary>A chat client for an already checked configuration, so the caller's model and client come from one settings read.</summary>
+    IChatClient CreateChatClient(ChatConfiguration chat);
+
     /// <exception cref="LlmNotConfiguredException">No embedding model is chosen.</exception>
     Task<IEmbeddingGenerator<string, Embedding<float>>> CreateEmbeddingGeneratorAsync(CancellationToken ct = default);
 
@@ -41,28 +51,30 @@ public sealed class LlmClientFactory(
     /// <summary>Vector size of the <c>LLM_FAKE=true</c> embeddings.</summary>
     public const int FakeEmbeddingDimension = 768;
 
-    public async Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default)
+    public async Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default) =>
+        CreateChatClient(await EnsureChatConfiguredAsync(ct));
+
+    public async Task<ChatConfiguration> EnsureChatConfiguredAsync(CancellationToken ct = default)
     {
         var s = await settings.GetAsync(ct);
         var model = string.IsNullOrWhiteSpace(s.ActiveChatModel) ? throw new LlmNotConfiguredException(ModelKinds.Chat) : s.ActiveChatModel;
-        if (UseFake)
+        if (UseFake || s.LlmProvider != LlmProvider.ClaudeApi)
         {
-            return CreateFakeChatClient();
+            return new ChatConfiguration(s, model);
         }
 
-        if (s.LlmProvider == LlmProvider.ClaudeApi)
-        {
-            var apiKey = await claudeApiKey.GetAsync(s, ct);
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                throw new LlmNotConfiguredException(ModelKinds.Chat, NoClaudeApiKeyMessage);
-            }
-
-            return CreateClaudeApiChatClient(apiKey, model);
-        }
-
-        return CreateChatClient(OllamaHttp.Parse(s.OllamaBaseUrl), model);
+        var apiKey = await claudeApiKey.GetAsync(s, ct);
+        return string.IsNullOrWhiteSpace(apiKey)
+            ? throw new LlmNotConfiguredException(ModelKinds.Chat, NoClaudeApiKeyMessage)
+            : new ChatConfiguration(s, model) { ClaudeApiKey = apiKey };
     }
+
+    public IChatClient CreateChatClient(ChatConfiguration chat) => UseFake
+        ? CreateFakeChatClient()
+        : chat.Settings.LlmProvider == LlmProvider.ClaudeApi
+            ? CreateClaudeApiChatClient(
+                chat.ClaudeApiKey ?? throw new LlmNotConfiguredException(ModelKinds.Chat, NoClaudeApiKeyMessage), chat.Model)
+            : CreateChatClient(OllamaHttp.Parse(chat.Settings.OllamaBaseUrl), chat.Model);
 
     public async Task<IEmbeddingGenerator<string, Embedding<float>>> CreateEmbeddingGeneratorAsync(CancellationToken ct = default)
     {

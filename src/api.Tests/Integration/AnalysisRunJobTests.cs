@@ -292,7 +292,7 @@ internal sealed class AnalysisRunHarness(ApiFactory factory, PostgresFixture pos
             services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), Seed()));
             services.AddSingleton(sp => new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>()));
             services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
-            services.AddScoped<ILlmClientFactory>(_ => new ScriptedLlmFactory(Chat, Embeddings));
+            services.AddScoped<ILlmClientFactory>(sp => new ScriptedLlmFactory(sp, Chat, Embeddings));
             services.AddSingleton<IJobProgressPublisher>(new RecordingPublisher(this));
             // Tests drive the job runner and the decision embedding themselves.
             services.Remove(services.Single(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(JobRunner)));
@@ -498,9 +498,16 @@ internal sealed class ScriptedChatClient : IChatClient
     }
 }
 
-internal sealed class ScriptedLlmFactory(IChatClient chat, IEmbeddingGenerator<string, Embedding<float>>? embed = null) : ILlmClientFactory
+/// <summary>Hands out <paramref name="chat"/>; the start check is the real one over the host's settings.</summary>
+internal sealed class ScriptedLlmFactory(
+    IServiceProvider services, IChatClient chat, IEmbeddingGenerator<string, Embedding<float>>? embed = null) : ILlmClientFactory
 {
     public Task<IChatClient> CreateChatClientAsync(CancellationToken ct = default) => Task.FromResult(chat);
+
+    public Task<ChatConfiguration> EnsureChatConfiguredAsync(CancellationToken ct = default) =>
+        FakeLlmClientFactory.Checks(services).EnsureChatConfiguredAsync(ct);
+
+    public IChatClient CreateChatClient(ChatConfiguration config) => chat;
 
     public Task<IEmbeddingGenerator<string, Embedding<float>>> CreateEmbeddingGeneratorAsync(CancellationToken ct = default) =>
         Task.FromResult(embed ?? throw new NotSupportedException());

@@ -39,6 +39,7 @@ public sealed partial class AnalysisRunService(
     AppDbContext db,
     IJobService jobs,
     ISettingsStore settingsStore,
+    ILlmClientFactory llm,
     SenderStatsUpdater senderStats,
     LabelCatalog labelCatalog,
     TimeProvider time,
@@ -50,12 +51,20 @@ public sealed partial class AnalysisRunService(
     /// Freezes the run's candidates, then stores a queued run and enqueues its job (one per run; the analysis queue
     /// runs them one at a time) in one transaction, so a failed enqueue leaves no run behind.
     /// </summary>
-    /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set.</exception>
     public async Task<AnalysisRunDto> StartAsync(
         AnalysisScope scope, string? senderAddress, string[]? messageIds, int count, AnalysisGroupingMode? groupingMode,
-        CancellationToken ct)
+        CancellationToken ct) =>
+        await StartAsync(await RequireChatModelAsync(ct), scope, senderAddress, messageIds, count, groupingMode, ct);
+
+    /// <summary>
+    /// <see cref="StartAsync(AnalysisScope, string?, string[]?, int, AnalysisGroupingMode?, CancellationToken)"/> for a
+    /// caller that already ran <see cref="RequireChatModelAsync"/> (and must not change anything before it), with its settings.
+    /// </summary>
+    public async Task<AnalysisRunDto> StartAsync(
+        AppSettings settings, AnalysisScope scope, string? senderAddress, string[]? messageIds, int count,
+        AnalysisGroupingMode? groupingMode, CancellationToken ct)
     {
-        var settings = await RequireChatModelAsync(ct);
 
         var now = time.GetUtcNow();
         var sender = scope is AnalysisScope.Sender or AnalysisScope.TopSenders ? senderAddress?.Trim().ToLowerInvariant() : null;
@@ -97,7 +106,7 @@ public sealed partial class AnalysisRunService(
     /// <paramref name="runId"/> wrote (or wrote an alternative for). Freezes each message's suggestion; messages deleted
     /// in Gmail and unknown ids count as skipped. Queued like any run, so it never overlaps another analysis run.
     /// </summary>
-    /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set.</exception>
     public async Task<(CompareRunResult Result, AnalysisRunDto? Run)> StartCompareAsync(
         Guid[]? suggestionIds, Guid? runId, CancellationToken ct)
     {
@@ -168,18 +177,9 @@ public sealed partial class AnalysisRunService(
         return (CompareRunResult.Ok, ToDto(run));
     }
 
-    /// <summary>The settings, once a chat model is selected; shared by the run starters so they cannot drift apart.</summary>
-    /// <exception cref="LlmNotConfiguredException">No chat model is selected.</exception>
-    private async Task<AppSettings> RequireChatModelAsync(CancellationToken ct)
-    {
-        var settings = await settingsStore.GetAsync(ct);
-        if (string.IsNullOrWhiteSpace(settings.ChatModel))
-        {
-            throw new LlmNotConfiguredException(ModelKinds.Chat);
-        }
-
-        return settings;
-    }
+    /// <summary>The settings, once the active provider can chat; shared by the run starters so they cannot drift apart.</summary>
+    /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set.</exception>
+    public async Task<AppSettings> RequireChatModelAsync(CancellationToken ct) => (await llm.EnsureChatConfiguredAsync(ct)).Settings;
 
     /// <summary>Stores the queued run and enqueues its job in one transaction, so a failed enqueue leaves no run behind.</summary>
     private async Task EnqueueAsync(AnalysisRunRow run, AnalysisRunCursor cursor, CancellationToken ct)

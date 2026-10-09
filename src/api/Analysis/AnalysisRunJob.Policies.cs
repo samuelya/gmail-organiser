@@ -20,8 +20,8 @@ public sealed partial class AnalysisRunJob
 {
     private async Task RunPoliciesAsync(JobContext ctx, AnalysisRunRow run, AnalysisRunCursor cursor, CancellationToken ct)
     {
-        var settings = await settingsStore.GetAsync(ct);
-        var model = settings.ChatModel ?? throw new LlmNotConfiguredException(ModelKinds.Chat);
+        var chatConfig = await llm.EnsureChatConfiguredAsync(ct);
+        var (settings, model) = (chatConfig.Settings, chatConfig.Model);
         var senders = cursor.Senders ?? throw new JobRefusedException("The top senders run has no frozen senders.");
 
         run.Status = AnalysisRunStatus.Running;
@@ -34,7 +34,8 @@ public sealed partial class AnalysisRunJob
 
         var (labelTree, _) = await UserLabelsAsync(settings, ct);
         var labelIndex = new LabelTreeIndex(labelTree);
-        using var chat = await llm.CreateChatClientAsync(ct);
+        using var client = llm.CreateChatClient(chatConfig);
+        var chat = ActiveChat(client, chatConfig);
         while (cursor.NextSenderIndex < senders.Count)
         {
             var sender = senders[cursor.NextSenderIndex];
@@ -74,7 +75,7 @@ public sealed partial class AnalysisRunJob
     /// </summary>
     private async Task<PolicyOutcome> ProposeAsync(
         AnalysisRunRow run, PolicyCandidate sender, AppSettings settings, IReadOnlyList<string> labelTree, LabelTreeIndex labelIndex,
-        IChatClient chat, CancellationToken ct)
+        MeteredChat chat, CancellationToken ct)
     {
         if (await HasTakenPolicyAsync(run, sender, ct)
             || await profiles.BuildAsync(sender.Scope, sender.ScopeKey, includeBodies: true, ct) is not { } profile)
@@ -84,7 +85,7 @@ public sealed partial class AnalysisRunJob
 
         var prompt = SenderPolicyPromptBuilder.Build(profile, labelTree, settings);
         var (text, usage) = await ChatAsync(
-            settings, chat, run.Model, prompt.Messages, SenderPolicyPromptBuilder.CreateOptions(settings.LlmNumCtx), 1, ct);
+            chat, run.Model, prompt.Messages, SenderPolicyPromptBuilder.CreateOptions(settings.LlmNumCtx), 1, ct);
         var parsed = policyParser.Parse(text, profile, labelIndex, settings);
         if (parsed.Dropped.Count > 0)
         {
