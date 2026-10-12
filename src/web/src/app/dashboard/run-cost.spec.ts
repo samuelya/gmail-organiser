@@ -1,5 +1,13 @@
-import { AnalysisRunDto } from '../analyse/analysis.models';
-import { RUN_COST_RUNS, durationText, runCostSummary, runCostTable, runCosts } from './run-cost';
+import { ANALYSIS_RUN_JOB, AnalysisRunDto } from '../analyse/analysis.models';
+import { JobDto } from '../core/jobs.models';
+import {
+  RUN_COST_RUNS,
+  endedAnalysisJobsKey,
+  runCostSummary,
+  runCostTable,
+  runCosts,
+  savedShare,
+} from './run-cost';
 
 let nextId = 0;
 const run = (over: Partial<AnalysisRunDto>) =>
@@ -20,12 +28,14 @@ const run = (over: Partial<AnalysisRunDto>) =>
   }) as AnalysisRunDto;
 
 describe('runCosts', () => {
-  it('drops compare and unfinished runs and orders the rest oldest first', () => {
+  it('keeps completed analyse runs only and orders them oldest first', () => {
     const rows = runCosts([
       run({ id: 'new', finishedAt: '2026-03-05T09:00:00Z' }),
       run({ id: 'compare', kind: 'compare', finishedAt: '2026-03-05T08:00:00Z' }),
       run({ id: 'running', status: 'running', finishedAt: null }),
-      run({ id: 'old', finishedAt: '2026-03-04T09:00:00Z', status: 'failed' }),
+      run({ id: 'failed', status: 'failed', finishedAt: '2026-03-05T07:00:00Z' }),
+      run({ id: 'cancelled', status: 'cancelled', finishedAt: '2026-03-05T06:00:00Z' }),
+      run({ id: 'old', finishedAt: '2026-03-04T09:00:00Z' }),
     ]);
     expect(rows.map((r) => r.id)).toEqual(['old', 'new']);
     expect(rows[1]).toEqual({
@@ -36,7 +46,6 @@ describe('runCosts', () => {
       derived: 5,
       memory: 3,
       llmSeconds: 30,
-      savedPercent: 0.8,
     });
   });
 
@@ -51,16 +60,30 @@ describe('runCosts', () => {
   });
 });
 
-describe('durationText', () => {
-  it.each([
-    [0, '0 s'],
-    [44.6, '45 s'],
-    [60, '1 min'],
-    [840, '14 min'],
-    [3600, '1 h'],
-    [7500, '2 h 5 min'],
-  ])('%s seconds reads %s', (seconds, text) => {
-    expect(durationText(seconds)).toBe(text);
+describe('savedShare', () => {
+  it('counts messages, not model calls', () => {
+    // Ten messages by model over two grouped calls (server savedPercent 0.8) still saved none.
+    const rows = runCosts([
+      run({ messagesLlm: 10, messagesDerived: 0, messagesFromMemory: 0, savedPercent: 0.8 }),
+    ]);
+    expect(savedShare(rows)).toBe(0);
+    expect(savedShare(runCosts([run({})]))).toBe(0.8);
+    expect(
+      savedShare(runCosts([run({ messagesLlm: 0, messagesDerived: 0, messagesFromMemory: 0 })])),
+    ).toBeNull();
+  });
+});
+
+describe('endedAnalysisJobsKey', () => {
+  const job = (id: string, status: string, type = ANALYSIS_RUN_JOB) =>
+    ({ id, type, status }) as unknown as JobDto;
+
+  it('changes only when an analysis job reaches a terminal status', () => {
+    expect(endedAnalysisJobsKey([job('a', 'queued'), job('b', 'running')])).toBe('');
+    expect(endedAnalysisJobsKey([job('f', 'completed', 'fetch')])).toBe('');
+    expect(
+      endedAnalysisJobsKey([job('b', 'cancelled'), job('a', 'completed'), job('c', 'failed')]),
+    ).toBe('a:completed,b:cancelled,c:failed');
   });
 });
 
@@ -77,11 +100,11 @@ describe('runCostSummary', () => {
 
   it('reads well for one run, no messages and no runs', () => {
     expect(runCostSummary(runCosts([run({})]), 'en-US')).toBe(
-      'In the last run, 80% of messages needed no model call; model time 30 s.',
+      'In the last run, 80% of messages needed no model call; model time 1 min.',
     );
     const empty = run({ messagesLlm: 0, messagesDerived: 0, messagesFromMemory: 0, llmSeconds: 0 });
     expect(runCostSummary(runCosts([empty, empty]), 'en-US')).toBe(
-      'Over the last 2 runs, no messages were covered; model time 0 s.',
+      'Over the last 2 runs, no messages were covered; model time 0 min.',
     );
     expect(runCostSummary([], 'en-US')).toBe('No analysis runs yet.');
   });

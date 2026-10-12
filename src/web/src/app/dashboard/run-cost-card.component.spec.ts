@@ -59,6 +59,7 @@ class FakeJobs {
 
 const analysisJob = (status: string, progress: number) =>
   ({ id: 'j1', type: ANALYSIS_RUN_JOB, status, progress }) as unknown as JobDto;
+const fetchJob = (status: string) => ({ id: 'f1', type: 'fetch', status }) as unknown as JobDto;
 
 describe('run cost chart data', () => {
   it('stacks model, derived and memory and draws model seconds as a dashed line on the right', () => {
@@ -103,33 +104,44 @@ describe('RunCostCard', () => {
 
   it('asks for finished runs and labels the chart with the summary', async () => {
     const { q } = await render(of([run()]));
-    expect(listRuns).toHaveBeenCalledWith(false, RUN_COST_FETCH);
+    expect(listRuns).toHaveBeenCalledWith(false, RUN_COST_FETCH, 'completed');
     expect(q('chart-canvas')?.getAttribute('aria-label')).toBe(
-      'In the last run, 80% of messages needed no model call; model time 30 s.',
+      'In the last run, 80% of messages needed no model call; model time 1 min.',
     );
   });
 
-  it('tooltip names the run target and its saving', async () => {
-    const { card } = await render(of([run()]));
+  it('tooltip names the run target and the same message-based saving as the summary', async () => {
+    const { card } = await render(of([run({ savedPercent: 0.5 })]));
     const callbacks = card.options().plugins?.tooltip?.callbacks as unknown as {
       title: (items: { dataIndex: number }[]) => string[];
       footer: (items: { dataIndex: number }[]) => string;
     };
     expect(callbacks.title([{ dataIndex: 0 }])[1]).toBe('Sender: news@example.com');
-    expect(callbacks.footer([{ dataIndex: 0 }])).toBe('Saved: 80%');
+    expect(callbacks.footer([{ dataIndex: 0 }])).toBe('Needed no model call: 80%');
   });
 
-  it('reloads when an analysis job changes status', async () => {
+  it('reloads only when an analysis job ends', async () => {
     const { fixture } = await render(of([run()]));
-    jobs.jobs.set([analysisJob('running', 10)]);
+    jobs.jobs.set([analysisJob('queued', 0)]);
     await fixture.whenStable();
     jobs.jobs.set([analysisJob('running', 50)]);
     await fixture.whenStable();
-    expect(listRuns).toHaveBeenCalledTimes(2);
+    jobs.jobs.set([analysisJob('running', 50), fetchJob('completed')]);
+    await fixture.whenStable();
+    expect(listRuns).toHaveBeenCalledTimes(1);
 
     jobs.jobs.set([analysisJob('completed', 100)]);
     await fixture.whenStable();
-    expect(listRuns).toHaveBeenCalledTimes(3);
+    expect(listRuns).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the last chart with an inline error when a reload fails', async () => {
+    const { fixture, q } = await render(of([run()]));
+    listRuns.mockReturnValue(throwError(() => new Error('down')));
+    jobs.jobs.set([analysisJob('completed', 100)]);
+    await fixture.whenStable();
+    expect(q('run-cost-error')?.textContent).toContain('could not be refreshed');
+    expect(q('chart-canvas')).not.toBeNull();
   });
 
   it('shows the empty text when only compare runs exist', async () => {

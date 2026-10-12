@@ -1,22 +1,38 @@
 import { formatDate, formatNumber } from '@angular/common';
-import { ChangeDetectionStrategy, Component, LOCALE_ID, computed, inject } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  LOCALE_ID,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import type { ChartData, ChartOptions } from 'chart.js';
 import { BaseChartDirective } from 'ng2-charts';
+import { catchError, of, Subject, switchMap } from 'rxjs';
+import { AnalysisRunDto } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { ChartPalette, ChartTheme, cartesianOptions, chartAxis } from '../core/charts/chart-theme';
 import { ChartPanel } from '../core/charts/chart-panel.component';
-import { mailboxCounts } from './mailbox-counts';
+import { JobsService } from '../core/jobs.service';
 import {
   RUN_COST_DATE,
   RUN_COST_FETCH,
   RunCost,
+  endedAnalysisJobsKey,
   runCostSummary,
   runCostTable,
   runCosts,
+  savedShare,
+  savedText,
 } from './run-cost';
 
 /** Chart height in pixels; the width follows the container. */
@@ -96,14 +112,18 @@ export function runCostData(
         @if (loadFailed()) {
           <p class="m-0 flex items-center gap-2" role="alert" data-testid="run-cost-error">
             <mat-icon aria-hidden="true">error</mat-icon>
-            The analysis runs could not be loaded.
+            {{
+              runs() === null
+                ? 'The analysis runs could not be loaded.'
+                : 'The analysis runs could not be refreshed; showing the last loaded runs.'
+            }}
             <button mat-button type="button" (click)="load()">Retry</button>
           </p>
         } @else if (runs() === null) {
           <mat-progress-bar mode="indeterminate" aria-label="Loading the analysis runs" />
         }
 
-        @if (!loadFailed() && runs() !== null) {
+        @if (runs() !== null) {
           <app-chart-panel
             heading="Model vs derived vs memory"
             [summary]="summary()"
@@ -132,12 +152,12 @@ export class RunCostCard {
   private readonly analysis = inject(AnalysisService);
   private readonly theme = inject(ChartTheme);
   private readonly locale = inject(LOCALE_ID);
-  /** Reloads when an analysis (or fetch) job changes status, so a finished run appears. */
-  private readonly counts = mailboxCounts(() => this.analysis.listRuns(false, RUN_COST_FETCH));
+  private readonly jobs = inject(JobsService);
+  private readonly refresh = new Subject<void>();
 
-  /** Null until the first answer. */
-  readonly runs = this.counts.value;
-  readonly loadFailed = this.counts.loadFailed;
+  /** The last list that loaded, kept after a failed reload; null until the first answer. */
+  readonly runs = signal<AnalysisRunDto[] | null>(null);
+  readonly loadFailed = signal(false);
   readonly height = RUN_COST_HEIGHT;
 
   readonly rows = computed(() => runCosts(this.runs() ?? []));
@@ -160,16 +180,11 @@ export class RunCostCard {
         legend: {
           ...base.plugins?.legend,
           position: 'bottom',
-          labels: {
-            ...base.plugins?.legend?.labels,
-            boxWidth: 12,
-            padding: 8,
-            // The line's `order` draws it on top; legend and tooltip keep the dataset order.
-            sort: (a, b) => (a.datasetIndex ?? 0) - (b.datasetIndex ?? 0),
-          },
+          labels: { ...base.plugins?.legend?.labels, boxWidth: 12, padding: 8 },
         },
         tooltip: {
           ...base.plugins?.tooltip,
+          // The line's `order` draws it on top and would list it first; keep the dataset order.
           itemSort: (a, b) => a.datasetIndex - b.datasetIndex,
           callbacks: {
             title: (items) => {
@@ -182,7 +197,8 @@ export class RunCostCard {
                 : `${item.dataset.label}: ${count(item.parsed.y ?? 0)}`,
             footer: (items) => {
               const row = items.length ? this.rows()[items[0].dataIndex] : undefined;
-              return row ? `Saved: ${count(row.savedPercent * 100)}%` : '';
+              const share = row ? savedShare([row]) : null;
+              return share === null ? '' : `Needed no model call: ${savedText(share, this.locale)}`;
             },
           },
         },
@@ -216,7 +232,32 @@ export class RunCostCard {
     };
   });
 
+  constructor() {
+    this.refresh
+      .pipe(
+        switchMap(() =>
+          this.analysis
+            .listRuns(false, RUN_COST_FETCH, 'completed')
+            .pipe(catchError(() => of(null))),
+        ),
+        takeUntilDestroyed(inject(DestroyRef)),
+      )
+      .subscribe((result) => {
+        if (result) this.runs.set(result);
+        this.loadFailed.set(!result);
+      });
+    // Reloads when an analysis job ends, so a completed run appears, and after a reconnect.
+    const key = computed(
+      () => `${endedAnalysisJobsKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
+    );
+    effect(() => {
+      key();
+      untracked(() => this.load());
+    });
+  }
+
   load(): void {
-    this.counts.load();
+    this.loadFailed.set(false);
+    this.refresh.next();
   }
 }
