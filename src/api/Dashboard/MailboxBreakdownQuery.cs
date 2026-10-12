@@ -32,12 +32,15 @@ public static class MailboxBreakdownQuery
 
         return new MailboxBreakdownDto(
             new SenderCategoryMixDto(
-                (int)(categories?.Primary ?? 0),
-                (int)(categories?.Promotions ?? 0),
-                (int)(categories?.Social ?? 0),
-                (int)(categories?.Updates ?? 0),
-                (int)(categories?.Forums ?? 0)),
-            [.. Enum.GetValues<MailType>().Select(t => new MailTypeCountDto(t, counts.GetValueOrDefault(t)))],
+                Clamp(categories?.Primary),
+                Clamp(categories?.Promotions),
+                Clamp(categories?.Social),
+                Clamp(categories?.Updates),
+                Clamp(categories?.Forums)),
+            [.. Enum.GetValues<MailType>().Select(t => new MailTypeCountDto(SnakeCaseEnumConverter<MailType>.ToDb(t), counts.GetValueOrDefault(t)))],
             byType.SingleOrDefault(t => t.MailType is null)?.Count ?? 0);
     }
+
+    /// <summary>Narrows a sum to the DTO's int, saturating rather than wrapping past <see cref="int.MaxValue"/>.</summary>
+    private static int Clamp(long? sum) => (int)Math.Min(sum ?? 0, int.MaxValue);
 }

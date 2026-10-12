@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Data;
 using GmailOrganiser.Senders;
@@ -60,20 +58,14 @@ public sealed record MetricPointDto(
 /// <param name="LlmHours">LLM time over all analysis runs, as of <paramref name="Current"/>.</param>
 public sealed record TriageMetricsDto(MetricSnapshotDto? Current, IReadOnlyList<MetricPointDto> History, double LlmHours);
 
-/// <param name="MailType">Written as the same snake_case name the review DTOs return.</param>
+/// <param name="MailType">The stored snake_case name, as the review DTOs return it.</param>
 /// <param name="Count">Suggestions of this type that are not rejected.</param>
-public sealed record MailTypeCountDto(
-    [property: JsonConverter(typeof(MailTypeJsonConverter))] MailType MailType,
-    int Count);
+public sealed record MailTypeCountDto(string MailType, int Count);
 
 /// <param name="Categories">Live messages per Gmail category tab, summed over all senders.</param>
 /// <param name="MailTypes">Every <see cref="MailType"/> in enum order, zero included.</param>
 /// <param name="Unclassified">Non-rejected suggestions without a mail type.</param>
 public sealed record MailboxBreakdownDto(SenderCategoryMixDto Categories, IReadOnlyList<MailTypeCountDto> MailTypes, int Unclassified);
-
-/// <summary>The snake_case policy <see cref="SnakeCaseEnumConverter{TEnum}"/> stores, so the names match <c>SuggestionDto.MailType</c>.</summary>
-public sealed class MailTypeJsonConverter()
-    : JsonStringEnumConverter<MailType>(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false);
 
 public static class DashboardEndpoints
 {

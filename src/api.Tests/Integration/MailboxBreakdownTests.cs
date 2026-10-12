@@ -15,38 +15,22 @@ namespace GmailOrganiser.Tests.Integration;
 /// classes leave senders and suggestions in the shared one; the endpoint test only checks the wire shape.
 /// </summary>
 [Collection(PostgresCollection.Name)]
-public sealed class MailboxBreakdownTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed class MailboxBreakdownTests(ApiFactory factory, BreakdownDatabase database)
+    : IClassFixture<ApiFactory>, IClassFixture<BreakdownDatabase>
 {
     private static readonly DateTimeOffset Start = new(2100, 4, 1, 8, 0, 0, TimeSpan.Zero);
 
-    private readonly string connectionString = new NpgsqlConnectionStringBuilder(postgres.ConnectionString)
-    {
-        Database = $"breakdown_{Guid.NewGuid():N}",
-    }.ConnectionString;
-
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
-
-    public async ValueTask InitializeAsync()
-    {
-        await using var db = CreateDbContext();
-        await db.Database.MigrateAsync(Ct);
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        await using var db = CreateDbContext();
-        await db.Database.EnsureDeletedAsync(CancellationToken.None);
-    }
 
     [Fact]
     public async Task Empty_database_returns_zeros_with_every_mail_type_in_enum_order()
     {
-        await using var db = CreateDbContext();
+        await using var db = await database.CreateEmptyAsync(Ct);
 
         var breakdown = await MailboxBreakdownQuery.LoadAsync(db, Ct);
 
         breakdown.Categories.ShouldBe(new SenderCategoryMixDto(0, 0, 0, 0, 0));
-        breakdown.MailTypes.Select(t => t.MailType).ShouldBe(Enum.GetValues<MailType>());
+        breakdown.MailTypes.Select(t => t.MailType).ShouldBe(AllMailTypeNames);
         breakdown.MailTypes.ShouldAllBe(t => t.Count == 0);
         breakdown.Unclassified.ShouldBe(0);
     }
@@ -54,7 +38,7 @@ public sealed class MailboxBreakdownTests(ApiFactory factory, PostgresFixture po
     [Fact]
     public async Task Sums_sender_categories_and_counts_non_rejected_suggestions_per_mail_type()
     {
-        await using var db = CreateDbContext();
+        await using var db = await database.CreateEmptyAsync(Ct);
         db.Senders.AddRange(
             Sender("a@one-470.example.com", primary: 3, promotions: 10, social: 1, updates: 4, forums: 0),
             Sender("b@two-470.example.com", primary: 2, promotions: 5, social: 0, updates: 6, forums: 7));
@@ -71,9 +55,9 @@ public sealed class MailboxBreakdownTests(ApiFactory factory, PostgresFixture po
         var breakdown = await MailboxBreakdownQuery.LoadAsync(db, Ct);
 
         breakdown.Categories.ShouldBe(new SenderCategoryMixDto(5, 15, 1, 10, 7));
-        breakdown.MailTypes.Select(t => t.MailType).ShouldBe(Enum.GetValues<MailType>());
+        breakdown.MailTypes.Select(t => t.MailType).ShouldBe(AllMailTypeNames);
         breakdown.MailTypes.ToDictionary(t => t.MailType, t => t.Count).ShouldBe(
-            Enum.GetValues<MailType>().ToDictionary(t => t, t => t switch
+            Enum.GetValues<MailType>().ToDictionary(SnakeCaseEnumConverter<MailType>.ToDb, t => t switch
             {
                 MailType.Receipt => 2,
                 MailType.Newsletter => 1,
@@ -94,15 +78,10 @@ public sealed class MailboxBreakdownTests(ApiFactory factory, PostgresFixture po
         root.GetProperty("categories").GetProperty("promotions").ValueKind.ShouldBe(JsonValueKind.Number);
         root.GetProperty("unclassified").ValueKind.ShouldBe(JsonValueKind.Number);
         root.GetProperty("mailTypes").EnumerateArray().Select(t => t.GetProperty("mailType").GetString())
-            .ShouldBe(Enum.GetValues<MailType>().Select(SnakeCaseEnumConverter<MailType>.ToDb));
+            .ShouldBe(AllMailTypeNames);
     }
 
-    private AppDbContext CreateDbContext()
-    {
-        var options = new DbContextOptionsBuilder<AppDbContext>();
-        AppDbContext.Configure(options, connectionString);
-        return new AppDbContext(options.Options);
-    }
+    private static IEnumerable<string> AllMailTypeNames => Enum.GetValues<MailType>().Select(SnakeCaseEnumConverter<MailType>.ToDb);
 
     private static SenderRow Sender(string address, int primary, int promotions, int social, int updates, int forums) => new()
     {
@@ -145,5 +124,41 @@ public sealed class MailboxBreakdownTests(ApiFactory factory, PostgresFixture po
         suggestion.SetStatus(status, message, Start);
         db.Messages.Add(message);
         db.Suggestions.Add(suggestion);
+    }
+}
+
+/// <summary>One migrated database per test class in the shared container; each test starts from <see cref="CreateEmptyAsync"/>.</summary>
+public sealed class BreakdownDatabase(PostgresFixture postgres) : IAsyncLifetime
+{
+    private readonly string connectionString = new NpgsqlConnectionStringBuilder(postgres.ConnectionString)
+    {
+        Database = $"breakdown_{Guid.NewGuid():N}",
+    }.ConnectionString;
+
+    public async ValueTask InitializeAsync()
+    {
+        await using var db = Create();
+        await db.Database.MigrateAsync(TestContext.Current.CancellationToken);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await using var db = Create();
+        await db.Database.EnsureDeletedAsync(CancellationToken.None);
+    }
+
+    /// <summary>A context on the class database with the tables these tests write cleared.</summary>
+    public async Task<AppDbContext> CreateEmptyAsync(CancellationToken ct)
+    {
+        var db = Create();
+        await db.Database.ExecuteSqlRawAsync("TRUNCATE suggestions, messages, senders CASCADE", ct);
+        return db;
+    }
+
+    private AppDbContext Create()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>();
+        AppDbContext.Configure(options, connectionString);
+        return new AppDbContext(options.Options);
     }
 }
