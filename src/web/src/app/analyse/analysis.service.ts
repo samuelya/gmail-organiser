@@ -5,6 +5,7 @@ import { QUIET_STATUSES } from '../core/error.interceptor';
 import { JobDto } from '../core/jobs.models';
 import {
   AnalysisRunDto,
+  AnalysisRunKind,
   AnalysisRunStatus,
   AnalysisSelection,
   AnalysisSummaryDto,
@@ -40,9 +41,11 @@ export class AnalysisService {
     active: boolean,
     limit: number,
     status?: AnalysisRunStatus,
+    kind?: AnalysisRunKind,
   ): Observable<AnalysisRunDto[]> {
     let params = new HttpParams().set('active', active).set('limit', limit);
     if (status) params = params.set('status', status);
+    if (kind) params = params.set('kind', kind);
     return this.http.get<AnalysisRunDto[]>('/api/analysis/runs', { params });
   }
 

@@ -9,7 +9,7 @@ import { ChartPalette } from '../core/charts/chart-theme';
 import { JobDto } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { RunCostCard, runCostData } from './run-cost-card.component';
-import { RUN_COST_FETCH, runCosts } from './run-cost';
+import { RUN_COST_RUNS, runCosts } from './run-cost';
 
 const palette: ChartPalette = {
   primary: 'rgb(1, 0, 0)',
@@ -104,7 +104,7 @@ describe('RunCostCard', () => {
 
   it('asks for finished runs and labels the chart with the summary', async () => {
     const { q } = await render(of([run()]));
-    expect(listRuns).toHaveBeenCalledWith(false, RUN_COST_FETCH, 'completed');
+    expect(listRuns).toHaveBeenCalledWith(false, RUN_COST_RUNS, 'completed', 'analyse');
     expect(q('chart-canvas')?.getAttribute('aria-label')).toBe(
       'In the last run, 80% of messages needed no model call; model time 1 min.',
     );

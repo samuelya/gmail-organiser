@@ -25,7 +25,7 @@ import { ChartPanel } from '../core/charts/chart-panel.component';
 import { JobsService } from '../core/jobs.service';
 import {
   RUN_COST_DATE,
-  RUN_COST_FETCH,
+  RUN_COST_RUNS,
   RunCost,
   endedAnalysisJobsKey,
   runCostSummary,
@@ -237,7 +237,7 @@ export class RunCostCard {
       .pipe(
         switchMap(() =>
           this.analysis
-            .listRuns(false, RUN_COST_FETCH, 'completed')
+            .listRuns(false, RUN_COST_RUNS, 'completed', 'analyse')
             .pipe(catchError(() => of(null))),
         ),
         takeUntilDestroyed(inject(DestroyRef)),
