@@ -88,6 +88,53 @@ public sealed class AnalysisRunExtraLabelsTests(ApiFactory factory, PostgresFixt
         member.ExtraLabelsNew.ShouldBe([ExtraA]);
     }
 
+    [Fact]
+    public async Task On_a_locked_run_a_new_extra_is_shown_new_and_left_out_of_bulk_approve_but_individual_approve_applies_it()
+    {
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(s => s with { TaxonomyLocked = true }, Ct);
+        }
+
+        await ApproveFirstWithExtraAsync();
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+
+        (await h.GetRunAsync(run.Id)).Status.ShouldBe("completed");
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.Suggestions.AsNoTracking().Where(s => s.RunId == run.Id && s.SenderAddress == AnalysisRunHarness.Shop).ToListAsync(Ct))
+                .ShouldAllBe(s => s.ExtraLabels.SequenceEqual(new[] { ExtraA }));
+        }
+
+        var member = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.SelectMany(g => g.Members).First(m => m.MessageId != "a00");
+        member.ExtraLabelsNew.ShouldBe([ExtraA]);
+        member.NewLabelPending.ShouldBeTrue();
+        var bulk = await h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(0.5, IncludeDerived: true, SenderAddress: AnalysisRunHarness.Shop));
+        var result = (await bulk.Content.ReadFromJsonAsync<BulkApproveResponse>(Ct)).ShouldNotBeNull();
+        result.Approved.ShouldBe(0);
+        result.ExcludedNewLabel.ShouldBeGreaterThan(1);
+
+        var approve = await h.PostWithoutBodyAsync($"/api/review/suggestions/{member.Id}/approve");
+        approve.StatusCode.ShouldBe(HttpStatusCode.OK, await approve.Content.ReadAsStringAsync(Ct));
+        (await h.PostAsync("/api/review/apply", new ApplyRequest(SuggestionIds: [member.Id]))).StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+
+        var created = (await h.Gmail.ListLabelsAsync(Ct)).Single(l => l.Name == ExtraA);
+        h.Gmail.Inner.Messages.Single(m => m.Id == member.MessageId).LabelIds.ShouldContain(created.Id);
+    }
+
+    private async Task ApproveFirstWithExtraAsync()
+    {
+        await h.StartAsync(new StartAnalysisRunRequest("messages", null, ["a00"], null, null));
+        await h.RunNextAsync();
+        var first = await IdAsync("a00");
+        var edit = await h.PutAsync($"/api/review/suggestions/{first}", new EditSuggestionRequest("Shopping", false, false, ExtraLabels: [ExtraA]));
+        edit.StatusCode.ShouldBe(HttpStatusCode.OK, await edit.Content.ReadAsStringAsync(Ct));
+        var approve = await h.PostWithoutBodyAsync($"/api/review/suggestions/{first}/approve");
+        approve.StatusCode.ShouldBe(HttpStatusCode.OK, await approve.Content.ReadAsStringAsync(Ct));
+    }
+
     private static string WithExtras(string answer, params string[] extras)
     {
         var node = JsonNode.Parse(answer)!;

@@ -39,7 +39,7 @@ public sealed record Agreed(
     /// <summary>The mail type the representatives agree on; null when any named none, like <see cref="DocumentTypeLabel"/>.</summary>
     public MailType? MailType { get; init; }
 
-    /// <summary>The additional labels every representative named (case-insensitive, first spelling), canonical order.</summary>
+    /// <summary>The additional labels every representative named (case-insensitive, first spelling); the row cleans them.</summary>
     public IReadOnlyList<string> ExtraLabels { get; init; } = [];
 }
 
@@ -99,12 +99,9 @@ public static class DerivationRule
 
     private static string[] CommonExtras(List<RepresentativeOutput> valid) =>
     [
-        .. (valid[0].ExtraLabels ?? [])
-            .Select(l => l.Trim())
-            .Where(l => l.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(l => valid.All(o => (o.ExtraLabels ?? []).Any(e => string.Equals(e.Trim(), l, StringComparison.OrdinalIgnoreCase))))
-            .Order(StringComparer.OrdinalIgnoreCase),
+        .. valid.Skip(1).Aggregate(
+            (IEnumerable<string>)(valid[0].ExtraLabels ?? []),
+            (common, o) => common.Intersect(o.ExtraLabels ?? [], StringComparer.OrdinalIgnoreCase)),
     ];
 
     private static string? Normalised(string? label) => string.IsNullOrWhiteSpace(label) ? null : label.Trim();

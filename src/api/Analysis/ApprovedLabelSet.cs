@@ -5,8 +5,9 @@ namespace GmailOrganiser.Analysis;
 
 /// <summary>
 /// The approved label set of one analysis run (#367): blocked label names fail an answer, a locked taxonomy turns a
-/// <c>topicLabel</c> outside the label tree into a <c>proposedNewLabel</c>, and past <see cref="MaxNewLabels"/> distinct
-/// new labels (locked only) a suggestion keeps its label at a capped confidence.
+/// <c>topicLabel</c> outside the label tree into a <c>proposedNewLabel</c>, a blocked additional label is dropped alone
+/// (#529), and past <see cref="MaxNewLabels"/> distinct new labels (locked only; the topic and additional labels outside
+/// the tree) a suggestion keeps its labels at a capped confidence.
 /// </summary>
 /// <param name="admitted">New labels the run already admitted under the cap (from its stored suggestions on resume).</param>
 public sealed class ApprovedLabelSet(bool locked, IEnumerable<string> blocked, int maxNewLabels, IEnumerable<string>? admitted = null)
@@ -69,26 +70,29 @@ public sealed class ApprovedLabelSet(bool locked, IEnumerable<string> blocked, i
     }
 
     /// <summary>
-    /// A blocked additional label is dropped alone, the suggestion kept (#529); a locked taxonomy does not restrict extras,
-    /// which only come from the person's own approved decisions. When locked, a new label beyond the run's first
-    /// <see cref="MaxNewLabels"/> distinct ones keeps its label, but its confidence is at most <see cref="CappedConfidence"/>
+    /// A blocked additional label is dropped alone, the suggestion kept (#529); a locked taxonomy does not drop extras,
+    /// which only come from the person's own approved decisions, but one outside <paramref name="tree"/> is a new label.
+    /// When locked, a suggestion whose new labels (topic and extras) do not all fit in the run's first
+    /// <see cref="MaxNewLabels"/> distinct ones keeps its labels, but its confidence is at most <see cref="CappedConfidence"/>
     /// and its reason ends with <see cref="CapNote"/>.
     /// </summary>
-    public SuggestionOutput Admit(SuggestionOutput output)
+    public SuggestionOutput Admit(SuggestionOutput output, LabelTreeIndex tree)
     {
-        if (output.ExtraLabels.Any(IsBlocked))
+        var extras = output.ExtraLabels.Where(e => !IsBlocked(e)).ToList();
+        if (extras.Count < output.ExtraLabels.Count)
         {
-            output = output with { ExtraLabels = [.. output.ExtraLabels.Where(e => !IsBlocked(e))] };
+            output = output with { ExtraLabels = extras };
         }
 
-        if (!Locked || !output.IsNewLabel)
+        if (!Locked)
         {
             return output;
         }
 
-        var label = output.TopicLabel.Trim();
-        if (_admitted.Contains(label) || (_admitted.Count < MaxNewLabels && _admitted.Add(label)))
+        var fresh = NewLabels(output, tree).Where(l => !_admitted.Contains(l)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (_admitted.Count + fresh.Count <= MaxNewLabels)
         {
+            _admitted.UnionWith(fresh);
             return output;
         }
 
@@ -98,4 +102,12 @@ public sealed class ApprovedLabelSet(bool locked, IEnumerable<string> blocked, i
             Reason = output.Reason.EndsWith(CapNote, StringComparison.Ordinal) ? output.Reason : output.Reason + CapNote,
         };
     }
+
+    /// <summary>The suggestion's labels the cap counts (trimmed): a new topic and the extras outside <paramref name="tree"/>.</summary>
+    public static IEnumerable<string> NewLabels(SuggestionOutput output, LabelTreeIndex tree) =>
+        NewLabels(output.IsNewLabel, output.TopicLabel, output.ExtraLabels, tree);
+
+    /// <inheritdoc cref="NewLabels(SuggestionOutput, LabelTreeIndex)"/>
+    public static IEnumerable<string> NewLabels(bool isNewLabel, string topic, IEnumerable<string> extras, LabelTreeIndex tree) =>
+        (isNewLabel ? [topic.Trim()] : Enumerable.Empty<string>()).Concat(extras.Where(e => !tree.Contains(e)).Select(e => e.Trim()));
 }

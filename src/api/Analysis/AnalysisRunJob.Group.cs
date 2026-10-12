@@ -414,17 +414,19 @@ public sealed partial class AnalysisRunJob
     /// The replaced labels resolve to the ids this message carries: a derived member without one loses nothing. The
     /// document-type label takes the spelling of the run's label tree entry it matches (for a new one, of its longest
     /// existing ancestor) and is new when there is none, so a derived row agrees with its representatives. Additional
-    /// labels are respelled the same way after <see cref="ApprovedLabelSet.Admit"/> dropped blocked ones (#367); a locked
-    /// taxonomy does not restrict them, as they only come from the person's own approved decisions (#529).
+    /// labels are respelled the same way and cleaned before <see cref="ApprovedLabelSet.Admit"/> drops blocked ones and
+    /// counts those outside the tree as new (#529).
     /// </summary>
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson,
         string? model)
     {
-        output = context.LabelSet.Admit(output);
         var type = output.DocumentTypeLabel is { } suggested ? context.LabelIndex.Respell(suggested) : null;
-        var extras = ExtraLabelList.Clean(
-            output.ExtraLabels.Select(context.LabelIndex.Respell), output.TopicLabel, type, ExtraLabelList.Reserved(context.Settings));
+        output = context.LabelSet.Admit(output with
+        {
+            ExtraLabels = ExtraLabelList.Clean(
+                output.ExtraLabels.Select(context.LabelIndex.Respell), output.TopicLabel, type, ExtraLabelList.Reserved(context.Settings)),
+        }, context.LabelIndex);
         var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
@@ -436,7 +438,7 @@ public sealed partial class AnalysisRunJob
             IsNewLabel = output.IsNewLabel,
             DocumentTypeLabel = type,
             DocumentTypeIsNew = type is not null && !context.LabelIndex.Contains(type),
-            ExtraLabels = extras,
+            ExtraLabels = [.. output.ExtraLabels],
             MailType = output.MailType,
             ProposedNewLabel = output.ProposedNewLabel,
             NeedsAction = output.NeedsAction,

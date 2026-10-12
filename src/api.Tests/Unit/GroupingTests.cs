@@ -278,7 +278,7 @@ public sealed class GroupingTests
     public void Rule_derives_the_extras_every_representative_named_and_never_disagrees_on_them()
     {
         var agreed = DerivationRule.Decide(
-            [Out(extras: ["Zeta", "alpha", "Beta", "ALPHA"]), Out(extras: ["beta", " Alpha ", "Other"]), Out(extras: ["ALPHA", "BETA", "Zeta"])],
+            [Out(extras: ["Zeta", "alpha", "Beta", "ALPHA"]), Out(extras: ["beta", "Alpha", "Other"]), Out(extras: ["ALPHA", "BETA", "Zeta"])],
             0.10).ShouldBeOfType<Agreed>();
 
         agreed.ExtraLabels.ShouldBe(["alpha", "Beta"]);
