@@ -160,10 +160,17 @@ export class RunCostCard {
         legend: {
           ...base.plugins?.legend,
           position: 'bottom',
-          labels: { ...base.plugins?.legend?.labels, boxWidth: 12, padding: 8 },
+          labels: {
+            ...base.plugins?.legend?.labels,
+            boxWidth: 12,
+            padding: 8,
+            // The line's `order` draws it on top; legend and tooltip keep the dataset order.
+            sort: (a, b) => (a.datasetIndex ?? 0) - (b.datasetIndex ?? 0),
+          },
         },
         tooltip: {
           ...base.plugins?.tooltip,
+          itemSort: (a, b) => a.datasetIndex - b.datasetIndex,
           callbacks: {
             title: (items) => {
               const row = items.length ? this.rows()[items[0].dataIndex] : undefined;
