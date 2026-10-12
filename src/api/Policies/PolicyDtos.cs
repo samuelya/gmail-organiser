@@ -88,6 +88,7 @@ public sealed record PolicyHintDto(string Scope, string ScopeKey, bool IsMixed, 
 /// <param name="MessageCount">The senders rows' message count (canonical address or domain); live messages for a list.</param>
 /// <param name="Kind">The senders rows' Stage-0 kind (<c>unknown</c>, <c>human</c>, <c>bulk</c>, <c>mixed</c>); a list is bulk.</param>
 /// <param name="UnreadRatio">0–1 of <paramref name="MessageCount"/>.</param>
+/// <param name="ExtraLabels">Additional labels next to the topic (#530); <c>[]</c> for null.</param>
 public sealed record SenderPolicyDto(
     Guid Id,
     string Scope,
@@ -111,7 +112,11 @@ public sealed record SenderPolicyDto(
     int RuleCount,
     int MessageCount,
     string Kind,
-    double UnreadRatio);
+    double UnreadRatio,
+    string[]? ExtraLabels = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
+}
 
 /// <summary>A <see cref="RuleMatch"/> on the wire; <paramref name="Category"/> is a snake_case <c>MessageCategory</c>.</summary>
 public sealed record RuleMatchDto(
@@ -131,6 +136,7 @@ public sealed record RuleMatchDto(
 /// <summary>One sub-rule in saved order with its preview over the policy's sample (<see cref="SenderPolicyDetailDto"/>).</summary>
 /// <param name="MatchCount">Sample messages this rule decides; 0 for a rejected rule.</param>
 /// <param name="SampleSubjects">The newest of them, at most three.</param>
+/// <param name="ExtraLabels">Additional labels next to the topic (#530); <c>[]</c> for null.</param>
 public sealed record PolicyRuleDto(
     Guid Id,
     int Position,
@@ -145,7 +151,11 @@ public sealed record PolicyRuleDto(
     string Source,
     string Reason,
     int MatchCount,
-    IReadOnlyList<string> SampleSubjects);
+    IReadOnlyList<string> SampleSubjects,
+    string[]? ExtraLabels = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
+}
 
 /// <summary>
 /// A policy with a preview of what it would do: <see cref="PolicyMatcher"/> over the scope's newest
@@ -172,6 +182,7 @@ public sealed record SenderPolicyDetailDto(
 /// <param name="Id">An existing rule of the policy to keep (its status, source and reason stay); null for a new rule.</param>
 /// <param name="MailType">A snake_case <c>MailType</c>, or null.</param>
 /// <param name="Action"><c>keep</c>, <c>archive</c>, <c>delete</c> or <c>unsubscribe</c>.</param>
+/// <param name="ExtraLabels">Additional labels next to the rule's topic (#530); null is <c>[]</c>.</param>
 public sealed record EditPolicyRuleRequest(
     Guid? Id,
     string? Name,
@@ -180,10 +191,12 @@ public sealed record EditPolicyRuleRequest(
     string? DocumentTypeLabel,
     string? MailType,
     int? RetentionDays,
-    string? Action);
+    string? Action,
+    string[]? ExtraLabels = null);
 
 /// <summary>Replaces the policy's fields and its whole rule list; rule positions are the array order.</summary>
 /// <param name="DocumentTypeLabel">Null or blank for none; otherwise under the configured document-type parent.</param>
+/// <param name="ExtraLabels">Additional labels next to the topic (#530); null is <c>[]</c>; none on a mixed sender's default.</param>
 public sealed record EditPolicyRequest(
     string? TopicLabel,
     string? DocumentTypeLabel,
@@ -191,7 +204,8 @@ public sealed record EditPolicyRequest(
     int? RetentionDays,
     string? Action,
     bool? IsMixed,
-    EditPolicyRuleRequest[]? Rules);
+    EditPolicyRuleRequest[]? Rules,
+    string[]? ExtraLabels = null);
 
 /// <param name="Reapply">The policy was already approved: its changes reach the mail only when it is applied again (#359).</param>
 public sealed record EditPolicyResponse(SenderPolicyDetailDto Policy, bool Reapply);

@@ -24,13 +24,14 @@ public enum PolicyChange
 /// The owner's decisions on sender policies (DESIGN §6.3): edit, approve, reject, per-rule decisions and delete. Changes
 /// only the database; an approved policy reaches Gmail through the <see cref="PolicyApplyJob"/> (#359).
 /// </summary>
-public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJobService jobs, TimeProvider time)
+public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJobService jobs, LabelCatalog labels, TimeProvider time)
 {
     public const int MaxRuleNameLength = 200;
 
     /// <summary>
     /// Replaces the policy's fields and rule list (positions = array order). Kept rules keep their status, source and
-    /// reason; new rules are the user's and approved. Only proposed and approved policies are editable.
+    /// reason; new rules are the user's and approved. Only proposed and approved policies are editable. Additional labels
+    /// are stored canonical and in Gmail's spelling where Gmail has the label (<see cref="ExtraLabelList"/>).
     /// </summary>
     /// <returns><see cref="PolicyChange.Invalid"/> with the field errors; <c>Reapply</c> when the policy was approved.</returns>
     public async Task<(PolicyChange Change, Dictionary<string, string[]> Errors, bool Reapply)> EditAsync(
@@ -48,9 +49,20 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJob
         }
 
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        var parent = (await settings.GetAsync(ct)).DocumentTypeParent;
+        var appSettings = await settings.GetAsync(ct);
+        var parent = appSettings.DocumentTypeParent;
         var topic = Label(request.TopicLabel, "topicLabel", errors);
         var documentType = DocumentType(request.DocumentTypeLabel, parent, topic, "documentTypeLabel", errors);
+        string[] extras = [];
+        if (request.IsMixed == true && request.ExtraLabels is { Length: > 0 })
+        {
+            errors[ExtraLabelList.Field] = ["A mixed sender's default labels nothing; set additional labels on its rules."];
+        }
+        else
+        {
+            extras = Extras(request.ExtraLabels, topic, documentType, appSettings, ExtraLabelList.Field, errors);
+        }
+
         var mailType = ParseOptional<MailType>(request.MailType, "mailType", errors);
         var action = ParseRequired<PolicyAction>(request.Action, "action", errors);
         Retention(request.RetentionDays, "retentionDays", errors);
@@ -105,6 +117,7 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJob
             rule.Match = Match(r.Match, $"{field}.match", errors);
             rule.TopicLabel = ruleTopic ?? "";
             rule.DocumentTypeLabel = DocumentType(r.DocumentTypeLabel, parent, ruleTopic, $"{field}.documentTypeLabel", errors);
+            rule.ExtraLabels = Extras(r.ExtraLabels, ruleTopic, rule.DocumentTypeLabel, appSettings, $"{field}.extraLabels", errors);
             rule.MailType = ParseOptional<MailType>(r.MailType, $"{field}.mailType", errors);
             rule.RetentionDays = Retention(r.RetentionDays, $"{field}.retentionDays", errors);
             rule.Action = ParseRequired<PolicyAction>(r.Action, $"{field}.action", errors) ?? default;
@@ -135,6 +148,12 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJob
         {
             // Nothing is saved: the tracked changes die with the request's context.
             return (PolicyChange.Invalid, errors, false);
+        }
+
+        policy.ExtraLabels = await SpelledAsync(extras, policy.TopicLabel, policy.DocumentTypeLabel, appSettings, ct);
+        foreach (var rule in rules)
+        {
+            rule.ExtraLabels = await SpelledAsync(rule.ExtraLabels, rule.TopicLabel, rule.DocumentTypeLabel, appSettings, ct);
         }
 
         db.SenderPolicyRules.RemoveRange(policy.Rules.Where(r => !kept.Contains(r.Id)));
@@ -309,6 +328,31 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJob
         }
 
         return change.Label;
+    }
+
+    /// <summary>
+    /// The canonical additional labels (null = none), checked by <see cref="ExtraLabelList.Normalise"/> with its errors
+    /// under <paramref name="field"/>.
+    /// </summary>
+    private static string[] Extras(
+        string[]? requested, string? topic, string? documentType, AppSettings appSettings, string field, Dictionary<string, string[]> errors)
+    {
+        var own = new Dictionary<string, string[]>();
+        var change = ExtraLabelList.Normalise(requested ?? [], topic, documentType, appSettings, own);
+        if (own.TryGetValue(ExtraLabelList.Field, out var messages))
+        {
+            errors[field] = messages;
+        }
+
+        return change.IsSet ? change.Labels : [];
+    }
+
+    /// <summary><paramref name="extras"/> in Gmail's spelling where Gmail has the label, canonical again.</summary>
+    private async Task<string[]> SpelledAsync(
+        string[] extras, string? topic, string? documentType, AppSettings appSettings, CancellationToken ct)
+    {
+        var spelled = await ExtraLabelList.ResolveAsync(labels, ExtraLabelsChange.To(extras), ct);
+        return ExtraLabelList.Clean(spelled.Labels, topic, documentType, ExtraLabelList.Reserved(appSettings));
     }
 
     private static int? Retention(int? days, string field, Dictionary<string, string[]> errors)

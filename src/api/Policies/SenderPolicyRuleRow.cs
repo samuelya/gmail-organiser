@@ -48,6 +48,9 @@ public sealed class SenderPolicyRuleRow
     public RuleMatch Match { get; set; } = new();
     public string TopicLabel { get; set; } = "";
     public string? DocumentTypeLabel { get; set; }
+
+    /// <summary>Additional labels next to the topic (#530), canonical (<see cref="ExtraLabelList.Clean"/>).</summary>
+    public string[] ExtraLabels { get; set; } = [];
     public MailType? MailType { get; set; }
 
     /// <summary>Days to keep matching mail; null = the default for the mail type.</summary>
@@ -72,6 +75,7 @@ public sealed class SenderPolicyRuleRow
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.Name).IsRequired();
             e.Property(r => r.TopicLabel).IsRequired();
+            e.Property(r => r.ExtraLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());
             e.Property(r => r.Action).IsRequired().HasConversion(new SnakeCaseEnumConverter<PolicyAction>());
             e.Property(r => r.Status).IsRequired().HasConversion(new SnakeCaseEnumConverter<PolicyStatus>());

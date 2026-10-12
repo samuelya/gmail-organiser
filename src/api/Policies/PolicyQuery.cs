@@ -245,7 +245,8 @@ public sealed class PolicyQuery(AppDbContext db, PolicyMatcher matcher, SenderPr
                 x.RuleCount,
                 x.MessageCount,
                 SnakeCaseEnumConverter<SenderKind>.ToDb(kind),
-                x.MessageCount == 0 ? 0 : Math.Round((double)unread / x.MessageCount, 3));
+                x.MessageCount == 0 ? 0 : Math.Round((double)unread / x.MessageCount, 3),
+                p.ExtraLabels);
         });
     }
 
@@ -289,7 +290,8 @@ public sealed class PolicyQuery(AppDbContext db, PolicyMatcher matcher, SenderPr
         SnakeCaseEnumConverter<PolicyRuleSource>.ToDb(r.Source),
         r.Reason,
         matchCount,
-        sampleSubjects);
+        sampleSubjects,
+        r.ExtraLabels);
 
     private sealed class PreviewCounts
     {
