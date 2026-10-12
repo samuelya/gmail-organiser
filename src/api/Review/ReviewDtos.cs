@@ -24,6 +24,8 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="NewLabelPending">A listed member is <see cref="SuggestionDto.NewLabelPending"/>.</param>
 /// <param name="ExtraLabels">The shown outcome's additional labels (#522); part of the card's outcome.</param>
 /// <param name="ExtraLabelsNew">Those Gmail lacks (<see cref="Analysis.ExtraLabelList.New"/>).</param>
+/// <param name="Status">The snake_case status of every member (#536): a filter over several statuses lists a group as one
+/// card per status, so the card's counts, outcome, alternatives and group actions cover only the members in it.</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -50,7 +52,8 @@ public sealed record ReviewGroupDto(
     SuggestionAlternativeDto? Alternative = null,
     bool NewLabelPending = false,
     string[]? ExtraLabels = null,
-    string[]? ExtraLabelsNew = null)
+    string[]? ExtraLabelsNew = null,
+    string Status = "pending")
 {
     public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
     public string[] ExtraLabelsNew { get; init; } = ExtraLabelsNew ?? [];

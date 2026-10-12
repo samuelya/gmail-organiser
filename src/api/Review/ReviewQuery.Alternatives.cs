@@ -16,19 +16,19 @@ public sealed partial class ReviewQuery
     }
 
     /// <summary>
-    /// The sender's suggestions in <paramref name="status"/>; with <paramref name="hasAlternative"/> or
+    /// The sender's suggestions in <paramref name="statuses"/>; with <paramref name="hasAlternative"/> or
     /// <paramref name="mailTypes"/> only the groups where at least one member matches, listed whole (every member), so a
-    /// group card and its approve/reject/edit act on the same members.
+    /// group card and its approve/reject/edit act on the same members. Several statuses list a group as one card per status.
     /// </summary>
-    private IQueryable<SuggestionRow> InStatus(string address, SuggestionStatus status, bool hasAlternative, IReadOnlyList<MailType>? mailTypes)
+    private IQueryable<SuggestionRow> InStatus(string address, IReadOnlyList<SuggestionStatus> statuses, bool hasAlternative, IReadOnlyList<MailType>? mailTypes)
     {
-        var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && s.Status == status);
+        var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && statuses.Contains(s.Status));
         if (!hasAlternative && mailTypes is not { Count: > 0 })
         {
             return inStatus;
         }
 
-        var keys = Suggestions(hasAlternative, mailTypes).Where(s => s.SenderAddress == address && s.Status == status)
+        var keys = Suggestions(hasAlternative, mailTypes).Where(s => s.SenderAddress == address && statuses.Contains(s.Status))
             .Select(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId);
         return inStatus.Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId));
     }
@@ -37,14 +37,19 @@ public sealed partial class ReviewQuery
     private static IQueryable<SuggestionRow> OfTypes(IQueryable<SuggestionRow> suggestions, IReadOnlyList<MailType>? mailTypes) =>
         mailTypes is { Count: > 0 } types ? suggestions.Where(s => s.MailType != null && types.Contains(s.MailType.Value)) : suggestions;
 
-    /// <summary>Per group key, how many of its members in <paramref name="inStatus"/> have an alternative (what group accept takes).</summary>
-    private async Task<Dictionary<string, int>> AlternativeCountsAsync(IQueryable<SuggestionRow> inStatus, List<string> keys, CancellationToken ct) =>
-        await inStatus
+    /// <summary>
+    /// Per group key and status (one card), how many of its members in <paramref name="inStatus"/> have an alternative
+    /// (what group accept takes for that status).
+    /// </summary>
+    private async Task<Dictionary<(string Key, SuggestionStatus Status), int>> AlternativeCountsAsync(
+        IQueryable<SuggestionRow> inStatus, List<string> keys, CancellationToken ct) =>
+        (await inStatus
             .Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
                 && db.SuggestionAlternatives.Any(a => a.SuggestionId == s.Id))
-            .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
-            .Select(g => new { g.Key, Count = g.Count() })
-            .ToDictionaryAsync(g => g.Key, g => g.Count, StringComparer.Ordinal, ct);
+            .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.Status })
+            .Select(g => new { g.Key.Key, g.Key.Status, Count = g.Count() })
+            .ToListAsync(ct))
+        .ToDictionary(g => (g.Key, g.Status), g => g.Count);
 
     private async Task<Dictionary<Guid, SuggestionAlternativeRow>> AlternativesAsync(IEnumerable<Guid> suggestionIds, CancellationToken ct)
     {

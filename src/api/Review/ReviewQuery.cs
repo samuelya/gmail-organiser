@@ -60,12 +60,12 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     }
 
     /// <summary>
-    /// Senders with at least one suggestion in <paramref name="status"/>, with their counts per status, the most
-    /// suggestions in that status first (pending by default), then by address. With <paramref name="hasAlternative"/>
+    /// Senders with at least one suggestion in <paramref name="statuses"/>, with their counts per status, the most
+    /// suggestions in those statuses first, then by address. With <paramref name="hasAlternative"/>
     /// only suggestions with a compare-run alternative count; with <paramref name="mailTypes"/> only those of one of the types.
     /// </summary>
     public async Task<PagedDto<ReviewSenderDto>> ListAsync(
-        SuggestionStatus status, string? search, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
+        IReadOnlyList<SuggestionStatus> statuses, string? search, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
         IReadOnlyList<MailType>? mailTypes = null)
     {
         var suggestions = Suggestions(hasAlternative, mailTypes);
@@ -75,23 +75,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             suggestions = suggestions.Where(s => matching.Contains(s.SenderAddress));
         }
 
-        var counts = suggestions
-            .GroupBy(s => s.SenderAddress)
-            .Select(g => new StatusCounts
-            {
-                Address = g.Key,
-                Pending = g.Count(s => s.Status == SuggestionStatus.Pending),
-                Approved = g.Count(s => s.Status == SuggestionStatus.Approved),
-                Rejected = g.Count(s => s.Status == SuggestionStatus.Rejected),
-                Applied = g.Count(s => s.Status == SuggestionStatus.Applied),
-            });
-        var ordered = status switch
-        {
-            SuggestionStatus.Approved => counts.Where(c => c.Approved > 0).OrderByDescending(c => c.Approved),
-            SuggestionStatus.Rejected => counts.Where(c => c.Rejected > 0).OrderByDescending(c => c.Rejected),
-            SuggestionStatus.Applied => counts.Where(c => c.Applied > 0).OrderByDescending(c => c.Applied),
-            _ => counts.Where(c => c.Pending > 0).OrderByDescending(c => c.Pending),
-        };
+        var ordered = CountsBySender(suggestions, statuses).Where(c => c.InFilter > 0).OrderByDescending(c => c.InFilter);
 
         var total = await ordered.LongCountAsync(ct);
         var rows = await ordered.ThenBy(c => c.Address).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
@@ -105,29 +89,21 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     }
 
     /// <summary>
-    /// One page of the sender's suggestions in <paramref name="status"/>, grouped (a message analysed alone is its own
-    /// group), largest group first; null when the sender has no suggestion at all. Groups are counted and paged in SQL;
-    /// members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
+    /// One page of the sender's suggestions in <paramref name="statuses"/>, grouped (a message analysed alone is its own
+    /// group, and one card per status), largest group first; null when the sender has no suggestion at all, no groups
+    /// when none is in <paramref name="statuses"/>. Groups are counted and paged in SQL; members are loaded per group,
+    /// newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>, the page's pending groups
+    /// first, so the response budget goes to the cards approve/reject act on.
     /// With <paramref name="hasAlternative"/> the counts take only suggestions with a compare-run alternative, and only
     /// groups with such a member are listed, whole, so a group card and its approve/reject act on the same members.
     /// With <paramref name="mailTypes"/> the counts take only suggestions of one of the types (null when none is), and only
     /// groups with such a member are listed, whole, each member with its own mail type.
     /// </summary>
     public async Task<ReviewSenderDetailDto?> DetailAsync(
-        string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
+        string address, IReadOnlyList<SuggestionStatus> statuses, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
         IReadOnlyList<MailType>? mailTypes = null)
     {
-        var counts = await Suggestions(hasAlternative, mailTypes)
-            .Where(s => s.SenderAddress == address)
-            .GroupBy(s => s.SenderAddress)
-            .Select(g => new StatusCounts
-            {
-                Address = g.Key,
-                Pending = g.Count(s => s.Status == SuggestionStatus.Pending),
-                Approved = g.Count(s => s.Status == SuggestionStatus.Approved),
-                Rejected = g.Count(s => s.Status == SuggestionStatus.Rejected),
-                Applied = g.Count(s => s.Status == SuggestionStatus.Applied),
-            })
+        var counts = await CountsBySender(Suggestions(hasAlternative, mailTypes).Where(s => s.SenderAddress == address), statuses)
             .SingleOrDefaultAsync(ct);
         if (counts is null)
         {
@@ -135,12 +111,13 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         }
 
         var sender = await db.Senders.AsNoTracking().SingleOrDefaultAsync(s => s.Address == address, ct);
-        var inStatus = InStatus(address, status, hasAlternative, mailTypes);
+        var inStatus = InStatus(address, statuses, hasAlternative, mailTypes);
         var stats = inStatus
-            .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
+            .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.Status })
             .Select(g => new GroupStats
             {
-                Key = g.Key,
+                Key = g.Key.Key,
+                Status = g.Key.Status,
                 Size = g.Count(),
                 Llm = g.Count(s => s.Source == SuggestionSource.Llm),
                 Derived = g.Count(s => s.Source == SuggestionSource.Derived),
@@ -151,29 +128,29 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
                 NewLabels = g.Count(s => s.IsNewLabel),
             });
         var totalGroups = await stats.LongCountAsync(ct);
-        var pageStats = await stats.OrderByDescending(g => g.Size).ThenBy(g => g.Key)
+        var pageStats = await stats.OrderByDescending(g => g.Size).ThenBy(g => g.Key).ThenBy(g => g.Status)
             .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
         var keys = pageStats.ConvertAll(g => g.Key);
         var outcomes = (await inStatus
                 .Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId))
-                .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel, s.ExtraLabels })
+                .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.Status, s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel, s.ExtraLabels })
                 .Select(g => new OutcomeCount(
-                    g.Key.Key, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
+                    g.Key.Key, g.Key.Status, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
                     g.Count(s => s.Source == SuggestionSource.Llm) > 0, g.Key.ExtraLabels))
                 .ToListAsync(ct))
-            .ToLookup(o => o.Key, StringComparer.Ordinal);
+            .ToLookup(o => (o.Key, o.Status));
 
         var groups = new List<ReviewGroupDto>(pageStats.Count);
         var loaded = new List<(GroupStats Stats, List<(SuggestionRow S, MessageRow M)> Members)>(pageStats.Count);
         var budget = MaxResponseMembers;
-        foreach (var g in pageStats)
+        foreach (var g in pageStats.OrderBy(g => g.Status != SuggestionStatus.Pending))
         {
             var take = Math.Clamp(budget, 1, MaxMembers);
-            var key = g.Key;
+            var (key, status) = (g.Key, g.Status);
             var members = await (
                     from s in inStatus
                     join m in db.Messages.AsNoTracking() on s.MessageId equals m.Id
-                    where (s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId) == key
+                    where (s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId) == key && s.Status == status
                     orderby m.InternalDate descending, m.Id
                     select new { Suggestion = s, Message = m })
                 .Take(take)
@@ -189,10 +166,11 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
         var labelNames = personal.IsUnavailable ? null : personal.Names;
         var existing = ExtraLabelList.Existing(labelNames);
-        foreach (var (g, members) in loaded)
+        foreach (var (g, members) in loaded.OrderBy(l => pageStats.IndexOf(l.Stats)))
         {
             groups.Add(ToGroup(
-                g, outcomes[g.Key], members, allowlist, claude, labelNames, existing, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
+                g, outcomes[(g.Key, g.Status)], members, allowlist, claude, labelNames, existing, personal.AppLabelIds, alternatives,
+                alternativeCounts.GetValueOrDefault((g.Key, g.Status))));
         }
 
         var policies = await PolicyLookup.ForSendersAsync(db, [counts.Address], ct);
@@ -209,7 +187,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             .Where(s => s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending)
             .GroupBy(s => new { s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel, s.ExtraLabels })
             .Select(g => new OutcomeCount(
-                groupKey, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
+                groupKey, SuggestionStatus.Pending, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
                 g.Count(s => s.Source == SuggestionSource.Llm) > 0, g.Key.ExtraLabels))
             .ToListAsync(ct);
         if (outcomes.Count == 0)
@@ -431,7 +409,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             GroupAlternative(dtos, alternativeCount),
             dtos.Any(d => d.NewLabelPending),
             shared.ExtraLabels,
-            ExtraLabelList.New(shared.ExtraLabels, existingLabels));
+            ExtraLabelList.New(shared.ExtraLabels, existingLabels),
+            SnakeCaseEnumConverter<SuggestionStatus>.ToDb(stats.Status));
     }
 
     /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags, type and extras.</summary>
@@ -457,12 +436,16 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         public int Approved { get; init; }
         public int Rejected { get; init; }
         public int Applied { get; init; }
+
+        /// <summary>Those in the listed statuses.</summary>
+        public int InFilter { get; init; }
     }
 
     /// <summary>A class with settable members so EF can sort and page on the projection.</summary>
     private sealed class GroupStats
     {
         public string Key { get; init; } = "";
+        public SuggestionStatus Status { get; init; }
         public int Size { get; init; }
         public int Llm { get; init; }
         public int Derived { get; init; }
@@ -477,6 +460,6 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         AppSettings Settings, Dictionary<Guid, ExternalReviewDto> Suggestions, Dictionary<string, ExternalReviewDto> Groups);
 
     private sealed record OutcomeCount(
-        string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, string? DocumentTypeLabel, int Count, bool HasLlm,
+        string Key, SuggestionStatus Status, string TopicLabel, bool NeedsAction, bool ToBeDeleted, string? DocumentTypeLabel, int Count, bool HasLlm,
         string[] ExtraLabels);
 }
