@@ -35,6 +35,11 @@ describe('triage chart', () => {
     ]);
   });
 
+  it('dashes the filter line so it stays distinct from unread', () => {
+    const data = triageChartData(points, palette, 'en-US');
+    expect(data.datasets.map((d) => d.borderDash)).toEqual([[], [], [6, 4]]);
+  });
+
   it('draws a lone day as dots', () => {
     const data = triageChartData(points.slice(0, 1), palette, 'en-US');
     expect(data.datasets.every((d) => d.pointRadius === 3)).toBe(true);
@@ -54,5 +59,14 @@ describe('triage chart', () => {
   it('asks Chart.js for an index tooltip across all three series', () => {
     const chart = TestBed.createComponent(TriageChart).componentInstance;
     expect(chart.options().interaction).toEqual({ mode: 'index', intersect: false });
+  });
+
+  it('titles the tooltip with the full date, year included', () => {
+    const fixture = TestBed.createComponent(TriageChart);
+    fixture.componentRef.setInput('points', points);
+    const title = fixture.componentInstance.options().plugins?.tooltip?.callbacks?.title as (
+      items: { dataIndex: number }[],
+    ) => string;
+    expect(title([{ dataIndex: 1 }])).toBe('Jan 2, 2026');
   });
 });

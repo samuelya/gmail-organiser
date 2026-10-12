@@ -10,7 +10,7 @@ import {
 import type { ChartData, ChartOptions } from 'chart.js';
 import { BaseChartDirective } from 'ng2-charts';
 import { ChartPanel } from '../core/charts/chart-panel.component';
-import { ChartPalette, ChartTheme } from '../core/charts/chart-theme';
+import { ChartPalette, ChartTheme, cartesianOptions, chartAxis } from '../core/charts/chart-theme';
 import { TriagePoint, triageChartSummary, triageChartTable } from './triage.models';
 
 /** Chart height in pixels; the width follows the container. */
@@ -24,7 +24,13 @@ export function triageChartData(
 ): ChartData<'line'> {
   // Lines need at least two points; a lone day is drawn as dots.
   const pointRadius = points.length === 1 ? 3 : 0;
-  const series = (label: string, colour: string, yAxisID: string, data: number[]) => ({
+  const series = (
+    label: string,
+    colour: string,
+    yAxisID: string,
+    data: number[],
+    borderDash: number[] = [],
+  ) => ({
     label,
     data,
     yAxisID,
@@ -33,6 +39,7 @@ export function triageChartData(
     fill: false,
     tension: 0,
     borderWidth: 2,
+    borderDash,
     pointRadius,
     pointHoverRadius: 4,
   });
@@ -56,6 +63,8 @@ export function triageChartData(
         p.secondary,
         'y1',
         points.map((pt) => pt.filterCoverage),
+        // Dashed: M3's secondary shares primary's hue, so colour alone doesn't separate it from unread.
+        [6, 4],
       ),
     ],
   };
@@ -92,11 +101,9 @@ export class TriageChart {
   readonly table = computed(() => triageChartTable(this.points(), this.locale));
   readonly data = computed(() => triageChartData(this.points(), this.theme.palette(), this.locale));
   readonly options = computed<ChartOptions<'line'>>(() => {
-    const base = this.theme.cartesian() as ChartOptions<'line'>;
     const p = this.theme.palette();
-    // Rebuilt from the palette rather than spread from the base, whose scale type is a union `line` can't narrow.
-    const line = { color: p.grid };
-    const ticks = { color: p.text, font: { family: p.fontFamily } };
+    const base = cartesianOptions<'line'>(p, this.theme.reducedMotion());
+    const axis = chartAxis(p);
     const percent = (n: number) => `${formatNumber(n, this.locale, '1.1-1')}%`;
     return {
       ...base,
@@ -111,6 +118,11 @@ export class TriageChart {
         tooltip: {
           ...base.plugins?.tooltip,
           callbacks: {
+            // Ticks drop the year; the title keeps it so days a year apart stay distinct.
+            title: (items) =>
+              items.length
+                ? formatDate(this.points()[items[0].dataIndex].day, 'mediumDate', this.locale)
+                : '',
             label: (item) =>
               item.dataset.yAxisID === 'y1'
                 ? `${item.dataset.label}: ${percent(item.parsed.y ?? 0)}`
@@ -120,27 +132,25 @@ export class TriageChart {
       },
       scales: {
         x: {
+          ...axis,
           type: 'category',
-          grid: line,
-          border: line,
-          ticks: { ...ticks, autoSkip: true, maxTicksLimit: 6, maxRotation: 0 },
+          ticks: { ...axis.ticks, autoSkip: true, maxTicksLimit: 6, maxRotation: 0 },
         },
         y: {
           type: 'linear',
           position: 'left',
           beginAtZero: true,
-          grid: line,
-          border: line,
-          ticks: { ...ticks, precision: 0 },
+          ...axis,
+          ticks: { ...axis.ticks, precision: 0 },
         },
         y1: {
           type: 'linear',
           position: 'right',
           min: 0,
           max: 100,
+          ...axis,
           grid: { drawOnChartArea: false },
-          border: line,
-          ticks: { ...ticks, stepSize: 50, callback: (v) => `${v}%` },
+          ticks: { ...axis.ticks, stepSize: 50, callback: (v) => `${v}%` },
         },
       },
     };

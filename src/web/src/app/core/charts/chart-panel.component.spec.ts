@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { ChartPanel, ChartTable } from './chart-panel.component';
+import { ChartPanel } from './chart-panel.component';
+import { ChartTable } from './chart.models';
 
 @Component({
   imports: [ChartPanel],

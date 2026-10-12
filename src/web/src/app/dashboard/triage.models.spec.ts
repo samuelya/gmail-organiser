@@ -49,6 +49,13 @@ describe('triage figures', () => {
       { day: '2026-01-02', unread: 12, policyCoverage: 0, filterCoverage: 0 },
     ]);
   });
+
+  it('triagePoints clamps coverage above 100%', () => {
+    const [p] = triagePoints([
+      point({ messagesTotal: 10, coveredByPolicy: 12, coveredByFilter: 11 }),
+    ]);
+    expect([p.policyCoverage, p.filterCoverage]).toEqual([100, 100]);
+  });
 });
 
 const points: TriagePoint[] = [
@@ -60,8 +67,8 @@ const points: TriagePoint[] = [
 describe('triage chart text', () => {
   it('summarises the first and the last point', () => {
     expect(triageChartSummary(points, 'en-US')).toBe(
-      'Inbox unread went from 1,200 to 85, policy coverage from 10% to 42% ' +
-        'and filter coverage from 2% to 6% over 3 days.',
+      'Inbox unread went from 1,200 to 85, policy coverage from 10% to 42.5% ' +
+        'and filter coverage from 2% to 5.5% over 3 days.',
     );
   });
 

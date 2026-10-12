@@ -1,5 +1,5 @@
 import { formatDate, formatNumber } from '@angular/common';
-import { ChartTable } from '../core/charts/chart-panel.component';
+import { ChartTable } from '../core/charts/chart.models';
 
 /** `GET /api/dashboard/triage`: one snapshot with its coverage ratios (0–1; 0 when the denominator is 0). */
 export interface MetricSnapshotDto {
@@ -76,7 +76,7 @@ export function triageChartSummary(points: readonly TriagePoint[], locale: strin
   const last = points.at(-1);
   if (!first || !last) return 'No history yet.';
   const count = (n: number) => formatNumber(n, locale, '1.0-0');
-  const percent = (n: number) => `${formatNumber(n, locale, '1.0-0')}%`;
+  const percent = (n: number) => `${formatNumber(n, locale, '1.0-1')}%`;
   if (points.length === 1) {
     return `Inbox unread is ${count(last.unread)}, policy coverage ${percent(last.policyCoverage)} and filter coverage ${percent(last.filterCoverage)} on the first day.`;
   }
@@ -101,8 +101,9 @@ export function triageChartTable(points: readonly TriagePoint[], locale: string)
   };
 }
 
+/** Clamped to 100: inconsistent snapshot counts must not push a point off the 0–100 axis. */
 function percentOf(part: number, total: number): number {
-  return total === 0 ? 0 : (part / total) * 100;
+  return total === 0 ? 0 : Math.min((part / total) * 100, 100);
 }
 
 function oneDecimal(n: number): number {
