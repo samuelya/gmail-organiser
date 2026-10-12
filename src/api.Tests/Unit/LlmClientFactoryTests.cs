@@ -186,6 +186,11 @@ public sealed class LlmClientFactoryTests
     [InlineData("Llm:ClaudeApiMaxOutputTokens", "0", "Llm__ClaudeApiMaxOutputTokens")]
     [InlineData("Llm:ClaudeApiMaxOutputTokens", "8193", "Llm__ClaudeApiMaxOutputTokens")]
     [InlineData("Llm:ClaudeApiBaseUrl", "not-a-url", "Llm__ClaudeApiBaseUrl")]
+    [InlineData("Llm:ClaudeApiBaseUrl", "http://claude.example.com", "Llm__ClaudeApiBaseUrl")]
+    [InlineData("Llm:ClaudeApiBaseUrl", "ftp://claude.example.com", "Llm__ClaudeApiBaseUrl")]
+    [InlineData("Llm:ClaudeApiBaseUrl", "https://user:secret@claude.example.com", "Llm__ClaudeApiBaseUrl")]
+    [InlineData("Llm:ClaudeApiBaseUrl", "https://claude.example.com/?x=1", "Llm__ClaudeApiBaseUrl")]
+    [InlineData("Llm:ClaudeApiBaseUrl", "https://claude.example.com/#frag", "Llm__ClaudeApiBaseUrl")]
     public void Out_of_range_claude_api_options_fail_validation(string key, string value, string expected)
     {
         using var services = LlmServices(value, key);
@@ -193,6 +198,18 @@ public sealed class LlmClientFactoryTests
         var ex = Should.Throw<OptionsValidationException>(() => services.GetRequiredService<IOptions<LlmOptions>>().Value);
 
         ex.Message.ShouldContain(expected);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    [InlineData("https://claude.example.com")]
+    [InlineData(" https://claude.example.com ")]
+    public void An_empty_or_https_claude_api_base_url_passes_validation(string value)
+    {
+        using var services = LlmServices(value, "Llm:ClaudeApiBaseUrl");
+
+        Should.NotThrow(() => services.GetRequiredService<IOptions<LlmOptions>>().Value);
     }
 
     [Theory]

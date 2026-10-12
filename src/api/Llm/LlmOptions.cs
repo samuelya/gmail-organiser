@@ -45,7 +45,7 @@ public sealed class LlmOptions
     public const int MaxNonStreamingOutputTokens = 8192;
 
     /// <summary>Claude API base URL; empty means the SDK's production URL. Never read from <c>ANTHROPIC_BASE_URL</c>.</summary>
-    [Url(ErrorMessage = "Llm:ClaudeApiBaseUrl (Llm__ClaudeApiBaseUrl) must be an http or https URL.")]
+    [HttpsUrlOrEmpty(ErrorMessage = "Llm:ClaudeApiBaseUrl (Llm__ClaudeApiBaseUrl) must be empty or an https URL.")]
     public string? ClaudeApiBaseUrl { get; set; }
 
     public TimeSpan CatalogTimeout => TimeSpan.FromSeconds(Math.Max(1, CatalogTimeoutSeconds));
@@ -96,4 +96,18 @@ public static class OllamaHttp
     // Relative API paths resolve under a base path (e.g. a reverse proxy prefix) only with a trailing slash.
     private static Uri WithTrailingSlash(Uri uri) =>
         uri.AbsolutePath.EndsWith('/') ? uri : new UriBuilder(uri) { Path = uri.AbsolutePath + "/" }.Uri;
+}
+
+/// <summary>
+/// Valid when the trimmed value is empty, or an absolute https URL without userinfo, query or fragment: the SDK appends
+/// API paths to the base URL, and userinfo would put a credential into config and logs.
+/// </summary>
+[AttributeUsage(AttributeTargets.Property)]
+public sealed class HttpsUrlOrEmptyAttribute : ValidationAttribute
+{
+    public override bool IsValid(object? value) =>
+        value is null
+        || value is string s && (s.Trim().Length == 0
+            || Uri.TryCreate(s.Trim(), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
+                && uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0);
 }

@@ -186,15 +186,30 @@ public sealed partial class ClaudeApiChatTests : IDisposable
         request.Headers.ContainsKey("authorization").ShouldBeFalse();
     }
 
-    [Fact]
-    public async Task The_configured_base_url_is_used()
+    [Theory]
+    [InlineData("https://claude.example.com")]
+    [InlineData(" https://claude.example.com ")]
+    public async Task The_configured_base_url_is_used(string value)
     {
         api.Message("ok");
-        using var chat = Create(settings: new() { ["Llm:ClaudeApiBaseUrl"] = "https://claude.example.com" });
+        using var chat = Create(settings: new() { ["Llm:ClaudeApiBaseUrl"] = value });
 
         await chat.GetResponseAsync(Messages(), cancellationToken: Ct);
 
         api.Requests.ShouldHaveSingleItem().Host.ShouldBe("claude.example.com");
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task An_empty_base_url_means_production(string value)
+    {
+        api.Message("ok");
+        using var chat = Create(settings: new() { ["Llm:ClaudeApiBaseUrl"] = value });
+
+        await chat.GetResponseAsync(Messages(), cancellationToken: Ct);
+
+        api.Requests.ShouldHaveSingleItem().Host.ShouldBe(new Uri(EnvironmentUrl.Production).Host);
     }
 
     [Fact]
