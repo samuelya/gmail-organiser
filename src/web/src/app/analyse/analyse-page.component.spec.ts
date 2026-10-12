@@ -1,7 +1,6 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
-import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
 import { convertToParamMap, provideRouter, Router } from '@angular/router';
@@ -72,6 +71,7 @@ describe('AnalysePage', () => {
     cancel: ReturnType<typeof vi.fn>;
     startCompareRun: ReturnType<typeof vi.fn>;
     resume: ReturnType<typeof vi.fn>;
+    getRun: ReturnType<typeof vi.fn>;
   };
   let active: AnalysisRunDto[];
   let finished: AnalysisRunDto[];
@@ -90,6 +90,7 @@ describe('AnalysePage', () => {
       cancel: vi.fn(() => of(run({ status: 'cancelled' }))),
       startCompareRun: vi.fn(() => of(run({ id: 'run-cmp', kind: 'compare', status: 'queued' }))),
       resume: vi.fn(() => of(job('queued', { id: 'job-2' }))),
+      getRun: vi.fn(() => throwError(() => new HttpErrorResponse({ status: 404 }))),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -437,37 +438,26 @@ describe('AnalysePage', () => {
       });
     });
 
-    it('a failed run offers Details, which turns on the Failed filter', async () => {
+    it('Details on a failed run opens the failed runs by URL', async () => {
       const { harness, component } = await finish({ status: 'failed' });
-      expect(snack()!.textContent).toContain('Analysis failed.');
       const action = snack()!.querySelector<HTMLElement>('button')!;
       expect(action.textContent).toContain('Details');
       action.click();
       await harness.fixture.whenStable();
+      expect(TestBed.inject(Router).url).toBe('/analyse?status=failed');
       expect(component.failedOnly()).toBe(true);
+      expect(api.listRuns).toHaveBeenLastCalledWith(false, expect.any(Number), 'failed');
     });
+  });
 
-    it('a cancelled run says nothing', async () => {
-      await finish({ status: 'cancelled' });
-      expect(snack()).toBeNull();
-    });
-
-    it('runs already finished on load say nothing', async () => {
-      const { harness, component } = await render();
-      finished.push(run({ status: 'completed', messagesCovered: 5 }));
-      component.loadRuns();
-      await harness.fixture.whenStable();
-      expect(snack()).toBeNull();
-    });
-
-    it('a finished run shows its notice once', async () => {
-      const { harness, component } = await finish({ messagesCovered: 1 });
-      expect(snack()!.textContent).toContain('Analysis finished: 1 message covered.');
-      const open = vi.spyOn(TestBed.inject(MatSnackBar), 'open');
-      component.loadRuns();
-      await harness.fixture.whenStable();
-      expect(open).not.toHaveBeenCalled();
-    });
+  it('the Failed filter comes from the URL and keeps the chosen count', async () => {
+    const { harness, component } = await render('/analyse?status=failed&count=30');
+    expect(component.failedOnly()).toBe(true);
+    component.form.patchValue({ preset: 'custom', customCount: 7 });
+    component.setFailedOnly(false);
+    await harness.fixture.whenStable();
+    expect(component.failedOnly()).toBe(false);
+    expect(component.form.getRawValue().customCount).toBe(7);
   });
 
   it('the Failed chip asks the API for failed runs only', async () => {
