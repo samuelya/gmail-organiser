@@ -308,6 +308,7 @@ describe('ReviewPage', () => {
       needsAction: false,
       toBeDeleted: true,
       documentTypeLabel: 'Docs/Invoice',
+      extraLabels: [],
     });
     expect(snackText()).toContain('1 member was skipped');
     await expand();
