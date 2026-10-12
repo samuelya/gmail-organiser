@@ -127,15 +127,32 @@ public sealed class ClaudeApiHeaderFilter : DelegatingHandler
 }
 
 /// <summary>
-/// Empties an error answer's body when it is not a JSON object (e.g. <c>[]</c>), which the SDK cannot parse into an
-/// <see cref="AnthropicApiException"/> and would throw as a status-less <see cref="InvalidOperationException"/>.
+/// Empties an error answer's body when it is not an Anthropic error shape (e.g. <c>[]</c> or <c>{"error":"x"}</c>), which
+/// the SDK cannot parse into an <see cref="AnthropicApiException"/> and would throw as a status-less
+/// <see cref="InvalidOperationException"/>.
 /// </summary>
 public sealed class ClaudeApiErrorBodyFilter : DelegatingHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var response = await base.SendAsync(request, cancellationToken);
-        if (response.IsSuccessStatusCode || IsJsonObject(await response.Content.ReadAsStringAsync(cancellationToken)))
+        if (response.IsSuccessStatusCode)
+        {
+            return response;
+        }
+
+        string body;
+        try
+        {
+            body = await response.Content.ReadAsStringAsync(cancellationToken);
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+
+        if (HasErrorShape(body))
         {
             return response;
         }
@@ -145,12 +162,23 @@ public sealed class ClaudeApiErrorBodyFilter : DelegatingHandler
         return response;
     }
 
-    private static bool IsJsonObject(string body)
+    /// <summary>
+    /// Whether <paramref name="root"/> is an object whose <c>error</c>, when present, is an object (the shape the SDK
+    /// parses); <paramref name="error"/> is that <c>error</c>, or <c>default</c> when there is none.
+    /// </summary>
+    public static bool IsErrorShape(JsonElement root, out JsonElement error)
+    {
+        error = default;
+        return root.ValueKind == JsonValueKind.Object
+            && (!root.TryGetProperty("error", out error) || error.ValueKind == JsonValueKind.Object);
+    }
+
+    private static bool HasErrorShape(string body)
     {
         try
         {
             using var doc = JsonDocument.Parse(body);
-            return doc.RootElement.ValueKind == JsonValueKind.Object;
+            return IsErrorShape(doc.RootElement, out _);
         }
         catch (JsonException)
         {
@@ -213,8 +241,10 @@ public sealed class ClaudeApiRetryHandler(int maxRetries, TimeSpan budget, TimeP
 /// for a 4xx other than 401/403/429, Anthropic's one-line, truncated error message, never the key, a header or the SDK's own text. Owns the
 /// <see cref="AnthropicClient"/>.
 /// </summary>
-internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient anthropic, TimeSpan timeout) : DelegatingChatClient(inner)
+public sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient anthropic, TimeSpan timeout) : DelegatingChatClient(inner)
 {
+    public const string UnreadableAnswer = "The Claude API sent an answer this app could not read.";
+
     public override async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
     {
@@ -255,9 +285,8 @@ internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient an
     {
         AnthropicApiException api => new HttpRequestException(Describe(api), null, api.StatusCode),
         AnthropicIOException io => new HttpRequestException("Could not reach the Claude API.", io.InnerException),
-        AnthropicException => new HttpRequestException("The Claude API sent an answer this app could not read."),
-        JsonException when !cancellationToken.IsCancellationRequested =>
-            new HttpRequestException("The Claude API sent an answer this app could not read."),
+        AnthropicException => new HttpRequestException(UnreadableAnswer),
+        JsonException when !cancellationToken.IsCancellationRequested => new HttpRequestException(UnreadableAnswer),
         TaskCanceledException { InnerException: TimeoutException } when !cancellationToken.IsCancellationRequested =>
             new HttpRequestException($"No answer from the Claude API within {timeout.TotalSeconds:0} s."),
         _ => null,
@@ -295,8 +324,7 @@ internal sealed class ClaudeApiErrorClient(IChatClient inner, AnthropicClient an
         try
         {
             using var doc = JsonDocument.Parse(body);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object
-                || !doc.RootElement.TryGetProperty("error", out var error)
+            if (!ClaudeApiErrorBodyFilter.IsErrorShape(doc.RootElement, out var error)
                 || error.ValueKind != JsonValueKind.Object
                 || !error.TryGetProperty("message", out var message)
                 || message.ValueKind != JsonValueKind.String)
