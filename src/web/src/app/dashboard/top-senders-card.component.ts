@@ -26,11 +26,15 @@ import {
   topSenders,
   topSendersSummary,
   topSendersTable,
+  truncate,
 } from './top-senders';
 
 /** Pixels per bar plus room for the legend and axis; the width follows the container. */
 const BAR_HEIGHT = 28;
 const CHART_CHROME = 64;
+/** Below this chart width the bar labels are cut to `NARROW_LABEL_MAX` characters. */
+const NARROW_CHART = 480;
+const NARROW_LABEL_MAX = 14;
 
 /** One horizontal bar per sender, stacked unread then read. */
 export function topSendersData(rows: readonly TopSender[], p: ChartPalette): ChartData<'bar'> {
@@ -178,9 +182,21 @@ export class TopSendersCard {
           type: 'linear',
           stacked: true,
           beginAtZero: true,
-          ticks: { ...axis.ticks, precision: 0 },
+          ticks: { ...axis.ticks, precision: 0, autoSkipPadding: 12 },
         },
-        y: { ...axis, type: 'category', stacked: true },
+        y: {
+          ...axis,
+          type: 'category',
+          stacked: true,
+          ticks: {
+            ...axis.ticks,
+            // On a phone-width chart the full label would crowd out the bars.
+            callback(_value, index) {
+              const label = String(this.getLabelForValue(index));
+              return this.chart.width < NARROW_CHART ? truncate(label, NARROW_LABEL_MAX) : label;
+            },
+          },
+        },
       },
     };
   });
