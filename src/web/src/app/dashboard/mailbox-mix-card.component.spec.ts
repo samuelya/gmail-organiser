@@ -133,7 +133,7 @@ describe('MailboxMixCard', () => {
 
     card.openBar(at(0));
     expect(navigate).toHaveBeenCalledWith(['/review'], {
-      queryParams: { mailType: 'newsletter' },
+      queryParams: { status: 'not_rejected', mailType: 'newsletter' },
     });
 
     navigate.mockClear();
@@ -152,7 +152,7 @@ describe('MailboxMixCard', () => {
 
     const link = panel.querySelector('table a')!;
     expect(link.textContent!.trim()).toBe('newsletter');
-    expect(link.getAttribute('href')).toBe('/review?mailType=newsletter');
+    expect(link.getAttribute('href')).toBe('/review?status=not_rejected&mailType=newsletter');
     expect(panel.querySelectorAll('table a').length).toBe(1);
   });
 });
