@@ -207,8 +207,9 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         }
 
         List<string> query = skip ? [.. scope.Base, .. scope.Narrower, negation] : [.. scope.Base, .. scope.Narrower];
-        var action = new FilterActionRequest(topic is null ? [] : FilterProposalQuery.Labels(topic, policy.ExtraLabels), skip, false);
-        var pattern = new SenderPatternDto(topic, needsAction, false, 0, 1, 0, null, topic is null ? null : policy.ExtraLabels);
+        var extras = Extras(policy.Action, policy.ExtraLabels);
+        var action = new FilterActionRequest(topic is null ? [] : FilterProposalQuery.Labels(topic, extras), skip, false);
+        var pattern = new SenderPatternDto(topic, needsAction, false, 0, 1, 0, null, topic is null ? null : extras);
         return Unit.Fitting(policy, null, scope, query, action, pattern, false, notes);
     }
 
@@ -239,11 +240,15 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         }
 
         notes.Add(LabelOnlyNote(MixedNote, settings));
-        var action = new FilterActionRequest(FilterProposalQuery.Labels(topic, rule.ExtraLabels), false, false);
-        var pattern = new SenderPatternDto(topic, false, false, 0, 1, 0, null, rule.ExtraLabels);
+        var extras = Extras(rule.Action, rule.ExtraLabels);
+        var action = new FilterActionRequest(FilterProposalQuery.Labels(topic, extras), false, false);
+        var pattern = new SenderPatternDto(topic, false, false, 0, 1, 0, null, extras);
         return Unit.Fitting(
             policy, rule, scope, [.. scope.Base, .. scope.Narrower, .. terms.Query, .. earlier], action, pattern, terms.Wider || untestable.Count > 0, notes);
     }
+
+    /// <summary>The additional labels a filter adds: none for delete, as policy apply writes none next to the delete label.</summary>
+    private static string[] Extras(PolicyAction action, string[] extras) => action == PolicyAction.Delete ? [] : extras;
 
     /// <summary>The label a filter may add: the topic label, unless it is empty or the delete label.</summary>
     private static string? Topic(string? label, AppSettings settings) =>

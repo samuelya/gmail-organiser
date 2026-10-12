@@ -151,6 +151,28 @@ public sealed class FilterPolicyConsolidationTests(ApiFactory factory, PostgresF
     /// An archive sender policy (skips the inbox, transactional mail carved out) and a domain policy over two sender
     /// policies with another label; filters: the archive sender trashed, another domain sender and an excluded one labelled.
     /// </summary>
+    // The delete policy's filter adds only its topic, as policy apply writes no extras next to the delete label (#554).
+    [Fact]
+    public async Task A_delete_policys_topic_only_filter_is_not_stale_for_its_additional_labels()
+    {
+        var policy = Policy(PolicyScope.Sender, Bulk, PolicyAction.Delete, FakeLabelStore.SeedUserLabelNames[0]);
+        policy.ExtraLabels = [FakeLabelStore.SeedUserLabelNames[1]];
+        await using (var db = Postgres.CreateDbContext())
+        {
+            await db.FilterReviews.ExecuteDeleteAsync(Ct);
+            db.Senders.Add(Sender(Bulk, Bulk));
+            db.SenderPolicies.Add(policy);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var own = await Gmail.CreateFilterAsync(
+            new GmailFilterCriteria(From: Bulk, Query: Negation()), new GmailFilterAction(["Label_1"], [FilterSpec.Inbox]), Ct);
+
+        var review = await CreateReviewAsync();
+
+        review.Findings.ShouldNotContain(f => f.FilterIds.Contains(own.Id));
+    }
+
     private async Task<(string Bulk, string Other, string Excluded, Dictionary<string, Guid> Policies)> SeedExclusionsAsync()
     {
         var policies = new[]
