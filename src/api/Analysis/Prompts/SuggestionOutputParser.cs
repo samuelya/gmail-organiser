@@ -241,11 +241,13 @@ public static class SuggestionOutputParser
             read.NewLabelDisagreements++;
         }
 
+        var documentType = ReadDocumentTypeLabel(id, item, label!, parent, dropped);
         return new SuggestionOutput(id, label!, isNewLabel, needsAction, toBeDeleted, unsubscribe, confidence,
-            Cut(reason!, MaxReasonLength), ReadDocumentTypeLabel(id, item, label!, parent, dropped), ReadMailType(id, item, read))
+            Cut(reason!, MaxReasonLength), documentType, ReadMailType(id, item, read))
         {
             ReplaceLabels = replaceLabels,
             ProposedNewLabel = proposed,
+            ExtraLabels = ExtraLabelsOutput.Read(id, item, label!, documentType, read.Context, dropped),
         };
     }
 

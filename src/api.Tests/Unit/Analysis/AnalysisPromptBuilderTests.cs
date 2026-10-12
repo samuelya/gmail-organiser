@@ -22,7 +22,7 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v6");
+        template.Version.ShouldBe("analysis-v7");
         template.AsksMailType.ShouldBeTrue();
         template.Text.ShouldContain("`proposedNewLabel` (string or null)");
         template.Text.ShouldContain("`topicLabel` is the processor's organisation label plus `/<Merchant>`");
@@ -109,6 +109,8 @@ public sealed class AnalysisPromptBuilderTests
         var schema = options.ResponseFormat.ShouldBeOfType<ChatResponseFormatJson>().Schema.ShouldNotBeNull();
         schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ShouldBe(["suggestions"]);
         schema.GetProperty("properties").GetProperty("suggestions").GetProperty("type").GetString().ShouldBe("array");
+        schema.GetProperty("properties").GetProperty("suggestions").GetProperty("items").GetProperty("properties")
+            .GetProperty("extraLabels").GetProperty("type").GetString().ShouldBe("array");
         options.Temperature.ShouldBe(0f);
     }
 
@@ -283,6 +285,48 @@ public sealed class AnalysisPromptBuilderTests
             + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.40\n"
             + "- sender: old@example.com | subject: - | topicLabel: Topic/Old | type: ? | mailType: -"
             + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.30");
+    }
+
+    [Fact]
+    public void Hint_extras_render_after_the_similarity_and_the_instruction_closes_the_memory()
+    {
+        var plain = new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5);
+        var memory = new[] { plain, plain with { SenderAddress = "bills@example.com", ExtraLabels = ["Extra/One", "Extra\nTwo"] } };
+        var builder = new AnalysisPromptBuilder(PromptTemplate.BuiltIn);
+
+        var messages = builder.Build(Input([Email(1)], memory: memory));
+
+        messages[0].Text.ShouldBe(builder.Build(Input([Email(1)], memory: [plain]))[0].Text);
+        messages[0].Text.ShouldNotContain("extraLabels");
+        messages[1].Text.ShouldContain("- sender: news@example.com | subject: - | topicLabel: Topic/News | type: ? | mailType: -"
+            + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.50\n"
+            + "- sender: bills@example.com | subject: - | topicLabel: Topic/News | type: ? | mailType: -"
+            + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.50 | extraLabels: Extra/One, Extra Two\n\n"
+            + AnalysisPromptBuilder.ExtraLabelsInstruction + "\n\nEmails to classify (1):");
+    }
+
+    [Fact]
+    public void Without_hint_extras_the_model_is_never_told_about_them()
+    {
+        var memory = new[] { new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5) };
+        var builder = new AnalysisPromptBuilder(PromptTemplate.BuiltIn);
+
+        var text = string.Join('\n', builder.Build(Input([Email(1)], memory: memory)).Select(m => m.Text));
+
+        text.ShouldNotContain("extraLabels");
+        builder.AllowedExtraLabels(memory).ShouldBeEmpty();
+        builder.AllowedExtraLabels([]).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Allowed_extras_are_the_union_of_the_hints_and_empty_for_a_template_without_memory()
+    {
+        var hint = new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5);
+        IReadOnlyList<MemoryHint> memory = [hint with { ExtraLabels = ["Extra/A", "Extra/B"] }, hint with { ExtraLabels = ["extra/a", "Extra/C"] }, hint];
+
+        new AnalysisPromptBuilder(PromptTemplate.BuiltIn).AllowedExtraLabels(memory).ShouldBe(["Extra/A", "Extra/B", "Extra/C"]);
+        new AnalysisPromptBuilder(PromptTemplate.FromSettings("Past: {{memory}}\n{{emails}}")).AllowedExtraLabels(memory).Count.ShouldBe(3);
+        new AnalysisPromptBuilder(PromptTemplate.FromSettings("Rules only.\n{{emails}}")).AllowedExtraLabels(memory).ShouldBeEmpty();
     }
 
     [Fact]

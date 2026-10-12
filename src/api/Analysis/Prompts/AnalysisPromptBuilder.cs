@@ -26,6 +26,15 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         + "`proposedNewLabel`; the person approves each new label one by one.";
 
     /// <summary>
+    /// Closes the memory section only when a hint above carries extras (#528): the model never hears of
+    /// <c>extraLabels</c> otherwise, and the parser keeps only extras from those hints (<see cref="AllowedExtraLabels"/>).
+    /// </summary>
+    public const string ExtraLabelsInstruction =
+        "Additional labels: answer `extraLabels` (array of strings, at most 5) only with labels listed as `extraLabels` in the "
+        + "similar past decisions above, only when the email is the same kind as that decision, spelled exactly as there. "
+        + "Otherwise answer `extraLabels` as [].";
+
+    /// <summary>
     /// The answer shape: one object wrapping the per-email array, because Ollama's JSON mode only yields a top-level
     /// object. OllamaSharp sends the schema as Ollama's <c>format</c>, so the model is constrained to it.
     /// </summary>
@@ -49,7 +58,8 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
                   "confidence": { "type": "number" },
                   "reason": { "type": "string" },
                   "replaceLabels": { "type": "array", "items": { "type": "string" } },
-                  "documentTypeLabel": { "type": ["string", "null"] }
+                  "documentTypeLabel": { "type": ["string", "null"] },
+                  "extraLabels": { "type": "array", "items": { "type": "string" } }
                 },
                 "required": ["id", "topicLabel", "mailType", "needsAction", "toBeDeleted", "unsubscribeSuggested", "confidence", "reason"]
               }
@@ -164,8 +174,19 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             $"- sender: {OneLine(m.SenderAddress)} | subject: {OneLine(m.SubjectTemplate ?? "-")} | topicLabel: {OneLine(m.TopicLabel)}"
             + $" | type: {(m.DocumentTypeDecided ? OneLine(m.DocumentTypeLabel ?? "-") : "?")} | mailType: {MailTypeName(m.MailType)}"
             + $" | needsAction: {YesNo(m.NeedsAction)} | toBeDeleted: {YesNo(m.ToBeDeleted)} | outcome: {OneLine(m.Outcome)}"
-            + $" | similarity: {m.Similarity:0.00}")));
+            + $" | similarity: {m.Similarity:0.00}")
+            + (m.ExtraLabels.Count == 0 ? "" : $" | extraLabels: {string.Join(", ", m.ExtraLabels.Select(OneLine))}")))
+            + (memory.Any(m => m.ExtraLabels.Count > 0) ? "\n\n" + ExtraLabelsInstruction : "");
     }
+
+    /// <summary>
+    /// The extras the model may answer for a prompt showing <paramref name="memory"/>: the union of the hints' extras
+    /// (case-insensitive, first spelling); empty when no hint has any, or the template has no <c>{{memory}}</c> to show them.
+    /// </summary>
+    public IReadOnlyCollection<string> AllowedExtraLabels(IReadOnlyList<MemoryHint> memory) =>
+        !template.Text.Contains(PromptTemplate.MemoryPlaceholder, StringComparison.Ordinal)
+            ? []
+            : [.. memory.SelectMany(m => m.ExtraLabels).Select(l => l.Trim()).Where(l => l.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>
     /// One hint line per approved policy of the emails' senders (#360), after the memory: covered mail never reaches the

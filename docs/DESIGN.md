@@ -113,6 +113,7 @@ Every fetched email has an **analysis status**:
 
 **LLM input:** sender info, subject/snippet/cleaned body (truncated), current label tree, and similar past decisions from memory.
 **LLM output (JSON per email):** `topicLabel` (the sender organisation, e.g. `Finance/<Bank>`), `documentTypeLabel` (optional second label under the document-type parent), `isNewLabel`, `needsAction` (bool), `toBeDeleted` (bool), `unsubscribeSuggested`, `confidence`, `reason`, plus a sender-level `filterCriteria` suggestion. Additional labels (up to 5) are added by the user in review, applied next to the topic label.
+**Additional labels (`extraLabels`, #528):** only from similar past decisions shown in the same prompt. A memory hint with extras renders ` | extraLabels: A, B` and the memory section then ends with the extras instruction; without such a hint the model is never told about the field. The parser keeps only entries equal (case-insensitive) to those hints' extras, in their spelling, and drops the rest with a note, so a first assessment never gets extras.
 
 ### 6.3 Review & apply
 - Review screen lists analysed emails grouped by sender; per item **Approve / Edit / Reject / Send to Claude**. Bulk-approve above a confidence threshold.
