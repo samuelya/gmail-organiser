@@ -191,7 +191,7 @@ public sealed partial class AnalysisRunJob
 
         var decision = DerivationRule.Decide(
             [.. representatives.Select(m => outputs.TryGetValue(m.Id, out var o)
-                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels, o.DocumentTypeLabel, o.MailType)
+                ? new RepresentativeOutput(o.TopicLabel, o.NeedsAction, o.ToBeDeleted, o.UnsubscribeSuggested, o.Confidence, o.ReplaceLabels, o.DocumentTypeLabel, o.MailType, o.ExtraLabels)
                 : null)],
             context.Settings.AnalysisDerivedConfidencePenalty);
         if (decision is not Agreed agreed)
@@ -209,6 +209,7 @@ public sealed partial class AnalysisRunJob
             $"Same as {outputs.Count} analysed emails of this group", agreed.DocumentTypeLabel, agreed.MailType)
         {
             ReplaceLabels = agreed.ReplaceLabels,
+            ExtraLabels = agreed.ExtraLabels,
         };
         foreach (var m in others)
         {
@@ -413,20 +414,19 @@ public sealed partial class AnalysisRunJob
     /// The replaced labels resolve to the ids this message carries: a derived member without one loses nothing. The
     /// document-type label takes the spelling of the run's label tree entry it matches (for a new one, of its longest
     /// existing ancestor) and is new when there is none, so a derived row agrees with its representatives. Additional
-    /// labels are respelled the same way; a blocked one (#367), or one outside the label tree while the taxonomy is locked,
-    /// is dropped alone and the suggestion keeps its topic. A locked run so never creates a label through an extra, and the
-    /// new-label cap (locked only) has no new extra to count.
+    /// labels are respelled the same way and cleaned before <see cref="ApprovedLabelSet.Admit"/> drops blocked ones and
+    /// counts those outside the tree as new (#529).
     /// </summary>
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson,
         string? model)
     {
-        output = context.LabelSet.Admit(output);
         var type = output.DocumentTypeLabel is { } suggested ? context.LabelIndex.Respell(suggested) : null;
-        var extras = ExtraLabelList.Clean(
-            output.ExtraLabels.Where(e => !context.LabelSet.IsBlocked(e)).Select(context.LabelIndex.Respell)
-                .Where(e => !context.LabelSet.Locked || context.LabelIndex.Contains(e)), output.TopicLabel, type,
-            ExtraLabelList.Reserved(context.Settings));
+        output = context.LabelSet.Admit(output with
+        {
+            ExtraLabels = ExtraLabelList.Clean(
+                output.ExtraLabels.Select(context.LabelIndex.Respell), output.TopicLabel, type, ExtraLabelList.Reserved(context.Settings)),
+        }, context.LabelIndex);
         var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
@@ -438,7 +438,7 @@ public sealed partial class AnalysisRunJob
             IsNewLabel = output.IsNewLabel,
             DocumentTypeLabel = type,
             DocumentTypeIsNew = type is not null && !context.LabelIndex.Contains(type),
-            ExtraLabels = extras,
+            ExtraLabels = [.. output.ExtraLabels],
             MailType = output.MailType,
             ProposedNewLabel = output.ProposedNewLabel,
             NeedsAction = output.NeedsAction,

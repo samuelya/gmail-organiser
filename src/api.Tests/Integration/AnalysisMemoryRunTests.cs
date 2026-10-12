@@ -1,8 +1,10 @@
+using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Gmail.Fake;
 using GmailOrganiser.Memory;
+using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
 using Microsoft.EntityFrameworkCore;
@@ -143,7 +145,7 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task A_locked_taxonomy_drops_remembered_extras_outside_the_label_tree(bool locked)
+    public async Task Remembered_extras_outside_the_label_tree_are_kept_and_a_locked_taxonomy_leaves_them_out_of_bulk_approve(bool locked)
     {
         var nested = FakeLabelStore.SeedUserLabelNames[1];
         await using (var scope = h.Services.CreateAsyncScope())
@@ -162,8 +164,13 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
         await using var check = postgres.CreateDbContext();
         var memory = await check.Suggestions.AsNoTracking().Where(s => s.Source == SuggestionSource.Memory).ToListAsync(Ct);
         memory.ShouldNotBeEmpty();
-        string[] expected = locked ? [nested] : [.. new[] { nested, "Gone Extra" }.Order(StringComparer.OrdinalIgnoreCase)];
+        string[] expected = [.. new[] { nested, "Gone Extra" }.Order(StringComparer.OrdinalIgnoreCase)];
         memory.ShouldAllBe(s => s.ExtraLabels.SequenceEqual(expected));
+
+        var bulk = await h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(0.5, IncludeDerived: true));
+        bulk.StatusCode.ShouldBe(HttpStatusCode.OK, await bulk.Content.ReadAsStringAsync(Ct));
+        var statuses = await check.Suggestions.AsNoTracking().Where(s => s.Source == SuggestionSource.Memory).Select(s => s.Status).ToListAsync(Ct);
+        statuses.ShouldAllBe(s => s == (locked ? SuggestionStatus.Pending : SuggestionStatus.Approved));
     }
 
     [Fact]

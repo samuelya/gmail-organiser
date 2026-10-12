@@ -151,16 +151,18 @@ public sealed partial class AnalysisRunJob(
             ? llm.CreateChatClient(OllamaHttp.Parse(settings.OllamaBaseUrl), triageModel)
             : null;
         // A resumed run counts the new labels it already admitted under the cap (#367), never the capped ones.
+        var index = new LabelTreeIndex(labelTree);
         var admitted = settings.TaxonomyLocked
-            ? await db.Suggestions.AsNoTracking()
-                .Where(s => s.RunId == run.Id && s.IsNewLabel && !s.Reason.EndsWith(ApprovedLabelSet.CapNote))
-                .Select(s => s.TopicLabel).Distinct().ToListAsync(ct)
+            ? (await db.Suggestions.AsNoTracking()
+                .Where(s => s.RunId == run.Id && (s.IsNewLabel || s.ExtraLabels.Length > 0) && !s.Reason.EndsWith(ApprovedLabelSet.CapNote))
+                .Select(s => new { s.IsNewLabel, s.TopicLabel, s.ExtraLabels }).ToListAsync(ct))
+                .SelectMany(s => ApprovedLabelSet.NewLabels(s.IsNewLabel, s.TopicLabel, s.ExtraLabels, index))
             : [];
 
         // A compare run's hints leave out decisions about every message it re-analyses, not just the current group's.
         var context = new RunContext(
             run, settings, builder, ActiveChat(chat, chatConfig), triage is null ? null : OllamaChat(triage, settings), labelTree,
-            new LabelTreeIndex(labelTree), labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
+            index, labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
             compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies, ApprovedLabelSet.From(settings, admitted));
 
         var prepared = new Dictionary<MessageGroup, PreparedGroup>(ReferenceEqualityComparer.Instance);

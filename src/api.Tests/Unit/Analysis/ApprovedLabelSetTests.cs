@@ -9,6 +9,8 @@ public sealed class ApprovedLabelSetTests
     private static SuggestionOutput Output(string id, string label, bool isNew, double confidence = 0.9, string? type = null) =>
         new(id, label, isNew, false, false, false, confidence, "Synthetic reason", type);
 
+    private static readonly LabelTreeIndex Tree = new(["Topic", "Kept"]);
+
     private static ParsedSuggestions Parsed(params SuggestionOutput[] valid) => new(valid, [], null);
 
     [Fact]
@@ -63,24 +65,62 @@ public sealed class ApprovedLabelSetTests
     {
         var set = new ApprovedLabelSet(true, [], 2, admitted: ["Topic/Seeded"]);
 
-        set.Admit(Output("1", "topic/seeded", true)).Confidence.ShouldBe(0.9);
-        set.Admit(Output("2", "Topic/First", true)).Confidence.ShouldBe(0.9);
-        var capped = set.Admit(Output("3", "Topic/Second", true));
-        set.Admit(Output("4", "Topic/First", true)).Confidence.ShouldBe(0.9);
-        var low = set.Admit(Output("5", "Topic/Second", true, confidence: 0.3));
+        set.Admit(Output("1", "topic/seeded", true), Tree).Confidence.ShouldBe(0.9);
+        set.Admit(Output("2", "Topic/First", true), Tree).Confidence.ShouldBe(0.9);
+        var capped = set.Admit(Output("3", "Topic/Second", true), Tree);
+        set.Admit(Output("4", "Topic/First", true), Tree).Confidence.ShouldBe(0.9);
+        var low = set.Admit(Output("5", "Topic/Second", true, confidence: 0.3), Tree);
 
         (capped.TopicLabel, capped.Confidence, capped.Reason).ShouldBe(
             ("Topic/Second", ApprovedLabelSet.CappedConfidence, "Synthetic reason" + ApprovedLabelSet.CapNote));
         low.Confidence.ShouldBe(0.3);
-        set.Admit(capped).Reason.ShouldBe(capped.Reason);
-        set.Admit(Output("6", "Topic", false)).Confidence.ShouldBe(0.9);
+        set.Admit(capped, Tree).Reason.ShouldBe(capped.Reason);
+        set.Admit(Output("6", "Topic", false), Tree).Confidence.ShouldBe(0.9);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Admit_drops_a_blocked_extra_alone_and_a_locked_taxonomy_caps_extras_outside_the_tree(bool locked)
+    {
+        var set = new ApprovedLabelSet(locked, ["Blocked"], 0);
+
+        var admitted = set.Admit(Output("1", "Topic", false) with { ExtraLabels = ["Kept", "Area/blocked", "Not In Tree"] }, Tree);
+
+        admitted.ExtraLabels.ShouldBe(["Kept", "Not In Tree"]);
+        (admitted.TopicLabel, admitted.Confidence).ShouldBe(("Topic", locked ? ApprovedLabelSet.CappedConfidence : 0.9));
+        set.Admit(Output("2", "Topic", false) with { ExtraLabels = ["kept"] }, Tree).Confidence.ShouldBe(0.9);
+    }
+
+    [Fact]
+    public void New_extras_count_toward_the_cap_with_the_topic_and_fit_together_or_not_at_all()
+    {
+        var set = new ApprovedLabelSet(true, [], 2);
+
+        set.Admit(Output("1", "Topic/New", true) with { ExtraLabels = ["Extra One"] }, Tree).Confidence.ShouldBe(0.9);
+        var over = set.Admit(Output("2", "Topic", false) with { ExtraLabels = ["Extra One", "Extra Two"] }, Tree);
+        set.Admit(Output("3", "Topic/new", true) with { ExtraLabels = ["extra one", "Kept"] }, Tree).Confidence.ShouldBe(0.9);
+
+        (over.Confidence, over.Reason).ShouldBe((ApprovedLabelSet.CappedConfidence, "Synthetic reason" + ApprovedLabelSet.CapNote));
+        set.Admit(Output("4", "Topic", false) with { ExtraLabels = ["Extra Two"] }, Tree).Confidence.ShouldBe(ApprovedLabelSet.CappedConfidence);
+    }
+
+    [Fact]
+    public void Past_the_cap_a_new_topic_is_capped_and_its_blocked_extra_dropped_together()
+    {
+        var set = new ApprovedLabelSet(true, ["Blocked"], 1, admitted: ["Topic/Seeded"]);
+
+        var capped = set.Admit(Output("1", "Topic/Other", true, confidence: 0.8) with { ExtraLabels = ["Kept", "Blocked"] }, Tree);
+
+        (capped.Confidence, capped.Reason).ShouldBe((ApprovedLabelSet.CappedConfidence, "Synthetic reason" + ApprovedLabelSet.CapNote));
+        capped.ExtraLabels.ShouldBe(["Kept"]);
     }
 
     [Fact]
     public void Unlocked_runs_have_no_cap_and_a_zero_cap_caps_every_new_label()
     {
-        new ApprovedLabelSet(false, [], 0).Admit(Output("1", "Topic/New", true)).Confidence.ShouldBe(0.9);
-        new ApprovedLabelSet(true, [], 0).Admit(Output("1", "Topic/New", true)).Confidence.ShouldBe(ApprovedLabelSet.CappedConfidence);
+        new ApprovedLabelSet(false, [], 0).Admit(Output("1", "Topic/New", true), Tree).Confidence.ShouldBe(0.9);
+        new ApprovedLabelSet(true, [], 0).Admit(Output("1", "Topic/New", true), Tree).Confidence.ShouldBe(ApprovedLabelSet.CappedConfidence);
     }
 
     [Fact]

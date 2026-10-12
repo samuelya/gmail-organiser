@@ -67,7 +67,7 @@ public sealed record ReviewGroupDto(
 /// <param name="DocumentTypeIsNew">Gmail did not have <paramref name="DocumentTypeLabel"/> when it was suggested or edited.</param>
 /// <param name="Alternative">The compare run's answer stored next to it (#248); null when none.</param>
 /// <param name="MailType">The snake_case <c>MailType</c> (#365); null when none.</param>
-/// <param name="NewLabelPending">The taxonomy is locked and this pending suggestion proposes a label Gmail still lacks (#367): bulk
+/// <param name="NewLabelPending">The taxonomy is locked and this pending suggestion proposes a label Gmail still lacks (#367; topic or additional, #529): bulk
 /// approve skips it until it is approved individually or edited to an existing label.</param>
 /// <param name="ExtraLabels">Additional labels the person added (#522), canonical (<see cref="Analysis.ExtraLabelList.Clean"/>).</param>
 /// <param name="ExtraLabelsNew">The subset Gmail lacks, computed from the label list (empty when it is unknown); never stored.</param>

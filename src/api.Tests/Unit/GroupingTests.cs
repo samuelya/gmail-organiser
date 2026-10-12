@@ -271,8 +271,21 @@ public sealed class GroupingTests
 
     private static RepresentativeOutput Out(
         string label = "Shopping", bool action = false, bool delete = true, double confidence = 0.9, bool unsubscribe = false, string[]? replace = null,
-        string? type = null, MailType? mailType = null) =>
-        new(label, action, delete, unsubscribe, confidence, replace, type, mailType);
+        string? type = null, MailType? mailType = null, string[]? extras = null) =>
+        new(label, action, delete, unsubscribe, confidence, replace, type, mailType, extras);
+
+    [Fact]
+    public void Rule_derives_the_extras_every_representative_named_and_never_disagrees_on_them()
+    {
+        var agreed = DerivationRule.Decide(
+            [Out(extras: ["Zeta", "alpha", "Beta", "ALPHA"]), Out(extras: ["beta", "Alpha", "Other"]), Out(extras: ["ALPHA", "BETA", "Zeta"])],
+            0.10).ShouldBeOfType<Agreed>();
+
+        agreed.ExtraLabels.ShouldBe(["alpha", "Beta"]);
+        DerivationRule.Decide([Out(extras: ["Alpha"]), Out()], 0.10).ShouldBeOfType<Agreed>().ExtraLabels.ShouldBeEmpty();
+        DerivationRule.Decide([Out(extras: ["Alpha"]), Out(extras: ["Beta"])], 0.10).ShouldBeOfType<Agreed>().ExtraLabels.ShouldBeEmpty();
+        DerivationRule.Decide([Out(), Out()], 0.10).ShouldBeOfType<Agreed>().ExtraLabels.ShouldBeEmpty();
+    }
 
     [Fact]
     public void Rule_agrees_on_the_mail_type_like_the_document_type()
