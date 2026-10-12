@@ -3,7 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { Router } from '@angular/router';
-import { catchError, filter, Observable, of, Subject, switchMap } from 'rxjs';
+import { catchError, filter, of, Subject, switchMap } from 'rxjs';
 import { openConfirm } from '../core/confirm-dialog';
 import { isActiveJob, JobDto, newerJob, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
@@ -90,15 +90,6 @@ export class ApplyTracker {
       .open(message, 'Create filter', { duration: 10_000 })
       .onAction()
       .subscribe(() => void this.router.navigate(['/rules'], { queryParams: { propose: from } }));
-  }
-
-  /** The confirm for applying every sender's `n` approved suggestions. */
-  confirmAll(n: number): Observable<boolean> {
-    return openConfirm(this.dialog, {
-      title: 'Apply all approved suggestions?',
-      message: `${n} approved suggestion(s) from every sender are applied to Gmail. You can undo the batch from History.`,
-      confirm: 'Apply all',
-    });
   }
 
   /** The API refuses (409, shown by the error interceptor) while a chunk is pending. */

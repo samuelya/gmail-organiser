@@ -166,7 +166,6 @@ describe('ReviewPage', () => {
       rejectGroup: vi.fn(() => of({ changed: 2, skipped: [] })),
       analyseIndividually: vi.fn(() => of({ id: 'run-1' })),
       apply: vi.fn(() => of({ id: 'batch-1', jobId: 'job-1' })),
-      applyAll: vi.fn(() => of({ id: 'batch-3', jobId: 'job-3' })),
       applyRest: vi.fn(() =>
         of({
           created: 4,
@@ -495,62 +494,6 @@ describe('ReviewPage', () => {
     expect(api.applyRest).not.toHaveBeenCalled();
   });
 
-  const renderApproved = (approved: number) =>
-    render(noPattern, 'off', [group()], 0, '/', approved);
-
-  it('hides "Apply all approved" when nothing is approved', async () => {
-    const { q } = await renderApproved(0);
-    expect(q('apply-all')).toBeNull();
-  });
-
-  it('applies all approved suggestions after confirming, then follows the job', async () => {
-    const { api, analysis, jobs, q, settle } = await renderApproved(7);
-    expect(q('apply-all')!.textContent).toContain('Apply all approved (7)');
-    q('apply-all')!.click();
-    await settle();
-    const dialog = document.querySelector('mat-dialog-container')!.textContent!;
-    expect(dialog).toContain('Apply all approved suggestions?');
-    expect(dialog).toContain('7 approved suggestion(s) from every sender are applied to Gmail.');
-    const loads = analysis.summary.mock.calls.length;
-    dialogButton('confirm-ok').click();
-    await settle();
-    expect(api.applyAll).toHaveBeenCalledTimes(1);
-    expect(q('apply-progress')).toBeNull();
-    jobs.held.set([job('running', { id: 'job-3' })]);
-    await settle();
-    expect(q('apply-progress')).not.toBeNull();
-    expect((q('apply-all') as HTMLButtonElement).disabled).toBe(true);
-    expect((q('apply-approved') as HTMLButtonElement).disabled).toBe(true);
-    jobs.held.set([job('completed', { id: 'job-3', version: 2 })]);
-    await settle();
-    expect(q('apply-progress')).toBeNull();
-    expect(snackText()).toContain('Applied 2 of 4 messages');
-    expect(analysis.summary.mock.calls.length).toBeGreaterThan(loads);
-  });
-
-  it('does not apply all when the confirm is cancelled', async () => {
-    const { api, q, settle } = await renderApproved(3);
-    q('apply-all')!.click();
-    await settle();
-    dialogButton('confirm-cancel').click();
-    await settle();
-    expect(api.applyAll).not.toHaveBeenCalled();
-  });
-
-  it('reloads the approved count after "Nothing to apply"', async () => {
-    const { api, analysis, q, settle } = await renderApproved(3);
-    api.applyAll.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 409 })));
-    analysis.summary.mockReturnValue(of({ alternatives: 0, approved: 0 }));
-    q('apply-all')!.click();
-    await settle();
-    dialogButton('confirm-ok').click();
-    await settle();
-    await settle();
-    expect(api.applyAll).toHaveBeenCalledTimes(1);
-    expect(q('apply-all')).toBeNull();
-    expect(q('apply-progress')).toBeNull();
-  });
-
   const claudeItem = (over: Partial<ExternalReviewDto> = {}): ExternalReviewDto => ({
     id: 'r1',
     targetType: 'suggestion',
@@ -799,17 +742,22 @@ describe('ReviewPage', () => {
   });
 
   it('filters by Re-analysed with the count from the summary', async () => {
-    const { api, el, q, settle } = await render(noPattern, 'off', [group()], 4);
+    const { api, el, q, settle } = await render(noPattern, 'off', [group()], 4, '/', 7);
     expect(q('filter-reanalysed')!.textContent).toContain('Re-analysed (4)');
+    expect(q('apply-all')!.textContent).toContain('Apply all approved (7)');
     el.querySelector<HTMLButtonElement>('[data-testid="filter-reanalysed"] button')!.click();
     await settle();
     expect(api.listSenders).toHaveBeenLastCalledWith('pending', '', 1, 25, true, []);
     expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, true, []);
   });
 
-  it('hides the Re-analysed filter while nothing waits', async () => {
-    const { q } = await render();
+  it('hides the Re-analysed filter while nothing waits, and Apply all once a reload fails', async () => {
+    const { analysis, jobs, q, settle } = await render(noPattern, 'off', [group()], 0, '/', 3);
     expect(q('filter-reanalysed')).toBeNull();
+    analysis.summary.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 500 })));
+    jobs.reconnects.set(1);
+    await settle();
+    expect(q('apply-all')).toBeNull();
   });
 
   it('Use new on an approved member notes it is pending again; Keep current on a card names the group and tab', async () => {

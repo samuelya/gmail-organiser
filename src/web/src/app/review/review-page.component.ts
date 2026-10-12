@@ -35,6 +35,7 @@ import {
   PENDING_AGAIN_NOTE,
   repends,
 } from './alternative.models';
+import { ApplyAllButton } from './apply-all-button.component';
 import { ApplyTracker } from './apply-tracker';
 import { CardReanalyse } from './card-reanalyse';
 import { bulkApproveData, openBulkApprove } from './bulk-approve-dialog.component';
@@ -75,6 +76,7 @@ import { SenderList } from './sender-list.component';
 @Component({
   selector: 'app-review-page',
   imports: [
+    ApplyAllButton,
     ClaudeSenderActions,
     GroupCard,
     MatButtonModule,
@@ -273,9 +275,9 @@ export class ReviewPage {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((summary) => {
-        if (!summary) return;
-        this.alternatives.set(summary.alternatives);
-        this.approvedTotal.set(summary.approved);
+        // A failed load hides "Apply all" rather than offering a stale count.
+        this.approvedTotal.set(summary?.approved ?? 0);
+        if (summary) this.alternatives.set(summary.alternatives);
       });
 
     this.jobs.externalReviewChanges
@@ -362,11 +364,11 @@ export class ReviewPage {
   editGroup(group: ReviewGroupDto): void {
     const address = this.selected();
     if (!address) return;
-    this.onYes(this.editDialog.editGroup(address, group), () => this.refresh());
+    this.refreshAfter(this.editDialog.editGroup(address, group));
   }
 
   editMember(m: SuggestionDto): void {
-    this.onYes(this.editDialog.editMember(m), () => this.refresh());
+    this.refreshAfter(this.editDialog.editMember(m));
   }
 
   /** Patched in place; an accepted verdict changed suggestions, so everything is re-fetched. */
@@ -408,16 +410,8 @@ export class ReviewPage {
   }
 
   bulkApprove(): void {
-    const data = bulkApproveData(this.settings(), this.selected());
-    this.onYes(openBulkApprove(this.dialog, data), () => this.refresh());
-  }
-
-  /** Applies every sender's approved suggestions after a confirm; the API answers 409 when none is. */
-  applyAll(): void {
-    const n = this.approvedTotal();
-    if (!n || this.apply.jobId()) return;
-    this.onYes(this.apply.confirmAll(n), () =>
-      this.run(this.review.applyAll(), (batch) => this.apply.track(batch.jobId)),
+    this.refreshAfter(
+      openBulkApprove(this.dialog, bulkApproveData(this.settings(), this.selected())),
     );
   }
 
@@ -467,6 +461,11 @@ export class ReviewPage {
     answer.pipe(filter(Boolean), takeUntilDestroyed(this.destroyRef)).subscribe(() => then());
   }
 
+  /** Re-fetches once a dialog says it changed something. */
+  private refreshAfter(saved: Observable<boolean>): void {
+    this.onYes(saved, () => this.refresh());
+  }
+
   /** Runs one action at a time, then re-fetches whatever happened (an error may mean the state moved). */
   private run<T>(request: Observable<T>, next?: (value: T) => void): void {
     if (this.busy()) return;
@@ -484,7 +483,7 @@ export class ReviewPage {
       .subscribe({ next: (value) => next?.(value), error: () => undefined });
   }
 
-  private refresh(): void {
+  refresh(): void {
     this.version.update((v) => v + 1);
   }
 
