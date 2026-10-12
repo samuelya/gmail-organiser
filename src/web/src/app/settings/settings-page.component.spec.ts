@@ -77,6 +77,7 @@ const setupStatus: SetupStatus = {
   embeddingModelSelected: false,
   wizardSeen: true,
   complete: true,
+  completedOnce: true,
 };
 
 const models: LlmModels = {
@@ -189,6 +190,7 @@ describe('SettingsPage', () => {
     const { el, q } = await render();
     const headings = [...el.querySelectorAll('h2')].map((h) => h.textContent?.trim());
     expect(headings).toEqual([
+      'Setup',
       'Google',
       'Gmail connection',
       'Analysis model provider',
@@ -209,6 +211,12 @@ describe('SettingsPage', () => {
     expect(q('section-ollama')!.querySelector('app-models-step')).not.toBeNull();
     expect(q('connected-as')!.textContent).toContain(EMAIL);
     expect(q('no-client')).toBeNull();
+  });
+
+  it('the Run setup again link points to /setup', async () => {
+    const { q } = await render();
+    expect(q('rerun-setup')!.getAttribute('href')).toBe('/setup');
+    expect(q('rerun-setup')!.textContent).toContain('Run setup again');
   });
 
   it('shows the api version from /healthz in the footer', async () => {

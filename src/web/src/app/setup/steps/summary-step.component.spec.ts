@@ -15,6 +15,7 @@ const status = (over: Partial<SetupStatus> = {}): SetupStatus => ({
   embeddingModelSelected: false,
   wizardSeen: false,
   complete: false,
+  completedOnce: false,
   ...over,
 });
 

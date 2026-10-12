@@ -3,22 +3,28 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  Injector,
   computed,
   inject,
   signal,
   viewChild,
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
+import { MatBadgeModule } from '@angular/material/badge';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatListModule } from '@angular/material/list';
+import { MatMenuModule } from '@angular/material/menu';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { distinctUntilChanged, filter, map, startWith, tap } from 'rxjs';
+import { progressPercent } from '../core/jobs.models';
+import type { JobsService } from '../core/jobs.service';
 import { readLocal, writeLocal } from '../core/local-store';
 import { ThemeChoice, ThemeService } from '../core/theme.service';
+import { jobTypeLabel } from '../dashboard/fetch.models';
 import { SetupState } from '../setup/setup-state';
 import { NAV_ITEMS, navActiveOptions } from './nav-items';
 
@@ -35,9 +41,11 @@ const THEME_ICONS: Record<ThemeChoice, string> = {
 @Component({
   selector: 'app-layout',
   imports: [
+    MatBadgeModule,
     MatButtonModule,
     MatIconModule,
     MatListModule,
+    MatMenuModule,
     MatSidenavModule,
     MatToolbarModule,
     MatTooltipModule,
@@ -51,12 +59,17 @@ const THEME_ICONS: Record<ThemeChoice, string> = {
 })
 export class Layout {
   protected readonly appName = 'Gmail Organiser';
-  protected readonly navItems = NAV_ITEMS.map((item) => ({
+  private readonly allNavItems = NAV_ITEMS.map((item) => ({
     ...item,
     active: navActiveOptions(item),
   }));
   protected readonly theme = inject(ThemeService);
   protected readonly setupState = inject(SetupState);
+  private readonly injector = inject(Injector);
+  /** Loaded after start-up so the SignalR client stays out of the initial bundle. */
+  private readonly jobsService = signal<JobsService | null>(null);
+  protected readonly jobTypeLabel = jobTypeLabel;
+  protected readonly progressPercent = progressPercent;
   private readonly router = inject(Router);
 
   private readonly breakpoints = inject(BreakpointObserver);
@@ -87,6 +100,23 @@ export class Layout {
     { initialValue: this.router.url },
   );
 
+  /** Setup leaves the nav after its first completion; `complete` is live and would bring it back. */
+  protected readonly navItems = computed(() => {
+    const completedOnce = this.setupState.status()?.completedOnce === true;
+    return this.allNavItems.filter((item) => !(item.hideWhenSetupComplete && completedOnce));
+  });
+
+  protected readonly activeJobs = computed(() => this.jobsService()?.activeJobs() ?? []);
+  protected readonly jobsReconnecting = computed(() => {
+    const state = this.jobsService()?.connectionState();
+    return state === 'reconnecting' || state === 'disconnected';
+  });
+  protected readonly jobsLabel = computed(() => {
+    if (this.jobsReconnecting()) return 'Live updates reconnecting';
+    const n = this.activeJobs().length;
+    return `${n} job${n === 1 ? '' : 's'} running`;
+  });
+
   /** "Setup incomplete" banner, except on the wizard itself. */
   protected readonly showSetupBanner = computed(
     () => this.setupState.showBanner() && !this.url().startsWith('/setup'),
@@ -95,6 +125,9 @@ export class Layout {
   constructor() {
     // The guard loads the status on guarded pages; this covers landing on /settings directly.
     this.setupState.load().subscribe();
+    void import('../core/jobs.service').then(({ JobsService }) =>
+      this.jobsService.set(this.injector.get(JobsService)),
+    );
   }
 
   protected readonly navOpen = computed(() =>

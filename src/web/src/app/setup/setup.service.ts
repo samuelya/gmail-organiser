@@ -89,6 +89,8 @@ export interface SetupStatus {
   embeddingModelSelected: boolean;
   wizardSeen: boolean;
   complete: boolean;
+  /** Setup has been complete at least once; stays true when `complete` turns false again. */
+  completedOnce: boolean;
 }
 
 export const GOOGLE_CONNECT_URL = '/api/auth/google/start';
