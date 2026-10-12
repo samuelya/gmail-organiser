@@ -1,5 +1,13 @@
-import { DecimalPipe } from '@angular/common';
-import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
+import { DecimalPipe, NgTemplateOutlet } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  TemplateRef,
+  computed,
+  contentChild,
+  input,
+  signal,
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 
 /** A chart's data as a table: the text alternative a "Show table" toggle swaps in. */
@@ -11,13 +19,14 @@ export interface ChartTable {
 let nextId = 0;
 
 /**
- * Generic chart frame: a heading, the projected `<canvas baseChart>` labelled by `summary`,
- * and a "Show table" toggle that swaps the chart for the same data as a table.
- * With no rows it shows `emptyText` instead; the caller renders no canvas then.
+ * Generic chart frame: a heading, the chart labelled by `summary`, and a "Show table" toggle
+ * that swaps the chart for the same data as a table. The caller passes the `<canvas baseChart>`
+ * inside an `<ng-template>`, so the panel creates it only when there are rows; otherwise it
+ * shows `emptyText`.
  */
 @Component({
   selector: 'app-chart-panel',
-  imports: [DecimalPipe, MatButtonModule],
+  imports: [DecimalPipe, MatButtonModule, NgTemplateOutlet],
   template: `
     <section class="flex flex-col gap-2" [attr.aria-labelledby]="headingId">
       <div class="flex flex-wrap items-center gap-2">
@@ -71,7 +80,7 @@ let nextId = 0;
           [hidden]="showTable()"
           data-testid="chart-canvas"
         >
-          <ng-content />
+          <ng-container [ngTemplateOutlet]="chart() ?? null" />
         </div>
       }
     </section>
@@ -113,6 +122,9 @@ export class ChartPanel {
   readonly summary = input.required<string>();
   readonly table = input.required<ChartTable>();
   readonly emptyText = input.required<string>();
+
+  /** The chart, created only while there are rows. */
+  readonly chart = contentChild(TemplateRef);
 
   readonly headingId = `chart-panel-${nextId++}`;
   readonly showTable = signal(false);

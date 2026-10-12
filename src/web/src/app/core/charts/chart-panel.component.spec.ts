@@ -11,7 +11,7 @@ import { ChartPanel, ChartTable } from './chart-panel.component';
       [table]="table()"
       emptyText="No data yet."
     >
-      <span data-testid="projected">chart</span>
+      <ng-template><span data-testid="projected">chart</span></ng-template>
     </app-chart-panel>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -35,7 +35,7 @@ describe('ChartPanel', () => {
     return { fixture, el, q };
   }
 
-  it('labels the projected chart with the summary and offers a table toggle', async () => {
+  it('labels the chart template with the summary and offers a table toggle', async () => {
     const { el, q } = await render();
 
     expect(el.querySelector('h3')!.textContent).toContain('Synthetic chart');

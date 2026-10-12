@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
+import { formatNumber } from '@angular/common';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  LOCALE_ID,
+  computed,
+  inject,
+  input,
+} from '@angular/core';
 import type { ChartData, ChartOptions } from 'chart.js';
 import { BaseChartDirective } from 'ng2-charts';
 import { ChartPanel, ChartTable } from '../core/charts/chart-panel.component';
@@ -41,8 +49,11 @@ export function statusChartTable(s: AnalysisSummaryDto): ChartTable {
   };
 }
 
-export function statusChartSummary(s: AnalysisSummaryDto): string {
-  const parts = SEGMENTS.map((seg) => `${s[seg.key].toLocaleString()} ${seg.label.toLowerCase()}`);
+/** Numbers formatted for `locale`, as the table's `DecimalPipe` formats them. */
+export function statusChartSummary(s: AnalysisSummaryDto, locale: string): string {
+  const parts = SEGMENTS.map(
+    (seg) => `${formatNumber(s[seg.key], locale)} ${seg.label.toLowerCase()}`,
+  );
   return `Messages by analysis status: ${parts.join(', ')}.`;
 }
 
@@ -57,29 +68,38 @@ export function statusChartSummary(s: AnalysisSummaryDto): string {
       [table]="table()"
       emptyText="Nothing fetched yet."
     >
-      @if (table().rows.length) {
-        <div class="relative h-24">
+      <ng-template>
+        <!-- Taller on phones, where the five-entry legend wraps to several rows. -->
+        <div class="relative h-36 sm:h-24">
           <canvas baseChart type="bar" [data]="data()" [options]="options()"></canvas>
         </div>
-      }
+      </ng-template>
     </app-chart-panel>
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AnalysisStatusChart {
   private readonly theme = inject(ChartTheme);
+  private readonly locale = inject(LOCALE_ID);
 
   readonly summary = input.required<AnalysisSummaryDto>();
 
   readonly table = computed(() => statusChartTable(this.summary()));
-  readonly chartSummary = computed(() => statusChartSummary(this.summary()));
+  readonly chartSummary = computed(() => statusChartSummary(this.summary(), this.locale));
   readonly data = computed(() => statusChartData(this.summary(), this.theme.palette()));
   readonly options = computed<ChartOptions<'bar'>>(() => {
     const base = this.theme.cartesian();
     return {
       ...base,
       indexAxis: 'y',
-      plugins: { ...base.plugins, legend: { ...base.plugins?.legend, position: 'bottom' } },
+      plugins: {
+        ...base.plugins,
+        legend: {
+          ...base.plugins?.legend,
+          position: 'bottom',
+          labels: { ...base.plugins?.legend?.labels, boxWidth: 12, padding: 8 },
+        },
+      },
       scales: {
         x: { ...base.scales?.['x'], stacked: true, beginAtZero: true },
         y: {

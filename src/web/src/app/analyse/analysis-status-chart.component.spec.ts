@@ -28,7 +28,6 @@ const palette: ChartPalette = {
   tertiary: 'rgb(3, 0, 0)',
   error: 'rgb(4, 0, 0)',
   outline: 'rgb(5, 0, 0)',
-  series: [],
   grid: 'rgb(6, 0, 0)',
   text: 'rgb(7, 0, 0)',
   tooltipBackground: 'rgb(8, 0, 0)',
@@ -61,7 +60,7 @@ describe('analysis status chart', () => {
         ['Applied', 25],
       ],
     });
-    expect(statusChartSummary(summary)).toBe(
+    expect(statusChartSummary(summary, 'en-US')).toBe(
       'Messages by analysis status: 1,200 not analysed, 300 waiting for review, 40 approved, 2 rejected, 25 applied.',
     );
   });

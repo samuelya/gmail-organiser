@@ -9,8 +9,6 @@ export interface ChartPalette {
   tertiary: string;
   error: string;
   outline: string;
-  /** Series colours in order: primary, tertiary, secondary, error, outline. */
-  series: string[];
   grid: string;
   text: string;
   tooltipBackground: string;
@@ -22,21 +20,24 @@ const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 
 /**
  * Resolves `--mat-sys-<token>` to the colour the browser computes for the active scheme.
- * The theme emits `light-dark()` values, which canvas can't parse, so the variable is applied
- * to a hidden probe element and its computed `color` is read back.
+ * The theme emits `light-dark()` values, which canvas can't parse, so each variable is applied
+ * to its own hidden probe element and the computed `color`s are read back in one pass
+ * (one style recalculation rather than one per token).
  */
 export function resolveColours(doc: Document, tokens: readonly string[]): string[] {
-  const probe = doc.createElement('span');
-  probe.style.display = 'none';
-  doc.body.appendChild(probe);
+  const host = doc.createElement('div');
+  host.style.display = 'none';
+  const probes = tokens.map((token) => {
+    const probe = doc.createElement('span');
+    probe.style.color = `var(--mat-sys-${token})`;
+    return host.appendChild(probe);
+  });
+  doc.body.appendChild(host);
   const view = doc.defaultView!;
   try {
-    return tokens.map((token) => {
-      probe.style.color = `var(--mat-sys-${token})`;
-      return view.getComputedStyle(probe).color;
-    });
+    return probes.map((probe) => view.getComputedStyle(probe).color);
   } finally {
-    probe.remove();
+    host.remove();
   }
 }
 
@@ -59,7 +60,6 @@ export function chartPalette(doc: Document): ChartPalette {
     tertiary,
     error,
     outline,
-    series: [primary, tertiary, secondary, error, outline],
     grid,
     text,
     tooltipBackground,

@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { ThemeService } from '../theme.service';
+import { THEME_STORAGE_KEY, ThemeService } from '../theme.service';
 import { cartesianOptions, ChartPalette, ChartTheme, resolveColours } from './chart-theme';
 
 const TOKENS = [
@@ -32,6 +32,7 @@ describe('chart theme', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     document.documentElement.classList.remove('light', 'dark');
+    localStorage.removeItem(THEME_STORAGE_KEY);
   });
 
   // jsdom doesn't resolve var(); the stub stands in for the browser's computed colour.
@@ -54,13 +55,7 @@ describe('chart theme', () => {
     theme.set('light');
     const light = charts.palette();
     expect(light.primary).toBe('rgb(0, 0, 0)');
-    expect(light.series).toEqual([
-      'rgb(0, 0, 0)',
-      'rgb(2, 0, 0)',
-      'rgb(1, 0, 0)',
-      'rgb(3, 0, 0)',
-      'rgb(4, 0, 0)',
-    ]);
+    expect(light.tertiary).toBe('rgb(2, 0, 0)');
     expect(charts.cartesian().plugins?.tooltip?.backgroundColor).toBe('rgb(7, 0, 0)');
 
     theme.set('dark');
@@ -78,7 +73,6 @@ describe('chart theme', () => {
       tertiary: 't',
       error: 'e',
       outline: 'o',
-      series: ['p', 't', 's', 'e', 'o'],
       grid: 'grid',
       text: 'text',
       tooltipBackground: 'tip-bg',
