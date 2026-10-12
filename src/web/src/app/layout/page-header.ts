@@ -8,7 +8,8 @@ import { ChangeDetectionStrategy, Component, input } from '@angular/core';
   selector: 'app-page-header',
   template: `
     <header class="mb-4 flex flex-wrap items-center gap-3">
-      <div class="min-w-0 flex-1">
+      <!-- The actions wrap below the title once it would get narrower than 15rem. -->
+      <div class="min-w-0 flex-1 basis-60">
         <h1 class="page-title m-0">{{ title() }}</h1>
         @if (description(); as text) {
           <p class="page-description m-0 mt-1" data-testid="page-description">{{ text }}</p>
