@@ -14,7 +14,7 @@ import { RULES_TABS } from './rules.models';
   imports: [FiltersTab, FindingsTab, LabelsTab, MatCardModule, MatTabsModule, PageHeader],
   template: `
     <app-page-header
-      title="Rules"
+      title="Gmail filters"
       description="Your Gmail filters and labels: what exists, what overlaps, and filters proposed from your policies."
     />
     <mat-card appearance="outlined">

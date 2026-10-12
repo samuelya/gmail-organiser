@@ -210,13 +210,14 @@ Claude's tools are review-only: applying labels, trashing and creating filters s
 Email bodies are **not** stored; they are fetched when an email is analysed and discarded afterwards. A "Purge local data" button wipes the DB.
 
 ## 8. Frontend pages
-1. **Setup wizard** – Google OAuth client, connect Gmail, Ollama URL, pick chat + embedding model (dropdown from Ollama), test connection.
-2. **Dashboard** – fetch progress (fetched / total, pause/resume), analysis progress (not analysed / analysed / applied), `Action/ToDo` and `To-Be-Deleted` counts, running jobs.
+1. **Setup wizard** – Google OAuth client, connect Gmail, Ollama URL, pick chat + embedding model (dropdown from Ollama), test connection. Hidden from the nav after the first completion; Settings → Run setup again.
+2. **Dashboard** – fetch progress (fetched / total, pause/resume), analysis progress (not analysed / analysed / applied), `Action/ToDo` and `To-Be-Deleted` counts, running jobs, "Inbox health" card.
 3. **Senders** – searchable list with per-sender counts and progress; "Fetch all from sender", "Analyse N from sender".
 4. **Analyse** – start a run: count (10/20/custom) + scope (Inbox / All / sender); run queue with cancel.
 5. **Review** – analysed emails grouped by sender: suggestion, confidence, reason, email preview; Approve / Edit / Reject / Send to Claude / Re-analyse; "Apply to rest of sender".
+   - **Sender policies** (`/policies`) – per sender / domain / list default outcome and rules, proposed by analysis, approved by the user.
 6. **Clean-up** – everything labelled `To-Be-Deleted`, grouped by sender; remove from list, Delete (→ Trash), Unsubscribe.
-7. **Rules** – existing filters with findings, proposed filters, label tree editor.
+7. **Gmail filters** (`/rules`) – existing filters with findings, proposed filters, label tree editor.
 8. **History** – action log with undo.
 9. **Settings** – LLM provider (Ollama / Claude API: key, model, test, privacy notice), models, fetch chunk size, default analysis count, label names (`Action/ToDo`, `To-Be-Deleted`), document-type parent (empty = off), protection rules, prompt templates, purge data.
 10. **Claude review** (in Settings + review UI) – choose mode (headless Claude Code / Claude Desktop), test connection, Claude Desktop config snippet; "Send to Claude" buttons in review screens; Claude's verdicts shown beside local suggestions.
