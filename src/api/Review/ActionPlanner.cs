@@ -51,22 +51,12 @@ public static class ActionPlanner
         Allowlist allowlist,
         IReadOnlySet<string>? removable = null)
     {
-        var topicIsDelete = string.Equals(suggestion.TopicLabel, settings.DeleteLabelName, StringComparison.OrdinalIgnoreCase);
-        if (topicIsDelete && !suggestion.ToBeDeleted)
+        if (UnchangedNote(suggestion, message, settings, allowlist) is { } unchanged)
         {
-            return new ActionPlan([], [], NotDeletableNote);
+            return new ActionPlan([], [], unchanged);
         }
 
         var protectedReason = MessageProtection.Reason(message, allowlist, settings.Protection);
-        // An unedited Stage-0 delete card (or one still filed under the delete label) has nothing else to add: a
-        // protected message stays put. An edited card with a real topic follows the normal path below.
-        var stage0Delete = suggestion.Source == SuggestionSource.Stage0
-            && ((suggestion.ToBeDeleted && !suggestion.Edited) || topicIsDelete);
-        if (stage0Delete && protectedReason is not null)
-        {
-            return new ActionPlan([], [], $"protected: {protectedReason}");
-        }
-
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
         if (suggestion.DocumentTypeLabel is { } type && AppliesDocumentType(type, settings))
         {
@@ -110,6 +100,28 @@ public static class ActionPlanner
             [.. add.Distinct(StringComparer.Ordinal).Where(id => !current.Contains(id) && !Untouched.Contains(id))],
             [.. remove.Distinct(StringComparer.Ordinal).Where(id => current.Contains(id) && !Untouched.Contains(id))],
             note);
+    }
+
+    /// <summary>Whether <see cref="Plan"/> can add labels to the message: false when it changes nothing.</summary>
+    public static bool AddsLabels(SuggestionRow suggestion, MessageRow message, AppSettings settings, Allowlist allowlist) =>
+        UnchangedNote(suggestion, message, settings, allowlist) is null;
+
+    /// <summary>Why the plan changes nothing, or null when it follows the outcome table.</summary>
+    private static string? UnchangedNote(SuggestionRow suggestion, MessageRow message, AppSettings settings, Allowlist allowlist)
+    {
+        var topicIsDelete = string.Equals(suggestion.TopicLabel, settings.DeleteLabelName, StringComparison.OrdinalIgnoreCase);
+        if (topicIsDelete && !suggestion.ToBeDeleted)
+        {
+            return NotDeletableNote;
+        }
+
+        // An unedited Stage-0 delete card (or one still filed under the delete label) has nothing else to add: a
+        // protected message stays put. An edited card with a real topic follows the normal path.
+        var stage0Delete = suggestion.Source == SuggestionSource.Stage0
+            && ((suggestion.ToBeDeleted && !suggestion.Edited) || topicIsDelete);
+        return stage0Delete && MessageProtection.Reason(message, allowlist, settings.Protection) is { } reason
+            ? $"protected: {reason}"
+            : null;
     }
 
     /// <summary>

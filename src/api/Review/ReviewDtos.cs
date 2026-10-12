@@ -206,8 +206,9 @@ public sealed record ActionBatchDto(
 /// never changes the top outcome or <paramref name="Agreement"/> (filter proposals use them).
 /// </param>
 /// <param name="ExtraLabels">
-/// The additional labels (#523) every approval of the outcome has, as one canonical list; <c>[]</c> when they differ or
-/// nothing is approved. Not part of the outcome either.
+/// The additional labels (#523) every approval of the top pattern has (the outcome's approvals with
+/// <paramref name="DocumentTypeLabel"/>), as one canonical list; <c>[]</c> when they differ or nothing is approved. Not
+/// part of the outcome either.
 /// </param>
 public sealed record SenderPatternDto(
     string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, int Approvals, double Agreement, int Remaining,

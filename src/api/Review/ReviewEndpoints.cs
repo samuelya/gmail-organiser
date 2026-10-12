@@ -122,7 +122,7 @@ public static class ReviewEndpoints
     /// <summary>
     /// 202 with the queued batch, 200 when nothing remained; 400 when the requested document type is the topic label
     /// applied (the pattern's when none is given) and on invalid additional labels (<see cref="ExtraLabelList.Normalise"/>,
-    /// against the requested topic and type); 409 without a pattern or topic label, or on a race.
+    /// against the topic and type applied: the requested ones, else the pattern's); 409 without a pattern or topic label, or on a race.
     /// </summary>
     private static async Task<Results<Accepted<ApplyRestResponse>, Ok<ApplyRestResponse>, ValidationProblem, ProblemHttpResult>> ApplyRestAsync(
         string address, ApplyRestRequest? request, SenderPatternService patterns, ISettingsStore settings, CancellationToken ct)
@@ -134,11 +134,24 @@ public static class ReviewEndpoints
             errors["topicLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters, not a Gmail system label."];
         }
 
-        var current = await settings.GetAsync(ct);
+        var current = request.DocumentTypeLabel is null && request.ExtraLabels is null ? null : await settings.GetAsync(ct);
         var type = request.DocumentTypeLabel is null
             ? DocumentTypeChange.Unchanged
-            : DocumentTypeEdit.Validate(request.DocumentTypeLabel, current.DocumentTypeParent, request.TopicLabel, errors);
-        var extras = ExtraLabelList.Normalise(request.ExtraLabels, request.TopicLabel?.Trim(), type.IsSet ? type.Label : null, current, errors);
+            : DocumentTypeEdit.Validate(request.DocumentTypeLabel, current!.DocumentTypeParent, request.TopicLabel, errors);
+        var extras = ExtraLabelsChange.Unchanged;
+        if (current is not null && request.ExtraLabels is not null)
+        {
+            // Against the topic and type applied: the pattern's where the request leaves them unchanged.
+            var pattern = request.ExtraLabels.Length > 0 && Normalise(address) is { } a
+                && (request.TopicLabel is null || !type.IsSet) ? await patterns.GetAsync(a, ct) : null;
+            extras = ExtraLabelList.Normalise(
+                request.ExtraLabels,
+                request.TopicLabel?.Trim() ?? pattern?.TopicLabel,
+                type.IsSet ? type.Label : pattern?.DocumentTypeLabel,
+                current,
+                errors);
+        }
+
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);

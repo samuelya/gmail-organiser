@@ -323,6 +323,9 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
                 $"/api/review/senders/{AnalysisRunHarness.Billing}/apply-rest",
                 new ApplyRestRequest(TopicLabel: "Example/Second", ExtraLabels: [" Example/Third ", "Example/Second"])))
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        // Checked against the pattern's topic when the request leaves it out.
+        (await h.PostAsync($"/api/review/senders/{AnalysisRunHarness.Billing}/apply-rest", new ApplyRestRequest(ExtraLabels: [Topic])))
+            .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await h.PostAsync(
                 $"/api/review/senders/{AnalysisRunHarness.Billing}/apply-rest",
                 new ApplyRestRequest(TopicLabel: "Example/Second", NeedsAction: true)))
@@ -332,8 +335,8 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
         var created = await db.Suggestions.Where(s => s.Source == SuggestionSource.SenderPattern).ToListAsync(Ct);
         created.Where(s => s.SenderAddress == AnalysisRunHarness.Shop).ShouldAllBe(s => s.ExtraLabels.SequenceEqual(new[] { "Example/Extra", "Example/Second" }));
         created.Where(s => s.SenderAddress == AnalysisRunHarness.News).ShouldAllBe(s => s.ExtraLabels.Length == 0);
-        // The pattern's extra that is now the topic is dropped; the rest is kept.
-        created.Where(s => s.SenderAddress == AnalysisRunHarness.Billing).ShouldAllBe(s => s.ExtraLabels.SequenceEqual(new[] { "Example/Extra" }));
+        // Another outcome than the pattern's: none of the pattern's labels.
+        created.Where(s => s.SenderAddress == AnalysisRunHarness.Billing).ShouldAllBe(s => s.ExtraLabels.Length == 0);
         var decisions = await db.Decisions.Where(d => d.Source == SuggestionSource.SenderPattern).ToDictionaryAsync(d => d.SenderAddress, Ct);
         decisions[AnalysisRunHarness.Shop].ExtraLabels.ShouldBe(["Example/Extra", "Example/Second"]);
         decisions[AnalysisRunHarness.News].ExtraLabels.ShouldBeEmpty();

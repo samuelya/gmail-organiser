@@ -59,8 +59,7 @@ public sealed partial class ApplyActionsJob(
 
     // Suggestions of the current plan whose topic label Gmail would refuse; reported in every progress update.
     private int invalidLabels;
-    private bool skippedTypesLogged;
-    private bool skippedExtrasLogged;
+    private bool skippedOptionalLogged;
 
     public string Type => JobType;
 
@@ -206,25 +205,18 @@ public sealed partial class ApplyActionsJob(
 
         var paths = valid.Select(r => r.Suggestion.TopicLabel).ToList();
 
-        // The approved document-type label is applied even if the parent setting changed since; a stored one Gmail
-        // would refuse, or that is now the action or delete label, is skipped for its message (logged once per run),
-        // which still gets its topic label.
-        var types = valid.Select(r => r.Suggestion.DocumentTypeLabel).OfType<string>()
-            .ToLookup(t => ActionPlanner.AppliesDocumentType(t, settings));
-        paths.AddRange(types[true]);
-        if (!skippedTypesLogged && types[false].Count() is > 0 and var skippedTypes)
+        // The approved document-type and additional labels (#523) are applied even if the settings changed since; a
+        // stored one Gmail would refuse, or that is now the action or delete label, is skipped for its message (logged
+        // once per run), which still gets its topic label. Only messages the plan adds labels to have theirs ensured,
+        // so no label is created in Gmail that no message gets (a protected Stage-0 card changes nothing).
+        var optional = valid.Where(r => ActionPlanner.AddsLabels(r.Suggestion, r.Message, settings, allowlisted))
+            .SelectMany(r => r.Suggestion.ExtraLabels.Prepend(r.Suggestion.DocumentTypeLabel).OfType<string>())
+            .ToLookup(l => ActionPlanner.AppliesExtraLabel(l, settings));
+        paths.AddRange(optional[true]);
+        if (!skippedOptionalLogged && optional[false].Count() is > 0 and var skippedOptional)
         {
-            skippedTypesLogged = true;
-            LogSkippedDocumentTypes(logger, skippedTypes);
-        }
-
-        // Additional labels likewise (#523): each that still applies is ensured (a new one recorded as created).
-        var extras = valid.SelectMany(r => r.Suggestion.ExtraLabels).ToLookup(l => ActionPlanner.AppliesExtraLabel(l, settings));
-        paths.AddRange(extras[true]);
-        if (!skippedExtrasLogged && extras[false].Count() is > 0 and var skippedExtras)
-        {
-            skippedExtrasLogged = true;
-            LogSkippedExtraLabels(logger, skippedExtras);
+            skippedOptionalLogged = true;
+            LogSkippedOptionalLabels(logger, skippedOptional);
         }
 
         if (valid.Any(r => r.Suggestion.NeedsAction))
@@ -412,13 +404,9 @@ public sealed partial class ApplyActionsJob(
     [GeneratedRegex(@" \(partial: \d+ of \d+\)$")]
     private static partial Regex PartialSuffix();
 
-    [LoggerMessage(Level = LogLevel.Warning,
-        Message = "{Count} approved document-type labels are not valid label paths or are the action or delete label; they are skipped.")]
-    private static partial void LogSkippedDocumentTypes(ILogger logger, int count);
-
-    [LoggerMessage(Level = LogLevel.Warning,
-        Message = "{Count} approved additional labels are not valid label paths or are the action or delete label; they are skipped.")]
-    private static partial void LogSkippedExtraLabels(ILogger logger, int count);
+    [LoggerMessage(Level = LogLevel.Warning, Message =
+        "{Count} approved document-type or additional labels are not valid label paths or are the action or delete label; they are skipped.")]
+    private static partial void LogSkippedOptionalLabels(ILogger logger, int count);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "Could not mark the action batch as partial.")]
     private static partial void LogPartialNotRecorded(ILogger logger, Exception exception);

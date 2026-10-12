@@ -123,9 +123,16 @@ public sealed partial class SenderPatternService(
         var (resolved, typeIsNew) = await DocumentTypeEdit.ResolveAsync(
             labels, type is null ? DocumentTypeChange.Clear : DocumentTypeChange.To(type), ct);
         type = resolved.Label;
-        var extras = (await ExtraLabelList.ResolveAsync(labels, extraLabels, ct)) is { IsSet: true } set
-            ? set.Labels
-            : top?.ExtraLabels ?? [];
+        // Unchanged: the list the chosen outcome and type agree on, none when the request picks one never approved.
+        var settings = await settingsStore.GetAsync(ct);
+        var extras = ExtraLabelList.Clean(
+            (await ExtraLabelList.ResolveAsync(labels, extraLabels, ct)) is { IsSet: true } set
+                ? set.Labels
+                : outcomes.FirstOrDefault(o => o.TopicLabel == label && o.NeedsAction == needsAction && o.ToBeDeleted == toBeDeleted)
+                    ?.Types.FirstOrDefault(t => t.Label == type)?.ExtraLabels ?? [],
+            label,
+            type,
+            ExtraLabelList.Reserved(settings));
         var approvals = outcomes.Sum(o => o.Count);
         var agreeing = outcomes
             .Where(o => o.TopicLabel == label && o.NeedsAction == needsAction && o.ToBeDeleted == toBeDeleted)
@@ -134,7 +141,7 @@ public sealed partial class SenderPatternService(
             .Sum(t => t.Count);
         var agreement = approvals == 0 ? 0 : (double)agreeing / approvals;
         var edited = top is not null && (top.TopicLabel != label || top.NeedsAction != needsAction || top.ToBeDeleted != toBeDeleted
-            || top.DocumentTypeLabel != type || (extraLabels.IsSet && !ExtraLabelList.SameList(top.ExtraLabels, extras)));
+            || top.DocumentTypeLabel != type || !ExtraLabelList.SameList(top.ExtraLabels, extras));
         var filter = new FilterCandidateDto(address, (await CommonListIdsAsync([address], ct)).GetValueOrDefault(address));
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -154,8 +161,6 @@ public sealed partial class SenderPatternService(
             return (ApplyRestStatus.Ok, new ApplyRestResponse(0, 0, null, filter));
         }
 
-        var settings = await settingsStore.GetAsync(ct);
-        extras = ExtraLabelList.Clean(extras, label, type, ExtraLabelList.Reserved(settings));
         var allowlist = await AllowlistLoader.LoadAsync(db, settings, [address], ct);
         var rules = settings.Protection;
         var now = time.GetUtcNow();
@@ -235,8 +240,8 @@ public sealed partial class SenderPatternService(
 
     /// <summary>
     /// Each sender's approved outcomes by topic and flags, most common first, ties to the latest decision; each with its
-    /// document types counted the same way, so the type never changes which outcome is on top, and the additional labels
-    /// all its approvals agree on.
+    /// document types counted the same way, so the type never changes which outcome is on top, each with the additional
+    /// labels all its approvals of that type agree on.
     /// </summary>
     private async Task<Dictionary<string, List<Outcome>>> OutcomesAsync(IReadOnlyCollection<string> addresses, CancellationToken ct)
     {
@@ -268,12 +273,17 @@ public sealed partial class SenderPatternService(
                     o.Sum(r => r.Count),
                     o.Max(r => r.Last),
                     [.. o.GroupBy(r => r.DocumentTypeLabel)
-                        .Select(t => (Label: t.Key, Count: t.Sum(r => r.Count), Last: t.Max(r => r.Last)))
+                        .Select(t => (
+                            Label: t.Key,
+                            Count: t.Sum(r => r.Count),
+                            Last: t.Max(r => r.Last),
+                            Extras: t.Skip(1).All(r => ExtraLabelList.SameList(r.ExtraLabels, t.First().ExtraLabels))
+                                ? t.First().ExtraLabels
+                                : []))
                         .OrderByDescending(t => t.Count)
                         .ThenByDescending(t => t.Last)
                         .ThenBy(t => t.Label, StringComparer.Ordinal)
-                        .Select(t => new TypeCount(t.Label, t.Count))],
-                    o.Skip(1).All(r => ExtraLabelList.SameList(r.ExtraLabels, o.First().ExtraLabels)) ? o.First().ExtraLabels : []))
+                        .Select(t => new TypeCount(t.Label, t.Count, t.Extras))]))
                 .OrderByDescending(o => o.Count)
                 .ThenByDescending(o => o.Last)
                 .ThenBy(o => o.TopicLabel, StringComparer.Ordinal)
@@ -288,13 +298,16 @@ public sealed partial class SenderPatternService(
     private static partial void LogPatternDocumentTypeDropped(ILogger logger);
 
     /// <param name="Types">The document types of the outcome's approvals, most common first; never empty.</param>
-    /// <param name="ExtraLabels">The additional labels every approval of the outcome has; <c>[]</c> when they differ.</param>
     private sealed record Outcome(
-        string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count, DateTimeOffset? Last, IReadOnlyList<TypeCount> Types,
-        string[] ExtraLabels)
+        string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Count, DateTimeOffset? Last, IReadOnlyList<TypeCount> Types)
     {
         public string? DocumentTypeLabel => Types[0].Label;
+
+        /// <summary>The additional labels of the top pattern: topic, flags and <see cref="DocumentTypeLabel"/>.</summary>
+        public string[] ExtraLabels => Types[0].ExtraLabels;
     }
 
-    private sealed record TypeCount(string? Label, int Count);
+    /// <param name="ExtraLabels">The additional labels every approval of the outcome with this type has; <c>[]</c> when
+    /// they differ.</param>
+    private sealed record TypeCount(string? Label, int Count, string[] ExtraLabels);
 }
