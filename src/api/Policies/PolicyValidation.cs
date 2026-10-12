@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis;
 using GmailOrganiser.Gmail;
 
 namespace GmailOrganiser.Policies;
@@ -24,6 +25,11 @@ public static class PolicyValidation
         if (policy.IsMixed && policy.Action == PolicyAction.Delete)
         {
             Add("action", "A mixed sender's default cannot delete; delete only through a rule.");
+        }
+
+        if (policy.IsMixed && policy.ExtraLabels.Length > 0)
+        {
+            Add(ExtraLabelList.Field, "A mixed sender's default labels nothing; set additional labels on its rules.");
         }
 
         if (!policy.IsMixed && string.IsNullOrWhiteSpace(policy.TopicLabel))

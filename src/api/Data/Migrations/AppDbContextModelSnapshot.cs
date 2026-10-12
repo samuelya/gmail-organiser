@@ -1225,6 +1225,13 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("edited");
 
+                    b.PrimitiveCollection<string[]>("ExtraLabels")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("extra_labels")
+                        .HasDefaultValueSql("'{}'");
+
                     b.Property<bool>("IsMixed")
                         .HasColumnType("boolean")
                         .HasColumnName("is_mixed");
@@ -1314,6 +1321,13 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("DocumentTypeLabel")
                         .HasColumnType("text")
                         .HasColumnName("document_type_label");
+
+                    b.PrimitiveCollection<string[]>("ExtraLabels")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("extra_labels")
+                        .HasDefaultValueSql("'{}'");
 
                     b.Property<string>("MailType")
                         .HasColumnType("text")

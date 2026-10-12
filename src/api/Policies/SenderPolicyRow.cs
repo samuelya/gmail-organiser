@@ -24,6 +24,12 @@ public sealed class SenderPolicyRow
     /// <summary>Null only while <see cref="IsMixed"/> (<c>ck_sender_policies_topic</c>).</summary>
     public string? TopicLabel { get; set; }
     public string? DocumentTypeLabel { get; set; }
+
+    /// <summary>
+    /// Additional labels next to the topic (#530), canonical (<see cref="ExtraLabelList.Clean"/>); always empty on a mixed
+    /// sender's default, which labels nothing.
+    /// </summary>
+    public string[] ExtraLabels { get; set; } = [];
     public MailType? MailType { get; set; }
 
     /// <summary>Days to keep matching mail; null = the default for the mail type.</summary>
@@ -60,6 +66,7 @@ public sealed class SenderPolicyRow
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.Scope).IsRequired().HasConversion(new SnakeCaseEnumConverter<PolicyScope>());
             e.Property(r => r.ScopeKey).IsRequired();
+            e.Property(r => r.ExtraLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());
             e.Property(r => r.Action).IsRequired().HasConversion(new SnakeCaseEnumConverter<PolicyAction>());
             e.Property(r => r.Reason).IsRequired();

@@ -1,3 +1,4 @@
+using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 
@@ -98,28 +99,41 @@ public static class ExtraLabelList
             return change;
         }
 
+        var catalog = await CatalogAsync(labels, ct);
+        return ExtraLabelsChange.To([.. change.Labels.Select(l => Spelling(l, catalog))]);
+    }
+
+    /// <summary>
+    /// Gmail's label list for <see cref="Canonical"/>, loaded once per edit; null when it cannot be loaded, so every
+    /// label keeps its typed spelling.
+    /// </summary>
+    public static async Task<IReadOnlyList<GmailLabel>?> CatalogAsync(LabelCatalog labels, CancellationToken ct)
+    {
         try
         {
-            var spelled = new string[change.Labels.Length];
-            for (var i = 0; i < spelled.Length; i++)
-            {
-                spelled[i] = (await labels.FindByNameAsync(change.Labels[i], ct))?.Name.Trim() ?? change.Labels[i];
-            }
-
-            return ExtraLabelsChange.To(spelled);
+            return await labels.GetAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            return change;
+            return null;
         }
     }
+
+    /// <summary>
+    /// The stored form of <paramref name="labels"/>: each in Gmail's spelling where <paramref name="catalog"/> has it (null
+    /// keeps the typed spelling), then <see cref="Clean"/>ed against <paramref name="topic"/> and <paramref name="documentType"/>.
+    /// The one canonical-form rule for review, memory and policies.
+    /// </summary>
+    public static string[] Canonical(
+        IEnumerable<string?>? labels, IReadOnlyList<GmailLabel>? catalog, string? topic, string? documentType, AppSettings settings) =>
+        Clean(labels?.Select(l => l is null ? null : Spelling(l, catalog)), topic, documentType, Reserved(settings));
 
     /// <summary>
     /// Sets <paramref name="change"/> (or keeps the current list) on the suggestion, canonical against its topic and
     /// document type as they are now: an extra the edit made the topic or document type is dropped silently.
     /// </summary>
     public static void Apply(SuggestionRow s, ExtraLabelsChange change, AppSettings settings) =>
-        s.ExtraLabels = Clean(change.IsSet ? change.Labels : s.ExtraLabels, s.TopicLabel, s.DocumentTypeLabel, Reserved(settings));
+        s.ExtraLabels = Canonical(change.IsSet ? change.Labels : s.ExtraLabels, null, s.TopicLabel, s.DocumentTypeLabel, settings);
 
     /// <summary>The trimmed Gmail label names (case-insensitive) for <see cref="New"/>, built once per request; null when unknown.</summary>
     public static IReadOnlySet<string>? Existing(IReadOnlyDictionary<string, string>? labelNames) =>
@@ -145,6 +159,9 @@ public static class ExtraLabelList
         : Same(label, documentType) ? "Must differ from the document-type label."
         : reserved.Any(r => Same(label, r)) ? "The app's action and delete labels are set by the outcome."
         : null;
+
+    private static string Spelling(string label, IReadOnlyList<GmailLabel>? catalog) =>
+        catalog is null ? label : GmailLabel.FindByName(catalog, label.Trim())?.Name.Trim() ?? label;
 
     private static bool Same(string label, string? other) => DocumentTypeEdit.IsTopic(other, label);
 }

@@ -75,6 +75,25 @@ public sealed class SenderPolicyOutputParserTests
     }
 
     [Fact]
+    public void Proposed_policies_and_rules_start_without_extra_labels()
+    {
+        // Additional labels are the owner's (#530): even when the model sends some, the proposal starts with none.
+        const string json = """
+            {"topicLabel": "Shop", "action": "keep", "confidence": 0.9, "reason": "Example shop", "isMixed": true,
+             "extraLabels": ["Shop/Other"], "rules": [
+               {"match": {"listIdPresent": true}, "topicLabel": "Shop/Example", "action": "keep", "reason": "List",
+                "extraLabels": ["Shop/Other"]}
+             ]}
+            """;
+
+        var parsed = Parser.Parse(json, Profile, Tree, Settings);
+
+        parsed.Errors.ShouldBeEmpty();
+        parsed.Policy.ShouldNotBeNull().ExtraLabels.ShouldBeEmpty();
+        parsed.Rules.ShouldHaveSingleItem().ExtraLabels.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Is_new_label_is_recomputed_from_the_tree()
     {
         var parsed = Parser.Parse(Single("Shop/Elsewhere", isNewLabel: false), Profile, Tree, Settings);
