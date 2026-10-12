@@ -2,30 +2,26 @@ import { BreakpointObserver } from '@angular/cdk/layout';
 import {
   ChangeDetectionStrategy,
   Component,
+  DOCUMENT,
   ElementRef,
-  Injector,
   computed,
   inject,
   signal,
   viewChild,
 } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { MatBadgeModule } from '@angular/material/badge';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatListModule } from '@angular/material/list';
-import { MatMenuModule } from '@angular/material/menu';
 import { MatSidenavModule } from '@angular/material/sidenav';
 import { MatToolbarModule } from '@angular/material/toolbar';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { distinctUntilChanged, filter, map, startWith, tap } from 'rxjs';
-import { progressPercent } from '../core/jobs.models';
-import type { JobsService } from '../core/jobs.service';
 import { readLocal, writeLocal } from '../core/local-store';
 import { ThemeChoice, ThemeService } from '../core/theme.service';
-import { jobTypeLabel } from '../dashboard/fetch.models';
 import { SetupState } from '../setup/setup-state';
+import { JobsIndicator } from './jobs-indicator';
 import { NAV_ITEMS, navActiveOptions } from './nav-items';
 
 export const WIDE_QUERY = '(min-width: 1024px)';
@@ -41,11 +37,10 @@ const THEME_ICONS: Record<ThemeChoice, string> = {
 @Component({
   selector: 'app-layout',
   imports: [
-    MatBadgeModule,
+    JobsIndicator,
     MatButtonModule,
     MatIconModule,
     MatListModule,
-    MatMenuModule,
     MatSidenavModule,
     MatToolbarModule,
     MatTooltipModule,
@@ -65,11 +60,7 @@ export class Layout {
   }));
   protected readonly theme = inject(ThemeService);
   protected readonly setupState = inject(SetupState);
-  private readonly injector = inject(Injector);
-  /** Loaded after start-up so the SignalR client stays out of the initial bundle. */
-  private readonly jobsService = signal<JobsService | null>(null);
-  protected readonly jobTypeLabel = jobTypeLabel;
-  protected readonly progressPercent = progressPercent;
+  private readonly document = inject(DOCUMENT);
   private readonly router = inject(Router);
 
   private readonly breakpoints = inject(BreakpointObserver);
@@ -106,15 +97,13 @@ export class Layout {
     return this.allNavItems.filter((item) => !(item.hideWhenSetupComplete && completedOnce));
   });
 
-  protected readonly activeJobs = computed(() => this.jobsService()?.activeJobs() ?? []);
-  protected readonly jobsReconnecting = computed(() => {
-    const state = this.jobsService()?.connectionState();
-    return state === 'reconnecting' || state === 'disconnected';
-  });
-  protected readonly jobsLabel = computed(() => {
-    if (this.jobsReconnecting()) return 'Live updates reconnecting';
-    const n = this.activeJobs().length;
-    return `${n} job${n === 1 ? '' : 's'} running`;
+  /**
+   * The jobs indicator (and with it the hub connection) starts once Gmail is connected or setup was
+   * completed once, so the wizard never opens a hub the API may not serve yet.
+   */
+  protected readonly jobsEnabled = computed(() => {
+    const status = this.setupState.status();
+    return !!status && (status.completedOnce || status.gmailConnected);
   });
 
   /** "Setup incomplete" banner, except on the wizard itself. */
@@ -125,9 +114,6 @@ export class Layout {
   constructor() {
     // The guard loads the status on guarded pages; this covers landing on /settings directly.
     this.setupState.load().subscribe();
-    void import('../core/jobs.service').then(({ JobsService }) =>
-      this.jobsService.set(this.injector.get(JobsService)),
-    );
   }
 
   protected readonly navOpen = computed(() =>
@@ -159,6 +145,11 @@ export class Layout {
   private setCollapsed(collapsed: boolean): void {
     this.collapsed.set(collapsed);
     writeLocal(NAV_COLLAPSED_KEY, String(collapsed));
+  }
+
+  /** A failed indicator chunk usually means a redeploy left this tab with stale chunk names. */
+  protected reload(): void {
+    this.document.location.reload();
   }
 
   protected onNavigate(): void {

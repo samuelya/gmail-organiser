@@ -28,6 +28,11 @@ export interface JobDto {
 /** Live-update connection state of the jobs hub. */
 export type JobsConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
+/** Live updates are down: the hub is reconnecting or gave up. */
+export function isReconnecting(state: JobsConnectionState | null | undefined): boolean {
+  return state === 'reconnecting' || state === 'disconnected';
+}
+
 /** Which job controls apply to a job in this status (the API answers 409 for the others). */
 export interface JobControls {
   pause: boolean;

@@ -13,36 +13,20 @@
   </button>
   <span class="app-name ml-2 truncate">{{ appName }}</span>
   <span class="flex-1"></span>
-  @if (activeJobs(); as activeJobs) {
-    @if (activeJobs.length > 0) {
+  @if (jobsEnabled()) {
+    @defer (on immediate) {
+      <app-jobs-indicator />
+    } @error {
       <button
         mat-icon-button
         type="button"
-        class="jobs-button"
-        data-testid="jobs-button"
-        [matMenuTriggerFor]="jobsMenu"
-        [attr.aria-label]="jobsLabel()"
-        [matTooltip]="jobsLabel()"
+        data-testid="jobs-unavailable"
+        aria-label="Job status failed to load (reload the page)"
+        matTooltip="Job status failed to load (reload the page)"
+        (click)="reload()"
       >
-        <!-- The button label carries the count; the icon and its badge stay out of the a11y tree. -->
-        <mat-icon aria-hidden="true" [matBadge]="activeJobs.length" matBadgeSize="small">{{
-          jobsReconnecting() ? 'sync_problem' : 'sync'
-        }}</mat-icon>
+        <mat-icon aria-hidden="true">sync_disabled</mat-icon>
       </button>
-      <mat-menu #jobsMenu="matMenu" xPosition="before">
-        @for (job of activeJobs; track job.id) {
-          @let pct = progressPercent(job.progress);
-          <a mat-menu-item routerLink="/dashboard" data-testid="jobs-row">
-            {{ jobTypeLabel(job.type) }}
-            <span class="jobs-status"
-              >· {{ job.status }}{{ pct === null ? '' : ' · ' + pct + '%' }}</span
-            >
-          </a>
-        }
-        <a mat-menu-item routerLink="/dashboard" data-testid="jobs-open-dashboard"
-          >Open dashboard</a
-        >
-      </mat-menu>
     }
   }
   <button

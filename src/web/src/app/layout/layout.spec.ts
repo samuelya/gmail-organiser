@@ -1,5 +1,5 @@
 import { BreakpointObserver, BreakpointState } from '@angular/cdk/layout';
-import { TestBed } from '@angular/core/testing';
+import { DeferBlockBehavior, DeferBlockState, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { provideRouter, Router } from '@angular/router';
@@ -59,6 +59,7 @@ describe('Layout', () => {
     };
     await TestBed.configureTestingModule({
       imports: [Layout],
+      deferBlockBehavior: DeferBlockBehavior.Manual,
       providers: [
         provideRouter([{ path: '**', children: [] }]),
         { provide: BreakpointObserver, useValue: fakeBreakpoints },
@@ -117,42 +118,34 @@ describe('Layout', () => {
     expect(navPaths(await render())).not.toContain('/setup');
   });
 
-  it('shows no jobs button without active jobs', async () => {
-    expect(jobsButton(await render())).toBeNull();
-  });
-
-  it('shows the running-jobs count and lists each job in the menu', async () => {
-    activeJobs.set([job('j1', 'fetch', 25, 100), job('j2', 'analysis', 3, null)]);
+  it('does not start the jobs indicator before Gmail is connected or setup completed', async () => {
+    status.set({ ...setupStatus(false, false), gmailConnected: false });
     const fixture = TestBed.createComponent(Layout);
     await fixture.whenStable();
-    const el = fixture.nativeElement as HTMLElement;
-    const button = jobsButton(el)!;
-    expect(button.getAttribute('aria-label')).toBe('2 jobs running');
-    expect(button.querySelector('mat-icon')?.textContent).toContain('sync');
-    expect(button.querySelector('.mat-badge-content')?.textContent?.trim()).toBe('2');
-
-    button.click();
-    await fixture.whenStable();
-    const rows = Array.from(
-      document.querySelectorAll('.cdk-overlay-container [data-testid="jobs-row"]'),
-    );
-    expect(rows).toHaveLength(2);
-    expect(rows[0].textContent).toContain('running');
-    expect(rows[0].textContent).toContain('25%');
-    expect(rows[1].textContent).not.toContain('%');
-    const open = document.querySelector(
-      '.cdk-overlay-container [data-testid="jobs-open-dashboard"]',
-    );
-    expect(open?.getAttribute('href')).toBe('/dashboard');
-    document.querySelector('.cdk-overlay-container')?.replaceChildren();
+    expect(await fixture.getDeferBlocks()).toHaveLength(0);
   });
 
-  it('says live updates are reconnecting while the jobs hub is down', async () => {
+  it('starts the jobs indicator once Gmail is connected', async () => {
+    status.set({ ...setupStatus(false, false), gmailConnected: true });
     activeJobs.set([job('j1', 'fetch', 1, 10)]);
-    connectionState.set('reconnecting');
-    const button = jobsButton(await render())!;
-    expect(button.getAttribute('aria-label')).toBe('Live updates reconnecting');
-    expect(button.querySelector('mat-icon')?.textContent).toContain('sync_problem');
+    const fixture = TestBed.createComponent(Layout);
+    await fixture.whenStable();
+    const [block] = await fixture.getDeferBlocks();
+    await block.render(DeferBlockState.Complete);
+    expect(jobsButton(fixture.nativeElement)?.getAttribute('aria-label')).toBe('1 job running');
+  });
+
+  it('offers a reload when the jobs indicator fails to load', async () => {
+    status.set(setupStatus(true, true));
+    const fixture = TestBed.createComponent(Layout);
+    await fixture.whenStable();
+    const [block] = await fixture.getDeferBlocks();
+    await block.render(DeferBlockState.Error);
+    const el = fixture.nativeElement as HTMLElement;
+    expect(jobsButton(el)).toBeNull();
+    expect(
+      el.querySelector('[data-testid="jobs-unavailable"]')?.getAttribute('aria-label'),
+    ).toContain('reload');
   });
 
   it('shows the setup banner and hides it on dismiss', async () => {
