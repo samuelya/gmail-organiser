@@ -169,6 +169,10 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         }
 
         (await h.PostWithoutBodyAsync($"/api/review/suggestions/{c01}/approve")).EnsureSuccessStatusCode();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Decisions.Where(d => d.MessageId == "c01").ExecuteUpdateAsync(s => s.SetProperty(d => d.ExtraLabels, new[] { "Synthetic Extra" }), Ct);
+        }
 
         var item = McpTestClient.Structured(await McpTestClient.CallAsync(client, "get_review_item", Ct,
             new Dictionary<string, object?> { ["id"] = singleItem.ToString() }));
@@ -177,6 +181,8 @@ public sealed class McpReviewToolsTests : IClassFixture<ApiFactory>, IAsyncLifet
         var similar = item.GetProperty("similarDecisions").EnumerateArray().ToList();
         similar.ShouldNotBeEmpty();
         similar[0].GetProperty("senderAddress").GetString().ShouldBe(AnalysisRunHarness.Billing);
+        // A hint's additional labels (#527) reach the MCP review item too.
+        similar[0].GetProperty("extraLabels").EnumerateArray().Select(e => e.GetString()).ShouldBe(["Synthetic Extra"]);
     }
 
     [Theory]

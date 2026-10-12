@@ -30,7 +30,7 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
         for (var i = 0; i < groups.Count; i++)
         {
             if (keys[i] is { } key && patterns.TryGetValue(key, out var pattern) && TypeOf(pattern, context) is (true, var type)
-                && KeepsLabels(groups[i], pattern.TopicLabel, type, context))
+                && KeepsLabels(groups[i], pattern, type, context))
             {
                 results[i] = Cover(groups[i], pattern, type, context);
             }
@@ -65,14 +65,14 @@ public sealed class MemoryShortCircuit(IDecisionMemory memory) : IAnalysisShortC
     }
 
     /// <summary>
-    /// Whether every personal label of the group is the memorised topic label or document-type label (the app's action
-    /// and delete labels do not count). An id without a known name (deleted in Gmail since the fetch, or names not
-    /// loaded) counts as different: the model sees the group instead.
+    /// Whether every personal label of the group is the memorised topic label, document-type label or one of the
+    /// pattern's additional labels (the app's action and delete labels do not count). An id without a known name (deleted
+    /// in Gmail since the fetch, or names not loaded) counts as different: the model sees the group instead.
     /// </summary>
-    private static bool KeepsLabels(MessageGroup group, string topicLabel, string? type, ShortCircuitContext context) =>
+    private static bool KeepsLabels(MessageGroup group, MemoryPattern pattern, string? type, ShortCircuitContext context) =>
         group.Members.SelectMany(context.Labels.IdsOf).All(id =>
             context.Labels.Names.TryGetValue(id, out var name)
-            && (Same(name, topicLabel) || (type is not null && Same(name, type))));
+            && (Same(name, pattern.TopicLabel) || (type is not null && Same(name, type)) || pattern.ExtraLabels.Any(e => Same(name, e))));
 
     private static bool Same(string a, string b) => string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase);
 

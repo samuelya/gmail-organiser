@@ -34,16 +34,18 @@ public sealed class DecisionMemoryExtraLabelsTests(PostgresFixture postgres) : I
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     [Fact]
-    public async Task Hints_carry_the_extras_and_two_decisions_differing_only_in_extras_are_two_hints()
+    public async Task Decisions_differing_only_in_extras_are_one_hint_with_the_newest_extras()
     {
         await using var db = postgres.CreateDbContext();
         db.Decisions.AddRange(
-            Approval(0, ["Travel", "Work"]), Approval(-1, ["travel", "work"]), Approval(-2, []), Approval(-3, ["Work"]));
+            Approval(-1, ["travel", "work"]), Approval(-2, []), Approval(0, ["Travel", "Work"]), Approval(-3, ["Work"]),
+            Approval(-4, ["Home"], "Other"));
         await db.SaveChangesAsync(Ct);
 
         var hints = await Memory(db).FindSimilarAsync([Message("m9")], vectors: null, k: 5, documentTypeParent: null, [], Ct);
 
-        hints.Select(h => string.Join(',', h.ExtraLabels)).ShouldBe(["Travel,Work", "", "Work"]);
+        // The prompt renders a hint without its extras (#528 adds them): extras must not fill k slots with lines that look alike.
+        hints.Select(h => (h.TopicLabel, string.Join(',', h.ExtraLabels))).ShouldBe([("Shopping", "Travel,Work"), ("Other", "Home")]);
     }
 
     [Theory]
@@ -62,6 +64,22 @@ public sealed class DecisionMemoryExtraLabelsTests(PostgresFixture postgres) : I
         var patterns = await Memory(db).FindPatternsAsync([Scope], minApprovals: 3, documentTypeParent: null, Ct);
 
         patterns[Scope].ExtraLabels.ShouldBe(Split(expected));
+    }
+
+    [Fact]
+    public async Task Pattern_extras_come_from_the_newest_approvals_so_older_ones_without_extras_never_block_them()
+    {
+        await using var db = postgres.CreateDbContext();
+        db.Decisions.AddRange(
+            [Approval(0, ["Work"]), Approval(-1, ["work", "Travel"]), Approval(-2, ["Work"]), .. Enumerable.Range(3, 40).Select(d => Approval(-d, []))]);
+        await db.SaveChangesAsync(Ct);
+
+        var memory = Memory(db);
+        var window = await memory.FindPatternsAsync([Scope], minApprovals: 3, documentTypeParent: null, Ct);
+        var wider = await memory.FindPatternsAsync([Scope], minApprovals: 4, documentTypeParent: null, Ct);
+
+        (window[Scope].Approvals, string.Join(',', window[Scope].ExtraLabels)).ShouldBe((43, "Work"));
+        wider[Scope].ExtraLabels.ShouldBeEmpty();
     }
 
     [Fact]
@@ -133,14 +151,14 @@ public sealed class DecisionMemoryExtraLabelsTests(PostgresFixture postgres) : I
         UpdatedAt = Now,
     };
 
-    private static DecisionRow Approval(int days, string[] extras) => new()
+    private static DecisionRow Approval(int days, string[] extras, string topic = "Shopping") => new()
     {
         Id = Guid.NewGuid(),
         MessageId = $"old-{Guid.NewGuid():N}",
         SenderAddress = Shop,
         SubjectTemplate = SubjectNormaliser.Template(Message("s0").Subject),
         ScopeKey = Scope,
-        TopicLabel = "Shopping",
+        TopicLabel = topic,
         ExtraLabels = extras,
         Outcome = DecisionOutcome.Approved,
         Source = SuggestionSource.Llm,

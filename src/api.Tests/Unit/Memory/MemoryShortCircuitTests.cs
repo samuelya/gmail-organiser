@@ -113,6 +113,33 @@ public sealed class MemoryShortCircuitTests
         results[0].ShouldNotBeNull().Suggestions.ShouldAllBe(s => s.ExtraLabels.SequenceEqual(expected));
     }
 
+    [Theory]
+    [InlineData("topic/other", true)]
+    [InlineData("", false)]
+    public async Task A_member_carrying_one_of_the_pattern_extras_keeps_its_labels(string extras, bool answers)
+    {
+        var results = await ShortCircuit(
+            null, new("Topic/Shop", false, false, 5, 1, null, false, ExtraLabels: extras.Split('|', StringSplitOptions.RemoveEmptyEntries)),
+            Group(Msg(1, "Label_1", "Label_2"), Msg(2, "Label_2")));
+
+        (results[0] is not null).ShouldBe(answers);
+    }
+
+    [Fact]
+    public void Patterns_and_hints_compare_their_extras_by_value()
+    {
+        MemoryPattern Pattern(params string[] extras) => new("Topic/Shop", false, false, 5, 1, null, false, ExtraLabels: extras);
+        MemoryHint Hint(params string[] extras) => new("shop@example.com", null, "Topic/Shop", false, false, "approved", 1, ExtraLabels: extras);
+
+        Pattern("Travel", "Work").ShouldBe(Pattern("Travel", "Work"));
+        Pattern("Travel", "Work").GetHashCode().ShouldBe(Pattern("Travel", "Work").GetHashCode());
+        Pattern("Travel").ShouldNotBe(Pattern("Work"));
+        Pattern().ShouldBe(new MemoryPattern("Topic/Shop", false, false, 5, 1, null, false));
+        Hint("Travel", "Work").ShouldBe(Hint("Travel", "Work"));
+        Hint("Travel").ShouldNotBe(Hint("Travel", "Work"));
+        (Hint("Travel") with { Similarity = 0.5 }).ShouldNotBe(Hint("Travel"));
+    }
+
     private static Task<IReadOnlyList<ShortCircuitResult?>> ShortCircuit(string? parent, MemoryPattern pattern, params MessageGroup[] groups) =>
         new MemoryShortCircuit(new PatternMemory(new Dictionary<string, MemoryPattern> { [GroupKey.For(Msg(0))] = pattern }))
             .TryAsync(groups, new ShortCircuitContext(Settings, Allowlist.Empty, new LabelTreeIndex(["Topic/Shop"]), Labels, parent), Ct);

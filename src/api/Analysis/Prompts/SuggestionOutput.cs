@@ -24,7 +24,7 @@ public sealed record EmailForPrompt(
 /// The decision was made under the current document-type parent, so a null <paramref name="DocumentTypeLabel"/> means
 /// "no type" rather than unknown.
 /// </param>
-/// <param name="ExtraLabels">The decision's additional labels (#527), canonical; null or empty is none (one shared empty array, so records without extras compare as before).</param>
+/// <param name="ExtraLabels">The additional labels of the newest decision the hint stands for (#527), canonical; null is none.</param>
 public sealed record MemoryHint(
     string SenderAddress,
     string? SubjectTemplate,
@@ -36,9 +36,19 @@ public sealed record MemoryHint(
     string? DocumentTypeLabel = null,
     bool DocumentTypeDecided = false,
     MailType? MailType = null,
-    string[]? ExtraLabels = null)
+    IReadOnlyList<string>? ExtraLabels = null)
 {
-    public string[] ExtraLabels { get; init; } = ExtraLabels is { Length: > 0 } extras ? extras : [];
+    public IReadOnlyList<string> ExtraLabels { get; init; } = ExtraLabels ?? [];
+
+    // Value equality for the extras too, as for the other members.
+    public bool Equals(MemoryHint? other) =>
+        other is not null
+        && (SenderAddress, SubjectTemplate, TopicLabel, NeedsAction, ToBeDeleted, Outcome, Similarity, DocumentTypeLabel, DocumentTypeDecided, MailType)
+            == (other.SenderAddress, other.SubjectTemplate, other.TopicLabel, other.NeedsAction, other.ToBeDeleted, other.Outcome, other.Similarity,
+                other.DocumentTypeLabel, other.DocumentTypeDecided, other.MailType)
+        && ExtraLabels.SequenceEqual(other.ExtraLabels, StringComparer.Ordinal);
+
+    public override int GetHashCode() => HashCode.Combine(SenderAddress, SubjectTemplate, TopicLabel, Outcome, Similarity, DocumentTypeLabel, MailType, ExtraLabels.Count);
 }
 
 /// <summary>An approved sender policy of an email in the prompt (#360): what the person decided for its sender, list or domain.</summary>
