@@ -1,7 +1,11 @@
 import { ComponentRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { startMailType } from './edit-suggestion-dialog.component';
-import { commonMailType, MailTypeChip, mailTypeHue } from './mail-type-chip.component';
+import {
+  commonMailType,
+  MailTypeChip,
+  mailTypeHue,
+  startMailType,
+} from './mail-type-chip.component';
 import { mailTypesParam, parseMailTypes } from './mail-type-filter';
 import { editRequest, SuggestionDto } from './review.models';
 

@@ -74,6 +74,14 @@ export const MEMBERS_STEP = 20;
               }
             </span>
           }
+          @for (extra of g.extraLabels ?? []; track extra) {
+            <span class="chip" data-testid="extra-label"
+              >{{ extra }}
+              @if (g.extraLabelsNew?.includes(extra)) {
+                <span class="new" data-testid="extra-label-new">new</span>
+              }
+            </span>
+          }
           @if (g.needsAction) {
             <span class="chip" data-testid="group-action">{{ labels().action }}</span>
           }

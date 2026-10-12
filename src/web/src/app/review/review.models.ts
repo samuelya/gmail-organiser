@@ -101,6 +101,9 @@ export interface SuggestionDto {
   mailType?: string | null;
   /** The taxonomy is locked and its label is not in Gmail yet: bulk approve skips it. */
   newLabelPending?: boolean;
+  /** Labels apply adds next to the topic and document type, and those Gmail does not have yet; missing is none. */
+  extraLabels?: string[];
+  extraLabelsNew?: string[];
 }
 
 /** `groupKey` is null for a message analysed on its own. */
@@ -138,6 +141,9 @@ export interface ReviewGroupDto {
   newLabelPending?: boolean;
   /** The members' status: "All but rejected" lists one card per group and status. */
   status?: SuggestionStatus;
+  /** The shown outcome's additional labels and those Gmail does not have yet; missing is none. */
+  extraLabels?: string[];
+  extraLabelsNew?: string[];
 }
 
 export interface ReviewSenderDetailDto {
@@ -159,17 +165,19 @@ export interface ReviewOutcome {
 export interface GroupOutcome extends ReviewOutcome {
   /** Null approves only members without one. */
   documentTypeLabel: string | null;
+  extraLabels: string[];
 }
 
 /**
  * `PUT /api/review/suggestions/{id}`; `replaceLabels` left out keeps the replaced labels as they are,
- * `documentTypeLabel` left out keeps the document type and `""` clears it.
+ * `documentTypeLabel` left out keeps the document type and `""` clears it; `extraLabels` left out keeps them, `[]` clears them.
  */
 export interface EditSuggestionRequest extends ReviewOutcome {
   replaceLabels?: string[];
   documentTypeLabel?: string;
   /** Left out keeps the mail type; `""` clears it. */
   mailType?: string;
+  extraLabels?: string[];
 }
 
 export interface GroupDecisionResponse {
@@ -251,8 +259,12 @@ export function outcomeOf(group: ReviewGroupDto): GroupOutcome {
     needsAction: group.needsAction,
     toBeDeleted: group.toBeDeleted,
     documentTypeLabel: group.documentTypeLabel,
+    extraLabels: group.extraLabels ?? [],
   };
 }
+
+/** Mirrors the API's `ExtraLabelList.Max`. */
+export const MAX_EXTRA_LABELS = 5;
 
 /** Mirrors the API's `DocumentTypePath.MaxDepth`: a document type is 1 to 3 levels under the parent. */
 export const MAX_DOCUMENT_TYPE_DEPTH = 3;

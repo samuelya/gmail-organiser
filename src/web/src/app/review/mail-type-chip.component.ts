@@ -70,3 +70,13 @@ export class MailTypeChip {
   readonly text = computed(() => mailTypeLabel(this.type() ?? ''));
   readonly hue = computed(() => mailTypeHue(this.type() ?? ''));
 }
+
+/** The members' shared mail type (`""` when none has one); null and `mixed` when they differ. */
+export function startMailType(members: readonly { mailType?: string | null }[]): {
+  value: string | null;
+  mixed: boolean;
+} {
+  const common = commonMailType(members);
+  const mixed = common === null && members.some((m) => !!m.mailType);
+  return { value: mixed ? null : (common ?? ''), mixed };
+}

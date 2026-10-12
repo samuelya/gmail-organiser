@@ -68,6 +68,7 @@ describe('ReviewService', () => {
         needsAction: true,
         toBeDeleted: false,
         documentTypeLabel: 'Docs/Invoice',
+        extraLabels: ['Extra/One'],
       })
       .subscribe();
     const req = http.expectOne('/api/review/groups/approve');
@@ -78,6 +79,7 @@ describe('ReviewService', () => {
       needsAction: true,
       toBeDeleted: false,
       documentTypeLabel: 'Docs/Invoice',
+      extraLabels: ['Extra/One'],
     });
     req.flush({ changed: 1, skipped: [] });
   });

@@ -86,6 +86,14 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
               }
             </span>
           }
+          @for (extra of s.extraLabels ?? []; track extra) {
+            <span class="badge" data-testid="extra-label"
+              >{{ extra }}
+              @if (s.extraLabelsNew?.includes(extra)) {
+                <span class="new" data-testid="extra-label-new">new</span>
+              }
+            </span>
+          }
           @if (s.needsAction) {
             <span class="badge">{{ labels().action }}</span>
           }

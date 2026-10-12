@@ -208,10 +208,28 @@ public sealed class PolicyExtraLabelsTests(ApiFactory factory, PostgresFixture p
 
         errors[ExtraLabelList.Field].Single().ShouldContain("mixed");
 
-        // Kept extras count too: a default with extras cannot turn mixed (PolicyValidation, shared with the parser).
+        // An explicit list stays a 400 when a default with extras turns mixed.
         (await PutAsync(Single, new EditPolicyRequest(Topic, null, null, null, "archive", false, [], ["Alpha"]))).StatusCode.ShouldBe(HttpStatusCode.OK);
-        var kept = await ErrorsAsync(await PutAsync(Single, new EditPolicyRequest(null, null, null, null, "keep", true, [Rule(null, null)])));
-        kept[ExtraLabelList.Field].Single().ShouldContain("mixed");
+        var explicitList = await ErrorsAsync(await PutAsync(Single, new EditPolicyRequest(null, null, null, null, "keep", true,
+            [Rule(null, null)], ["Alpha"])));
+        explicitList[ExtraLabelList.Field].Single().ShouldContain("mixed");
+    }
+
+    [Fact]
+    public async Task Turning_mixed_without_a_list_drops_the_stored_extras()
+    {
+        (await PutAsync(Single, new EditPolicyRequest(Topic, null, null, null, "archive", false, [], ["Alpha", "Beta"])))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // What the web editor sends: no extraLabels (null keeps), but a mixed default has nothing to keep (#546).
+        (await PutAsync(Single, new EditPolicyRequest(null, null, null, null, "keep", true, [Rule(null, null)])))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var policy = (await DetailAsync(Single)).Policy;
+        policy.IsMixed.ShouldBeTrue();
+        policy.ExtraLabels.ShouldBeEmpty();
+        await using var db = postgres.CreateDbContext();
+        (await db.SenderPolicies.AsNoTracking().SingleAsync(p => p.Id == Single, Ct)).ExtraLabels.ShouldBeEmpty();
     }
 
     private Task<HttpResponseMessage> PutAsync(Guid id, EditPolicyRequest request) =>

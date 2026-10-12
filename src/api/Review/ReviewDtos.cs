@@ -208,14 +208,34 @@ public sealed record ActionBatchDto(
 /// The most common document-type label among the outcome's approvals; outcomes are by topic and flags only, so the type
 /// never changes the top outcome or <paramref name="Agreement"/> (filter proposals use them).
 /// </param>
+/// <param name="ExtraLabels">
+/// The additional labels (#523) every approval of the top pattern has (the outcome's approvals with
+/// <paramref name="DocumentTypeLabel"/>), as one canonical list; <c>[]</c> when they differ or nothing is approved. Not
+/// part of the outcome either.
+/// </param>
 public sealed record SenderPatternDto(
     string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, int Approvals, double Agreement, int Remaining,
-    string? DocumentTypeLabel = null);
+    string? DocumentTypeLabel = null, string[]? ExtraLabels = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
+
+    /// <summary>Value equality, the additional labels compared as a list (<see cref="Analysis.ExtraLabelList.SameList"/>).</summary>
+    public bool Equals(SenderPatternDto? other) =>
+        other is not null && TopicLabel == other.TopicLabel && NeedsAction == other.NeedsAction && ToBeDeleted == other.ToBeDeleted
+        && Approvals == other.Approvals && Agreement.Equals(other.Agreement) && Remaining == other.Remaining
+        && DocumentTypeLabel == other.DocumentTypeLabel && Analysis.ExtraLabelList.SameList(ExtraLabels, other.ExtraLabels);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(TopicLabel, NeedsAction, ToBeDeleted, Approvals, Agreement, Remaining, DocumentTypeLabel, ExtraLabels.Length);
+}
 
 /// <summary>Each value overrides the pattern's; without a pattern the topic label is required and the flags default to false.</summary>
 /// <param name="DocumentTypeLabel">Null keeps the pattern's, <c>""</c> sets none (<see cref="DocumentTypeEdit"/>).</param>
+/// <param name="ExtraLabels">Null keeps the pattern's, <c>[]</c> sets none, a list sets them
+/// (<see cref="Analysis.ExtraLabelList.Normalise"/>).</param>
 public sealed record ApplyRestRequest(
-    string? TopicLabel = null, bool? NeedsAction = null, bool? ToBeDeleted = null, string? DocumentTypeLabel = null);
+    string? TopicLabel = null, bool? NeedsAction = null, bool? ToBeDeleted = null, string? DocumentTypeLabel = null,
+    string[]? ExtraLabels = null);
 
 /// <summary>The criteria of the Gmail filter that matches the sender; the input of filter creation (M6).</summary>
 /// <param name="ListId">The List-Id all the sender's messages share, if any.</param>
