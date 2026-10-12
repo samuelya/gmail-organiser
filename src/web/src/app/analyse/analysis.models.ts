@@ -221,14 +221,14 @@ export function runTarget(
 }
 
 /**
- * Review's query params for the pending suggestions a completed analyse run produced, narrowed to its sender when it
- * had one; `null` when the run produced nothing to review.
+ * Review's query params for the pending suggestions a completed analyse run produced, narrowed to the sender of a
+ * sender run (a top senders run's optional sender only seeds its picks); `null` when the run produced nothing to review.
  */
 export function reviewSuggestionsParams(
-  run: Pick<AnalysisRunDto, 'status' | 'kind' | 'messagesCovered' | 'senderAddress'>,
+  run: Pick<AnalysisRunDto, 'status' | 'kind' | 'scope' | 'messagesCovered' | 'senderAddress'>,
 ): { status: 'pending'; sender?: string } | null {
   if (run.status !== 'completed' || run.kind !== 'analyse' || run.messagesCovered <= 0) return null;
-  return run.senderAddress
+  return run.scope === 'sender' && run.senderAddress
     ? { status: 'pending', sender: run.senderAddress }
     : { status: 'pending' };
 }

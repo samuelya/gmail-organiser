@@ -165,7 +165,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
                 {{ resuming().has(run.id) ? 'Resuming…' : 'Resume' }}
               </button>
             }
-            @if (reviewParams(run); as params) {
+            @if (reviewParams().get(run.id); as params) {
               <a
                 mat-button
                 routerLink="/review"
@@ -363,6 +363,10 @@ export class RunList {
   /** Run ids whose "Send run to Claude" is in flight. */
   readonly sending = signal<ReadonlySet<string>>(new Set());
 
+  /** Review's query params per finished run id, built once per list so the links keep the same object. */
+  readonly reviewParams = computed(
+    () => new Map(this.finished().map((run) => [run.id, reviewSuggestionsParams(run)])),
+  );
   readonly activeViews = computed(() =>
     this.active().map((run) =>
       activeRunView(run, run.jobId ? this.jobs.job(run.jobId) : undefined),
@@ -418,10 +422,6 @@ export class RunList {
 
   isTopSenders(run: AnalysisRunDto): boolean {
     return run.scope === TOP_SENDERS;
-  }
-
-  reviewParams(run: AnalysisRunDto): ReturnType<typeof reviewSuggestionsParams> {
-    return reviewSuggestionsParams(run);
   }
 
   usage(run: AnalysisRunDto): string | null {
