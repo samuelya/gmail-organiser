@@ -87,6 +87,8 @@ describe('ReviewService', () => {
     expect(http.expectOne('/api/review/apply').request.body).toEqual({
       senderAddress: 'news@example.com',
     });
+    service.applyAll().subscribe();
+    expect(http.expectOne('/api/review/apply').request.body).toEqual({});
     service.applyRest('news@example.com').subscribe();
     expect(http.expectOne('/api/review/senders/news%40example.com/apply-rest').request.method).toBe(
       'POST',

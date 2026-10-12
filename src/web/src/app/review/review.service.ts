@@ -132,6 +132,11 @@ export class ReviewService {
     return this.http.post<ActionBatchDto>('/api/review/apply', { senderAddress });
   }
 
+  /** Every approved suggestion from every sender; `409` when none is. */
+  applyAll(): Observable<ActionBatchDto> {
+    return this.http.post<ActionBatchDto>('/api/review/apply', {});
+  }
+
   pattern(address: string): Observable<SenderPatternDto> {
     return this.http.get<SenderPatternDto>(
       `/api/review/senders/${encodeURIComponent(address)}/pattern`,

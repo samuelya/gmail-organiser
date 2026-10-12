@@ -12,6 +12,18 @@
   >
     Bulk approve…
   </button>
+  @if (approvedTotal(); as n) {
+    <button
+      actions
+      mat-flat-button
+      type="button"
+      [disabled]="busy() || !!apply.jobId()"
+      (click)="applyAll()"
+      data-testid="apply-all"
+    >
+      Apply all approved ({{ n }})
+    </button>
+  }
 </app-page-header>
 
 @if (apply.jobId()) {
