@@ -115,6 +115,58 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
     }
 
     [Fact]
+    public async Task Memory_suggestions_store_the_extras_respelled_without_blocked_or_reserved_ones()
+    {
+        var nested = FakeLabelStore.SeedUserLabelNames[1];
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>()
+                .UpdateAsync(s => s with { AnalysisBlockedLabels = ["Blocked Extra"] }, Ct);
+        }
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            var actionLabel = (await h.Services.GetRequiredService<ISettingsStore>().GetAsync(Ct)).ActionLabelName;
+            await db.Decisions.ExecuteUpdateAsync(
+                s => s.SetProperty(d => d.ExtraLabels, new[] { "blocked extra", "deals", nested.ToLowerInvariant(), actionLabel }), Ct);
+        }
+
+        var run = await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+
+        (await h.GetRunAsync(run.Id)).MessagesFromMemory.ShouldBe(9);
+        await using var check = postgres.CreateDbContext();
+        var memory = await check.Suggestions.AsNoTracking().Where(s => s.Source == SuggestionSource.Memory).ToListAsync(Ct);
+        memory.ShouldAllBe(s => s.TopicLabel == "Deals" && s.ExtraLabels.SequenceEqual(new[] { nested }));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_locked_taxonomy_drops_remembered_extras_outside_the_label_tree(bool locked)
+    {
+        var nested = FakeLabelStore.SeedUserLabelNames[1];
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ISettingsStore>().UpdateAsync(s => s with { TaxonomyLocked = locked }, Ct);
+        }
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Decisions.ExecuteUpdateAsync(s => s.SetProperty(d => d.ExtraLabels, new[] { nested, "Gone Extra" }), Ct);
+        }
+
+        await h.StartAsync(new StartAnalysisRunRequest("inbox", null, null, 20, null));
+        await h.RunNextAsync();
+
+        await using var check = postgres.CreateDbContext();
+        var memory = await check.Suggestions.AsNoTracking().Where(s => s.Source == SuggestionSource.Memory).ToListAsync(Ct);
+        memory.ShouldNotBeEmpty();
+        string[] expected = locked ? [nested] : [.. new[] { nested, "Gone Extra" }.Order(StringComparer.OrdinalIgnoreCase)];
+        memory.ShouldAllBe(s => s.ExtraLabels.SequenceEqual(expected));
+    }
+
+    [Fact]
     public async Task With_the_short_circuit_off_the_model_sees_the_sender_decisions_as_memory()
     {
         await using (var scope = h.Services.CreateAsyncScope())
