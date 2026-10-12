@@ -25,6 +25,12 @@
     </div>
   }
 
+  <app-next-steps-card
+    [status]="status()"
+    [statusFailed]="loadFailed()"
+    [gmailConnected]="gmailConnected()"
+  />
+
   <mat-card appearance="outlined" role="region" aria-labelledby="dashboard-fetch">
     <mat-card-content class="flex flex-col gap-4" data-testid="fetch-card">
       <div class="flex flex-wrap items-center gap-2">
