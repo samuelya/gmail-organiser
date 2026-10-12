@@ -9,6 +9,7 @@ import {
   Injector,
   OnInit,
   signal,
+  viewChild,
 } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -87,6 +88,21 @@ export const SECTIONS = [
 ] as const;
 
 export type SettingsSection = (typeof SECTIONS)[number];
+export type SettingsSectionId = SettingsSection['id'];
+
+/** Each card's heading text, by section id. */
+const SECTION_LABEL = Object.fromEntries(SECTIONS.map((s) => [s.id, s.label])) as Record<
+  SettingsSectionId,
+  string
+>;
+
+/**
+ * How long the deep link keeps its heading in view while the cards above load (the models list
+ * waits on the LLM host), unless the user scrolls first.
+ */
+export const SECTION_FOLLOW_MS = 5000;
+/** Any of these means the user took over the scroll, so the deep link stops following. */
+const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
 
 /**
  * `/settings` (M1): the wizard's step components, one section each. Every step saves only its own
@@ -208,15 +224,25 @@ export class SettingsPage implements OnInit {
   /** `null` until loaded, and on an older API without protection rules, which hides the section. */
   readonly protection = signal<ProtectionSettings | null>(null);
 
-  /** The index lists only the cards on the page: an older API hides some of them. */
-  readonly sections = computed<readonly SettingsSection[]>(() =>
-    SECTIONS.filter(
-      (s) =>
-        (s.id !== 'attachments' || !!this.attachments()?.attachments) &&
-        (s.id !== 'protection' || !!this.protection()) &&
-        (s.id !== 'claude' || !!this.claude()),
-    ),
-  );
+  /**
+   * The optional cards' settings, `null` where the card is hidden (still loading, or an older API
+   * without that block). The template's `@if`s and the index both read this.
+   */
+  readonly optionalCards = computed(() => ({
+    attachments: this.attachments()?.attachments ?? null,
+    protection: this.protection(),
+    claude: this.claude(),
+  }));
+
+  /** The index lists only the cards on the page. */
+  readonly sections = computed<readonly SettingsSection[]>(() => {
+    const cards: Partial<Record<SettingsSectionId, unknown>> = this.optionalCards();
+    return SECTIONS.filter((s) => !(s.id in cards) || cards[s.id] !== null);
+  });
+
+  readonly label = SECTION_LABEL;
+
+  private readonly cards = viewChild.required<ElementRef<HTMLElement>>('cards');
 
   /** `?section=<id>` from a deep link; scrolled to once the settings have loaded. */
   private readonly initialSection: string | null;
@@ -244,15 +270,22 @@ export class SettingsPage implements OnInit {
     }
   }
 
-  /** Scrolls to a card from an in-page link and moves focus to its heading until it is left. */
-  jumpToSection(headingId: string): void {
+  /**
+   * Scrolls to a card from an in-page link and moves focus to its heading until it is left.
+   * Smooth unless the user prefers reduced motion or the caller asks for `auto`.
+   */
+  jumpToSection(headingId: string, behavior?: ScrollBehavior): HTMLElement | null {
     const heading = this.host.nativeElement.querySelector<HTMLElement>(`#${headingId}`);
-    if (!heading) return;
+    if (!heading) return null;
     const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-    heading.scrollIntoView?.({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+    heading.scrollIntoView?.({
+      block: 'start',
+      behavior: behavior ?? (reduceMotion ? 'auto' : 'smooth'),
+    });
     heading.setAttribute('tabindex', '-1');
     heading.addEventListener('blur', () => heading.removeAttribute('tabindex'), { once: true });
     heading.focus({ preventScroll: true });
+    return heading;
   }
 
   ngOnInit(): void {
@@ -287,11 +320,44 @@ export class SettingsPage implements OnInit {
       .subscribe({ next: (version) => this.version.set(version), error: () => undefined });
   }
 
-  /** Waits for the load: the optional cards only render once their settings are in. */
+  /**
+   * Waits for the load: the optional cards only render once their settings are in. Skipped after
+   * the OAuth callback, whose result on the Gmail card is the thing to see.
+   */
   private scrollToInitialSection(): void {
     const section = this.initialSection;
-    if (!section) return;
-    afterNextRender(() => this.jumpToSection(`settings-${section}`), { injector: this.injector });
+    if (!section || this.connectResult) return;
+    afterNextRender(
+      () => {
+        const heading = this.jumpToSection(`settings-${section}`, 'auto');
+        if (heading) this.followWhileCardsLoad(heading);
+      },
+      { injector: this.injector },
+    );
+  }
+
+  /**
+   * The cards above the target load their own data after the jump and grow, pushing the heading
+   * down where the browser has no scroll anchoring. Re-scrolls on every change in the cards' height
+   * for `SECTION_FOLLOW_MS`, or until the user scrolls, clicks or presses a key.
+   */
+  private followWhileCardsLoad(heading: HTMLElement): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() =>
+      heading.scrollIntoView?.({ block: 'start', behavior: 'auto' }),
+    );
+    const timer = setTimeout(stop, SECTION_FOLLOW_MS);
+    const removeDestroy = this.destroyRef.onDestroy(() => stop());
+    function stop() {
+      observer.disconnect();
+      clearTimeout(timer);
+      for (const type of USER_SCROLL_EVENTS) window.removeEventListener(type, stop, true);
+      removeDestroy();
+    }
+    for (const type of USER_SCROLL_EVENTS) {
+      window.addEventListener(type, stop, { capture: true, passive: true });
+    }
+    observer.observe(this.cards().nativeElement);
   }
 
   onClientChange(client: GoogleClientSettings): void {
