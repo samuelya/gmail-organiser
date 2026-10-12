@@ -1,6 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { plural } from '../clean-up/clean-up.models';
 import { ConfirmDialogData } from '../core/confirm-dialog';
+import { sameLabels } from './extra-labels-field.component';
 import { ActionBatchDto, FlagLabels, percent } from './review.models';
 
 /** The sender's most approved outcome; the outcome fields are null when nothing is approved yet. */
@@ -15,11 +16,17 @@ export interface SenderPatternDto {
   remaining: number;
   /** The most common document-type label among the outcome's approvals. */
   documentTypeLabel: string | null;
+  /** The outcome's additional labels; missing is none. */
+  extraLabels?: string[];
 }
 
-/** `POST …/senders/{address}/apply-rest`: each value overrides the pattern's; `documentTypeLabel: ""` sets none. */
+/**
+ * `POST …/senders/{address}/apply-rest`: each value overrides the pattern's; `documentTypeLabel: ""`
+ * sets none, `extraLabels: []` clears them.
+ */
 export interface ApplyRestRequest {
   documentTypeLabel?: string;
+  extraLabels?: string[];
 }
 
 export interface FilterCandidateDto {
@@ -37,13 +44,18 @@ export interface ApplyRestResponse {
 /**
  * The apply-rest body: a pattern's own type is never re-sent, so the server keeps it as approved
  * even when the parent has changed since; `""` only says "none" when the parent is on and the
- * pattern has no type.
+ * pattern has no type. The additional labels are sent only when `extraLabels` differs from the
+ * pattern's, so the pattern's set is otherwise kept as approved.
  */
 export function applyRestRequest(
   pattern: SenderPatternDto,
   parent: string | null,
+  extraLabels?: readonly string[],
 ): ApplyRestRequest {
-  return parent && !pattern.documentTypeLabel ? { documentTypeLabel: '' } : {};
+  const type = parent && !pattern.documentTypeLabel ? { documentTypeLabel: '' } : {};
+  return extraLabels && !sameLabels(extraLabels, pattern.extraLabels ?? [])
+    ? { ...type, extraLabels: [...extraLabels] }
+    : type;
 }
 
 /** A pattern exists and there is mail left to apply it to. */
@@ -66,9 +78,18 @@ export function patternSummary(
     pattern.toBeDeleted ? labels.delete : null,
   ].filter((f): f is string => !!f);
   const type = pattern.documentTypeLabel ? [`document type "${pattern.documentTypeLabel}"`] : [];
-  const outcome = [`label "${pattern.topicLabel}"`, ...type, ...flags.map((f) => `"${f}"`)].join(
-    ', ',
-  );
+  const extras = pattern.extraLabels?.length
+    ? [
+        `additional ${pattern.extraLabels.length === 1 ? 'label' : 'labels'} ` +
+          pattern.extraLabels.map((l) => `"${l}"`).join(', '),
+      ]
+    : [];
+  const outcome = [
+    `label "${pattern.topicLabel}"`,
+    ...type,
+    ...flags.map((f) => `"${f}"`),
+    ...extras,
+  ].join(', ');
   return (
     `Suggest ${outcome} for the ${pattern.remaining} remaining messages and apply it ` +
     `(${percent(pattern.agreement)} of ${pattern.approvals} approvals agree). ` +
