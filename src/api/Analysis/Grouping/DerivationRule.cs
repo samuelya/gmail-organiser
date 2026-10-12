@@ -4,6 +4,7 @@ namespace GmailOrganiser.Analysis.Grouping;
 /// <param name="ReplaceLabels">Current labels the answer replaces; null is none.</param>
 /// <param name="DocumentTypeLabel">The document-type label; null is none.</param>
 /// <param name="MailType">The mail type (#365); null is none.</param>
+/// <param name="ExtraLabels">The additional labels the answer kept (#529); null is none.</param>
 public sealed record RepresentativeOutput(
     string TopicLabel,
     bool NeedsAction,
@@ -12,7 +13,8 @@ public sealed record RepresentativeOutput(
     double Confidence,
     IReadOnlyList<string>? ReplaceLabels = null,
     string? DocumentTypeLabel = null,
-    MailType? MailType = null);
+    MailType? MailType = null,
+    IReadOnlyList<string>? ExtraLabels = null);
 
 /// <summary>Whether a group's remaining members get a derived suggestion.</summary>
 public abstract record Derivation;
@@ -36,6 +38,9 @@ public sealed record Agreed(
 
     /// <summary>The mail type the representatives agree on; null when any named none, like <see cref="DocumentTypeLabel"/>.</summary>
     public MailType? MailType { get; init; }
+
+    /// <summary>The additional labels every representative named (case-insensitive, first spelling), canonical order.</summary>
+    public IReadOnlyList<string> ExtraLabels { get; init; } = [];
 }
 
 /// <summary>Representatives disagree or one has no valid output: every remaining member goes to the LLM individually.</summary>
@@ -49,7 +54,8 @@ public sealed record Mixed : Derivation
 /// all decision fields, the replaced labels (same set, ordinal) included. One invalid representative makes the group
 /// mixed rather than deriving from a partial sample. A missing document-type label is no opinion: representatives that
 /// name different types (case-insensitive) are mixed, and a group where only some name the type derives with none. The
-/// mail type follows the same rule (#365).
+/// mail type follows the same rule (#365). Additional labels never make representatives disagree: derived members get
+/// only the extras every representative named (#529).
 /// </summary>
 public static class DerivationRule
 {
@@ -87,8 +93,19 @@ public static class DerivationRule
             ReplaceLabels = Set(first.ReplaceLabels),
             DocumentTypeLabel = types.Contains(null) ? null : types[0],
             MailType = mailTypes.Contains(null) ? null : mailTypes[0],
+            ExtraLabels = CommonExtras(valid),
         };
     }
+
+    private static string[] CommonExtras(List<RepresentativeOutput> valid) =>
+    [
+        .. (valid[0].ExtraLabels ?? [])
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(l => valid.All(o => (o.ExtraLabels ?? []).Any(e => string.Equals(e.Trim(), l, StringComparison.OrdinalIgnoreCase))))
+            .Order(StringComparer.OrdinalIgnoreCase),
+    ];
 
     private static string? Normalised(string? label) => string.IsNullOrWhiteSpace(label) ? null : label.Trim();
 

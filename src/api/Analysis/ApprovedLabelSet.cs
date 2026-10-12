@@ -69,11 +69,18 @@ public sealed class ApprovedLabelSet(bool locked, IEnumerable<string> blocked, i
     }
 
     /// <summary>
-    /// When locked, a new label beyond the run's first <see cref="MaxNewLabels"/> distinct ones keeps its label, but its
-    /// confidence is at most <see cref="CappedConfidence"/> and its reason ends with <see cref="CapNote"/>.
+    /// A blocked additional label is dropped alone, the suggestion kept (#529); a locked taxonomy does not restrict extras,
+    /// which only come from the person's own approved decisions. When locked, a new label beyond the run's first
+    /// <see cref="MaxNewLabels"/> distinct ones keeps its label, but its confidence is at most <see cref="CappedConfidence"/>
+    /// and its reason ends with <see cref="CapNote"/>.
     /// </summary>
     public SuggestionOutput Admit(SuggestionOutput output)
     {
+        if (output.ExtraLabels.Any(IsBlocked))
+        {
+            output = output with { ExtraLabels = [.. output.ExtraLabels.Where(e => !IsBlocked(e))] };
+        }
+
         if (!Locked || !output.IsNewLabel)
         {
             return output;

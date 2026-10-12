@@ -143,7 +143,7 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task A_locked_taxonomy_drops_remembered_extras_outside_the_label_tree(bool locked)
+    public async Task A_locked_taxonomy_keeps_remembered_extras_outside_the_label_tree(bool locked)
     {
         var nested = FakeLabelStore.SeedUserLabelNames[1];
         await using (var scope = h.Services.CreateAsyncScope())
@@ -162,7 +162,7 @@ public sealed class AnalysisMemoryRunTests(ApiFactory factory, PostgresFixture p
         await using var check = postgres.CreateDbContext();
         var memory = await check.Suggestions.AsNoTracking().Where(s => s.Source == SuggestionSource.Memory).ToListAsync(Ct);
         memory.ShouldNotBeEmpty();
-        string[] expected = locked ? [nested] : [.. new[] { nested, "Gone Extra" }.Order(StringComparer.OrdinalIgnoreCase)];
+        string[] expected = [.. new[] { nested, "Gone Extra" }.Order(StringComparer.OrdinalIgnoreCase)];
         memory.ShouldAllBe(s => s.ExtraLabels.SequenceEqual(expected));
     }
 

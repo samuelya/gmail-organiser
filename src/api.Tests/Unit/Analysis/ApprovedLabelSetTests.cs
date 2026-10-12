@@ -76,6 +76,19 @@ public sealed class ApprovedLabelSetTests
         set.Admit(Output("6", "Topic", false)).Confidence.ShouldBe(0.9);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Admit_drops_a_blocked_extra_alone_and_a_locked_taxonomy_keeps_extras_outside_the_tree(bool locked)
+    {
+        var set = new ApprovedLabelSet(locked, ["Blocked"], 5);
+
+        var admitted = set.Admit(Output("1", "Topic", false) with { ExtraLabels = ["Kept", "Area/blocked", "Not In Tree"] });
+
+        (admitted.TopicLabel, admitted.Confidence).ShouldBe(("Topic", 0.9));
+        admitted.ExtraLabels.ShouldBe(["Kept", "Not In Tree"]);
+    }
+
     [Fact]
     public void Unlocked_runs_have_no_cap_and_a_zero_cap_caps_every_new_label()
     {
