@@ -35,10 +35,16 @@ import { MAX_EXTRA_LABELS } from './review.models';
 /** Autocomplete shows at most this many matching labels. */
 const MAX_OPTIONS = 50;
 
+/** Whether two label lists hold the same names, ignoring case and order. */
+export function sameLabels(a: readonly string[], b: readonly string[]): boolean {
+  const key = (list: readonly string[]) => [...new Set(list.map((l) => l.toLowerCase()))].sort();
+  return key(a).join('\n') === key(b).join('\n');
+}
+
 /**
  * "Additional labels" (#524): a chip per label, picked from the label list or typed as a new path and
  * added on Enter or comma. A form control (value `string[]`) that is invalid while a chip equals an
- * `exclude`d name or there are more than `max`.
+ * `exclude`d name, there are more than `max`, or typed text has not been added.
  */
 @Component({
   selector: 'app-extra-labels-field',
@@ -89,7 +95,9 @@ const MAX_OPTIONS = 50;
           [matAutocomplete]="auto"
           (input)="type(input.value)"
           (blur)="touched()"
-          [disabled]="disabled() || full()"
+          [disabled]="disabled()"
+          [readOnly]="full()"
+          [matAutocompleteDisabled]="full()"
           data-testid="extra-labels-input"
         />
       </mat-chip-grid>
@@ -133,6 +141,13 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   private readonly text = signal('');
   /** Why the typed text was not added; typing again clears it. */
   private readonly inputError = signal<string | null>(null);
+  /** The input lost focus with text not yet added. */
+  private readonly left = signal(false);
+  /** Typed text not added yet keeps the control invalid, so Save cannot drop it. */
+  private readonly pending = computed(() => {
+    const text = this.text().trim();
+    return text ? `Press Enter to add '${text}', or clear it.` : null;
+  });
 
   private readonly names = computed(() =>
     (this.labels() ?? []).filter((l) => l.type === 'user').map((l) => l.name),
@@ -146,7 +161,13 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
     if (clash) return `'${clash}' is already the topic, document type or a flag label.`;
     return this.value().length > this.max() ? `At most ${this.max()} additional labels.` : null;
   });
-  readonly error = computed(() => this.inputError() ?? this.conflict() ?? this.serverError());
+  readonly error = computed(
+    () =>
+      this.inputError() ??
+      this.conflict() ??
+      (this.left() ? this.pending() : null) ??
+      this.serverError(),
+  );
   readonly full = computed(() => this.value().length >= this.max());
   /** Labels not yet chosen nor excluded that contain the typed text. */
   readonly options = computed(() => {
@@ -186,6 +207,7 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
     });
     effect(() => {
       this.conflict();
+      this.pending();
       untracked(() => this.onValidatorChange());
     });
   }
@@ -208,7 +230,7 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   }
 
   validate(): ValidationErrors | null {
-    const message = this.conflict();
+    const message = this.conflict() ?? this.pending();
     return message ? { extraLabels: message } : null;
   }
 
@@ -223,7 +245,12 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
 
   /** Enter or comma: adds the typed path, or keeps it with a message; the highlighted option wins. */
   add(text: string): void {
-    if (this.trigger().panelOpen && this.trigger().activeOption) return;
+    const trigger = this.trigger();
+    if (trigger.panelOpen && trigger.activeOption) {
+      // Comma would otherwise be swallowed; on Enter the panel closes so the trigger does not pick twice.
+      trigger.activeOption._selectViaInteraction();
+      return;
+    }
     const label = text.trim();
     if (!label) return;
     const known = this.names().find((n) => n.toLowerCase() === label.toLowerCase()) ?? label;
@@ -239,7 +266,9 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   pick(event: MatAutocompleteSelectedEvent): void {
     const label = String(event.option.value);
     this.clearInput();
-    if (!this.rejection(label)) this.commit([...this.value(), label]);
+    const error = this.rejection(label);
+    if (error) this.inputError.set(error);
+    else this.commit([...this.value(), label]);
   }
 
   remove(label: string): void {
@@ -249,9 +278,11 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   type(text: string): void {
     this.text.set(text);
     this.inputError.set(null);
+    this.left.set(false);
   }
 
   touched(): void {
+    this.left.set(true);
     this.onTouched();
   }
 
@@ -276,5 +307,6 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
     this.input().nativeElement.value = '';
     this.text.set('');
     this.inputError.set(null);
+    this.left.set(false);
   }
 }

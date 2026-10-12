@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
-import { ExtraLabelsField } from './extra-labels-field.component';
+import { ExtraLabelsField, sameLabels } from './extra-labels-field.component';
 import { LabelDto } from './labels.models';
 
 const labels: LabelDto[] = [
@@ -115,14 +115,49 @@ describe('ExtraLabelsField', () => {
     expect(q('extra-labels-error')).toBeNull();
   });
 
-  it('disables the input with a hint at the limit and removes a chip', () => {
-    const { host } = setup(['Travel', 'Projects', 'Ideas']);
-    expect(input().disabled).toBe(true);
+  it('makes the input read-only with a hint at the limit, keeping focus, and removes a chip', () => {
+    const { host } = setup(['Travel', 'Projects']);
+    type('Ideas');
+    enter();
+    expect(input().readOnly).toBe(true);
+    expect(input().disabled).toBe(false);
+    expect(document.activeElement).toBe(input());
     expect(q('extra-labels-full')!.textContent).toContain('At most 3 additional labels');
     all('extra-label-remove')[1].click();
     TestBed.tick();
     expect(host.control.value).toEqual(['Travel', 'Ideas']);
-    expect(input().disabled).toBe(false);
+    expect(input().readOnly).toBe(false);
+  });
+
+  it('adds the highlighted option on comma', () => {
+    const { host } = setup();
+    type('trav');
+    key('ArrowDown', 40);
+    key(',', 188);
+    expect(host.control.value).toEqual(['Travel']);
+    expect(input().value).toBe('');
+  });
+
+  it('shows why a picked option was refused', () => {
+    const { host } = setup();
+    host.labels.set([...labels, { id: 'L5', name: 'a'.repeat(300), type: 'user' }]);
+    type('aaa');
+    all('extra-label-option')[0].click();
+    TestBed.tick();
+    expect(host.control.value).toEqual([]);
+    expect(q('extra-labels-error')).not.toBeNull();
+  });
+
+  it('stays invalid while typed text is not added, and says so once the input loses focus', () => {
+    const { host } = setup();
+    type('Ideas');
+    expect(host.control.errors?.['extraLabels']).toContain("'Ideas'");
+    expect(q('extra-labels-error')).toBeNull();
+    input().dispatchEvent(new Event('blur'));
+    TestBed.tick();
+    expect(q('extra-labels-error')!.textContent).toContain("Press Enter to add 'Ideas'");
+    type('');
+    expect(host.control.valid).toBe(true);
   });
 
   it('makes the control invalid while a chip equals an excluded name', () => {
@@ -150,5 +185,12 @@ describe('ExtraLabelsField', () => {
     host.control.disable();
     TestBed.tick();
     expect(input().disabled).toBe(true);
+  });
+});
+
+describe('sameLabels', () => {
+  it('ignores case and order', () => {
+    expect(sameLabels(['A', 'b'], ['B', 'a'])).toBe(true);
+    expect(sameLabels(['A'], ['A', 'B'])).toBe(false);
   });
 });

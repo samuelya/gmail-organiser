@@ -179,4 +179,59 @@ describe('additional labels in the edit dialog', () => {
     expect(q('extra-labels-error')!.textContent).toContain("Entry 1 'Travel': no.");
     expect(q('edit-error')).toBeNull();
   });
+
+  it('leaves extraLabels out of a group save when the value ends where it started', () => {
+    const { api, dialog } = setup();
+    const members = [member('a', { extraLabels: ['Travel'] }), member('b')];
+    dialog.editGroup('news@example.com', group({ members, extraLabels: ['Travel'] })).subscribe();
+    settle();
+    q('extra-label-remove')!.click();
+    settle();
+    const input = q<HTMLInputElement>('extra-labels-input')!;
+    input.value = 'travel';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+    settle();
+    save();
+    expect(api.edit.mock.calls.map((c) => c[1])).toEqual([
+      expect.not.objectContaining({ extraLabels: expect.anything() }),
+      expect.not.objectContaining({ extraLabels: expect.anything() }),
+    ]);
+  });
+
+  it("refuses an extra equal to a member's stored document type", () => {
+    const { api, dialog } = setup();
+    const members = [member('a'), member('b', { documentTypeLabel: 'Docs/Invoice' })];
+    dialog
+      .editGroup('news@example.com', group({ members, extraLabels: ['Docs/Invoice'] }))
+      .subscribe();
+    settle();
+    expect(q('extra-labels-error')!.textContent).toContain("'Docs/Invoice'");
+    save();
+    expect(api.edit).not.toHaveBeenCalled();
+  });
+
+  it('retries after a server extraLabels error without changing the field', () => {
+    let fail = true;
+    const { api, dialog } = setup((id) =>
+      fail
+        ? throwError(
+            () =>
+              new HttpErrorResponse({
+                status: 400,
+                error: { title: 'Invalid', errors: { extraLabels: ['No.'] } },
+              }),
+          )
+        : of(member(id)),
+    );
+    dialog.editMember(member('a', { extraLabels: ['Travel', 'Projects'] })).subscribe();
+    settle();
+    q('extra-label-remove')!.click();
+    settle();
+    save();
+    expect(q('extra-labels-error')!.textContent).toContain('No.');
+    fail = false;
+    save();
+    expect(api.edit).toHaveBeenCalledTimes(2);
+  });
 });

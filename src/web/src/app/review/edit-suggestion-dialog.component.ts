@@ -42,8 +42,8 @@ import {
   LabelsService,
 } from './labels.service';
 import { LabelTreePicker } from './label-tree-picker.component';
-import { ExtraLabelsField } from './extra-labels-field.component';
-import { commonMailType, MAIL_TYPES, mailTypeLabel } from './mail-type-chip.component';
+import { ExtraLabelsField, sameLabels } from './extra-labels-field.component';
+import { MAIL_TYPES, mailTypeLabel, startMailType } from './mail-type-chip.component';
 import {
   currentLabelsOf,
   decidedReplaceLabels,
@@ -195,10 +195,12 @@ export class EditSuggestionDialog {
     return exists ? `Existing label under ${parent}` : `New: ${text} under ${parent}`;
   });
 
+  /** The server checks extras against the type sent, or else each member's stored type. */
   readonly extraLabelsExclude = computed(() => {
-    const parent = this.documentTypeParent();
-    const type = parent ? toDocumentTypeLabel(parent, this.documentType()) : null;
-    return [this.path(), type, this.flagLabels().action, this.flagLabels().delete];
+    this.documentType();
+    const type = this.documentTypeChange();
+    const types = type !== undefined ? [type] : this.data.members.map((m) => m.documentTypeLabel);
+    return [this.path(), ...types, this.flagLabels().action, this.flagLabels().delete];
   });
 
   readonly protectedCount = this.data.members.filter((m) => m.protected).length;
@@ -256,6 +258,10 @@ export class EditSuggestionDialog {
    */
   save(): void {
     if (this.saving()) return;
+    // A retry re-sends; the server reports again what still fails.
+    for (const control of Object.values(this.form.controls)) {
+      if (control.hasError('server')) control.updateValueAndValidity();
+    }
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
@@ -265,7 +271,8 @@ export class EditSuggestionDialog {
     const decisions = this.replaceDecisions();
     const documentType = this.documentTypeChange();
     const mailType = this.mailTypeChange();
-    const extras = this.form.controls.extraLabels;
+    const extras = this.form.controls.extraLabels.value;
+    const extrasChanged = !sameLabels(extras, this.data.extraLabels);
     const failures: EditFailure[] = [];
     let labelError: string | null = null;
     let typeError: string | null = null;
@@ -286,7 +293,7 @@ export class EditSuggestionDialog {
                 documentType,
                 mailType,
               ),
-              ...(extras.dirty && { extraLabels: extras.value }),
+              ...(extrasChanged && { extraLabels: extras }),
             })
             .pipe(
               map(() => ({ member: m, err: null as unknown })),
@@ -432,16 +439,6 @@ export class EditSuggestionDialog {
       error: () => this.labelsFailed.set(true),
     });
   }
-}
-
-/** The members' shared mail type (`""` when none has one); null and `mixed` when they differ. */
-export function startMailType(members: readonly SuggestionDto[]): {
-  value: string | null;
-  mixed: boolean;
-} {
-  const common = commonMailType(members);
-  const mixed = common === null && members.some((m) => !!m.mailType);
-  return { value: mixed ? null : (common ?? ''), mixed };
 }
 
 /** The `errors` of an RFC 9457 validation problem. */
