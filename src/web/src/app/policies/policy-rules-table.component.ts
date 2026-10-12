@@ -21,6 +21,7 @@ import {
   MESSAGE_CATEGORIES,
   POLICY_ACTIONS,
   PolicyRuleDto,
+  serverErrorOf,
 } from './policies.models';
 import {
   matchValue,
@@ -265,7 +266,7 @@ export interface RuleDecision {
                           class="md:col-span-3"
                           formControlName="extraLabels"
                           [labels]="labelDtos()"
-                          [exclude]="[v.topicLabel, v.documentTypeLabel]"
+                          [exclude]="[v.topicLabel, v.documentTypeLabel, ...reserved()]"
                           [serverError]="serverError(rule.controls.extraLabels)"
                           data-testid="rule-extra-labels"
                         />
@@ -407,6 +408,8 @@ export class PolicyRulesTable {
   readonly labels = input<readonly string[]>([]);
   /** Every Gmail label, for the additional-labels autocomplete; null while loading. */
   readonly labelDtos = input<readonly LabelDto[] | null>(null);
+  /** The app's flag labels, which can't be additional labels. */
+  readonly reserved = input<readonly string[]>([]);
   readonly documentTypes = input<readonly string[]>([]);
   /** Per-rule decisions wait for this to be false (unsaved edits or a request in flight). */
   readonly decisionsDisabled = input(false);
@@ -429,7 +432,7 @@ export class PolicyRulesTable {
   }
   serverError(control: AbstractControl): string | null {
     this.changes();
-    return (control.errors?.['server'] as string | undefined) ?? null;
+    return serverErrorOf(control);
   }
   readonly outcome = outcomeSummary;
   readonly options = matchingOptions;

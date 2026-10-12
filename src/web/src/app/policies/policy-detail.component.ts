@@ -25,7 +25,7 @@ import { JobsService } from '../core/jobs.service';
 import { PageHeader } from '../layout/page-header';
 import { fieldErrors } from '../review/edit-suggestion-dialog.component';
 import { LabelsService } from '../review/labels.service';
-import { documentTypeOptions } from '../review/review.models';
+import { DEFAULT_FLAG_LABELS, documentTypeOptions } from '../review/review.models';
 import { SettingsService } from '../settings/settings.service';
 import { openApprovePolicy } from './approve-policy-dialog.component';
 import {
@@ -109,18 +109,26 @@ export class PolicyDetail {
   readonly reapply = signal(false);
   readonly labels = signal<string[]>([]);
   readonly documentTypeParent = signal<string | null>(null);
+  /** The action and delete flag labels; the API refuses them as additional labels. */
+  readonly reservedLabels = signal<readonly string[]>([
+    DEFAULT_FLAG_LABELS.action,
+    DEFAULT_FLAG_LABELS.delete,
+  ]);
+  /** Null while loading or when the labels can't be read, so no chip is marked new. */
   readonly labelDtos = toSignal(
     inject(LabelsService)
       .labels()
-      .pipe(catchError(() => of([]))),
-    { initialValue: [] },
+      .pipe(catchError(() => of(null))),
+    { initialValue: null },
   );
   readonly documentTypes = computed(() => {
     const parent = this.documentTypeParent();
-    return parent ? documentTypeOptions(this.labelDtos(), parent).map((t) => `${parent}/${t}`) : [];
+    return parent
+      ? documentTypeOptions(this.labelDtos() ?? [], parent).map((t) => `${parent}/${t}`)
+      : [];
   });
   readonly labelNames = computed(() =>
-    this.labelDtos()
+    (this.labelDtos() ?? [])
       .filter((l) => l.type === 'user')
       .map((l) => l.name)
       .sort((a, b) => a.localeCompare(b)),
@@ -153,8 +161,12 @@ export class PolicyDetail {
       .getSettings()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (s) => this.documentTypeParent.set(s.documentTypeParent ?? null),
-        // The error interceptor shows why; the form works without the document-type field.
+        next: (s) => {
+          this.documentTypeParent.set(s.documentTypeParent ?? null);
+          this.reservedLabels.set([s.actionLabelName, s.deleteLabelName]);
+        },
+        // The error interceptor shows why; the form works without the document-type field
+        // and excludes the default flag names.
         error: () => undefined,
       });
     effect(() => {

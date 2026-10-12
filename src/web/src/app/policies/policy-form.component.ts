@@ -15,6 +15,7 @@ import {
   MAIL_TYPES,
   matchingOptions,
   POLICY_ACTIONS,
+  serverErrorOf,
 } from './policies.models';
 import { PolicyForm } from './policy-form.models';
 
@@ -82,7 +83,11 @@ import { PolicyForm } from './policy-form.models';
           class="md:col-span-2"
           formControlName="extraLabels"
           [labels]="labelDtos()"
-          [exclude]="[f.controls.topicLabel.value, f.controls.documentTypeLabel.value]"
+          [exclude]="[
+            f.controls.topicLabel.value,
+            f.controls.documentTypeLabel.value,
+            ...reserved(),
+          ]"
           [serverError]="serverError(f.controls.extraLabels)"
           data-testid="policy-extra-labels"
         />
@@ -158,6 +163,8 @@ export class PolicyFormComponent {
   readonly labels = input<readonly string[]>([]);
   /** Every Gmail label, for the additional-labels autocomplete; null while loading. */
   readonly labelDtos = input<readonly LabelDto[] | null>(null);
+  /** The app's flag labels, which can't be additional labels. */
+  readonly reserved = input<readonly string[]>([]);
   /** Document-type labels (full paths) under `documentTypeParent`. */
   readonly documentTypes = input<readonly string[]>([]);
   /** From settings; null hides the document-type field. */
@@ -173,10 +180,9 @@ export class PolicyFormComponent {
     this.changes();
     return controlError(control);
   }
-  /** The server's message for the control, if it still holds the refused value. */
   serverError(control: AbstractControl): string | null {
     this.changes();
-    return (control.errors?.['server'] as string | undefined) ?? null;
+    return serverErrorOf(control);
   }
   readonly options = matchingOptions;
 }

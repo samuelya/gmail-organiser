@@ -304,6 +304,11 @@ export function applyServerErrors(form: PolicyForm, errors: Record<string, strin
   return unplaced;
 }
 
+/** The server's message for the control, if it still holds the refused value. */
+export function serverErrorOf(control: AbstractControl): string | null {
+  return (control.errors?.['server'] as string | undefined) ?? null;
+}
+
 /** A control's first error message: the server's, or the client validator's. */
 export function controlError(control: AbstractControl): string | null {
   const e = control.errors;

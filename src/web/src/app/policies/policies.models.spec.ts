@@ -190,11 +190,13 @@ describe('policy form', () => {
     expect(body.rules.map((r) => r.extraLabels)).toEqual([['Tax', 'Home'], []]);
   });
 
-  it('clears the default extra labels when switched to mixed', () => {
+  it('sends no default extra labels while mixed, and keeps them for when mixed is turned off', () => {
     const form = policyForm(detail({ policy: policy({ extraLabels: ['Projects/Alpha'] }) }));
     form.controls.isMixed.setValue(true);
-    expect(form.controls.extraLabels.value).toEqual([]);
     expect(editRequest(form).extraLabels).toEqual([]);
+    form.controls.isMixed.setValue(false);
+    expect(form.controls.extraLabels.value).toEqual(['Projects/Alpha']);
+    expect(editRequest(form).extraLabels).toEqual(['Projects/Alpha']);
   });
 
   it('puts server errors under extraLabels on the field controls', () => {
@@ -215,6 +217,7 @@ describe('policy form', () => {
     const v = ruleForm(rule({ extraLabels: ['A', 'B'], action: 'archive' })).getRawValue();
     expect(outcomeSummary(v)).toBe('Shopping/Receipts + A, B · archive · receipt');
     expect(outcomeSummary({ ...v, extraLabels: [] })).toBe('Shopping/Receipts · archive · receipt');
+    expect(outcomeSummary({ ...v, topicLabel: '' })).toBe('A, B · archive · receipt');
   });
 
   it('validates labels, retention and a new rule', () => {

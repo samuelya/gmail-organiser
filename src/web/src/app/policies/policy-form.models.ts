@@ -129,10 +129,6 @@ export function policyForm(detail: SenderPolicyDetailDto): PolicyForm {
       [...detail.rules].sort((a, b) => a.position - b.position).map((r) => ruleForm(r)),
     ),
   });
-  // A mixed policy's default has no topic, so nothing to add labels next to.
-  form.controls.isMixed.valueChanges.subscribe((mixed) => {
-    if (mixed) form.controls.extraLabels.setValue([]);
-  });
   return form;
 }
 
@@ -162,7 +158,10 @@ export function matchValue(m: ReturnType<MatchForm['getRawValue']>): RuleMatchDt
   };
 }
 
-/** The `PUT` body: rule positions are the array order; blank text is null; extras always in full. */
+/**
+ * The `PUT` body: rule positions are the array order; blank text is null; extras always in full.
+ * A mixed default sends no extras, but the control keeps them in case mixed is turned off again.
+ */
 export function editRequest(form: PolicyForm): EditPolicyRequest {
   const v = form.getRawValue();
   return {
@@ -189,8 +188,7 @@ export function editRequest(form: PolicyForm): EditPolicyRequest {
 
 /** A rule's outcome as one line, e.g. `Bills + Tax, Home · archive · receipt`. */
 export function outcomeSummary(v: ReturnType<RuleForm['getRawValue']>): string {
-  const topic = v.extraLabels.length
-    ? `${v.topicLabel} + ${v.extraLabels.join(', ')}`
-    : v.topicLabel;
+  const extras = v.extraLabels.join(', ');
+  const topic = v.topicLabel && extras ? `${v.topicLabel} + ${extras}` : v.topicLabel || extras;
   return [topic, v.action, label(v.mailType)].filter(Boolean).join(' · ');
 }
