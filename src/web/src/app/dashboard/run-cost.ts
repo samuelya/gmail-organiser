@@ -4,14 +4,8 @@ import { ChartTable } from '../core/charts/chart.models';
 import { JobDto } from '../core/jobs.models';
 import { hoursText } from './triage.models';
 
-/** How many runs the chart shows. */
+/** How many runs the chart shows, and asks of the API. */
 export const RUN_COST_RUNS = 20;
-
-/**
- * Completed runs asked of the API: its most, since compare runs are dropped here
- * (the list has no kind filter or paging).
- */
-export const RUN_COST_FETCH = 200;
 
 /** The x label and table format for a run's `finishedAt`. */
 export const RUN_COST_DATE = 'd MMM HH:mm';
@@ -28,7 +22,7 @@ export interface RunCost {
   llmSeconds: number;
 }
 
-/** The last `RUN_COST_RUNS` completed analyse runs, oldest first; compare, failed and cancelled runs are left out. */
+/** The last `RUN_COST_RUNS` completed analyse runs, oldest first; anything else the API returns is left out. */
 export function runCosts(runs: readonly AnalysisRunDto[]): RunCost[] {
   return runs
     .filter((r) => r.kind === 'analyse' && r.status === 'completed' && r.finishedAt !== null)
