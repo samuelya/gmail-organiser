@@ -140,7 +140,9 @@ public sealed class AnalysisRunEndpointsTests(ApiFactory factory, PostgresFixtur
 
         var summary = await (await h.GetAsync("/api/analysis/summary")).Content.ReadFromJsonAsync<AnalysisSummaryDto>(Ct);
 
-        summary.ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0), 2, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        // LlmSeconds is the meter's wall-clock time for the fake calls, not what this test is about.
+        summary!.LlmSeconds.ShouldBeGreaterThanOrEqualTo(0);
+        (summary with { LlmSeconds = 0 }).ShouldBe(new AnalysisSummaryDto(5, 16, 1, 1, 2, 1, 1, 3, 20, 1 - (3 / 20.0), 2, 0, 0, 0, 0, 0, 0, 0, 0, 0));
     }
 
     [Fact]

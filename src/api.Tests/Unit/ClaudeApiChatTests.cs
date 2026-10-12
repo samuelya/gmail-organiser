@@ -205,6 +205,9 @@ public sealed class ClaudeApiChatTests : IDisposable
 
     [Theory]
     [InlineData("not json")]
+    [InlineData("")]
+    [InlineData("[]")]
+    [InlineData("\"synthetic\"")]
     [InlineData("""{"error":{"type":"invalid_request_error"}}""")]
     [InlineData("""{"error":{"type":"invalid_request_error","message":" \r\n "}}""")]
     public async Task A_client_error_without_a_message_keeps_the_short_text(string body)
@@ -365,6 +368,47 @@ public sealed class ClaudeApiChatTests : IDisposable
         ex.ToString().ShouldNotContain(ApiKey);
     }
 
+    [Theory]
+    [InlineData("<html>gateway</html>")]
+    [InlineData("")]
+    [InlineData("{\"type\":\"message\"")]
+    public async Task A_non_json_answer_surfaces_as_a_key_free_http_error(string body)
+    {
+        api.ErrorBody(HttpStatusCode.OK, body);
+        using var chat = Create();
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.Message.ShouldBe("The Claude API sent an answer this app could not read.");
+        ex.ToString().ShouldNotContain(ApiKey);
+    }
+
+    [Fact]
+    public async Task A_non_json_answer_after_the_callers_cancel_is_not_mapped()
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        using var chat = Create(handler: new CancellingHandler(cts));
+
+        var ex = await Should.ThrowAsync<Exception>(() => chat.GetResponseAsync(Messages(), cancellationToken: cts.Token));
+
+        ex.ShouldNotBeOfType<HttpRequestException>();
+        (ex is OperationCanceledException or JsonException).ShouldBeTrue(ex.GetType().Name);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError, "[]")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "<html>gateway</html>")]
+    public async Task A_server_error_with_an_odd_body_keeps_the_status(HttpStatusCode status, string body)
+    {
+        api.ErrorBody(status, body);
+        using var chat = Create(maxRetries: 0);
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(() => chat.GetResponseAsync(Messages(), cancellationToken: Ct));
+
+        ex.StatusCode.ShouldBe(status);
+        ex.Message.ShouldBe($"The Claude API answered HTTP {(int)status}.");
+    }
+
     [Fact]
     public async Task The_sdk_timeout_surfaces_as_a_claude_http_error()
     {
@@ -454,6 +498,16 @@ public sealed class ClaudeApiChatTests : IDisposable
         var closed = json.Schema.ShouldNotBeNull();
         closed.GetProperty("additionalProperties").GetBoolean().ShouldBeFalse();
         closed.GetProperty("properties").GetProperty("a").GetProperty("additionalProperties").GetBoolean().ShouldBeFalse();
+    }
+
+    /// <summary>Cancels the caller's token, then answers 200 with a body that is not JSON.</summary>
+    private sealed class CancellingHandler(CancellationTokenSource caller) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await caller.CancelAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html>gateway</html>") };
+        }
     }
 
     private sealed class HangingHandler : HttpMessageHandler
