@@ -45,11 +45,11 @@ describe('nextSteps', () => {
     });
   });
 
-  it('adds no step for an account mismatch, nor the fetch step or "caught up"', () => {
-    expect(ids({ status: status({ accountMismatch: true }) })).toEqual([]);
-    expect(
-      ids({ status: status({ accountMismatch: true }), summary: { ...empty, analysed: 2 } }),
-    ).toEqual(['review']);
+  it('adds no step for an account mismatch and ends the list there', () => {
+    const mismatch = status({ accountMismatch: true });
+    expect(ids({ status: mismatch })).toEqual([]);
+    expect(ids({ status: mismatch, summary: { ...empty, analysed: 2, approved: 1 } })).toEqual([]);
+    expect(ids({ gmailConnected: false, status: mismatch })).toEqual(['connect']);
   });
 
   it('asks to fetch when the mailbox was never fetched and no fetch runs, without a link', () => {
@@ -63,6 +63,27 @@ describe('nextSteps', () => {
       },
     ]);
     expect(ids({ status: status({ activeJob: job('running') }) })).toEqual([]);
+  });
+
+  it('leaves out the fetch step while the Gmail connection is unknown', () => {
+    expect(ids({ gmailConnected: null, status: status() })).toEqual([]);
+  });
+
+  it('points at Resume for a paused first fetch and explains a queued one', () => {
+    expect(nextSteps(input({ status: status({ activeJob: job('paused') }) }))).toEqual([
+      {
+        id: 'fetch',
+        icon: 'play_arrow',
+        text: 'Your first fetch is paused: use Resume below.',
+        link: null,
+      },
+    ]);
+    expect(nextSteps(input({ status: status({ activeJob: job('queued') }) }))[0]).toMatchObject({
+      id: 'fetch',
+      text: 'Your first fetch is queued and starts shortly.',
+    });
+    const fetched = status({ mailboxPhase: 'completed', activeJob: job('paused') });
+    expect(ids({ status: fetched })).toEqual(['caught-up']);
   });
 
   it('links pending suggestions to Review with the status filter', () => {

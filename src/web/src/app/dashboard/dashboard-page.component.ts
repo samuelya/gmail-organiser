@@ -20,6 +20,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { RouterLink } from '@angular/router';
 import { auditTime, catchError, filter, map, Observable, of, Subject, switchMap } from 'rxjs';
 import { AnalysisSummaryCard } from '../analyse/analysis-summary-card.component';
+import { AnalysisSummaryStore } from '../analyse/analysis-summary-store';
 import { openConfirm } from '../core/confirm-dialog';
 import { CountOfPipe } from '../core/count-of.pipe';
 import { JobDto, JobStatus, progressPercent } from '../core/jobs.models';
@@ -62,6 +63,7 @@ export const STATUS_REFRESH_MS = 5000;
     TriageCard,
   ],
   templateUrl: './dashboard-page.component.html',
+  providers: [AnalysisSummaryStore],
   styles: `
     .card-title {
       font: var(--mat-sys-title-medium);
@@ -108,6 +110,7 @@ export class DashboardPage {
   readonly loadFailed = signal(false);
   /** Gmail is connected (the API's own check); `null` while unknown or unreadable. */
   readonly gmailConnected = signal<boolean | null>(null);
+  readonly gmailFailed = signal(false);
   /** A start or job control request is in flight. */
   readonly busy = signal(false);
   /** Pause or cancel requested per job id, with the status it had; shown until the status changes. */
@@ -176,7 +179,10 @@ export class DashboardPage {
         ),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe((connected) => this.gmailConnected.set(connected));
+      .subscribe((connected) => {
+        this.gmailConnected.set(connected);
+        this.gmailFailed.set(connected === null);
+      });
     // Counts move with every chunk: refetch at most every 5 s while a fetch job runs.
     toObservable(computed(() => fetchProgressKey(this.jobs.jobs())))
       .pipe(

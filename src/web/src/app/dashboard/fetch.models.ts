@@ -149,6 +149,15 @@ export function fetchProgressKey(jobs: readonly JobDto[]): string {
     .join(',');
 }
 
+/** `id:status` of every fetch job; changes when one appears, goes or changes status. */
+export function fetchJobStatusKey(jobs: readonly JobDto[]): string {
+  return jobs
+    .filter((j) => j.queue === FETCH_QUEUE)
+    .map((j) => `${j.id}:${j.status}`)
+    .sort()
+    .join(',');
+}
+
 /**
  * Changes when a fetch job appears, goes, changes status or moves to another step (its progress
  * message, e.g. Inbox to All mail); `done` ticks leave it equal.

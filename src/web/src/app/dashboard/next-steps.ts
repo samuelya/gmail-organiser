@@ -1,4 +1,4 @@
-import { AnalysisSummaryDto } from '../analyse/analysis.models';
+import { AnalysisSummaryDto, countText } from '../analyse/analysis.models';
 import { FetchStatusDto } from './fetch.models';
 
 /** One line of the Dashboard's "Next steps" card; `link` is `null` when the action is on the page. */
@@ -21,13 +21,12 @@ export interface NextStepsInput {
 export const MAX_NEXT_STEPS = 3;
 
 /**
- * The first matching steps in priority order, at most three. An account mismatch adds no step (the
- * banner explains it) and suppresses the fetch step and "caught up"; so does a missing input, and
- * a first fetch still running suppresses "caught up".
+ * The first matching steps in priority order, at most three. An account mismatch ends the list: the
+ * banner explains it, and the local counts belong to another account. The fetch step needs Gmail known
+ * to be connected; a missing input suppresses "caught up", and so does a first fetch not finished yet.
  */
 export function nextSteps({ gmailConnected, status, summary }: NextStepsInput): NextStep[] {
   const steps: NextStep[] = [];
-  const mismatch = status?.accountMismatch ?? false;
   if (gmailConnected === false) {
     steps.push({
       id: 'connect',
@@ -37,17 +36,28 @@ export function nextSteps({ gmailConnected, status, summary }: NextStepsInput): 
       linkLabel: 'Settings',
     });
   }
-  if (
-    status &&
-    !mismatch &&
-    gmailConnected !== false &&
-    status.mailboxPhase === 'not_started' &&
-    status.activeJob === null
-  ) {
+  if (status?.accountMismatch) return steps;
+  const firstFetch = gmailConnected === true && status?.mailboxPhase === 'not_started';
+  const firstJob = firstFetch ? (status.activeJob?.status ?? null) : null;
+  if (firstFetch && status.activeJob === null) {
     steps.push({
       id: 'fetch',
       icon: 'download',
       text: 'Fetch your mailbox: use Start fetch below.',
+      link: null,
+    });
+  } else if (firstJob === 'paused') {
+    steps.push({
+      id: 'fetch',
+      icon: 'play_arrow',
+      text: 'Your first fetch is paused: use Resume below.',
+      link: null,
+    });
+  } else if (firstJob === 'queued') {
+    steps.push({
+      id: 'fetch',
+      icon: 'schedule',
+      text: 'Your first fetch is queued and starts shortly.',
       link: null,
     });
   }
@@ -56,7 +66,7 @@ export function nextSteps({ gmailConnected, status, summary }: NextStepsInput): 
       steps.push({
         id: 'review',
         icon: 'fact_check',
-        text: `${count(summary.analysed, 'suggestion', 'suggestions')} waiting for review.`,
+        text: `${countText(summary.analysed, 'suggestion', 'suggestions')} waiting for review.`,
         link: '/review',
         queryParams: { status: 'pending' },
         linkLabel: 'Review',
@@ -66,7 +76,7 @@ export function nextSteps({ gmailConnected, status, summary }: NextStepsInput): 
       steps.push({
         id: 'apply',
         icon: 'done_all',
-        text: `${count(summary.approved, 'approved suggestion', 'approved suggestions')} not applied to Gmail yet.`,
+        text: `${countText(summary.approved, 'approved suggestion', 'approved suggestions')} not applied to Gmail yet.`,
         link: '/review',
         queryParams: { status: 'approved' },
         linkLabel: 'Apply',
@@ -76,7 +86,7 @@ export function nextSteps({ gmailConnected, status, summary }: NextStepsInput): 
       steps.push({
         id: 'clean-up',
         icon: 'delete',
-        text: `${count(summary.toBeDeletedCount, 'message', 'messages')} marked for deletion.`,
+        text: `${countText(summary.toBeDeletedCount, 'message', 'messages')} marked for deletion.`,
         link: '/clean-up',
         linkLabel: 'Clean-up',
       });
@@ -85,24 +95,14 @@ export function nextSteps({ gmailConnected, status, summary }: NextStepsInput): 
       steps.push({
         id: 'analyse',
         icon: 'psychology',
-        text: `${count(summary.notAnalysed, 'message', 'messages')} not analysed yet.`,
+        text: `${countText(summary.notAnalysed, 'message', 'messages')} not analysed yet.`,
         link: '/analyse',
         linkLabel: 'Analyse',
       });
     }
   }
-  if (
-    steps.length === 0 &&
-    status &&
-    summary &&
-    !mismatch &&
-    status.mailboxPhase !== 'not_started'
-  ) {
+  if (steps.length === 0 && status && summary && status.mailboxPhase !== 'not_started') {
     steps.push({ id: 'caught-up', icon: 'task_alt', text: "You're all caught up.", link: null });
   }
   return steps.slice(0, MAX_NEXT_STEPS);
-}
-
-function count(n: number, one: string, many: string): string {
-  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
 }

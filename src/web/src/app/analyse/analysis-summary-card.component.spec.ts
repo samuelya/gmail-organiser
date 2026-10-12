@@ -8,6 +8,7 @@ import { AnalysisStatusChart } from './analysis-status-chart.component';
 import { AnalysisSummaryCard } from './analysis-summary-card.component';
 import { ANALYSIS_RUN_JOB, AnalysisSummaryDto } from './analysis.models';
 import { AnalysisService } from './analysis.service';
+import { AnalysisSummaryStore } from './analysis-summary-store';
 
 const summary: AnalysisSummaryDto = {
   notAnalysed: 1200,
@@ -58,6 +59,7 @@ describe('AnalysisSummaryCard', () => {
         provideRouter([]),
         { provide: JobsService, useValue: jobs },
         { provide: AnalysisService, useValue: api },
+        AnalysisSummaryStore,
       ],
     });
     TestBed.overrideComponent(AnalysisSummaryCard, {

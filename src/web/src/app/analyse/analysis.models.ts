@@ -109,6 +109,11 @@ export function canResume(run: Pick<AnalysisRunDto, 'status' | 'isStalled'>): bo
   return runBadge(run) !== null;
 }
 
+/** "1 email", "1,200 emails": the count, locale-formatted, with the singular or plural noun. */
+export function countText(n: number, one: string, many: string): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`;
+}
+
 /** Triage, escalated, packed and pack retry counts that are not zero, or `null` when all are. */
 export function modelCountersText(
   run: Pick<AnalysisRunDto, 'triageCalls' | 'escalatedCalls' | 'packedMessages' | 'packRetries'>,
@@ -119,9 +124,7 @@ export function modelCountersText(
     [run.packedMessages, 'packed', 'packed'],
     [run.packRetries, 'pack retry', 'pack retries'],
   ] as const;
-  const text = parts
-    .filter(([n]) => n > 0)
-    .map(([n, one, many]) => `${n.toLocaleString()} ${n === 1 ? one : many}`);
+  const text = parts.filter(([n]) => n > 0).map(([n, one, many]) => countText(n, one, many));
   return text.length ? text.join(' · ') : null;
 }
 
@@ -220,9 +223,9 @@ export function runTarget(
 /** "10 senders" for a top senders run, "20 emails" otherwise: what the run's count counts. */
 export function requestedText(run: Pick<AnalysisRunDto, 'scope' | 'requestedCount'>): string {
   const n = run.requestedCount;
-  const unit =
-    run.scope === TOP_SENDERS ? (n === 1 ? 'sender' : 'senders') : n === 1 ? 'email' : 'emails';
-  return `${n.toLocaleString()} ${unit}`;
+  return run.scope === TOP_SENDERS
+    ? countText(n, 'sender', 'senders')
+    : countText(n, 'email', 'emails');
 }
 
 /** "1,200 prompt + 300 completion tokens · 12.5 s LLM", or `null` before the run made a model call. */
@@ -239,8 +242,8 @@ export function usageText(
  * covers emails: that reads as "Z % more calls than emails" rather than a negative saving.
  */
 export function savingsText(llmCalls: number, covered: number, savedPercent: number): string {
-  const calls = `${llmCalls.toLocaleString()} LLM ${llmCalls === 1 ? 'call' : 'calls'}`;
-  const emails = `${covered.toLocaleString()} ${covered === 1 ? 'email' : 'emails'}`;
+  const calls = countText(llmCalls, 'LLM call', 'LLM calls');
+  const emails = countText(covered, 'email', 'emails');
   if (covered === 0) return `${calls}, no emails covered`;
   const percent = Math.round(savedPercent * 100);
   return percent >= 0

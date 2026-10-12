@@ -1,28 +1,17 @@
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  DestroyRef,
-  effect,
-  inject,
-  input,
-  signal,
-  untracked,
-} from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { RouterLink } from '@angular/router';
-import { catchError, of, Subject, switchMap } from 'rxjs';
-import { AnalysisSummaryDto, analysisJobsKey } from '../analyse/analysis.models';
-import { AnalysisService } from '../analyse/analysis.service';
-import { JobsService } from '../core/jobs.service';
-import { FetchStatusDto, fetchJobsKey } from './fetch.models';
+import { AnalysisSummaryStore } from '../analyse/analysis-summary-store';
+import { FetchStatusDto } from './fetch.models';
 import { nextSteps } from './next-steps';
 
-/** Dashboard card: up to three things to do next, each with a link to the page that does it. */
+/**
+ * Dashboard card: up to three things to do next, each with a link to the page that does it. The summary
+ * comes from the page's `AnalysisSummaryStore`; status and Gmail connection are inputs.
+ */
 @Component({
   selector: 'app-next-steps-card',
   imports: [MatButtonModule, MatCardModule, MatIconModule, MatProgressBarModule, RouterLink],
@@ -69,9 +58,7 @@ import { nextSteps } from './next-steps';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class NextStepsCard {
-  private readonly analysis = inject(AnalysisService);
-  private readonly jobs = inject(JobsService);
-  private readonly refresh = new Subject<void>();
+  private readonly store = inject(AnalysisSummaryStore);
 
   /** The page's fetch status; `null` until loaded. */
   readonly status = input<FetchStatusDto | null>(null);
@@ -79,43 +66,22 @@ export class NextStepsCard {
   readonly statusFailed = input(false);
   /** Gmail is connected; `null` while unknown. */
   readonly gmailConnected = input<boolean | null>(null);
+  /** The page's Gmail connection check failed. */
+  readonly gmailFailed = input(false);
 
-  readonly summary = signal<AnalysisSummaryDto | null>(null);
-  readonly summaryFailed = signal(false);
-
-  /** Either input is still loading; a failed one counts as done and its steps are left out. */
+  /** An input still loading; a failed one counts as done and its steps are left out. */
   readonly loading = computed(
     () =>
       (this.status() === null && !this.statusFailed()) ||
-      (this.summary() === null && !this.summaryFailed()),
+      (this.gmailConnected() === null && !this.gmailFailed()) ||
+      (this.store.summary() === null && !this.store.loadFailed()),
   );
+  /** A failed reload keeps the last value on the page; the steps leave it out rather than show stale counts. */
   readonly steps = computed(() =>
     nextSteps({
-      gmailConnected: this.gmailConnected(),
-      status: this.status(),
-      summary: this.summary(),
+      gmailConnected: this.gmailFailed() ? null : this.gmailConnected(),
+      status: this.statusFailed() ? null : this.status(),
+      summary: this.store.loadFailed() ? null : this.store.summary(),
     }),
   );
-
-  /** The analysis summary card's trigger, plus a fetch job status or step change. */
-  private readonly refreshKey = computed(
-    () =>
-      `${analysisJobsKey(this.jobs.jobs())}|${fetchJobsKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
-  );
-
-  constructor() {
-    this.refresh
-      .pipe(
-        switchMap(() => this.analysis.summary().pipe(catchError(() => of(null)))),
-        takeUntilDestroyed(inject(DestroyRef)),
-      )
-      .subscribe((summary) => {
-        if (summary) this.summary.set(summary);
-        this.summaryFailed.set(!summary);
-      });
-    effect(() => {
-      this.refreshKey();
-      untracked(() => this.refresh.next());
-    });
-  }
 }

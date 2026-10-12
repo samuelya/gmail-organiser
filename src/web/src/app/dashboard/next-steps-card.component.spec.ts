@@ -3,12 +3,13 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter, Router, RouterLink } from '@angular/router';
 import { By } from '@angular/platform-browser';
 import { Observable, of, Subject, throwError } from 'rxjs';
-import { ANALYSIS_RUN_JOB, AnalysisSummaryDto } from '../analyse/analysis.models';
+import { AnalysisSummaryStore } from '../analyse/analysis-summary-store';
+import { AnalysisSummaryDto } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { isActiveJob, JobDto } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { FetchStatusDto } from './fetch.models';
-import { job, status } from './fetch.testing';
+import { status } from './fetch.testing';
 import { NextStepsCard } from './next-steps-card.component';
 
 const summary: AnalysisSummaryDto = {
@@ -48,6 +49,7 @@ describe('NextStepsCard', () => {
       status?: FetchStatusDto | null;
       statusFailed?: boolean;
       gmailConnected?: boolean | null;
+      gmailFailed?: boolean;
     } = {
       status: status({ mailboxPhase: 'completed' }),
       gmailConnected: true,
@@ -60,6 +62,7 @@ describe('NextStepsCard', () => {
         provideRouter([]),
         { provide: JobsService, useValue: jobs },
         { provide: AnalysisService, useValue: api },
+        AnalysisSummaryStore,
       ],
     });
     const fixture = TestBed.createComponent(NextStepsCard);
@@ -67,7 +70,7 @@ describe('NextStepsCard', () => {
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
     const q = (id: string) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-    return { fixture, jobs, api, el, q };
+    return { fixture, jobs, api, el, q, store: TestBed.inject(AnalysisSummaryStore) };
   }
 
   it('renders the steps with icons and links carrying the status filter', async () => {
@@ -112,7 +115,46 @@ describe('NextStepsCard', () => {
   });
 
   it('shows the summary steps when the status fails', async () => {
-    const { q } = await render(() => of(summary), { status: null, statusFailed: true });
+    const { q } = await render(() => of(summary), {
+      status: null,
+      statusFailed: true,
+      gmailConnected: true,
+    });
+    expect(q('step-review')).not.toBeNull();
+  });
+
+  it('leaves out the stale summary after a failed reload, never saying caught up', async () => {
+    const zero = { ...summary, notAnalysed: 0, analysed: 0, approved: 0 };
+    let fail = false;
+    const { fixture, q, store } = await render(() =>
+      fail ? throwError(() => new Error('down')) : of(zero),
+    );
+    expect(q('step-caught-up')).not.toBeNull();
+    fail = true;
+    store.load();
+    await fixture.whenStable();
+    expect(q('step-caught-up')).toBeNull();
+  });
+
+  it('leaves out the stale status after a failed reload', async () => {
+    const zero = { ...summary, notAnalysed: 0, analysed: 0, approved: 0 };
+    const { fixture, q } = await render(() => of(zero), { status: status(), gmailConnected: true });
+    expect(q('step-fetch')).not.toBeNull();
+    fixture.componentRef.setInput('statusFailed', true);
+    await fixture.whenStable();
+    expect(q('step-fetch')).toBeNull();
+  });
+
+  it('waits for the Gmail connection, and shows no fetch step when its check fails', async () => {
+    const { fixture, q, el } = await render(() => of(summary), {
+      status: status(),
+      gmailConnected: null,
+    });
+    expect(el.querySelector('mat-progress-bar')).not.toBeNull();
+    fixture.componentRef.setInput('gmailFailed', true);
+    await fixture.whenStable();
+    expect(el.querySelector('mat-progress-bar')).toBeNull();
+    expect(q('step-fetch')).toBeNull();
     expect(q('step-review')).not.toBeNull();
   });
 
@@ -131,23 +173,5 @@ describe('NextStepsCard', () => {
     const zero = { ...summary, notAnalysed: 0, analysed: 0, approved: 0 };
     const { q } = await render(() => of(zero));
     expect(q('step-caught-up')!.textContent).toContain("You're all caught up.");
-  });
-
-  it('reloads on an analysis or fetch job status change and a reconnect', async () => {
-    const { fixture, jobs, api } = await render(() => of(summary));
-    expect(api.summary).toHaveBeenCalledTimes(1);
-    const run = job('running', { id: 'run-1', type: ANALYSIS_RUN_JOB, queue: 'analysis' });
-    jobs.held.set([run]);
-    await fixture.whenStable();
-    expect(api.summary).toHaveBeenCalledTimes(2);
-    jobs.held.set([run, job('running')]);
-    await fixture.whenStable();
-    expect(api.summary).toHaveBeenCalledTimes(3);
-    jobs.held.set([run, job('running', { progress: { done: 50, total: 100, message: null } })]);
-    await fixture.whenStable();
-    expect(api.summary).toHaveBeenCalledTimes(3);
-    jobs.reconnects.set(1);
-    await fixture.whenStable();
-    expect(api.summary).toHaveBeenCalledTimes(4);
   });
 });
