@@ -39,6 +39,7 @@ import {
 import { FetchService } from './fetch.service';
 import { MailboxMixCard } from './mailbox-mix-card.component';
 import { NextStepsCard } from './next-steps-card.component';
+import { TopSendersCard } from './top-senders-card.component';
 import { TriageCard } from './triage-card.component';
 
 /** Counts refetch at most this often while a fetch job runs. */
@@ -62,6 +63,7 @@ export const STATUS_REFRESH_MS = 5000;
     NextStepsCard,
     PageHeader,
     RouterLink,
+    TopSendersCard,
     TriageCard,
   ],
   templateUrl: './dashboard-page.component.html',

@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { ChartPanel } from './chart-panel.component';
 import { ChartTable } from './chart.models';
 
@@ -29,6 +30,7 @@ class Host {
 
 describe('ChartPanel', () => {
   async function render() {
+    TestBed.configureTestingModule({ providers: [provideRouter([])] });
     const fixture = TestBed.createComponent(Host);
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
@@ -81,5 +83,19 @@ describe('ChartPanel', () => {
     expect(q('chart-canvas')).toBeNull();
     expect(q('projected')).toBeNull();
     expect(q('chart-toggle')).toBeNull();
+  });
+
+  it('renders link cells as router links with their query params', async () => {
+    const { fixture, q } = await render();
+    fixture.componentInstance.table.set({
+      columns: ['Name', 'Count'],
+      rows: [[{ text: 'Alpha', link: '/somewhere', queryParams: { search: 'a b' } }, 1]],
+    });
+    q('chart-toggle')!.click();
+    await fixture.whenStable();
+
+    const link = q('chart-table')!.querySelector('a')!;
+    expect(link.textContent!.trim()).toBe('Alpha');
+    expect(link.getAttribute('href')).toBe('/somewhere?search=a%20b');
   });
 });

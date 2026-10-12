@@ -12,6 +12,7 @@ import { DashboardPage, STATUS_REFRESH_MS } from './dashboard-page.component';
 import { FetchStatusDto } from './fetch.models';
 import { FetchService } from './fetch.service';
 import { job, status } from './fetch.testing';
+import { SendersService } from '../senders/senders.service';
 import { SetupService } from '../setup/setup.service';
 import { TriageService } from './triage.service';
 
@@ -91,6 +92,10 @@ describe('DashboardPage', () => {
                 unclassified: 0,
               }),
           },
+        },
+        {
+          provide: SendersService,
+          useValue: { list: () => of({ items: [], page: 1, pageSize: 10, total: 0 }) },
         },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],

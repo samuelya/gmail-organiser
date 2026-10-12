@@ -190,6 +190,8 @@
 
   <app-triage-card />
 
+  <app-top-senders-card [messagesStored]="status()?.messagesStored ?? null" />
+
   <app-analysis-summary-card />
 
   <app-mailbox-mix-card />
