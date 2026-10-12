@@ -24,11 +24,19 @@ import {
   usageText,
 } from './analysis.models';
 import { AnalysisService } from './analysis.service';
+import { AnalysisStatusChart } from './analysis-status-chart.component';
 
 /** Dashboard card: messages by analysis status, Action and To-Be-Deleted counts, cumulative LLM savings, usage and model counters. */
 @Component({
   selector: 'app-analysis-summary-card',
-  imports: [DecimalPipe, MatButtonModule, MatCardModule, MatIconModule, RouterLink],
+  imports: [
+    AnalysisStatusChart,
+    DecimalPipe,
+    MatButtonModule,
+    MatCardModule,
+    MatIconModule,
+    RouterLink,
+  ],
   template: `
     <mat-card appearance="outlined" role="region" aria-labelledby="dashboard-analysis">
       <mat-card-content class="flex flex-col gap-4" data-testid="analysis-card">
@@ -45,13 +53,14 @@ import { AnalysisService } from './analysis.service';
           </p>
         }
         @if (summary(); as s) {
+          <app-analysis-status-chart [summary]="s" />
           <dl class="m-0 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
             <div>
               <dt>Not analysed</dt>
               <dd data-testid="not-analysed">{{ s.notAnalysed | number }}</dd>
             </div>
             <div>
-              <dt>Analysed</dt>
+              <dt>Waiting for review</dt>
               <dd data-testid="analysed">{{ s.analysed | number }}</dd>
             </div>
             <div>

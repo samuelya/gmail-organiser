@@ -1,9 +1,10 @@
-import { computed, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, input, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { of, throwError } from 'rxjs';
 import { isActiveJob, JobDto } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
+import { AnalysisStatusChart } from './analysis-status-chart.component';
 import { AnalysisSummaryCard } from './analysis-summary-card.component';
 import { ANALYSIS_RUN_JOB, AnalysisSummaryDto } from './analysis.models';
 import { AnalysisService } from './analysis.service';
@@ -31,6 +32,16 @@ const summary: AnalysisSummaryDto = {
   packRetries: 0,
 };
 
+/** jsdom has no canvas: the chart's builders are covered by its own spec. */
+@Component({
+  selector: 'app-analysis-status-chart',
+  template: `<span data-testid="status-chart">{{ summary().notAnalysed }}</span>`,
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+class StubStatusChart {
+  readonly summary = input.required<AnalysisSummaryDto>();
+}
+
 class FakeJobs {
   readonly held = signal<JobDto[]>([]);
   readonly jobs = this.held.asReadonly();
@@ -49,6 +60,10 @@ describe('AnalysisSummaryCard', () => {
         { provide: AnalysisService, useValue: api },
       ],
     });
+    TestBed.overrideComponent(AnalysisSummaryCard, {
+      remove: { imports: [AnalysisStatusChart] },
+      add: { imports: [StubStatusChart] },
+    });
     const fixture = TestBed.createComponent(AnalysisSummaryCard);
     await fixture.whenStable();
     const el = fixture.nativeElement as HTMLElement;
@@ -60,6 +75,8 @@ describe('AnalysisSummaryCard', () => {
     const { q } = await render(() => of(summary));
     expect(q('not-analysed')!.textContent).toContain('1,200');
     expect(q('analysed')!.textContent).toContain('300');
+    expect(q('analysed')!.previousElementSibling!.textContent).toBe('Waiting for review');
+    expect(q('status-chart')!.textContent).toBe('1200');
     expect(q('approved')!.textContent).toContain('40');
     expect(q('applied')!.textContent).toContain('25');
     expect(q('action-count')!.textContent).toContain('7');
