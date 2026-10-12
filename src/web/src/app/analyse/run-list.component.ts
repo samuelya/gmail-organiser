@@ -29,6 +29,7 @@ import {
   canResume,
   modelCountersText,
   requestedText,
+  reviewSuggestionsParams,
   runTarget,
   savingsText,
   TOP_SENDERS,
@@ -163,6 +164,16 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
               >
                 {{ resuming().has(run.id) ? 'Resuming…' : 'Resume' }}
               </button>
+            }
+            @if (reviewParams(run); as params) {
+              <a
+                mat-button
+                routerLink="/review"
+                [queryParams]="params"
+                data-testid="run-review-suggestions"
+              >
+                Review suggestions
+              </a>
             }
             @if (run.policiesProposed > 0) {
               <a
@@ -407,6 +418,10 @@ export class RunList {
 
   isTopSenders(run: AnalysisRunDto): boolean {
     return run.scope === TOP_SENDERS;
+  }
+
+  reviewParams(run: AnalysisRunDto): ReturnType<typeof reviewSuggestionsParams> {
+    return reviewSuggestionsParams(run);
   }
 
   usage(run: AnalysisRunDto): string | null {

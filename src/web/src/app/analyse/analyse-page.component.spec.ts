@@ -1,9 +1,10 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
+import { MatSnackBar } from '@angular/material/snack-bar';
 import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
-import { convertToParamMap, provideRouter } from '@angular/router';
+import { convertToParamMap, provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
 import { ClaudeService } from '../core/claude.service';
@@ -403,6 +404,70 @@ describe('AnalysePage', () => {
     await harness.fixture.whenStable();
     expect(api.listRuns).toHaveBeenCalled();
     expect(component.resuming().size).toBe(0);
+  });
+
+  describe('finish notice', () => {
+    const snack = () => document.querySelector<HTMLElement>('mat-snack-bar-container');
+
+    async function finish(over: Partial<AnalysisRunDto>) {
+      const r = await render();
+      active = [run({ id: 'run-a', status: 'running' })];
+      r.component.loadRuns();
+      await r.harness.fixture.whenStable();
+      expect(snack()).toBeNull();
+      active = [];
+      finished = [run({ id: 'run-a', status: 'completed', ...over })];
+      r.component.loadRuns();
+      await r.harness.fixture.whenStable();
+      return r;
+    }
+
+    it('a run that finishes while listed as active links to its suggestions', async () => {
+      const { harness } = await finish({
+        messagesCovered: 3,
+        scope: 'sender',
+        senderAddress: 'news@example.com',
+      });
+      const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+      expect(snack()!.textContent).toContain('Analysis finished: 3 messages covered.');
+      snack()!.querySelector<HTMLElement>('button')!.click();
+      await harness.fixture.whenStable();
+      expect(navigate).toHaveBeenCalledWith(['/review'], {
+        queryParams: { status: 'pending', sender: 'news@example.com' },
+      });
+    });
+
+    it('a failed run offers Details, which turns on the Failed filter', async () => {
+      const { harness, component } = await finish({ status: 'failed' });
+      expect(snack()!.textContent).toContain('Analysis failed.');
+      const action = snack()!.querySelector<HTMLElement>('button')!;
+      expect(action.textContent).toContain('Details');
+      action.click();
+      await harness.fixture.whenStable();
+      expect(component.failedOnly()).toBe(true);
+    });
+
+    it('a cancelled run says nothing', async () => {
+      await finish({ status: 'cancelled' });
+      expect(snack()).toBeNull();
+    });
+
+    it('runs already finished on load say nothing', async () => {
+      const { harness, component } = await render();
+      finished.push(run({ status: 'completed', messagesCovered: 5 }));
+      component.loadRuns();
+      await harness.fixture.whenStable();
+      expect(snack()).toBeNull();
+    });
+
+    it('a finished run shows its notice once', async () => {
+      const { harness, component } = await finish({ messagesCovered: 1 });
+      expect(snack()!.textContent).toContain('Analysis finished: 1 message covered.');
+      const open = vi.spyOn(TestBed.inject(MatSnackBar), 'open');
+      component.loadRuns();
+      await harness.fixture.whenStable();
+      expect(open).not.toHaveBeenCalled();
+    });
   });
 
   it('the Failed chip asks the API for failed runs only', async () => {

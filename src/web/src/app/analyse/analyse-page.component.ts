@@ -19,7 +19,8 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { MatSnackBar } from '@angular/material/snack-bar';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
   catchError,
   debounceTime,
@@ -48,6 +49,7 @@ import {
   AnalysisSelection,
   analysisJobsKey,
   COUNT_PRESETS,
+  countText,
   DEFAULT_TOP_SENDERS,
   FINISHED_RUNS_SHOWN,
   GroupingPreviewDto,
@@ -55,6 +57,7 @@ import {
   MAX_TOP_SENDERS,
   parseAnalyseParams,
   queueOrder,
+  reviewSuggestionsParams,
   SCOPE_OPTIONS,
   TOP_SENDERS,
 } from './analysis.models';
@@ -65,6 +68,7 @@ import { RunList } from './run-list.component';
 
 export const PREVIEW_DEBOUNCE_MS = 400;
 export const SENDER_SEARCH_DEBOUNCE_MS = 300;
+export const FINISH_NOTICE_MS = 8000;
 const SENDER_OPTIONS = 10;
 const MAX_COUNT = 1000;
 
@@ -153,6 +157,10 @@ export class AnalysePage {
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
   private readonly jobs = inject(JobsService);
+  private readonly router = inject(Router);
+  private readonly snackBar = inject(MatSnackBar);
+  /** Runs listed as active during this visit and not yet seen to end: only these get a finish notice. */
+  private readonly seenActive = new Set<string>();
   private readonly reloadRuns = new Subject<void>();
   /** Asks for a fresh preview of the same selection: a started or finished run changes what is left. */
   private readonly refreshPreview = new Subject<void>();
@@ -323,6 +331,7 @@ export class AnalysePage {
         if (!runs) return;
         const ids = new Set(runs.active.map((r) => r.id));
         const ended = this.active().some((r) => !ids.has(r.id));
+        this.noticeEnded(ids, runs.finished);
         this.active.set(queueOrder(runs.active));
         this.queueTruncated.set(runs.active.length >= ACTIVE_RUNS_LIMIT);
         this.finished.set(runs.finished);
@@ -339,6 +348,40 @@ export class AnalysePage {
 
   loadRuns(): void {
     this.reloadRuns.next();
+  }
+
+  /**
+   * A run seen active on this visit that has left the queue gets a snackbar: completed links to its suggestions,
+   * failed turns on the Failed filter, cancelled says nothing.
+   */
+  private noticeEnded(activeIds: ReadonlySet<string>, finished: readonly AnalysisRunDto[]): void {
+    for (const r of this.active()) this.seenActive.add(r.id);
+    for (const id of [...this.seenActive]) {
+      if (activeIds.has(id)) continue;
+      this.seenActive.delete(id);
+      const run = finished.find((r) => r.id === id);
+      if (run) this.noticeFinished(run);
+    }
+    for (const id of activeIds) this.seenActive.add(id);
+  }
+
+  private noticeFinished(run: AnalysisRunDto): void {
+    if (run.status === 'completed') {
+      const params = reviewSuggestionsParams(run);
+      this.snackBar
+        .open(
+          `Analysis finished: ${countText(run.messagesCovered, 'message', 'messages')} covered.`,
+          params ? 'Review' : undefined,
+          { duration: FINISH_NOTICE_MS },
+        )
+        .onAction()
+        .subscribe(() => this.router.navigate(['/review'], { queryParams: params }));
+    } else if (run.status === 'failed') {
+      this.snackBar
+        .open('Analysis failed.', 'Details', { duration: FINISH_NOTICE_MS })
+        .onAction()
+        .subscribe(() => this.failedOnly.set(true));
+    }
   }
 
   start(): void {
