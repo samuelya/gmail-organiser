@@ -117,6 +117,9 @@ let nextId = 0;
     .chart-table td.num {
       text-align: end;
     }
+    .chart-table a {
+      color: var(--mat-sys-primary);
+    }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
