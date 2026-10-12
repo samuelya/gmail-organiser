@@ -98,12 +98,16 @@ public static class OllamaHttp
         uri.AbsolutePath.EndsWith('/') ? uri : new UriBuilder(uri) { Path = uri.AbsolutePath + "/" }.Uri;
 }
 
-/// <summary>Valid when the value is null, empty or whitespace, or an absolute https URL.</summary>
+/// <summary>
+/// Valid when the trimmed value is empty, or an absolute https URL without userinfo, query or fragment: the SDK appends
+/// API paths to the base URL, and userinfo would put a credential into config and logs.
+/// </summary>
 [AttributeUsage(AttributeTargets.Property)]
 public sealed class HttpsUrlOrEmptyAttribute : ValidationAttribute
 {
     public override bool IsValid(object? value) =>
         value is null
-        || value is string s && (string.IsNullOrWhiteSpace(s)
-            || Uri.TryCreate(s, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps);
+        || value is string s && (s.Trim().Length == 0
+            || Uri.TryCreate(s.Trim(), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
+                && uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0);
 }

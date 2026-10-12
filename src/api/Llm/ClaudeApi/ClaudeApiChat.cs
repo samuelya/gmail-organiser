@@ -53,9 +53,11 @@ public static class ClaudeApiChat
     {
         var http = httpClients.CreateClient(clientName);
         http.Timeout = Timeout.InfiniteTimeSpan;
+        // Trimmed as HttpsUrlOrEmptyAttribute validates it, so a padded .env value fails at startup or works, never in between.
+        var baseUrl = options.ClaudeApiBaseUrl?.Trim();
         return new AnthropicClient
         {
-            BaseUrl = string.IsNullOrWhiteSpace(options.ClaudeApiBaseUrl) ? EnvironmentUrl.Production : options.ClaudeApiBaseUrl,
+            BaseUrl = string.IsNullOrEmpty(baseUrl) ? EnvironmentUrl.Production : baseUrl,
             ApiKey = apiKey,
             AuthToken = null,
             HttpClient = http,
