@@ -22,9 +22,21 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { catchError, debounceTime, EMPTY, map, Observable, of, startWith, switchMap } from 'rxjs';
+import {
+  catchError,
+  debounceTime,
+  distinctUntilChanged,
+  EMPTY,
+  map,
+  Observable,
+  of,
+  skip,
+  startWith,
+  switchMap,
+} from 'rxjs';
 import { errorMessage } from '../core/error.interceptor';
 import { fieldErrors } from '../review/edit-suggestion-dialog.component';
+import { ExtraLabelsField } from '../review/extra-labels-field.component';
 import { LabelTreePicker } from '../review/label-tree-picker.component';
 import { LabelDto } from '../review/labels.models';
 import { labelPathError, LabelsService } from '../review/labels.service';
@@ -55,6 +67,7 @@ function optionalLabelPath(control: AbstractControl): ValidationErrors | null {
   selector: 'app-filter-preview-dialog',
   imports: [
     DecimalPipe,
+    ExtraLabelsField,
     LabelTreePicker,
     MatButtonModule,
     MatCheckboxModule,
@@ -97,6 +110,10 @@ export class FilterPreviewDialog {
       validators: [optionalLabelPath],
     }),
     archiveLabel: new FormControl(this.initial.archiveLabel, { nonNullable: true }),
+    extraLabels: new FormControl(
+      { value: this.initial.extraLabels, disabled: !this.initial.labelPath.trim() },
+      { nonNullable: true },
+    ),
     skipInbox: new FormControl(this.initial.skipInbox, { nonNullable: true }),
     markRead: new FormControl(this.initial.markRead, { nonNullable: true }),
   });
@@ -107,6 +124,9 @@ export class FilterPreviewDialog {
   readonly labelsFailed = signal(false);
   readonly path = toSignal(this.form.controls.labelPath.valueChanges, {
     initialValue: this.form.controls.labelPath.value,
+  });
+  readonly archive = toSignal(this.form.controls.archiveLabel.valueChanges, {
+    initialValue: this.form.controls.archiveLabel.value,
   });
 
   readonly previewing = signal(false);
@@ -126,14 +146,33 @@ export class FilterPreviewDialog {
       )
       .subscribe((labels) => {
         this.archiveLabels.set(labels);
-        const archive = filterEdit(this.data.request, this.data.from, labels).archiveLabel;
-        if (archive && !this.form.controls.archiveLabel.value) {
-          this.form.controls.archiveLabel.setValue(archive);
+        const edit = filterEdit(this.data.request, this.data.from, labels);
+        if (edit.archiveLabel && !this.form.controls.archiveLabel.value) {
+          // The proposal's archive label was an additional label until the rules were known.
+          const extras = this.form.controls.extraLabels;
+          extras.setValue(extras.value.filter((n) => n !== edit.archiveLabel));
+          this.form.controls.archiveLabel.setValue(edit.archiveLabel);
         }
       });
 
+    // An additional label needs a main label.
+    this.form.controls.labelPath.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((path) => {
+        const extras = this.form.controls.extraLabels;
+        if (path.trim()) extras.enable({ emitEvent: false });
+        else extras.disable({ emitEvent: false });
+      });
+
+    // A re-validation that changes neither value nor status (the extra-labels field re-validates
+    // once on start) is not a reason to preview again.
+    const key = () => JSON.stringify([this.form.getRawValue(), this.form.status]);
     this.form.valueChanges
       .pipe(
+        map(key),
+        startWith(key()),
+        distinctUntilChanged(),
+        skip(1),
         debounceTime(PREVIEW_DEBOUNCE_MS),
         startWith(null),
         switchMap(() => this.previewRequest()),

@@ -133,10 +133,36 @@ describe('filter request mapping', () => {
       negatedQuery: 'has:attachment',
       labelPath: 'Topic/Alpha',
       archiveLabel: 'Archive/Weekly',
+      extraLabels: [],
       skipInbox: true,
       markRead: false,
     });
     expect(filterEdit(suggested, '', []).archiveLabel).toBe('');
+  });
+
+  it('fills additional labels with every later name but the first archive-rule label, in order', () => {
+    const names = ['Topic/Alpha', 'Extra/One', 'Archive/Weekly', 'Extra/Two', 'Archive/Daily'];
+    const request = { ...suggested, action: { ...suggested.action, addLabelNames: names } };
+    const edit = filterEdit(request, '', ['Archive/Daily', 'Archive/Weekly']);
+    expect(edit.labelPath).toBe('Topic/Alpha');
+    expect(edit.archiveLabel).toBe('Archive/Weekly');
+    expect(edit.extraLabels).toEqual(['Extra/One', 'Extra/Two', 'Archive/Daily']);
+    expect(filterEdit(request, '', []).extraLabels).toEqual(names.slice(1));
+  });
+
+  it('adds the label path, archive label, then the extras, trimmed and de-duplicated', () => {
+    const edit = filterEdit(suggested, '', ['Archive/Weekly']);
+    const extraLabels = [' Extra/One ', 'topic/alpha', 'ARCHIVE/WEEKLY', 'Extra/Two', 'extra/one'];
+    expect(filterRequest({ ...edit, extraLabels }).action.addLabelNames).toEqual([
+      'Topic/Alpha',
+      'Archive/Weekly',
+      'Extra/One',
+      'Extra/Two',
+    ]);
+    // An additional label needs a main label.
+    expect(
+      filterRequest({ ...edit, labelPath: ' ', extraLabels }).action.addLabelNames,
+    ).toEqual(['Archive/Weekly']);
   });
 
   it('fills only from without a suggestion', () => {

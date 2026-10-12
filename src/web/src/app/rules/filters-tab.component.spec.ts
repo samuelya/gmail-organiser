@@ -118,7 +118,11 @@ describe('FiltersTab', () => {
 
   let review: { pattern: ReturnType<typeof vi.fn> };
 
-  async function render(propose?: string, proposals = paged([proposal('news@example.com')])) {
+  async function render(
+    propose?: string,
+    proposals = paged([proposal('news@example.com')]),
+    filters = [filterDto()],
+  ) {
     review = { pattern: vi.fn(() => of({ ...proposal('x').pattern, topicLabel: 'Topic/Beta' })) };
     api = {
       list: vi.fn((includeDeleted: boolean) =>
@@ -129,7 +133,7 @@ describe('FiltersTab', () => {
                   filterDto(),
                   filterDto({ id: 'f-2', deletedAt: '2026-01-02T00:00:00Z', deletedByApp: true }),
                 ]
-              : [filterDto()],
+              : filters,
           ),
         ),
       ),
@@ -196,6 +200,37 @@ describe('FiltersTab', () => {
       'forwards',
     ]);
     expect(q('filter-by-app')).not.toBeNull();
+  });
+
+  it('lists every label of a filter that adds three', async () => {
+    const addLabels = ['Topic/Alpha', 'Extra/One', 'Extra/Two'].map((name, i) => ({
+      id: `L${i + 1}`,
+      name,
+    }));
+    const { all } = await render(undefined, undefined, [
+      filterDto({ action: { ...filterDto().action, addLabels, forwards: false } }),
+    ]);
+    expect(all('filter-chip').map((c) => c.textContent!.trim())).toEqual([
+      'Topic/Alpha',
+      'Extra/One',
+      'Extra/Two',
+      'skip inbox',
+    ]);
+  });
+
+  it('shows the labels a proposal adds after its topic', async () => {
+    const extras = proposal('news@example.com', 10, {
+      suggested: {
+        ...proposal('news@example.com').suggested,
+        action: {
+          addLabelNames: ['Topic/Alpha', 'Extra/One', 'Extra/Two'],
+          skipInbox: false,
+          markRead: false,
+        },
+      },
+    });
+    const { q } = await render(undefined, paged([extras]));
+    expect(q('proposal-pattern')!.textContent).toContain('Topic/Alpha + Extra/One, Extra/Two · Act');
   });
 
   it('syncs from Gmail and reloads', async () => {

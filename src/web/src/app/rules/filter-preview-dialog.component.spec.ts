@@ -155,6 +155,47 @@ describe('FilterPreviewDialog', () => {
     ]);
   });
 
+  it('pre-fills additional labels apart from the archive label and creates them all', async () => {
+    const names = ['Topic/Alpha', 'Archive/Weekly', 'Extra/One', 'Extra/Two'];
+    const request = { ...suggested, action: { ...suggested.action, addLabelNames: names } };
+    const { fixture, el, q } = await render({ request, from: '' }, ['Archive/Weekly']);
+    const form = fixture.componentInstance.form.controls;
+    expect(form.archiveLabel.value).toBe('Archive/Weekly');
+    expect(form.extraLabels.value).toEqual(['Extra/One', 'Extra/Two']);
+    const chips = el.querySelectorAll('[data-testid="extra-label-chip"]');
+    expect([...chips].map((c) => c.textContent!.trim().split(/\s/)[0])).toEqual([
+      'Extra/One',
+      'Extra/Two',
+    ]);
+    q('preview-create')!.click();
+    expect(rules.create.mock.calls[0][0].action.addLabelNames).toEqual(names);
+  });
+
+  it('disables additional labels without a label path and leaves them out of the request', async () => {
+    const request = {
+      ...suggested,
+      action: { ...suggested.action, addLabelNames: ['Topic/Alpha', 'Extra/One'] },
+    };
+    const { fixture, q, settle } = await render({ request, from: '' });
+    const form = fixture.componentInstance.form.controls;
+    form.labelPath.setValue('');
+    await settle();
+    expect(form.extraLabels.disabled).toBe(true);
+    q('preview-create')!.click();
+    expect(rules.create.mock.calls[0][0].action.addLabelNames).toEqual([]);
+    form.labelPath.setValue('Topic/Beta');
+    expect(form.extraLabels.enabled).toBe(true);
+  });
+
+  it('refuses an additional label equal to the label path', async () => {
+    const { fixture, q, settle } = await render({ request: suggested, from: '' });
+    fixture.componentInstance.form.controls.extraLabels.setValue(['topic/alpha']);
+    await settle();
+    expect(fixture.componentInstance.form.invalid).toBe(true);
+    q('preview-create')!.click();
+    expect(rules.create).not.toHaveBeenCalled();
+  });
+
   it('stays open with the reason when Gmail refuses the create', async () => {
     const { q, settle } = await render({ request: suggested, from: '' });
     rules.create.mockReturnValue(
