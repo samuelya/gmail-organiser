@@ -114,9 +114,18 @@ public sealed record ParsedSuggestions(
 /// <param name="LabelTree">The run's label tree: <c>isNewLabel</c> is computed from it, never taken from the model.</param>
 /// <param name="ConfiguredLabels">The app's action and delete label names; never a <c>proposedNewLabel</c>.</param>
 /// <param name="ReadMailType">False for a custom template that does not ask for a mail type: none is stored.</param>
-public sealed record SuggestionParseContext(LabelTreeIndex LabelTree, IReadOnlyCollection<string> ConfiguredLabels, bool ReadMailType = true)
+/// <param name="AllowedExtraLabels">
+/// The extras of the approved similar past decisions shown in this prompt (#528,
+/// <see cref="AnalysisPromptBuilder.AllowedExtraLabels"/>, built by <see cref="ExtraLabelsOutput.Allowed"/>): shown form
+/// (case-insensitive) to stored spelling; the only <c>extraLabels</c> the parser keeps. Empty (default) keeps none.
+/// </param>
+public sealed record SuggestionParseContext(
+    LabelTreeIndex LabelTree, IReadOnlyCollection<string> ConfiguredLabels, bool ReadMailType = true,
+    IReadOnlyDictionary<string, string>? AllowedExtraLabels = null)
 {
     public static readonly SuggestionParseContext Default = new(LabelTreeIndex.Empty, []);
+
+    public IReadOnlyDictionary<string, string> AllowedExtraLabels { get; init; } = AllowedExtraLabels ?? ExtraLabelsOutput.Allowed([]);
 }
 
 public sealed record PromptTemplateDto(string Version, string Template);

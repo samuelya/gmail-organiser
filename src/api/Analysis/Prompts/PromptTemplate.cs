@@ -4,17 +4,18 @@ using System.Text.RegularExpressions;
 namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>
-/// The analysis prompt template: the built-in embedded <c>analysis-v6.md</c> or the user's override from Settings.
+/// The analysis prompt template: the built-in embedded <c>analysis-v7.md</c> or the user's override from Settings.
 /// Placeholders are <c>{{name}}</c>; substitution is a single pass, so values (email text) never expand further.
 /// </summary>
 public sealed partial class PromptTemplate
 {
-    public const string BuiltInVersion = "analysis-v6";
+    public const string BuiltInVersion = "analysis-v7";
     public const string CustomVersion = "custom";
     public const string EmailsPlaceholder = "{{emails}}";
     public const string MailTypesPlaceholder = "{{mailTypes}}";
+    public const string MemoryPlaceholder = "{{memory}}";
 
-    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v6.md";
+    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v7.md";
 
     private PromptTemplate(string version, string text)
     {
@@ -42,7 +43,7 @@ public sealed partial class PromptTemplate
         PlaceholderRegex().Replace(text, m => values.TryGetValue(m.Groups[1].Value, out var value) ? value : m.Value);
 
     /// <summary>Placeholders whose values come from email content (senders, subjects, bodies, attachment names).</summary>
-    public static IReadOnlyList<string> EmailDerivedPlaceholders { get; } = [EmailsPlaceholder, "{{memory}}", "{{attachments}}"];
+    public static IReadOnlyList<string> EmailDerivedPlaceholders { get; } = [EmailsPlaceholder, MemoryPlaceholder, "{{attachments}}"];
 
     /// <summary>
     /// Splits the template at the first line holding an email-derived placeholder: the instructions before it become

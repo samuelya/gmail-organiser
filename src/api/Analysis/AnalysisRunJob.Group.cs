@@ -263,13 +263,15 @@ public sealed partial class AnalysisRunJob
         string attachmentsSection, CancellationToken ct)
     {
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
-        var messages = context.Builder.Build(new PromptInput(
+        var input = new PromptInput(
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName,
-            context.Run.DocumentTypeParent, policies, context.LabelSet.Blocked, context.LabelSet.Locked));
+            context.Run.DocumentTypeParent, policies, context.LabelSet.Blocked, context.LabelSet.Locked);
+        var messages = context.Builder.Build(input);
+        var extras = context.Builder.AllowedExtraLabels(input);
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
         if (context.Triage is not { } triage)
         {
-            return await AskChatModelAsync(context, messages, expected, new HashSet<string>(), current, ct);
+            return await AskChatModelAsync(context, messages, extras, expected, new HashSet<string>(), current, ct);
         }
 
         string text;
@@ -283,11 +285,11 @@ public sealed partial class AnalysisRunJob
             // Triage is an optimisation: an unreachable triage model hands the group to the chat model, whose own
             // unavailability still fails the run.
             LogTriageUnavailable(logger, ex.Message);
-            var escalated = await AskChatModelAsync(context, messages, expected, new HashSet<string>(), current, ct);
+            var escalated = await AskChatModelAsync(context, messages, extras, expected, new HashSet<string>(), current, ct);
             return escalated with { Calls = escalated.Calls + 1, TriageCalls = 1, EscalatedCalls = 1 };
         }
 
-        var parsed = Parse(context, text, expected, current);
+        var parsed = Parse(context, text, extras, expected, current);
         LogDropped(parsed);
         var threshold = context.Settings.TriageConfidenceThreshold;
         var triaged = parsed.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
@@ -300,7 +302,7 @@ public sealed partial class AnalysisRunJob
         // Parser errors name ids and fields only, never email content.
         LogTriageEscalated(
             logger, expected.Count - triaged.Count, triaged.Count - confident.Count, threshold, string.Join("; ", parsed.Errors));
-        var chat = await AskChatModelAsync(context, messages, expected, confident, current, ct);
+        var chat = await AskChatModelAsync(context, messages, extras, expected, confident, current, ct);
         var outputs = new Dictionary<string, SuggestionOutput>(chat.Outputs, StringComparer.Ordinal);
         var filled = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (id, output) in triaged)
@@ -321,12 +323,13 @@ public sealed partial class AnalysisRunJob
     /// a valid answer, never derived from the error count.
     /// </summary>
     private async Task<ModelAnswer> AskChatModelAsync(
-        RunContext context, IList<ChatMessage> messages, HashSet<string> expected, IReadOnlySet<string> answered,
+        RunContext context, IList<ChatMessage> messages, IReadOnlyDictionary<string, string> extras, HashSet<string> expected,
+        IReadOnlySet<string> answered,
         IReadOnlyDictionary<string, IReadOnlyList<string>> current, CancellationToken ct)
     {
         var model = context.Run.Model;
         var (firstText, usage) = await ChatAsync(context, context.Chat, model, messages, expected.Count, ct);
-        var first = Parse(context, firstText, expected, current);
+        var first = Parse(context, firstText, extras, expected, current);
         LogDropped(first);
         var outputs = first.Valid.ToDictionary(o => o.Id, StringComparer.Ordinal);
         var filter = first.Filter;
@@ -338,7 +341,7 @@ public sealed partial class AnalysisRunJob
         var (retryText, retryUsage) = await ChatAsync(
             context, context.Chat, model, [.. messages, new ChatMessage(ChatRole.User, RetryInstruction)], expected.Count, ct);
         usage += retryUsage;
-        var retry = Parse(context, retryText, expected, current);
+        var retry = Parse(context, retryText, extras, expected, current);
         LogDropped(retry);
         foreach (var o in retry.Valid)
         {
@@ -374,11 +377,15 @@ public sealed partial class AnalysisRunJob
         }
     }
 
-    /// <summary>The parsed answer after the run's approved label set (#367): a blocked label is an error for its email.</summary>
+    /// <summary>
+    /// The parsed answer after the run's approved label set (#367): a blocked label is an error for its email. Only the
+    /// prompt's allowed <paramref name="extras"/> (#528) are kept.
+    /// </summary>
     private static ParsedSuggestions Parse(
-        RunContext context, string text, IReadOnlySet<string> expected, IReadOnlyDictionary<string, IReadOnlyList<string>> current) =>
+        RunContext context, string text, IReadOnlyDictionary<string, string> extras, IReadOnlySet<string> expected,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> current) =>
         context.LabelSet.Apply(SuggestionOutputParser.Parse(text, expected, current, context.Run.DocumentTypeParent, new SuggestionParseContext(
-            context.LabelIndex, [context.Settings.ActionLabelName, context.Settings.DeleteLabelName], context.Builder.AsksMailType)));
+            context.LabelIndex, [context.Settings.ActionLabelName, context.Settings.DeleteLabelName], context.Builder.AsksMailType, extras)));
 
     private GroupOutcome FromMemory(RunContext context, MessageGroup group, ShortCircuitResult covered)
     {
