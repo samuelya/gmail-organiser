@@ -197,6 +197,19 @@ public sealed partial class ClaudeApiChatTests : IDisposable
         api.Requests.ShouldHaveSingleItem().Host.ShouldBe("claude.example.com");
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task An_empty_base_url_means_production(string value)
+    {
+        api.Message("ok");
+        using var chat = Create(settings: new() { ["Llm:ClaudeApiBaseUrl"] = value });
+
+        await chat.GetResponseAsync(Messages(), cancellationToken: Ct);
+
+        api.Requests.ShouldHaveSingleItem().Host.ShouldBe(new Uri(EnvironmentUrl.Production).Host);
+    }
+
     [Fact]
     public async Task The_header_filter_drops_headers_the_sdk_does_not_set()
     {

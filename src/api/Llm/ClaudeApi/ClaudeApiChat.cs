@@ -55,7 +55,7 @@ public static class ClaudeApiChat
         http.Timeout = Timeout.InfiniteTimeSpan;
         return new AnthropicClient
         {
-            BaseUrl = options.ClaudeApiBaseUrl ?? EnvironmentUrl.Production,
+            BaseUrl = string.IsNullOrWhiteSpace(options.ClaudeApiBaseUrl) ? EnvironmentUrl.Production : options.ClaudeApiBaseUrl,
             ApiKey = apiKey,
             AuthToken = null,
             HttpClient = http,
