@@ -78,16 +78,17 @@ public sealed class FilterProposalQuery(
                 continue;
             }
 
+            var suggested = Suggest(sender.Address, pattern, settings.DeleteLabelName, allowlist);
             items.Add(new FilterProposalDto(
                 sender.Address, sender.DisplayName, sender.TotalCount, listIds.GetValueOrDefault(sender.Address), pattern,
-                Suggest(sender.Address, pattern, settings.DeleteLabelName, allowlist), "sender:" + sender.Address));
+                suggested, "sender:" + sender.Address, Note: ExtrasNote(suggested.Action) is { } note ? note + "." : null));
         }
 
         return (total, items);
     }
 
     /// <summary>
-    /// Labels the sender's mail with its topic label and skips the inbox unless it needs action; a to-be-deleted
+    /// Labels the sender's mail with its topic and additional labels and skips the inbox unless it needs action; a to-be-deleted
     /// pattern adds the delete label instead, skips the inbox and leaves mail with attachments alone. An allowlisted
     /// sender or domain is protected (MessageProtection), so it never gets the delete label: its proposal is the topic label.
     /// </summary>
@@ -99,9 +100,16 @@ public sealed class FilterProposalQuery(
         var criteria = new FilterCriteriaDto(address, null, null, null, delete ? "has:attachment" : null, null, null, null, null);
         var action = delete
             ? new FilterActionRequest([deleteLabelName], SkipInbox: true, MarkRead: false)
-            : new FilterActionRequest([pattern.TopicLabel!], SkipInbox: pattern.NeedsAction != true, MarkRead: false);
+            : new FilterActionRequest(Labels(pattern.TopicLabel!, pattern.ExtraLabels), SkipInbox: pattern.NeedsAction != true, MarkRead: false);
         return new FilterSuggestionDto(criteria, action);
     }
+
+    /// <summary>A filter's label names (#531): the topic first, then its additional labels, which come only with the topic.</summary>
+    public static string[] Labels(string topic, IEnumerable<string> extras) => [topic, .. extras];
+
+    /// <summary>The note clause naming a filter's additional labels (after its first, <see cref="Labels"/>); null without any.</summary>
+    public static string? ExtrasNote(FilterActionRequest action) =>
+        action.AddLabelNames is { Count: > 1 } names ? $"Also adds {string.Join(", ", names.Skip(1).Select(n => $"\"{n}\""))}" : null;
 
     /// <summary>
     /// <paramref name="senders"/> minus those an active filter's <c>from</c> matches: an exact address, or an

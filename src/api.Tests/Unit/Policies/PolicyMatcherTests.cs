@@ -45,6 +45,22 @@ public sealed class PolicyMatcherTests
     }
 
     [Fact]
+    public void A_match_carries_the_rules_or_the_defaults_extras()
+    {
+        var rule = Rule(PolicyAction.Archive, new RuleMatch { ListIdPresent = true });
+        rule.ExtraLabels = ["Shops/Rule extra"];
+        var policy = Policy(PolicyAction.Archive, rule);
+        policy.ExtraLabels = ["Shops/Default extra"];
+
+        Matcher.Match(Message(), policy).ShouldNotBeNull().ExtraLabels.ShouldBe(["Shops/Default extra"]);
+        Matcher.Match(Message(subject: "Invoice 42"), policy).ShouldNotBeNull().ExtraLabels.ShouldBe(["Shops/Default extra"]);
+
+        policy.IsMixed = true;
+        Matcher.Match(Message(listId: "news.example.com"), policy).ShouldNotBeNull().ExtraLabels.ShouldBe(["Shops/Rule extra"]);
+        new PolicyMatch(null, "Shops/Example", null, null, null, PolicyAction.Archive, false).ExtraLabels.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Non_mixed_policy_ignores_its_rules()
     {
         var policy = Policy(PolicyAction.Keep, Rule(PolicyAction.Delete, new RuleMatch { ListIdPresent = true }, topic: "Shops/Example/Ads"));

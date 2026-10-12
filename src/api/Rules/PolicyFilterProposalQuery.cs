@@ -207,8 +207,8 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         }
 
         List<string> query = skip ? [.. scope.Base, .. scope.Narrower, negation] : [.. scope.Base, .. scope.Narrower];
-        var action = new FilterActionRequest(topic is null ? [] : [topic], skip, false);
-        var pattern = new SenderPatternDto(topic, needsAction, false, 0, 1, 0, null);
+        var action = new FilterActionRequest(topic is null ? [] : FilterProposalQuery.Labels(topic, policy.ExtraLabels), skip, false);
+        var pattern = new SenderPatternDto(topic, needsAction, false, 0, 1, 0, null, topic is null ? null : policy.ExtraLabels);
         return Unit.Fitting(policy, null, scope, query, action, pattern, false, notes);
     }
 
@@ -239,8 +239,8 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         }
 
         notes.Add(LabelOnlyNote(MixedNote, settings));
-        var action = new FilterActionRequest([topic], false, false);
-        var pattern = new SenderPatternDto(topic, false, false, 0, 1, 0, null);
+        var action = new FilterActionRequest(FilterProposalQuery.Labels(topic, rule.ExtraLabels), false, false);
+        var pattern = new SenderPatternDto(topic, false, false, 0, 1, 0, null, rule.ExtraLabels);
         return Unit.Fitting(
             policy, rule, scope, [.. scope.Base, .. scope.Narrower, .. terms.Query, .. earlier], action, pattern, terms.Wider || untestable.Count > 0, notes);
     }
@@ -398,7 +398,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     private static FilterProposalDto Dto(Unit first, List<Unit> units, string? from, string key)
     {
         var policies = units.Select(u => u.Policy.Id).Distinct().Count();
-        List<string> notes = [.. units.SelectMany(u => u.Notes).Distinct(StringComparer.Ordinal)];
+        List<string> notes = [.. units.SelectMany(u => u.Notes).Append(FilterProposalQuery.ExtrasNote(first.Action)).OfType<string>().Distinct()];
         if (policies > 1)
         {
             notes.Insert(0, $"Merges the filters of {policies} policies");

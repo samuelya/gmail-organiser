@@ -117,6 +117,7 @@ Every fetched email has an **analysis status**:
 ### 6.3 Review & apply
 - Review screen lists analysed emails grouped by sender; per item **Approve / Edit / Reject / Send to Claude**. Bulk-approve above a confidence threshold.
 - **Apply to rest of sender:** after approving a sender's pattern, one button applies the same decision to **all remaining emails from that sender without the LLM**, and offers the matching Gmail filter (6.5). The user can still choose to analyse them individually instead (useful for mixed senders such as a bank sending statements and ads).
+- **Sender policies:** a policy's default and each rule can add several labels (topic plus additional labels); policy apply and learned rules carry them.
 - Apply: create missing labels, `batchModify` (≤1000 IDs/call), write undo log, save decision to memory.
 
 **Outcome labels**
@@ -138,6 +139,7 @@ For the already-labelled phase, suggestions are different: *merge labels*, *move
 
 ### 6.5 Rules
 - **New filters** from approved senders/patterns: criteria preview + match count → create via Gmail API. Option: apply label, skip inbox, mark read, or apply the `Auto Archive` label (feeds the Apps Script).
+- A filter can add several labels: a proposal adds the topic label plus the pattern's, policy's or rule's additional labels (never next to the delete label).
 - **Existing filter review** (deterministic checks + LLM summary): duplicates, overlapping criteria, filters targeting deleted labels, filters matching 0 recent emails, mergeable filters (`from:(a OR b)`), filters inconsistent with the new label tree. Each finding has a proposed fix to approve.
 - **Label review**: empty labels, near-duplicate names, flat → nested migration plan.
 - Gmail limit: ~1000 filters per account — the tool consolidates criteria where possible.

@@ -272,6 +272,7 @@ public sealed class PolicyApplyJob(
         row.Source = SuggestionSource.Policy;
         row.TopicLabel = match.TopicLabel;
         row.DocumentTypeLabel = match.DocumentTypeLabel;
+        row.ExtraLabels = [.. match.ExtraLabels];
         row.MailType = match.MailType;
         row.NeedsAction = match.MailType == MailType.ActionBill;
         row.ToBeDeleted = delete && protectedReason is null;
@@ -283,8 +284,9 @@ public sealed class PolicyApplyJob(
         row.PolicyRuleId = match.Rule?.Id;
     }
 
+    // The extras joined: an array compares by reference.
     private static object Outcome(SuggestionRow s) => (s.TopicLabel, s.DocumentTypeLabel, s.MailType, s.NeedsAction, s.ToBeDeleted,
-        s.KeepInInbox, s.UnsubscribeSuggested, s.Confidence, s.Reason, s.PolicyRuleId);
+        s.KeepInInbox, s.UnsubscribeSuggested, s.Confidence, s.Reason, s.PolicyRuleId, string.Join('\n', s.ExtraLabels));
 
     private static JobProgress Progress(PolicyApplyCursor c) => new(
         c.Seen, c.Total, $"Matched {c.Matched}, superseded {c.Superseded}, unmatched {c.Unmatched}, "
