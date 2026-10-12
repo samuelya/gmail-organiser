@@ -1,3 +1,8 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using GmailOrganiser.Analysis;
+using GmailOrganiser.Data;
+using GmailOrganiser.Senders;
 using Microsoft.AspNetCore.Http.HttpResults;
 
 namespace GmailOrganiser.Dashboard;
@@ -55,6 +60,21 @@ public sealed record MetricPointDto(
 /// <param name="LlmHours">LLM time over all analysis runs, as of <paramref name="Current"/>.</param>
 public sealed record TriageMetricsDto(MetricSnapshotDto? Current, IReadOnlyList<MetricPointDto> History, double LlmHours);
 
+/// <param name="MailType">Written as the same snake_case name the review DTOs return.</param>
+/// <param name="Count">Suggestions of this type that are not rejected.</param>
+public sealed record MailTypeCountDto(
+    [property: JsonConverter(typeof(MailTypeJsonConverter))] MailType MailType,
+    int Count);
+
+/// <param name="Categories">Live messages per Gmail category tab, summed over all senders.</param>
+/// <param name="MailTypes">Every <see cref="MailType"/> in enum order, zero included.</param>
+/// <param name="Unclassified">Non-rejected suggestions without a mail type.</param>
+public sealed record MailboxBreakdownDto(SenderCategoryMixDto Categories, IReadOnlyList<MailTypeCountDto> MailTypes, int Unclassified);
+
+/// <summary>The snake_case policy <see cref="SnakeCaseEnumConverter{TEnum}"/> stores, so the names match <c>SuggestionDto.MailType</c>.</summary>
+public sealed class MailTypeJsonConverter()
+    : JsonStringEnumConverter<MailType>(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false);
+
 public static class DashboardEndpoints
 {
     /// <summary>Registers the snapshotter and its hourly / after-job scheduler.</summary>
@@ -70,6 +90,7 @@ public static class DashboardEndpoints
         var group = endpoints.MapGroup("/api/dashboard").WithTags("Dashboard");
         group.MapGet("/triage", GetTriageAsync);
         group.MapPost("/triage/snapshot", SnapshotAsync);
+        group.MapGet("/breakdown", GetBreakdownAsync);
         return endpoints;
     }
 
@@ -85,4 +106,8 @@ public static class DashboardEndpoints
         await snapshotter.TakeAsync(ct);
         return TypedResults.Ok(await snapshotter.GetAsync(ct));
     }
+
+    /// <summary>Messages per Gmail category tab and non-rejected suggestions per mail type.</summary>
+    private static async Task<Ok<MailboxBreakdownDto>> GetBreakdownAsync(AppDbContext db, CancellationToken ct) =>
+        TypedResults.Ok(await MailboxBreakdownQuery.LoadAsync(db, ct));
 }
