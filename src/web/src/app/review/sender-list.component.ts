@@ -23,7 +23,13 @@ import { PagedDto } from '../core/paging.models';
 import { cleanSearch, MAX_SEARCH_LENGTH } from '../senders/senders.models';
 import { MAIL_TYPES, mailTypeLabel } from './mail-type-chip.component';
 import { suggestionsKind } from './mail-type-filter';
-import { isSingleStatus, REVIEW_STATUSES, ReviewSenderDto, ReviewTab } from './review.models';
+import {
+  isSingleStatus,
+  NOT_REJECTED_TAB,
+  REVIEW_STATUSES,
+  ReviewSenderDto,
+  ReviewTab,
+} from './review.models';
 
 export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
 
@@ -177,7 +183,7 @@ export class SenderList {
   readonly single = computed(() => isSingleStatus(this.status()));
   readonly kind = computed(() => suggestionsKind(this.status(), false));
   /** The badge's text alternative after the count. */
-  readonly countLabel = computed(() => (this.single() ? this.status() : 'other than rejected'));
+  readonly countLabel = computed(() => (this.single() ? this.status() : NOT_REJECTED_TAB.phrase));
   readonly allMailTypes = MAIL_TYPES;
   readonly mailTypeLabel = mailTypeLabel;
   readonly maxSearch = MAX_SEARCH_LENGTH;
@@ -203,7 +209,7 @@ export class SenderList {
     const status = this.status();
     return isSingleStatus(status)
       ? sender[status]
-      : sender.pending + sender.approved + sender.applied;
+      : NOT_REJECTED_TAB.statuses.reduce((sum, s) => sum + sender[s], 0);
   }
 
   onPage(event: PageEvent): void {

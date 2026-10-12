@@ -3,7 +3,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import { map } from 'rxjs';
 import { MAIL_TYPES } from './mail-type-chip.component';
-import { isSingleStatus, ReviewTab } from './review.models';
+import { isSingleStatus, NOT_REJECTED_TAB, ReviewTab } from './review.models';
 
 /** The review page's query parameter: comma-separated snake_case mail types. */
 export const MAIL_TYPE_PARAM = 'mailType';
@@ -27,7 +27,7 @@ export function listedKey(status: string, reanalysed: boolean, types: readonly s
 
 /** The suggestions a tab lists, for its empty texts: "pending re-analysed suggestions", "suggestions other than rejected". */
 export function suggestionsKind(status: ReviewTab, reanalysed: boolean): string {
-  if (!isSingleStatus(status)) return 'suggestions other than rejected';
+  if (!isSingleStatus(status)) return `suggestions ${NOT_REJECTED_TAB.phrase}`;
   return `${status} ${reanalysed ? 're-analysed ' : ''}suggestions`;
 }
 

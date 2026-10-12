@@ -6,6 +6,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RUN_ACTIVE_TOOLTIP } from '../analyse/compare-run';
+import { ALL_BUT_REJECTED_TOOLTIP } from './card-reanalyse';
 import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import { AlternativeCompare } from './alternative-compare.component';
@@ -181,7 +182,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
         <button
           mat-icon-button
           type="button"
-          [disabled]="busy() || runActive()"
+          [disabled]="busy() || runActive() || !alternatives()"
           [disabledInteractive]="true"
           (click)="reanalyse.emit()"
           [matTooltip]="reanalyseTooltip()"
@@ -255,7 +256,7 @@ export class MemberRow {
   readonly runActive = input(false);
   /** This member's own re-analysis is running. */
   readonly reanalysing = input(false);
-  /** Show its re-analysis result: "All but rejected" hides them. */
+  /** Re-analyse it and show the result: "All but rejected" does neither. */
   readonly alternatives = input(true);
   readonly approve = output<void>();
   readonly reject = output<void>();
@@ -275,7 +276,11 @@ export class MemberRow {
   readonly confidence = computed(() => percent(this.suggestion().confidence));
   readonly values = computed(() => memberValues(this.suggestion()));
   readonly reanalyseTooltip = computed(() =>
-    this.runActive() ? RUN_ACTIVE_TOOLTIP : 'Re-analyse with the current prompt',
+    !this.alternatives()
+      ? ALL_BUT_REJECTED_TOOLTIP
+      : this.runActive()
+        ? RUN_ACTIVE_TOOLTIP
+        : 'Re-analyse with the current prompt',
   );
   readonly claudeRequest = computed(() => ({ suggestionIds: [this.suggestion().id] }));
 }

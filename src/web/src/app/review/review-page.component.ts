@@ -124,8 +124,10 @@ export class ReviewPage {
   /** The tab and selected sender, fed from the query string. */
   private readonly url = inject(ReviewUrl);
   readonly status = this.url.status;
-  /** The "Re-analysed" filter: only suggestions with a re-analysis result waiting. */
-  readonly reanalysed = signal(false);
+  readonly allButRejected = computed(() => !isSingleStatus(this.status()));
+  /** The "Re-analysed" filter; "All but rejected" shows no re-analysis results, so it is off there. */
+  private readonly reanalysedOn = signal(false);
+  readonly reanalysed = computed(() => !this.allButRejected() && this.reanalysedOn());
   private readonly search = signal('');
   private readonly senderPage = signal(1);
   readonly selected = this.url.selected;
@@ -185,7 +187,6 @@ export class ReviewPage {
     this.url.connect({ senders: this.senders, reanalysed: this.reanalysed });
     this.url.changed.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((change) => {
       if (change === 'status') this.senderPage.set(1);
-      if (!isSingleStatus(this.status())) this.reanalysed.set(false);
       this.resetDetail();
     });
 
@@ -300,7 +301,7 @@ export class ReviewPage {
   }
 
   onReanalysed(on: boolean): void {
-    this.reanalysed.set(on);
+    this.reanalysedOn.set(on);
     this.senderPage.set(1);
     this.resetDetail();
   }

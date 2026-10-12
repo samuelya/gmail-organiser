@@ -2,6 +2,7 @@ import { formatNumber } from '@angular/common';
 import { ChartLinkCell, ChartTable } from '../core/charts/chart.models';
 import { mailTypeLabel } from '../review/mail-type-chip.component';
 import { MAIL_TYPE_PARAM, mailTypesParam } from '../review/mail-type-filter';
+import { NOT_REJECTED_TAB, REVIEW_STATUS_PARAM, ReviewTab } from '../review/review.models';
 
 /** Live messages per Gmail category tab. */
 export interface CategoryCountsDto {
@@ -86,8 +87,13 @@ export function mailTypeBars(dto: MailboxBreakdownDto): MailTypeBar[] {
 /** The review page filtered to one type on "All but rejected": the bar counts every status but rejected. */
 function reviewLink(mailType: string, text: string): ChartLinkCell | null {
   const param = mailTypesParam([mailType]);
+  const tab: ReviewTab = NOT_REJECTED_TAB.value;
   return param
-    ? { text, link: '/review', queryParams: { status: 'not_rejected', [MAIL_TYPE_PARAM]: param } }
+    ? {
+        text,
+        link: '/review',
+        queryParams: { [REVIEW_STATUS_PARAM]: tab, [MAIL_TYPE_PARAM]: param },
+      }
     : null;
 }
 
