@@ -14,7 +14,7 @@ namespace GmailOrganiser.Review;
 /// Each member keeps only its own replaced labels named here (never gains one; empty clears them); null leaves them.
 /// </param>
 /// <param name="DocumentTypeLabel">The card's document-type label; null matches only members without one.</param>
-/// <param name="ExtraLabels">The card's additional labels, canonical; empty matches only members without any, null any member.</param>
+/// <param name="ExtraLabels">The card's additional labels, canonical; null or empty matches only members without any.</param>
 public sealed record GroupOutcome(
     string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels = null, string? DocumentTypeLabel = null,
     IReadOnlyList<string>? ExtraLabels = null);
@@ -211,7 +211,7 @@ public sealed partial class ReviewService(
                 if (outcome == DecisionOutcome.Rejected
                     || (s.TopicLabel == shown!.TopicLabel && s.NeedsAction == shown.NeedsAction && s.ToBeDeleted == shown.ToBeDeleted
                         && s.DocumentTypeLabel == shown.DocumentTypeLabel
-                        && (shown.ExtraLabels is null || ExtraLabelList.SameList(s.ExtraLabels, shown.ExtraLabels))
+                        && ExtraLabelList.SameList(s.ExtraLabels, shown.ExtraLabels ?? [])
                         && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlist, rules))))
                 {
                     if (outcome == DecisionOutcome.Approved)

@@ -121,24 +121,22 @@ public static class ExtraLabelList
     public static void Apply(SuggestionRow s, ExtraLabelsChange change, AppSettings settings) =>
         s.ExtraLabels = Clean(change.IsSet ? change.Labels : s.ExtraLabels, s.TopicLabel, s.DocumentTypeLabel, Reserved(settings));
 
+    /// <summary>The trimmed Gmail label names (case-insensitive) for <see cref="New"/>, built once per request; null when unknown.</summary>
+    public static IReadOnlySet<string>? Existing(IReadOnlyDictionary<string, string>? labelNames) =>
+        labelNames?.Values.Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
-    /// The labels Gmail lacks (case-insensitive) from <paramref name="labelNames"/>, in list order; computed, never
+    /// The labels Gmail lacks (<paramref name="existing"/>, from <see cref="Existing"/>), in list order; computed, never
     /// stored. Empty when the label list is unknown (null).
     /// </summary>
-    public static string[] New(IReadOnlyList<string> labels, IReadOnlyDictionary<string, string>? labelNames)
-    {
-        if (labelNames is null || labels.Count == 0)
-        {
-            return [];
-        }
+    public static string[] New(IReadOnlyList<string> labels, IReadOnlySet<string>? existing) =>
+        existing is null ? [] : [.. labels.Where(l => !existing.Contains(l.Trim()))];
 
-        var existing = labelNames.Values.Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return [.. labels.Where(l => !existing.Contains(l.Trim()))];
-    }
-
-    /// <summary>Whether two canonical lists are the same outcome (case-insensitive, in order).</summary>
-    public static bool SameList(IReadOnlyList<string> a, IReadOnlyList<string> b) =>
-        a.SequenceEqual(b, StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// Whether two canonical lists are the same outcome: ordinal, in order, as the review query's SQL grouping compares
+    /// <c>text[]</c>. Stored lists are in Gmail's spelling where Gmail has the label (<see cref="ResolveAsync"/>).
+    /// </summary>
+    public static bool SameList(IReadOnlyList<string> a, IReadOnlyList<string> b) => a.SequenceEqual(b, StringComparer.Ordinal);
 
     private static string? Error(string label, string? topic, string? documentType, IReadOnlyCollection<string> reserved) =>
         label.Length == 0 ? "Must not be blank."
@@ -148,6 +146,5 @@ public static class ExtraLabelList
         : reserved.Any(r => Same(label, r)) ? "The app's action and delete labels are set by the outcome."
         : null;
 
-    private static bool Same(string label, string? other) =>
-        other is not null && string.Equals(label, other.Trim(), StringComparison.OrdinalIgnoreCase);
+    private static bool Same(string label, string? other) => DocumentTypeEdit.IsTopic(other, label);
 }

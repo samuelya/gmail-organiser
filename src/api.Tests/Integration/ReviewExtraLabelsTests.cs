@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Claude;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
@@ -23,6 +24,7 @@ public sealed class ReviewExtraLabelsTests(ApiFactory factory, PostgresFixture p
     {
         await using (var db = postgres.CreateDbContext())
         {
+            await db.ExternalReviews.ExecuteDeleteAsync();
             await db.ActionLog.ExecuteDeleteAsync();
             await db.ActionBatches.ExecuteDeleteAsync();
         }
@@ -74,6 +76,71 @@ public sealed class ReviewExtraLabelsTests(ApiFactory factory, PostgresFixture p
     }
 
     [Fact]
+    public async Task Edit_refuses_an_extra_equal_to_the_document_type_the_suggestion_keeps()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a01")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.DocumentTypeLabel, "Synthetic Type"), Ct);
+        }
+
+        var response = await h.PutAsync($"/api/review/suggestions/{await IdAsync("a01")}", Edit(["synthetic type"]));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors[ExtraLabelList.Field]
+            .ShouldHaveSingleItem().ShouldContain("document-type label");
+    }
+
+    [Fact]
+    public async Task Group_approve_validates_extras_as_the_edit_does()
+    {
+        var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.Single();
+        var request = (string[] extras) => new GroupDecisionRequest(
+            AnalysisRunHarness.Shop, group.GroupKey, group.TopicLabel, group.NeedsAction, group.ToBeDeleted, null, group.DocumentTypeLabel, extras);
+
+        var bad = await h.PostAsync("/api/review/groups/approve", request(["Fine", "INBOX"]));
+        bad.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await bad.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors[ExtraLabelList.Field]
+            .ShouldHaveSingleItem().ShouldStartWith("Entry 2 'INBOX':");
+
+        // Six entries with one case-insensitive duplicate are five distinct labels: accepted, as the edit accepts them.
+        var dup = await h.PostAsync("/api/review/groups/approve", request(["E1", "E2", "E3", "E4", "E5", "e5"]));
+        dup.StatusCode.ShouldBe(HttpStatusCode.OK, await dup.Content.ReadAsStringAsync(Ct));
+        (await dup.Content.ReadFromJsonAsync<GroupDecisionResponse>(Ct)).ShouldNotBeNull().Changed.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Accepting_a_claude_agree_approves_only_the_members_with_the_cards_extras()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a01").ExecuteUpdateAsync(s => s.SetProperty(x => x.ExtraLabels, new[] { "Extra" }), Ct);
+        }
+
+        var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.Single();
+        group.ExtraLabels.ShouldBeEmpty();
+        var created = await h.PostAsync("/api/claude/reviews", new CreateExternalReviewsRequest(
+            null, [new GroupRef(AnalysisRunHarness.Shop, group.GroupKey!)], null));
+        created.StatusCode.ShouldBe(HttpStatusCode.OK, await created.Content.ReadAsStringAsync(Ct));
+        var id = (await created.Content.ReadFromJsonAsync<CreateExternalReviewsResponse>(Ct)).ShouldNotBeNull().Items.ShouldHaveSingleItem().Id;
+        await using (var scope = h.Services.CreateAsyncScope())
+        {
+            var verdict = new ReviewVerdictInput(ReviewVerdict.Agree, null, null, null, null, "Synthetic reasoning", "mcp", null);
+            (await scope.ServiceProvider.GetRequiredService<ExternalReviewService>().SubmitVerdictAsync(id, verdict, Ct)).Result
+                .ShouldBe(ReviewVerdictResult.Ok);
+        }
+
+        var accept = await h.PostAsync($"/api/claude/reviews/{id}/accept", new { });
+
+        accept.StatusCode.ShouldBe(HttpStatusCode.OK, await accept.Content.ReadAsStringAsync(Ct));
+        await using var check = postgres.CreateDbContext();
+        var statuses = await check.Suggestions.AsNoTracking().Where(s => s.SenderAddress == AnalysisRunHarness.Shop)
+            .ToDictionaryAsync(s => s.MessageId, s => s.Status, Ct);
+        statuses["a01"].ShouldBe(SuggestionStatus.Pending);
+        statuses.Where(p => p.Key != "a01").ShouldAllBe(p => p.Value == SuggestionStatus.Approved);
+    }
+
+    [Fact]
     public async Task Edit_drops_an_extra_the_new_topic_label_equals()
     {
         await EditAsync("a01", Edit(["Later", "Other"]));
@@ -105,15 +172,16 @@ public sealed class ReviewExtraLabelsTests(ApiFactory factory, PostgresFixture p
         single.ExtraLabels.ShouldBe(["Extra", Existing]);
         single.ExtraLabelsNew.ShouldBe(["Extra"]);
         (await ApproveAsync(single, [])).Changed.ShouldBe(0);
-        (await ApproveAsync(single, [Existing.ToLowerInvariant(), "extra"])).Changed.ShouldBe(1);
+        (await ApproveAsync(single, [Existing.ToLowerInvariant(), "extra"])).Changed.ShouldBe(0);
+        (await ApproveAsync(single, ["Extra", Existing])).Changed.ShouldBe(1);
     }
 
     [Fact]
-    public async Task Accepting_an_alternative_keeps_the_extras()
+    public async Task Accepting_an_alternative_keeps_the_extras_but_one_equal_to_its_topic()
     {
         await using (var db = postgres.CreateDbContext())
         {
-            await db.Suggestions.Where(s => s.MessageId == "a01").ExecuteUpdateAsync(s => s.SetProperty(x => x.ExtraLabels, new[] { "Extra" }), Ct);
+            await db.Suggestions.Where(s => s.MessageId == "a01").ExecuteUpdateAsync(s => s.SetProperty(x => x.ExtraLabels, new[] { "Extra", "Synthetic Alternative" }), Ct);
             var row = await db.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a01", Ct);
             var alternative = SuggestionAlternativeRow.From(row, row.Id, row.RunId!.Value, DateTimeOffset.UtcNow);
             alternative.TopicLabel = "Synthetic Alternative";

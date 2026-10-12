@@ -31,10 +31,10 @@ public static class ReviewEndpoints
         group.MapPost("/suggestions/{id:guid}/reject", (Guid id, ReviewService review, CancellationToken ct) =>
             ToResultAsync(review.DecideAsync(id, DecisionOutcome.Rejected, ct)));
         group.MapPut("/suggestions/{id:guid}", EditAsync);
-        group.MapPost("/groups/approve", (GroupDecisionRequest request, ReviewService review, CancellationToken ct) =>
-            DecideGroupAsync(request, DecisionOutcome.Approved, review, ct));
-        group.MapPost("/groups/reject", (GroupDecisionRequest request, ReviewService review, CancellationToken ct) =>
-            DecideGroupAsync(request, DecisionOutcome.Rejected, review, ct));
+        group.MapPost("/groups/approve", (GroupDecisionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct) =>
+            DecideGroupAsync(request, DecisionOutcome.Approved, review, settings, ct));
+        group.MapPost("/groups/reject", (GroupDecisionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct) =>
+            DecideGroupAsync(request, DecisionOutcome.Rejected, review, settings, ct));
         group.MapPost("/bulk-approve", BulkApproveAsync);
         group.MapPost("/analyse-individually", AnalyseIndividuallyAsync).RequireAccountMatch();
         group.MapApplyEndpoints();
@@ -163,7 +163,8 @@ public static class ReviewEndpoints
     /// then 400 naming the replaced labels the message does not carry and 503 when the Gmail label list cannot be loaded.
     /// A document-type label needs the document-type parent setting (<see cref="DocumentTypeEdit.Validate"/>); 400 too
     /// when the topic label would equal the document type the suggestion keeps, and when it is the delete label on an
-    /// email not to be deleted (any source), and on invalid additional labels (<see cref="ExtraLabelList.Normalise"/>).
+    /// email not to be deleted (any source), and on invalid additional labels (<see cref="ExtraLabelList.Normalise"/>,
+    /// against the requested document type or, when unchanged, the stored one).
     /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct)
@@ -180,7 +181,8 @@ public static class ReviewEndpoints
             ? DocumentTypeChange.Unchanged
             : DocumentTypeEdit.Validate(request.DocumentTypeLabel, current.DocumentTypeParent, label, errors);
         var mailType = MailTypeChange.Validate(request.MailType, errors);
-        var extras = ExtraLabelList.Normalise(request.ExtraLabels, label, type.Label, current, errors);
+        var effectiveType = type.IsSet || request.ExtraLabels is not { Length: > 0 } ? type.Label : await review.DocumentTypeOfAsync(id, ct);
+        var extras = ExtraLabelList.Normalise(request.ExtraLabels, label, effectiveType, current, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
@@ -193,9 +195,12 @@ public static class ReviewEndpoints
             : ToResult((result, suggestion));
     }
 
-    /// <summary>Reject takes every pending member; approve needs the card's outcome and takes the members that have it.</summary>
+    /// <summary>
+    /// Reject takes every pending member; approve needs the card's outcome and takes the members that have it. The
+    /// card's additional labels are validated as the edit does (<see cref="ExtraLabelList.Normalise"/>).
+    /// </summary>
     private static async Task<Results<Ok<GroupDecisionResponse>, ValidationProblem, ProblemHttpResult>> DecideGroupAsync(
-        GroupDecisionRequest request, DecisionOutcome outcome, ReviewService review, CancellationToken ct)
+        GroupDecisionRequest request, DecisionOutcome outcome, ReviewService review, ISettingsStore settings, CancellationToken ct)
     {
         var errors = new Dictionary<string, string[]>();
         GroupOutcome? shown = null;
@@ -209,16 +214,10 @@ public static class ReviewEndpoints
                 errors["documentTypeLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters."];
             }
 
-            var extras = request.ExtraLabels is { Length: > ExtraLabelList.Max }
-                || request.ExtraLabels?.Any(l => string.IsNullOrWhiteSpace(l) || !LabelResolver.IsValid(l.Trim())) == true;
-            if (extras)
-            {
-                errors[ExtraLabelList.Field] = [$"At most {ExtraLabelList.Max} label paths Gmail accepts."];
-            }
-
+            var extras = ExtraLabelList.Normalise(request.ExtraLabels, label, type, await settings.GetAsync(ct), errors);
             shown = errors.Count == 0
                 ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type,
-                    ExtraLabelList.Clean(request.ExtraLabels, null, null, []))
+                    extras.IsSet ? extras.Labels : [])
                 : null;
         }
 

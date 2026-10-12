@@ -58,7 +58,10 @@ public sealed partial class ReviewService
     private Task<List<SuggestionRow>> LockAsync(Guid[] ids, CancellationToken ct) =>
         db.Suggestions.FromSql($"SELECT * FROM suggestions WHERE id = ANY({ids}) ORDER BY id FOR UPDATE").ToListAsync(ct);
 
-    /// <summary>Whether Gmail lacks the label; null without a Gmail connection or when the label list cannot be loaded.</summary>
+    /// <summary>The suggestion's stored document-type label; null when it has none or does not exist.</summary>
+    public Task<string?> DocumentTypeOfAsync(Guid id, CancellationToken ct) =>
+        db.Suggestions.AsNoTracking().Where(s => s.Id == id).Select(s => s.DocumentTypeLabel).SingleOrDefaultAsync(ct);
+
     /// <summary>The personal labels by id; <see cref="PersonalLabels.None"/> (no names) when Gmail is not reachable.</summary>
     private async Task<PersonalLabels> PersonalLabelsAsync(CancellationToken ct) =>
         await PersonalLabels.LoadAsync(labels, await settingsStore.GetAsync(ct), ct);
@@ -71,6 +74,7 @@ public sealed partial class ReviewService
         return (await AllowlistLoader.LoadAsync(db, settings, senders, ct), settings.Protection, settings);
     }
 
+    /// <summary>Whether Gmail lacks the label; null without a Gmail connection or when the label list cannot be loaded.</summary>
     private async Task<bool?> IsNewLabelAsync(string label, CancellationToken ct)
     {
         try

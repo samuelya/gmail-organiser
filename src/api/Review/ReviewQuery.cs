@@ -188,10 +188,11 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var allowlist = await AllowlistLoader.LoadAsync(db, claude.Settings, ct);
         var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
         var labelNames = personal.IsUnavailable ? null : personal.Names;
+        var existing = ExtraLabelList.Existing(labelNames);
         foreach (var (g, members) in loaded)
         {
             groups.Add(ToGroup(
-                g, outcomes[g.Key], members, allowlist, claude, labelNames, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
+                g, outcomes[g.Key], members, allowlist, claude, labelNames, existing, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
         }
 
         var policies = await PolicyLookup.ForSendersAsync(db, [counts.Address], ct);
@@ -250,8 +251,11 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         IReadOnlyDictionary<string, string>? labelNames = null,
         IReadOnlyList<string>? appLabelIds = null,
         bool taxonomyLocked = false) =>
-        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds, taxonomyLocked: taxonomyLocked);
+        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds, taxonomyLocked: taxonomyLocked,
+            existingLabels: ExtraLabelList.Existing(labelNames));
 
+    /// <param name="existingLabels"><see cref="ExtraLabelList.Existing"/> of <paramref name="labelNames"/>, built once per
+    /// request; null lists no additional label as new.</param>
     public static SuggestionDto ToDto(
         SuggestionRow s,
         MessageRow m,
@@ -262,7 +266,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         bool suggestedForClaude,
         SuggestionAlternativeRow? alternative = null,
         IReadOnlyList<string>? appLabelIds = null,
-        bool taxonomyLocked = false)
+        bool taxonomyLocked = false,
+        IReadOnlySet<string>? existingLabels = null)
     {
         var current = CurrentLabels(m, labelNames);
         var replaced = Replaced(s.Replaced(labelNames), s.TopicLabel, m, labelNames, appLabelIds);
@@ -294,7 +299,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         s.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
         taxonomyLocked && s.Status == SuggestionStatus.Pending && IsStillNew(s, labelNames),
         s.ExtraLabels,
-        ExtraLabelList.New(s.ExtraLabels, labelNames));
+        ExtraLabelList.New(s.ExtraLabels, existingLabels));
     }
 
     /// <summary>
@@ -368,6 +373,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         Allowlist allowlist,
         ClaudeLookup claude,
         IReadOnlyDictionary<string, string>? labelNames,
+        IReadOnlySet<string>? existingLabels,
         IReadOnlyList<string> appLabelIds,
         IReadOnlyDictionary<Guid, SuggestionAlternativeRow> alternatives,
         int alternativeCount)
@@ -395,7 +401,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var dtos = members.Select(x => ToDto(
                 x.S, x.M, allowlist, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
                 IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel), alternatives.GetValueOrDefault(x.S.Id), appLabelIds,
-                settings.TaxonomyLocked))
+                settings.TaxonomyLocked, existingLabels))
             .ToList();
         var change = Combined(dtos.Select(d => d.LabelChange));
         return new ReviewGroupDto(
@@ -425,7 +431,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             GroupAlternative(dtos, alternativeCount),
             dtos.Any(d => d.NewLabelPending),
             shared.ExtraLabels,
-            ExtraLabelList.New(shared.ExtraLabels, labelNames));
+            ExtraLabelList.New(shared.ExtraLabels, existingLabels));
     }
 
     /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags, type and extras.</summary>

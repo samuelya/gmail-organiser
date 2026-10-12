@@ -343,6 +343,15 @@ public sealed partial class ExternalReviewService(
             ? new GroupOutcome(label, row.VerdictNeedsAction ?? false, row.VerdictToBeDeleted ?? false, null, row.VerdictDocumentTypeLabel)
             : null;
 
+        // The verdict stores no additional labels (#522): an agree approves the members with the card's shown ones.
+        if (!alternative && outcome is not null && row.TargetType == ExternalReviewTarget.Group)
+        {
+            outcome = outcome with
+            {
+                ExtraLabels = (await reviewQuery.PendingOutcomeAsync(row.SenderAddress, row.GroupKey!, ct))?.ExtraLabels ?? [],
+            };
+        }
+
         // An alternative's document type is checked again: the parent setting may have changed since Claude's verdict.
         var documentType = !alternative || !row.VerdictDocumentTypeSet ? DocumentTypeChange.Unchanged
             : row.VerdictDocumentTypeLabel is { } type ? DocumentTypeChange.To(type)

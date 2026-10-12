@@ -77,14 +77,16 @@ public sealed class ExtraLabelListTests
     {
         var names = new Dictionary<string, string> { ["Label_1"] = "Known " };
 
-        ExtraLabelList.New(["known", "Fresh"], names).ShouldBe(["Fresh"]);
+        ExtraLabelList.New(["known", "Fresh"], ExtraLabelList.Existing(names)).ShouldBe(["Fresh"]);
+        ExtraLabelList.Existing(null).ShouldBeNull();
         ExtraLabelList.New(["Fresh"], null).ShouldBeEmpty();
     }
 
     [Fact]
-    public void SameList_compares_canonical_lists_case_insensitively_in_order()
+    public void SameList_compares_canonical_lists_ordinally_in_order_as_the_sql_grouping_does()
     {
-        ExtraLabelList.SameList(["a", "B"], ["A", "b"]).ShouldBeTrue();
+        ExtraLabelList.SameList(["a", "B"], ["a", "B"]).ShouldBeTrue();
+        ExtraLabelList.SameList(["a", "B"], ["A", "b"]).ShouldBeFalse();
         ExtraLabelList.SameList(["a"], ["a", "b"]).ShouldBeFalse();
         ExtraLabelList.SameList([], []).ShouldBeTrue();
     }
