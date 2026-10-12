@@ -196,6 +196,69 @@ describe('FilterPreviewDialog', () => {
     expect(rules.create).not.toHaveBeenCalled();
   });
 
+  it('keeps previewing the added chips while a label is typed, and blocks only Create', async () => {
+    const request = {
+      ...suggested,
+      action: { ...suggested.action, addLabelNames: ['Topic/Alpha', 'Extra/One'] },
+    };
+    const { q, settle } = await render({ request, from: '' });
+    vi.useFakeTimers();
+    const input = q('extra-labels-input') as HTMLInputElement;
+    for (const text of ['E', 'Ex', 'Ext']) {
+      input.value = text;
+      input.dispatchEvent(new Event('input'));
+      await settle();
+    }
+    vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS);
+    await settle();
+    expect(rules.preview).toHaveBeenCalledTimes(1);
+    expect(q('preview-creates')).not.toBeNull();
+    expect(q('preview-problem')).toBeNull();
+    q('preview-create')!.click();
+    expect(rules.create).not.toHaveBeenCalled();
+  });
+
+  it('drops an additional label that is picked as the archive label', async () => {
+    const request = {
+      ...suggested,
+      action: { ...suggested.action, addLabelNames: ['Topic/Alpha', 'archive/weekly'] },
+    };
+    const { fixture, q, settle } = await render({ request, from: '' }, ['Archive/Weekly', 'Other']);
+    const form = fixture.componentInstance.form.controls;
+    expect(form.archiveLabel.value).toBe('');
+    form.archiveLabel.setValue('Archive/Weekly');
+    await settle();
+    expect(form.extraLabels.value).toEqual([]);
+    expect(fixture.componentInstance.form.valid).toBe(true);
+    q('preview-create')!.click();
+    expect(rules.create.mock.calls[0][0].action.addLabelNames).toEqual([
+      'Topic/Alpha',
+      'Archive/Weekly',
+    ]);
+  });
+
+  it("says a clash is with the filter's label", async () => {
+    const { fixture, q, settle } = await render({ request: suggested, from: '' });
+    fixture.componentInstance.form.controls.extraLabels.setValue(['topic/alpha']);
+    await settle();
+    expect(q('extra-labels-error')!.textContent).toContain(
+      "is already the filter's label or archive label",
+    );
+  });
+
+  it('pre-fills at most the field limit of additional labels and says how many were left out', async () => {
+    const extras = ['A/1', 'A/2', 'A/3', 'A/4', 'A/5', 'A/6', 'A/7'];
+    const request = {
+      ...suggested,
+      action: { ...suggested.action, addLabelNames: ['Topic/Alpha', 'Archive/Weekly', ...extras] },
+    };
+    const { fixture, q } = await render({ request, from: '' }, ['Archive/Weekly']);
+    const form = fixture.componentInstance.form;
+    expect(form.controls.extraLabels.value).toEqual(extras.slice(0, 5));
+    expect(form.valid).toBe(true);
+    expect(q('preview-extras-dropped')!.textContent).toContain('2 more suggested labels were');
+  });
+
   it('stays open with the reason when Gmail refuses the create', async () => {
     const { q, settle } = await render({ request: suggested, from: '' });
     rules.create.mockReturnValue(

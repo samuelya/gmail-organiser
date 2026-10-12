@@ -19,6 +19,7 @@ const labels: LabelDto[] = [
     [formControl]="control"
     [labels]="labels()"
     [exclude]="exclude()"
+    [excludeText]="excludeText()"
     [max]="max()"
     [serverError]="serverError()"
   />`,
@@ -28,6 +29,7 @@ class Host {
   readonly control = new FormControl<string[]>([], { nonNullable: true });
   readonly labels = signal<LabelDto[] | null>(labels);
   readonly exclude = signal<(string | null)[]>(['Receipts', 'Act']);
+  readonly excludeText = signal('the topic, document type or a flag label');
   readonly max = signal(3);
   readonly serverError = signal<string | null>(null);
 }
@@ -158,6 +160,36 @@ describe('ExtraLabelsField', () => {
     expect(q('extra-labels-error')!.textContent).toContain("Press Enter to add 'Ideas'");
     type('');
     expect(host.control.valid).toBe(true);
+  });
+
+  it('re-validates the host only when the result changes, not on start or each keystroke', () => {
+    TestBed.configureTestingModule({
+      providers: [{ provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } }],
+    });
+    const fixture = TestBed.createComponent(Host);
+    const host = fixture.componentInstance;
+    host.control.setValue(['Travel']);
+    let validations = 0;
+    host.control.valueChanges.subscribe(() => validations++);
+    fixture.autoDetectChanges();
+    TestBed.tick();
+    expect(validations).toBe(0);
+    type('I');
+    type('Id');
+    type('Ide');
+    expect(validations).toBe(1);
+    expect(host.control.errors?.['extraLabelsPending']).toBe(true);
+    type('');
+    expect(validations).toBe(2);
+    expect(host.control.valid).toBe(true);
+  });
+
+  it('words a clash with the excludeText', () => {
+    const { host } = setup(['Travel']);
+    host.excludeText.set('the filter label');
+    host.exclude.set(['travel']);
+    TestBed.tick();
+    expect(q('extra-labels-error')!.textContent).toContain("'Travel' is already the filter label.");
   });
 
   it('makes the control invalid while a chip equals an excluded name', () => {

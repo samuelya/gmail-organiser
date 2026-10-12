@@ -255,7 +255,8 @@ export class FilterProposals implements OnInit {
     const flags = this.flags();
     const [first, ...extras] = p.suggested.action.addLabelNames;
     const topic = p.pattern.topicLabel;
-    const withExtras = topic && first === topic && extras.length;
+    const key = (n: string | null | undefined) => n?.trim().toLowerCase();
+    const withExtras = topic && key(first) === key(topic) && extras.length;
     return [
       withExtras ? `${topic} + ${extras.join(', ')}` : topic,
       p.pattern.needsAction ? flags.action : null,

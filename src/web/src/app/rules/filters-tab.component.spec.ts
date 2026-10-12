@@ -235,6 +235,17 @@ describe('FiltersTab', () => {
     );
   });
 
+  it('shows the extras when the topic differs from the first label only in case or spaces', async () => {
+    const extras = proposal('news@example.com', 10, {
+      suggested: {
+        ...proposal('news@example.com').suggested,
+        action: { addLabelNames: [' topic/alpha', 'Extra/One'], skipInbox: false, markRead: false },
+      },
+    });
+    const { q } = await render(undefined, paged([extras]));
+    expect(q('proposal-pattern')!.textContent).toContain('Topic/Alpha + Extra/One');
+  });
+
   it('syncs from Gmail and reloads', async () => {
     const { q, settle } = await render();
     q('filters-sync')!.click();
