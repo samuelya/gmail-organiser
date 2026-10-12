@@ -96,7 +96,7 @@ export function sameLabels(a: readonly string[], b: readonly string[]): boolean 
           (input)="type(input.value)"
           (blur)="touched()"
           [disabled]="disabled()"
-          [readOnly]="full()"
+          [readOnly]="full() && !text()"
           [matAutocompleteDisabled]="full()"
           data-testid="extra-labels-input"
         />
@@ -138,7 +138,8 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   readonly separators = [ENTER, COMMA] as const;
   readonly value = signal<string[]>([]);
   readonly disabled = signal(false);
-  private readonly text = signal('');
+  /** The typed text; at the limit the input stays editable until it is cleared. */
+  protected readonly text = signal('');
   /** Why the typed text was not added; typing again clears it. */
   private readonly inputError = signal<string | null>(null);
   /** The input lost focus with text not yet added. */
@@ -301,6 +302,7 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
     this.chips.setValue(next, { emitEvent: false });
     this.onChange(next);
     this.onTouched();
+    if (this.full()) this.trigger().closePanel();
   }
 
   private clearInput(): void {
