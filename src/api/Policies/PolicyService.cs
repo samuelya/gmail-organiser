@@ -54,7 +54,9 @@ public sealed class PolicyService(AppDbContext db, ISettingsStore settings, IJob
         var parent = appSettings.DocumentTypeParent;
         var topic = Label(request.TopicLabel, "topicLabel", errors);
         var documentType = DocumentType(request.DocumentTypeLabel, parent, topic, "documentTypeLabel", errors);
-        var extras = Extras(request.ExtraLabels, policy.ExtraLabels, topic, documentType, appSettings, ExtraLabelList.Field, errors);
+        // Null keeps the stored extras, but a mixed default has none to keep: turning mixed drops them (#546).
+        var extras = Extras(
+            request.ExtraLabels, request.IsMixed == true ? [] : policy.ExtraLabels, topic, documentType, appSettings, ExtraLabelList.Field, errors);
         var mailType = ParseOptional<MailType>(request.MailType, "mailType", errors);
         var action = ParseRequired<PolicyAction>(request.Action, "action", errors);
         Retention(request.RetentionDays, "retentionDays", errors);
