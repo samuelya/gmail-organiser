@@ -24,6 +24,7 @@ public sealed record EmailForPrompt(
 /// The decision was made under the current document-type parent, so a null <paramref name="DocumentTypeLabel"/> means
 /// "no type" rather than unknown.
 /// </param>
+/// <param name="ExtraLabels">The decision's additional labels (#527), canonical; null or empty is none (one shared empty array, so records without extras compare as before).</param>
 public sealed record MemoryHint(
     string SenderAddress,
     string? SubjectTemplate,
@@ -34,7 +35,11 @@ public sealed record MemoryHint(
     double Similarity,
     string? DocumentTypeLabel = null,
     bool DocumentTypeDecided = false,
-    MailType? MailType = null);
+    MailType? MailType = null,
+    string[]? ExtraLabels = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels is { Length: > 0 } extras ? extras : [];
+}
 
 /// <summary>An approved sender policy of an email in the prompt (#360): what the person decided for its sender, list or domain.</summary>
 /// <param name="Scope">sender, list or domain.</param>
@@ -75,6 +80,9 @@ public sealed record SuggestionOutput(
 
     /// <summary>The model's <c>proposedNewLabel</c> when it became <see cref="TopicLabel"/>; null otherwise.</summary>
     public string? ProposedNewLabel { get; init; }
+
+    /// <summary>Additional labels next to the topic (#527); cleaned and respelled when the suggestion is stored.</summary>
+    public IReadOnlyList<string> ExtraLabels { get; init; } = [];
 }
 
 /// <summary>A sender-level Gmail filter suggestion; at least one field is set.</summary>

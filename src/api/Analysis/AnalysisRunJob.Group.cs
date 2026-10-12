@@ -405,7 +405,8 @@ public sealed partial class AnalysisRunJob
     /// <summary>
     /// The replaced labels resolve to the ids this message carries: a derived member without one loses nothing. The
     /// document-type label takes the spelling of the run's label tree entry it matches (for a new one, of its longest
-    /// existing ancestor) and is new when there is none, so a derived row agrees with its representatives.
+    /// existing ancestor) and is new when there is none, so a derived row agrees with its representatives. Additional
+    /// labels are respelled the same way; a blocked one (#367) is dropped alone, the suggestion keeps its topic.
     /// </summary>
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson,
@@ -413,6 +414,9 @@ public sealed partial class AnalysisRunJob
     {
         output = context.LabelSet.Admit(output);
         var type = output.DocumentTypeLabel is { } suggested ? context.LabelIndex.Respell(suggested) : null;
+        var extras = ExtraLabelList.Clean(
+            output.ExtraLabels.Where(e => !context.LabelSet.IsBlocked(e)).Select(context.LabelIndex.Respell), output.TopicLabel, type,
+            ExtraLabelList.Reserved(context.Settings));
         var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),
@@ -424,6 +428,7 @@ public sealed partial class AnalysisRunJob
             IsNewLabel = output.IsNewLabel,
             DocumentTypeLabel = type,
             DocumentTypeIsNew = type is not null && !context.LabelIndex.Contains(type),
+            ExtraLabels = extras,
             MailType = output.MailType,
             ProposedNewLabel = output.ProposedNewLabel,
             NeedsAction = output.NeedsAction,

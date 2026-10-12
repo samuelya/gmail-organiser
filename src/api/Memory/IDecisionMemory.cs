@@ -9,9 +9,13 @@ namespace GmailOrganiser.Memory;
 /// <param name="DocumentTypeLabel">The latest approval's document-type label; null is none.</param>
 /// <param name="DocumentTypeDecided">The latest approval was decided under the document-type parent asked about.</param>
 /// <param name="MailType">The mail type the typed approvals agree on (#365); null when none has one or they differ.</param>
+/// <param name="ExtraLabels">The additional labels every approval carries (#527), canonical; null or empty is none (one shared empty array, so records without extras compare as before).</param>
 public sealed record MemoryPattern(
     string TopicLabel, bool NeedsAction, bool ToBeDeleted, int Approvals, double Agreement, string? DocumentTypeLabel, bool DocumentTypeDecided,
-    MailType? MailType = null);
+    MailType? MailType = null, string[]? ExtraLabels = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels is { Length: > 0 } extras ? extras : [];
+}
 
 /// <summary>Message vectors of one embedding model, by message id.</summary>
 public sealed record MessageVectors(string Model, IReadOnlyDictionary<string, Vector> ById);
@@ -37,7 +41,7 @@ public interface IDecisionMemory
     /// <summary>
     /// Up to <paramref name="k"/> past decisions similar to <paramref name="messages"/> (by their
     /// <paramref name="vectors"/>), filled with the latest decisions of their senders or lists (one query per distinct
-    /// sender and list); deduplicated by label, flags and outcome, best first. A hint's document type counts as decided
+    /// sender and list); deduplicated by label, flags, additional labels and outcome, best first. A hint's document type counts as decided
     /// only when it was decided under <paramref name="documentTypeParent"/>. Decisions about
     /// <paramref name="excludeMessageIds"/> are left out (a compare run must not hint the answer for its own messages).
     /// </summary>

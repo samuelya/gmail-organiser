@@ -182,7 +182,8 @@ public sealed partial class DecisionMemory(
             .Select(h => new MemoryHint(
                 h.Decision.SenderAddress, h.Decision.SubjectTemplate, h.Decision.TopicLabel, h.Decision.NeedsAction,
                 h.Decision.ToBeDeleted, SnakeCaseEnumConverter<DecisionOutcome>.ToDb(h.Decision.Outcome), h.Similarity,
-                h.Decision.DocumentTypeLabel, DecidedUnder(h.Decision.DocumentTypeParent, documentTypeParent), h.Decision.MailType))
+                h.Decision.DocumentTypeLabel, DecidedUnder(h.Decision.DocumentTypeParent, documentTypeParent), h.Decision.MailType,
+                h.Decision.ExtraLabels))
             .ToList();
     }
 
@@ -192,7 +193,8 @@ public sealed partial class DecisionMemory(
     /// at least <paramref name="minApprovals"/> of them, all with the same outcome, and no rejection in the scope since the latest.
     /// Only approvals decided under <paramref name="documentTypeParent"/> vote on the document-type label (case-insensitive,
     /// null is none), so approvals from before the feature or under an earlier parent never contradict the first one under
-    /// this parent. The mail type is the one the approvals that have one agree on (#365), none when they differ.
+    /// this parent. The mail type is the one the approvals that have one agree on (#365), none when they differ. The
+    /// additional labels are those every approval carries (#527); they never decide whether the pattern is consistent.
     /// </summary>
     public async Task<IReadOnlyDictionary<string, MemoryPattern>> FindPatternsAsync(
         IReadOnlyCollection<string> scopeKeys, int minApprovals, string? documentTypeParent, CancellationToken ct)
@@ -208,7 +210,7 @@ public sealed partial class DecisionMemory(
             .Where(d => d.ScopeKey != null && keys.Contains(d.ScopeKey))
             .Where(d => d.Outcome == DecisionOutcome.Rejected
                 || (d.Source != SuggestionSource.SenderPattern && (d.Source == SuggestionSource.Llm || d.Edited)))
-            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel, d.DocumentTypeParent, d.MailType, d.CreatedAt })
+            .Select(d => new { d.Id, ScopeKey = d.ScopeKey!, d.MessageId, d.Outcome, d.TopicLabel, d.NeedsAction, d.ToBeDeleted, d.DocumentTypeLabel, d.DocumentTypeParent, d.MailType, d.ExtraLabels, d.CreatedAt })
             .ToListAsync(ct);
         foreach (var scope in rows.GroupBy(r => r.ScopeKey, StringComparer.Ordinal))
         {
@@ -233,12 +235,20 @@ public sealed partial class DecisionMemory(
                 var mailTypes = approvals.Where(a => a.MailType is not null).Select(a => a.MailType).Distinct().ToList();
                 patterns[scope.Key] = new MemoryPattern(
                     latest.TopicLabel, latest.NeedsAction, latest.ToBeDeleted, approvals.Count, 1.0, latest.DocumentTypeLabel,
-                    DecidedUnder(latest.DocumentTypeParent, documentTypeParent), mailTypes.Count == 1 ? mailTypes[0] : null);
+                    DecidedUnder(latest.DocumentTypeParent, documentTypeParent), mailTypes.Count == 1 ? mailTypes[0] : null,
+                    SharedExtras([.. approvals.Select(a => a.ExtraLabels)]));
             }
         }
 
         return patterns;
     }
+
+    /// <summary>
+    /// The extras in every list (case-insensitive), in the first (latest) list's spelling and canonical order; <c>[]</c>
+    /// when any list has none.
+    /// </summary>
+    public static string[] SharedExtras(IReadOnlyList<string[]> lists) =>
+        lists.Count == 0 ? [] : [.. lists[0].Where(e => lists.All(l => l.Contains(e.Trim(), StringComparer.OrdinalIgnoreCase)))];
 
     private static bool SameType(string? a, string? b) => string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
 
@@ -247,10 +257,11 @@ public sealed partial class DecisionMemory(
         parent is not null && string.Equals(decidedParent?.Trim(), parent.Trim(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>A hint's dedup key: an undecided type renders as unknown whatever its stored label.</summary>
-    private static (string, bool, bool, bool, string?, DecisionOutcome) Outcome(DecisionRow d, string? parent)
+    private static (string, bool, bool, bool, string?, DecisionOutcome, string) Outcome(DecisionRow d, string? parent)
     {
         var decided = DecidedUnder(d.DocumentTypeParent, parent);
-        return (d.TopicLabel, d.NeedsAction, d.ToBeDeleted, decided, decided ? d.DocumentTypeLabel?.Trim().ToUpperInvariant() : null, d.Outcome);
+        return (d.TopicLabel, d.NeedsAction, d.ToBeDeleted, decided, decided ? d.DocumentTypeLabel?.Trim().ToUpperInvariant() : null, d.Outcome,
+            string.Join('\n', d.ExtraLabels.Select(e => e.Trim().ToUpperInvariant())));
     }
 
     private sealed record Embedded(string Model, IReadOnlyList<Vector> Vectors);

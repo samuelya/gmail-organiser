@@ -101,6 +101,18 @@ public sealed class MemoryShortCircuitTests
         (results[0] is not null).ShouldBe(answers);
     }
 
+    [Theory]
+    [InlineData("Travel|Work")]
+    [InlineData("")]
+    public async Task Suggestions_carry_the_pattern_extras_and_none_without_them(string extras)
+    {
+        var expected = extras.Split('|', StringSplitOptions.RemoveEmptyEntries);
+        var results = await ShortCircuit(
+            null, new("Topic/Shop", false, false, 5, 1, null, false, ExtraLabels: expected), Group(Msg(1), Msg(2)));
+
+        results[0].ShouldNotBeNull().Suggestions.ShouldAllBe(s => s.ExtraLabels.SequenceEqual(expected));
+    }
+
     private static Task<IReadOnlyList<ShortCircuitResult?>> ShortCircuit(string? parent, MemoryPattern pattern, params MessageGroup[] groups) =>
         new MemoryShortCircuit(new PatternMemory(new Dictionary<string, MemoryPattern> { [GroupKey.For(Msg(0))] = pattern }))
             .TryAsync(groups, new ShortCircuitContext(Settings, Allowlist.Empty, new LabelTreeIndex(["Topic/Shop"]), Labels, parent), Ct);
