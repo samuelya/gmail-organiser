@@ -23,7 +23,7 @@ import { MatCardModule } from '@angular/material/card';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { VersionService } from '../core/version.service';
 import { PageHeader } from '../layout/page-header';
 import { GoogleClientSettings, SetupService } from '../setup/setup.service';
@@ -78,6 +78,7 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
     MatFormFieldModule,
     MatInputModule,
     PageHeader,
+    RouterLink,
     GoogleClientStep,
     ConnectGmailStep,
     OllamaUrlStep,

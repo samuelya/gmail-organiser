@@ -7,6 +7,8 @@ export interface NavItem {
   icon: string;
   /** Shown indented under the entry before it. */
   nested?: boolean;
+  /** Hidden once setup has been completed the first time (`completedOnce`). */
+  hideWhenSetupComplete?: boolean;
 }
 
 /** Side-nav entries, in display order. Each path is a lazy feature route. */
@@ -20,7 +22,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { path: 'clean-up', label: 'Clean-up', icon: 'cleaning_services' },
   { path: 'rules', label: 'Gmail filters', icon: 'filter_alt' },
   { path: 'history', label: 'History', icon: 'history' },
-  { path: 'setup', label: 'Setup', icon: 'rocket_launch' },
+  { path: 'setup', label: 'Setup', icon: 'rocket_launch', hideWhenSetupComplete: true },
   { path: 'settings', label: 'Settings', icon: 'settings' },
 ];
 

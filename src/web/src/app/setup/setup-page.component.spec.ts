@@ -92,6 +92,7 @@ describe('SetupPage', () => {
           embeddingModelSelected: false,
           wizardSeen,
           complete: false,
+          completedOnce: false,
         }),
       getGoogleStatus: () => of(status(connected)),
       disconnectGoogle: () => {

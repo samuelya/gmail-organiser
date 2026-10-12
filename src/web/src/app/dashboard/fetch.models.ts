@@ -55,6 +55,11 @@ export function jobTypeLabel(type: string): string {
   return JOB_TYPE_LABELS[type] ?? humanise(type);
 }
 
+/** A job status as shown to the user; unknown statuses are humanised rather than shown raw. */
+export function jobStatusLabel(status: string): string {
+  return humanise(status);
+}
+
 /**
  * Resync labels is blocked before Gmail is connected (`connected` false; `null` while unknown lets
  * the API answer), on an account mismatch, and while any fetch-queue job is queued, running or paused.

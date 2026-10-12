@@ -13,6 +13,22 @@
   </button>
   <span class="app-name ml-2 truncate">{{ appName }}</span>
   <span class="flex-1"></span>
+  @if (jobsEnabled()) {
+    @defer (on immediate) {
+      <app-jobs-indicator />
+    } @error {
+      <button
+        mat-icon-button
+        type="button"
+        data-testid="jobs-unavailable"
+        aria-label="Job status failed to load (reload the page)"
+        matTooltip="Job status failed to load (reload the page)"
+        (click)="reload()"
+      >
+        <mat-icon aria-hidden="true">sync_disabled</mat-icon>
+      </button>
+    }
+  }
   <button
     mat-icon-button
     type="button"
@@ -35,7 +51,7 @@
   >
     <nav aria-label="Main">
       <mat-nav-list>
-        @for (item of navItems; track item.path) {
+        @for (item of navItems(); track item.path) {
           <a
             mat-list-item
             [routerLink]="item.path"

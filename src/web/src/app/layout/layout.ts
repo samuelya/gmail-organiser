@@ -2,6 +2,7 @@ import { BreakpointObserver } from '@angular/cdk/layout';
 import {
   ChangeDetectionStrategy,
   Component,
+  DOCUMENT,
   ElementRef,
   computed,
   inject,
@@ -20,6 +21,7 @@ import { distinctUntilChanged, filter, map, startWith, tap } from 'rxjs';
 import { readLocal, writeLocal } from '../core/local-store';
 import { ThemeChoice, ThemeService } from '../core/theme.service';
 import { SetupState } from '../setup/setup-state';
+import { JobsIndicator } from './jobs-indicator';
 import { NAV_ITEMS, navActiveOptions } from './nav-items';
 
 export const WIDE_QUERY = '(min-width: 1024px)';
@@ -35,6 +37,7 @@ const THEME_ICONS: Record<ThemeChoice, string> = {
 @Component({
   selector: 'app-layout',
   imports: [
+    JobsIndicator,
     MatButtonModule,
     MatIconModule,
     MatListModule,
@@ -51,12 +54,13 @@ const THEME_ICONS: Record<ThemeChoice, string> = {
 })
 export class Layout {
   protected readonly appName = 'Gmail Organiser';
-  protected readonly navItems = NAV_ITEMS.map((item) => ({
+  private readonly allNavItems = NAV_ITEMS.map((item) => ({
     ...item,
     active: navActiveOptions(item),
   }));
   protected readonly theme = inject(ThemeService);
   protected readonly setupState = inject(SetupState);
+  private readonly document = inject(DOCUMENT);
   private readonly router = inject(Router);
 
   private readonly breakpoints = inject(BreakpointObserver);
@@ -86,6 +90,21 @@ export class Layout {
     ),
     { initialValue: this.router.url },
   );
+
+  /** Setup leaves the nav after its first completion; `complete` is live and would bring it back. */
+  protected readonly navItems = computed(() => {
+    const completedOnce = this.setupState.status()?.completedOnce === true;
+    return this.allNavItems.filter((item) => !(item.hideWhenSetupComplete && completedOnce));
+  });
+
+  /**
+   * The jobs indicator (and with it the hub connection) starts once Gmail is connected or setup was
+   * completed once, so the wizard never opens a hub the API may not serve yet.
+   */
+  protected readonly jobsEnabled = computed(() => {
+    const status = this.setupState.status();
+    return !!status && (status.completedOnce || status.gmailConnected);
+  });
 
   /** "Setup incomplete" banner, except on the wizard itself. */
   protected readonly showSetupBanner = computed(
@@ -126,6 +145,11 @@ export class Layout {
   private setCollapsed(collapsed: boolean): void {
     this.collapsed.set(collapsed);
     writeLocal(NAV_COLLAPSED_KEY, String(collapsed));
+  }
+
+  /** A failed indicator chunk usually means a redeploy left this tab with stale chunk names. */
+  protected reload(): void {
+    this.document.location.reload();
   }
 
   protected onNavigate(): void {

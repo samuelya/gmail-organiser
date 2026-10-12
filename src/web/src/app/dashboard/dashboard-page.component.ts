@@ -23,7 +23,7 @@ import { AnalysisSummaryCard } from '../analyse/analysis-summary-card.component'
 import { AnalysisSummaryStore } from '../analyse/analysis-summary-store';
 import { openConfirm } from '../core/confirm-dialog';
 import { CountOfPipe } from '../core/count-of.pipe';
-import { JobDto, JobStatus, progressPercent } from '../core/jobs.models';
+import { isReconnecting, JobDto, JobStatus, progressPercent } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { PageHeader } from '../layout/page-header';
 import { SetupService } from '../setup/setup.service';
@@ -135,10 +135,7 @@ export class DashboardPage {
       percent: progressPercent(job.progress),
     }));
   });
-  readonly reconnecting = computed(() => {
-    const state = this.jobs.connectionState();
-    return state === 'reconnecting' || state === 'disconnected';
-  });
+  readonly reconnecting = computed(() => isReconnecting(this.jobs.connectionState()));
 
   /** Status refetches on a fetch job status or step change, or a reconnect. */
   private readonly refreshKey = computed(

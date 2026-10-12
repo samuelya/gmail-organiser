@@ -27,6 +27,7 @@ function setupStatus(googleClientConfigured: boolean): SetupStatus {
     embeddingModelSelected: false,
     wizardSeen: false,
     complete: false,
+    completedOnce: false,
   };
 }
 

@@ -1,0 +1,28 @@
+@let jobs = activeJobs();
+@if (jobs.length > 0) {
+  <button
+    mat-icon-button
+    type="button"
+    data-testid="jobs-button"
+    [matMenuTriggerFor]="jobsMenu"
+    [attr.aria-label]="label()"
+    [matTooltip]="label()"
+  >
+    <!-- The button label carries the count; the icon and its badge stay out of the a11y tree. -->
+    <mat-icon aria-hidden="true" [matBadge]="jobs.length">{{
+      reconnecting() ? 'sync_problem' : 'sync'
+    }}</mat-icon>
+  </button>
+  <mat-menu #jobsMenu="matMenu" xPosition="before">
+    @for (job of jobs; track job.id) {
+      @let pct = progressPercent(job.progress);
+      <a mat-menu-item routerLink="/dashboard" data-testid="jobs-row">
+        {{ jobTypeLabel(job.type) }}
+        <span class="jobs-status"
+          >· {{ jobStatusLabel(job.status) }}{{ pct === null ? '' : ' · ' + pct + '%' }}</span
+        >
+      </a>
+    }
+    <a mat-menu-item routerLink="/dashboard" data-testid="jobs-open-dashboard">Open dashboard</a>
+  </mat-menu>
+}
