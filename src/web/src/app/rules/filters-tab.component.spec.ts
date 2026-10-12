@@ -230,7 +230,9 @@ describe('FiltersTab', () => {
       },
     });
     const { q } = await render(undefined, paged([extras]));
-    expect(q('proposal-pattern')!.textContent).toContain('Topic/Alpha + Extra/One, Extra/Two · Act');
+    expect(q('proposal-pattern')!.textContent).toContain(
+      'Topic/Alpha + Extra/One, Extra/Two · Act',
+    );
   });
 
   it('syncs from Gmail and reloads', async () => {
@@ -336,7 +338,11 @@ describe('FiltersTab', () => {
     const toggles = [
       ...document.querySelectorAll<HTMLElement>('[data-testid="proposals-source"] button'),
     ];
-    expect(toggles.map((b) => b.textContent!.trim())).toEqual(['All', 'Sender policies', 'Patterns']);
+    expect(toggles.map((b) => b.textContent!.trim())).toEqual([
+      'All',
+      'Sender policies',
+      'Patterns',
+    ]);
     toggles[2].click();
     await settle();
     expect(api.proposals).toHaveBeenLastCalledWith(1, 'pattern');

@@ -160,9 +160,9 @@ describe('filter request mapping', () => {
       'Extra/Two',
     ]);
     // An additional label needs a main label.
-    expect(
-      filterRequest({ ...edit, labelPath: ' ', extraLabels }).action.addLabelNames,
-    ).toEqual(['Archive/Weekly']);
+    expect(filterRequest({ ...edit, labelPath: ' ', extraLabels }).action.addLabelNames).toEqual([
+      'Archive/Weekly',
+    ]);
   });
 
   it('fills only from without a suggestion', () => {
