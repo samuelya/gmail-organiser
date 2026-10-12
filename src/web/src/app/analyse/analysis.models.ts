@@ -220,6 +220,19 @@ export function runTarget(
   return run.senderAddress ? `${label}: ${run.senderAddress}` : label;
 }
 
+/**
+ * Review's query params for the pending suggestions a completed analyse run produced, narrowed to the sender of a
+ * sender run (a top senders run's optional sender only seeds its picks); `null` when the run produced nothing to review.
+ */
+export function reviewSuggestionsParams(
+  run: Pick<AnalysisRunDto, 'status' | 'kind' | 'scope' | 'messagesCovered' | 'senderAddress'>,
+): { status: 'pending'; sender?: string } | null {
+  if (run.status !== 'completed' || run.kind !== 'analyse' || run.messagesCovered <= 0) return null;
+  return run.scope === 'sender' && run.senderAddress
+    ? { status: 'pending', sender: run.senderAddress }
+    : { status: 'pending' };
+}
+
 /** "10 senders" for a top senders run, "20 emails" otherwise: what the run's count counts. */
 export function requestedText(run: Pick<AnalysisRunDto, 'scope' | 'requestedCount'>): string {
   const n = run.requestedCount;

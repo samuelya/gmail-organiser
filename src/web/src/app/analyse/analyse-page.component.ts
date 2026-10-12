@@ -19,7 +19,7 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
-import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
   catchError,
   debounceTime,
@@ -58,6 +58,7 @@ import {
   SCOPE_OPTIONS,
   TOP_SENDERS,
 } from './analysis.models';
+import { AnalysisFinishNotice } from './analysis-finish-notice';
 import { AnalysisService } from './analysis.service';
 import { confirmCompareRun, injectAnalysisRunActive, MAX_COMPARE } from './compare-run';
 import { GroupingPreview } from './grouping-preview.component';
@@ -122,6 +123,7 @@ function maxCountOf(scope: AnalysisScope): number {
     RouterLink,
     RunList,
   ],
+  providers: [AnalysisFinishNotice],
   templateUrl: './analyse-page.component.html',
   styles: `
     .card-title {
@@ -153,6 +155,8 @@ export class AnalysePage {
   private readonly dialog = inject(MatDialog);
   private readonly destroyRef = inject(DestroyRef);
   private readonly jobs = inject(JobsService);
+  private readonly router = inject(Router);
+  private readonly finishNotice = inject(AnalysisFinishNotice);
   private readonly reloadRuns = new Subject<void>();
   /** Asks for a fresh preview of the same selection: a started or finished run changes what is left. */
   private readonly refreshPreview = new Subject<void>();
@@ -215,8 +219,11 @@ export class AnalysePage {
   readonly cancelling = signal<ReadonlySet<string>>(new Set());
   /** Run ids whose resume request is in flight. */
   readonly resuming = signal<ReadonlySet<string>>(new Set());
-  /** "Failed" filter chip on the finished runs: the API lists only failed runs. */
-  readonly failedOnly = signal(false);
+  /** "Failed" filter chip on the finished runs (`?status=failed`): the API lists only failed runs. */
+  readonly failedOnly = toSignal(
+    this.route.queryParamMap.pipe(map((p) => p.get('status') === 'failed')),
+    { requireSync: true },
+  );
   private readonly hubRunActive = injectAnalysisRunActive();
   /** A run is queued or running (by the hub or the last list): no re-analysis can start. */
   readonly runActive = computed(() => this.hubRunActive() || this.active().length > 0);
@@ -231,7 +238,12 @@ export class AnalysePage {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((scope) => this.switchUnit(unitOf(scope)));
     this.route.queryParamMap
-      .pipe(map(parseAnalyseParams), takeUntilDestroyed(this.destroyRef))
+      .pipe(
+        map(parseAnalyseParams),
+        // The Failed filter changes the URL too: only a changed selection is applied.
+        distinctUntilChanged((a, b) => a.sender === b.sender && a.count === b.count),
+        takeUntilDestroyed(this.destroyRef),
+      )
       .subscribe(({ sender, count }) => {
         if (sender) this.form.patchValue({ scope: 'sender', sender });
         if (count !== null) {
@@ -322,9 +334,10 @@ export class AnalysePage {
         this.runsFailed.set(!runs);
         if (!runs) return;
         const ids = new Set(runs.active.map((r) => r.id));
-        const ended = this.active().some((r) => !ids.has(r.id));
+        const truncated = runs.active.length >= ACTIVE_RUNS_LIMIT;
+        const ended = this.finishNotice.update(ids, truncated, runs.finished);
         this.active.set(queueOrder(runs.active));
-        this.queueTruncated.set(runs.active.length >= ACTIVE_RUNS_LIMIT);
+        this.queueTruncated.set(truncated);
         this.finished.set(runs.finished);
         if (ended) this.refreshPreview.next();
         // A cancel is done once its run has left the queue.
@@ -341,6 +354,15 @@ export class AnalysePage {
     this.reloadRuns.next();
   }
 
+  setFailedOnly(failedOnly: boolean): void {
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { status: failedOnly ? 'failed' : null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
   start(): void {
     const selection = this.selection();
     if (!selection || this.starting()) return;
@@ -352,6 +374,7 @@ export class AnalysePage {
         next: (run) => {
           this.starting.set(false);
           this.noChatModel.set(false);
+          this.finishNotice.watch(run.id);
           this.active.update((runs) => [...runs.filter((r) => r.id !== run.id), run]);
           this.refreshPreview.next();
           this.loadRuns();
@@ -373,6 +396,7 @@ export class AnalysePage {
       // The error interceptor shows the server's problem detail (a 409 among them).
       .subscribe({
         next: (started) => {
+          this.finishNotice.watch(started.id);
           this.active.update((runs) => [...runs.filter((r) => r.id !== started.id), started]);
           this.loadRuns();
         },

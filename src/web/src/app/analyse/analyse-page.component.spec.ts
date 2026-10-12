@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
-import { convertToParamMap, provideRouter } from '@angular/router';
+import { convertToParamMap, provideRouter, Router } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { of, throwError } from 'rxjs';
 import { ClaudeService } from '../core/claude.service';
@@ -71,6 +71,7 @@ describe('AnalysePage', () => {
     cancel: ReturnType<typeof vi.fn>;
     startCompareRun: ReturnType<typeof vi.fn>;
     resume: ReturnType<typeof vi.fn>;
+    getRun: ReturnType<typeof vi.fn>;
   };
   let active: AnalysisRunDto[];
   let finished: AnalysisRunDto[];
@@ -89,6 +90,7 @@ describe('AnalysePage', () => {
       cancel: vi.fn(() => of(run({ status: 'cancelled' }))),
       startCompareRun: vi.fn(() => of(run({ id: 'run-cmp', kind: 'compare', status: 'queued' }))),
       resume: vi.fn(() => of(job('queued', { id: 'job-2' }))),
+      getRun: vi.fn(() => throwError(() => new HttpErrorResponse({ status: 404 }))),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -403,6 +405,59 @@ describe('AnalysePage', () => {
     await harness.fixture.whenStable();
     expect(api.listRuns).toHaveBeenCalled();
     expect(component.resuming().size).toBe(0);
+  });
+
+  describe('finish notice', () => {
+    const snack = () => document.querySelector<HTMLElement>('mat-snack-bar-container');
+
+    async function finish(over: Partial<AnalysisRunDto>) {
+      const r = await render();
+      active = [run({ id: 'run-a', status: 'running' })];
+      r.component.loadRuns();
+      await r.harness.fixture.whenStable();
+      expect(snack()).toBeNull();
+      active = [];
+      finished = [run({ id: 'run-a', status: 'completed', ...over })];
+      r.component.loadRuns();
+      await r.harness.fixture.whenStable();
+      return r;
+    }
+
+    it('a run that finishes while listed as active links to its suggestions', async () => {
+      const { harness } = await finish({
+        messagesCovered: 3,
+        scope: 'sender',
+        senderAddress: 'news@example.com',
+      });
+      const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+      expect(snack()!.textContent).toContain('Analysis finished: 3 messages covered.');
+      snack()!.querySelector<HTMLElement>('button')!.click();
+      await harness.fixture.whenStable();
+      expect(navigate).toHaveBeenCalledWith(['/review'], {
+        queryParams: { status: 'pending', sender: 'news@example.com' },
+      });
+    });
+
+    it('Details on a failed run opens the failed runs by URL', async () => {
+      const { harness, component } = await finish({ status: 'failed' });
+      const action = snack()!.querySelector<HTMLElement>('button')!;
+      expect(action.textContent).toContain('Details');
+      action.click();
+      await harness.fixture.whenStable();
+      expect(TestBed.inject(Router).url).toBe('/analyse?status=failed');
+      expect(component.failedOnly()).toBe(true);
+      expect(api.listRuns).toHaveBeenLastCalledWith(false, expect.any(Number), 'failed');
+    });
+  });
+
+  it('the Failed filter comes from the URL and keeps the chosen count', async () => {
+    const { harness, component } = await render('/analyse?status=failed&count=30');
+    expect(component.failedOnly()).toBe(true);
+    component.form.patchValue({ preset: 'custom', customCount: 7 });
+    component.setFailedOnly(false);
+    await harness.fixture.whenStable();
+    expect(component.failedOnly()).toBe(false);
+    expect(component.form.getRawValue().customCount).toBe(7);
   });
 
   it('the Failed chip asks the API for failed runs only', async () => {

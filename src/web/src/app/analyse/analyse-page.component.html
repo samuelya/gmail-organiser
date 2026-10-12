@@ -146,7 +146,7 @@
         [cancelling]="cancelling()"
         [resuming]="resuming()"
         [failedOnly]="failedOnly()"
-        (failedOnlyChange)="failedOnly.set($event)"
+        (failedOnlyChange)="setFailedOnly($event)"
         [runActive]="runActive()"
         (cancelRun)="cancel($event)"
         (resumeRun)="resume($event)"

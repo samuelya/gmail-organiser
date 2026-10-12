@@ -29,6 +29,7 @@ import {
   canResume,
   modelCountersText,
   requestedText,
+  reviewSuggestionsParams,
   runTarget,
   savingsText,
   TOP_SENDERS,
@@ -151,7 +152,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
             </mat-chip-set>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <span class="min-w-0 flex-1" data-testid="run-savings">{{ savings(run) }}</span>
+            <span class="min-w-0 flex-1 basis-48" data-testid="run-savings">{{ savings(run) }}</span>
             @if (resumable(run)) {
               <button
                 mat-button
@@ -163,6 +164,16 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
               >
                 {{ resuming().has(run.id) ? 'Resuming…' : 'Resume' }}
               </button>
+            }
+            @if (reviewParams().get(run.id); as params) {
+              <a
+                mat-button
+                routerLink="/review"
+                [queryParams]="params"
+                data-testid="run-review-suggestions"
+              >
+                Review suggestions
+              </a>
             }
             @if (run.policiesProposed > 0) {
               <a
@@ -352,6 +363,10 @@ export class RunList {
   /** Run ids whose "Send run to Claude" is in flight. */
   readonly sending = signal<ReadonlySet<string>>(new Set());
 
+  /** Review's query params per finished run id, built once per list so the links keep the same object. */
+  readonly reviewParams = computed(
+    () => new Map(this.finished().map((run) => [run.id, reviewSuggestionsParams(run)])),
+  );
   readonly activeViews = computed(() =>
     this.active().map((run) =>
       activeRunView(run, run.jobId ? this.jobs.job(run.jobId) : undefined),

@@ -1,6 +1,7 @@
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpParams } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
+import { QUIET_STATUSES } from '../core/error.interceptor';
 import { JobDto } from '../core/jobs.models';
 import {
   AnalysisRunDto,
@@ -43,6 +44,13 @@ export class AnalysisService {
     let params = new HttpParams().set('active', active).set('limit', limit);
     if (status) params = params.set('status', status);
     return this.http.get<AnalysisRunDto[]>('/api/analysis/runs', { params });
+  }
+
+  /** One run by id; a `404` (the run is gone) is left to the caller. */
+  getRun(id: string): Observable<AnalysisRunDto> {
+    return this.http.get<AnalysisRunDto>(`/api/analysis/runs/${encodeURIComponent(id)}`, {
+      context: new HttpContext().set(QUIET_STATUSES, [404]),
+    });
   }
 
   /** A running run stops after its current group; `409` when it has already finished. */

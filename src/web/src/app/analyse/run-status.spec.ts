@@ -140,6 +140,33 @@ describe('RunList run status', () => {
     }
   });
 
+  it('only a completed analyse run that covered messages links to its pending suggestions', async () => {
+    const { el } = await render(
+      [],
+      [
+        run({ id: 'r-all', status: 'completed', messagesCovered: 20 }),
+        run({
+          id: 'r-sender',
+          status: 'completed',
+          scope: 'sender',
+          senderAddress: 'news@example.com',
+          messagesCovered: 5,
+        }),
+        run({ id: 'r-empty', status: 'completed', messagesCovered: 0 }),
+        run({ id: 'r-failed', status: 'failed', messagesCovered: 3 }),
+        run({ id: 'r-cancelled', status: 'cancelled', messagesCovered: 3 }),
+        run({ id: 'r-compare', kind: 'compare', status: 'completed', messagesCovered: 3 }),
+      ],
+    );
+    const rows = [...el.querySelectorAll<HTMLElement>('[data-testid="finished-run"]')];
+    const link = (i: number) =>
+      rows[i].querySelector<HTMLAnchorElement>('[data-testid="run-review-suggestions"]');
+    expect(link(0)!.textContent).toContain('Review suggestions');
+    expect(link(0)!.getAttribute('href')).toBe('/review?status=pending');
+    expect(link(1)!.getAttribute('href')).toBe('/review?status=pending&sender=news@example.com');
+    for (const i of [2, 3, 4, 5]) expect(link(i)).toBeNull();
+  });
+
   it('the Failed chip asks for the failed-only filter; the empty list says so', async () => {
     const { fixture, q } = await render([], []);
     const changes: boolean[] = [];
