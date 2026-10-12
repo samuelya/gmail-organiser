@@ -15,6 +15,8 @@ public sealed class ActionPlannerTests
         ["Synthetic Action"] = "L2",
         ["Synthetic Delete"] = "L3",
         ["Types/Invoice"] = "L4",
+        ["Extra/One"] = "L5",
+        ["Extra/Two"] = "L6",
     };
 
     [Fact]
@@ -236,6 +238,72 @@ public sealed class ActionPlannerTests
     {
         ActionPlanner.AppliesDocumentType(type, Settings).ShouldBeFalse();
         Plan(Suggestion(type: type), Message("INBOX")).Add.ShouldBe(["L1"]);
+    }
+
+    [Fact]
+    public void Additional_labels_are_added_with_the_topic()
+    {
+        var suggestion = Suggestion(type: "Types/Invoice");
+        suggestion.ExtraLabels = ["Extra/One", "Extra/Two"];
+
+        var plan = Plan(suggestion, Message("INBOX", "L6"));
+
+        plan.Add.ShouldBe(["L1", "L4", "L5"]);
+        plan.Remove.ShouldBe(["INBOX"]);
+    }
+
+    [Theory]
+    [InlineData("synthetic action")]
+    [InlineData("Synthetic Delete")]
+    [InlineData("INBOX")]
+    public void An_additional_label_that_is_now_an_app_label_or_invalid_is_skipped_and_the_rest_still_apply(string extra)
+    {
+        ActionPlanner.AppliesExtraLabel(extra, Settings).ShouldBeFalse();
+        var suggestion = Suggestion();
+        suggestion.ExtraLabels = [extra, "Extra/One"];
+
+        Plan(suggestion, Message("INBOX")).Add.ShouldBe(["L1", "L5"]);
+    }
+
+    [Fact]
+    public void A_protected_stage0_suggestion_adds_no_additional_labels_either()
+    {
+        var suggestion = Suggestion(topic: "Synthetic Delete", toBeDeleted: true);
+        suggestion.Source = SuggestionSource.Stage0;
+        suggestion.ExtraLabels = ["Extra/One"];
+
+        var plan = Plan(suggestion, Message("INBOX", "STARRED"));
+
+        plan.Add.ShouldBeEmpty();
+        plan.Remove.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_replaced_label_the_plan_adds_as_an_additional_label_is_not_removed()
+    {
+        var suggestion = Suggestion(replace: ["L5", "Label_7"]);
+        suggestion.ExtraLabels = ["Extra/One"];
+        var removable = new HashSet<string>(StringComparer.Ordinal) { "L5", "Label_7" };
+
+        var plan = Plan(suggestion, Message("INBOX", "L5", "Label_7"), removable: removable);
+
+        plan.Add.ShouldBe(["L1"]);
+        plan.Remove.ShouldBe(["Label_7", "INBOX"]);
+    }
+
+    [Fact]
+    public void Messages_with_different_additional_labels_go_in_different_chunks()
+    {
+        var plain = Suggestion();
+        var one = Suggestion();
+        one.ExtraLabels = ["Extra/One"];
+        var both = Suggestion();
+        both.ExtraLabels = ["Extra/Two", "Extra/One"];
+        var plans = new[] { plain, one, both, one }.Select(s => Plan(s, Message("INBOX"))).ToList();
+
+        var chunks = LabelChunks.Group(plans, p => p.Add, p => p.Remove, 1000).ToList();
+
+        chunks.Select(c => (string.Join(",", c.Add), c.Items.Count)).ShouldBe([("L1", 1), ("L1,L5", 2), ("L1,L5,L6", 1)]);
     }
 
     private static ActionPlan Plan(

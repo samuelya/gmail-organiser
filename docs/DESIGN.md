@@ -112,7 +112,7 @@ Every fetched email has an **analysis status**:
 - Analysis calls go to the chosen provider (Ollama or the Claude API); token usage per run is recorded for both.
 
 **LLM input:** sender info, subject/snippet/cleaned body (truncated), current label tree, and similar past decisions from memory.
-**LLM output (JSON per email):** `topicLabel` (the sender organisation, e.g. `Finance/<Bank>`), `documentTypeLabel` (optional second label under the document-type parent), `isNewLabel`, `needsAction` (bool), `toBeDeleted` (bool), `unsubscribeSuggested`, `confidence`, `reason`, plus a sender-level `filterCriteria` suggestion.
+**LLM output (JSON per email):** `topicLabel` (the sender organisation, e.g. `Finance/<Bank>`), `documentTypeLabel` (optional second label under the document-type parent), `isNewLabel`, `needsAction` (bool), `toBeDeleted` (bool), `unsubscribeSuggested`, `confidence`, `reason`, plus a sender-level `filterCriteria` suggestion. Additional labels (up to 5) are added by the user in review, applied next to the topic label.
 
 ### 6.3 Review & apply
 - Review screen lists analysed emails grouped by sender; per item **Approve / Edit / Reject / Send to Claude**. Bulk-approve above a confidence threshold.
@@ -122,7 +122,7 @@ Every fetched email has an **analysis status**:
 **Outcome labels**
 | Suggestion | What the portal does |
 |---|---|
-| Normal mail | Topic label (+ document-type label when set) + archive (leaves inbox) |
+| Normal mail | Topic label (+ document-type label and additional labels when set, same `batchModify`, undone together) + archive (leaves inbox) |
 | Needs action (e.g. invoice to pay) | Topic label **+ `Action/ToDo`**, stays in inbox. When the user removes `Action/ToDo`, it is auto-archived (6.6) |
 | Deletable (ads, low value) | **`To-Be-Deleted`** label + archive. The portal never deletes on its own |
 
@@ -214,7 +214,7 @@ Email bodies are **not** stored; they are fetched when an email is analysed and 
 2. **Dashboard** – fetch progress (fetched / total, pause/resume), analysis progress (not analysed / analysed / applied), `Action/ToDo` and `To-Be-Deleted` counts, running jobs, "Inbox health" card.
 3. **Senders** – searchable list with per-sender counts and progress; "Fetch all from sender", "Analyse N from sender".
 4. **Analyse** – start a run: count (10/20/custom) + scope (Inbox / All / sender); run queue with cancel.
-5. **Review** – analysed emails grouped by sender: suggestion, confidence, reason, email preview; Approve / Edit / Reject / Send to Claude / Re-analyse; "Apply to rest of sender".
+5. **Review** – analysed emails grouped by sender: suggestion, confidence, reason, email preview; Approve / Edit / Reject / Send to Claude / Re-analyse; additional labels per card; "Apply to rest of sender" (carries the additional labels all the pattern's approvals share, editable).
    - **Sender policies** (`/policies`) – per sender / domain / list default outcome and rules, proposed by analysis, approved by the user.
 6. **Clean-up** – everything labelled `To-Be-Deleted`, grouped by sender; remove from list, Delete (→ Trash), Unsubscribe.
 7. **Gmail filters** (`/rules`) – existing filters with findings, proposed filters, label tree editor.

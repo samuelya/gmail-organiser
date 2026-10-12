@@ -9,8 +9,8 @@ namespace GmailOrganiser.Review;
 public sealed record ActionPlan(IReadOnlyList<string> Add, IReadOnlyList<string> Remove, string? Note);
 
 /// <summary>
-/// Turns an approved suggestion into label changes (DESIGN §6.3 outcome table): topic and document-type label, plus
-/// the action label and staying in the inbox when it needs action, plus the delete label when deletable; everything
+/// Turns an approved suggestion into label changes (DESIGN §6.3 outcome table): topic, document-type and additional
+/// labels, plus the action label and staying in the inbox when it needs action, plus the delete label when deletable; everything
 /// else leaves the inbox, unless it is to be kept there (a policy's keep).
 /// A protected message (§6.4) never gets the delete label, whichever way it was asked for. The replaced labels
 /// (labelled phase, or an applied outcome an accepted alternative replaces) are removed when the message carries them:
@@ -37,7 +37,8 @@ public static class ActionPlanner
         [MessageProtection.StarredLabel, MessageProtection.ImportantLabel, "UNREAD"], StringComparer.Ordinal);
 
     /// <param name="labelIds">Label path to Gmail label id (case-insensitive): the topic label, the document-type label
-    /// when <see cref="AppliesDocumentType"/> (otherwise it is skipped), the action label when the suggestion needs
+    /// when <see cref="AppliesDocumentType"/> (otherwise it is skipped), each additional label when
+    /// <see cref="AppliesExtraLabel"/> (likewise), the action label when the suggestion needs
     /// action and the delete label when it is deletable and not protected.</param>
     /// <param name="removable">Ids of the user labels Gmail has now (the action and delete label included: an accepted
     /// alternative replaces them); a replaced label not in it (deleted) is skipped. Null removes no replaced label.</param>
@@ -50,27 +51,19 @@ public static class ActionPlanner
         Allowlist allowlist,
         IReadOnlySet<string>? removable = null)
     {
-        var topicIsDelete = string.Equals(suggestion.TopicLabel, settings.DeleteLabelName, StringComparison.OrdinalIgnoreCase);
-        if (topicIsDelete && !suggestion.ToBeDeleted)
+        if (UnchangedNote(suggestion, message, settings, allowlist) is { } unchanged)
         {
-            return new ActionPlan([], [], NotDeletableNote);
+            return new ActionPlan([], [], unchanged);
         }
 
         var protectedReason = MessageProtection.Reason(message, allowlist, settings.Protection);
-        // An unedited Stage-0 delete card (or one still filed under the delete label) has nothing else to add: a
-        // protected message stays put. An edited card with a real topic follows the normal path below.
-        var stage0Delete = suggestion.Source == SuggestionSource.Stage0
-            && ((suggestion.ToBeDeleted && !suggestion.Edited) || topicIsDelete);
-        if (stage0Delete && protectedReason is not null)
-        {
-            return new ActionPlan([], [], $"protected: {protectedReason}");
-        }
-
         var add = new List<string> { labelIds[suggestion.TopicLabel] };
         if (suggestion.DocumentTypeLabel is { } type && AppliesDocumentType(type, settings))
         {
             add.Add(labelIds[type]);
         }
+
+        add.AddRange(suggestion.ExtraLabels.Where(l => AppliesExtraLabel(l, settings)).Select(l => labelIds[l]));
 
         if (suggestion.NeedsAction)
         {
@@ -109,6 +102,28 @@ public static class ActionPlanner
             note);
     }
 
+    /// <summary>Whether <see cref="Plan"/> can add labels to the message: false when it changes nothing.</summary>
+    public static bool AddsLabels(SuggestionRow suggestion, MessageRow message, AppSettings settings, Allowlist allowlist) =>
+        UnchangedNote(suggestion, message, settings, allowlist) is null;
+
+    /// <summary>Why the plan changes nothing, or null when it follows the outcome table.</summary>
+    private static string? UnchangedNote(SuggestionRow suggestion, MessageRow message, AppSettings settings, Allowlist allowlist)
+    {
+        var topicIsDelete = string.Equals(suggestion.TopicLabel, settings.DeleteLabelName, StringComparison.OrdinalIgnoreCase);
+        if (topicIsDelete && !suggestion.ToBeDeleted)
+        {
+            return NotDeletableNote;
+        }
+
+        // An unedited Stage-0 delete card (or one still filed under the delete label) has nothing else to add: a
+        // protected message stays put. An edited card with a real topic follows the normal path.
+        var stage0Delete = suggestion.Source == SuggestionSource.Stage0
+            && ((suggestion.ToBeDeleted && !suggestion.Edited) || topicIsDelete);
+        return stage0Delete && MessageProtection.Reason(message, allowlist, settings.Protection) is { } reason
+            ? $"protected: {reason}"
+            : null;
+    }
+
     /// <summary>
     /// Whether a stored document-type label is applied: a path Gmail accepts that is not the current action or delete
     /// label. It was approved under the parent of its time, and settings only keep those two apart from the current one.
@@ -117,4 +132,10 @@ public static class ActionPlanner
         LabelResolver.IsValid(type)
         && !string.Equals(type, settings.ActionLabelName.Trim(), StringComparison.OrdinalIgnoreCase)
         && !string.Equals(type, settings.DeleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a stored additional label is applied: as <see cref="AppliesDocumentType"/>, a path Gmail accepts that is
+    /// not the current action or delete label (settings may have changed since it was approved).
+    /// </summary>
+    public static bool AppliesExtraLabel(string label, AppSettings settings) => AppliesDocumentType(label, settings);
 }

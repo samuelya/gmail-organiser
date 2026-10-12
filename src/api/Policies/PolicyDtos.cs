@@ -196,7 +196,7 @@ public sealed record EditPolicyRuleRequest(
 
 /// <summary>Replaces the policy's fields and its whole rule list; rule positions are the array order.</summary>
 /// <param name="DocumentTypeLabel">Null or blank for none; otherwise under the configured document-type parent.</param>
-/// <param name="ExtraLabels">Additional labels next to the topic (#530); null keeps them, <c>[]</c> clears; none on a mixed sender's default.</param>
+/// <param name="ExtraLabels">Additional labels next to the topic (#530); null keeps them (a mixed default drops them), <c>[]</c> clears; none on a mixed sender's default.</param>
 public sealed record EditPolicyRequest(
     string? TopicLabel,
     string? DocumentTypeLabel,
