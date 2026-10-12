@@ -26,7 +26,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         + "`proposedNewLabel`; the person approves each new label one by one.";
 
     /// <summary>
-    /// Closes the memory section only when a hint above carries extras (#528): the model never hears of
+    /// Closes the memory section only when an approved hint above carries extras (#528): the model never hears of
     /// <c>extraLabels</c> otherwise, and the parser keeps only extras from those hints (<see cref="AllowedExtraLabels"/>).
     /// </summary>
     public const string ExtraLabelsInstruction =
@@ -102,7 +102,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             ["mailTypes"] = MailTypes.PromptList(),
             ["blockedLabels"] = RenderLabelSet(input.BlockedLabels ?? [], input.TaxonomyLocked),
             ["documentTypes"] = RenderDocumentTypes(input.DocumentTypeParent, input.LabelTree),
-            ["memory"] = RenderMemory(input.Memory) + RenderPolicies(input.Policies ?? []),
+            ["memory"] = RenderMemory(input.Memory, input.Policies ?? []),
             ["attachments"] = DefuseBodyTags(input.AttachmentsSection ?? string.Empty),
             ["emails"] = RenderEmails(input.Emails),
             ["actionLabel"] = OneLine(input.ActionLabel),
@@ -163,30 +163,40 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         (blocked.Count == 0 ? "" : $"\n\n{BlockedLabelsHeading} {string.Join(", ", blocked.Select(b => $"`{OneLine(b)}`"))}.")
         + (locked ? "\n\n" + TaxonomyLockedText : "");
 
-    private static string RenderMemory(IReadOnlyList<MemoryHint> memory)
+    /// <summary>
+    /// The hints, then <see cref="ExtraLabelsInstruction"/> when one shows extras (<see cref="ExtraLabelsOutput.Shown"/>,
+    /// each between backticks as allowed), then the policies after a blank line.
+    /// </summary>
+    private static string RenderMemory(IReadOnlyList<MemoryHint> memory, IReadOnlyList<SenderPolicyHint> policies)
     {
         if (memory.Count == 0)
         {
-            return MemoryHeading + " none";
+            return MemoryHeading + " none" + RenderPolicies(policies);
         }
 
-        return MemoryHeading + "\n" + string.Join('\n', memory.Select(m => string.Create(CultureInfo.InvariantCulture,
+        var extras = memory.Select(m => ExtraLabelsOutput.Shown(m).Select(l => $"`{ExtraLabelsOutput.ShownForm(l)}`").ToList()).ToList();
+        return MemoryHeading + "\n" + string.Join('\n', memory.Select((m, i) => string.Create(CultureInfo.InvariantCulture,
             $"- sender: {OneLine(m.SenderAddress)} | subject: {OneLine(m.SubjectTemplate ?? "-")} | topicLabel: {OneLine(m.TopicLabel)}"
             + $" | type: {(m.DocumentTypeDecided ? OneLine(m.DocumentTypeLabel ?? "-") : "?")} | mailType: {MailTypeName(m.MailType)}"
             + $" | needsAction: {YesNo(m.NeedsAction)} | toBeDeleted: {YesNo(m.ToBeDeleted)} | outcome: {OneLine(m.Outcome)}"
             + $" | similarity: {m.Similarity:0.00}")
-            + (m.ExtraLabels.Count == 0 ? "" : $" | extraLabels: {string.Join(", ", m.ExtraLabels.Select(OneLine))}")))
-            + (memory.Any(m => m.ExtraLabels.Count > 0) ? "\n\n" + ExtraLabelsInstruction : "");
+            + (extras[i].Count == 0 ? "" : $" | extraLabels: {string.Join(", ", extras[i])}")))
+            + (extras.Any(e => e.Count > 0) ? "\n\n" + ExtraLabelsInstruction + (policies.Count == 0 ? "" : "\n") : "")
+            + RenderPolicies(policies);
     }
 
     /// <summary>
-    /// The extras the model may answer for a prompt showing <paramref name="memory"/>: the union of the hints' extras
-    /// (case-insensitive, first spelling); empty when no hint has any, or the template has no <c>{{memory}}</c> to show them.
+    /// The extras the model may answer for <paramref name="input"/>'s prompt, from the same hints <see cref="Build"/>
+    /// renders: the approved hints' extras (<see cref="ExtraLabelsOutput.Allowed"/>); empty when none has any, or the
+    /// template has no <c>{{memory}}</c> to show them.
     /// </summary>
-    public IReadOnlyCollection<string> AllowedExtraLabels(IReadOnlyList<MemoryHint> memory) =>
-        !template.Text.Contains(PromptTemplate.MemoryPlaceholder, StringComparison.Ordinal)
-            ? []
-            : [.. memory.SelectMany(m => m.ExtraLabels).Select(l => l.Trim()).Where(l => l.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)];
+    public IReadOnlyDictionary<string, string> AllowedExtraLabels(PromptInput input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        return ExtraLabelsOutput.Allowed(template.Text.Contains(PromptTemplate.MemoryPlaceholder, StringComparison.Ordinal)
+            ? input.Memory.SelectMany(ExtraLabelsOutput.Shown)
+            : []);
+    }
 
     /// <summary>
     /// One hint line per approved policy of the emails' senders (#360), after the memory: covered mail never reaches the

@@ -288,10 +288,14 @@ public sealed class AnalysisPromptBuilderTests
     }
 
     [Fact]
-    public void Hint_extras_render_after_the_similarity_and_the_instruction_closes_the_memory()
+    public void Approved_hint_extras_render_quoted_after_the_similarity_and_the_instruction_closes_the_memory()
     {
         var plain = new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5);
-        var memory = new[] { plain, plain with { SenderAddress = "bills@example.com", ExtraLabels = ["Extra/One", "Extra\nTwo"] } };
+        var memory = new[]
+        {
+            plain with { ExtraLabels = ["Extra/Rejected"], Outcome = "rejected" },
+            plain with { SenderAddress = "bills@example.com", ExtraLabels = ["Extra/One", "Extra\nTwo", " ", "Extra, Three"] },
+        };
         var builder = new AnalysisPromptBuilder(PromptTemplate.BuiltIn);
 
         var messages = builder.Build(Input([Email(1)], memory: memory));
@@ -299,34 +303,56 @@ public sealed class AnalysisPromptBuilderTests
         messages[0].Text.ShouldBe(builder.Build(Input([Email(1)], memory: [plain]))[0].Text);
         messages[0].Text.ShouldNotContain("extraLabels");
         messages[1].Text.ShouldContain("- sender: news@example.com | subject: - | topicLabel: Topic/News | type: ? | mailType: -"
-            + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.50\n"
+            + " | needsAction: no | toBeDeleted: no | outcome: rejected | similarity: 0.50\n"
             + "- sender: bills@example.com | subject: - | topicLabel: Topic/News | type: ? | mailType: -"
-            + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.50 | extraLabels: Extra/One, Extra Two\n\n"
+            + " | needsAction: no | toBeDeleted: no | outcome: approved | similarity: 0.50 | extraLabels: `Extra/One`, `Extra Two`, `Extra, Three`\n\n"
             + AnalysisPromptBuilder.ExtraLabelsInstruction + "\n\nEmails to classify (1):");
     }
 
     [Fact]
-    public void Without_hint_extras_the_model_is_never_told_about_them()
+    public void With_policies_the_instruction_ends_with_a_blank_line_before_them()
     {
-        var memory = new[] { new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5) };
-        var builder = new AnalysisPromptBuilder(PromptTemplate.BuiltIn);
+        var hint = new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5) { ExtraLabels = ["Extra/One"] };
+        var policy = new SenderPolicyHint("sender", "news@example.com", false, "Topic/News", null, "label");
 
-        var text = string.Join('\n', builder.Build(Input([Email(1)], memory: memory)).Select(m => m.Text));
+        var user = new AnalysisPromptBuilder(PromptTemplate.BuiltIn).Build(Input([Email(1)], memory: [hint]) with { Policies = [policy] })[1].Text;
 
-        text.ShouldNotContain("extraLabels");
-        builder.AllowedExtraLabels(memory).ShouldBeEmpty();
-        builder.AllowedExtraLabels([]).ShouldBeEmpty();
+        user.ShouldContain("similarity: 0.50 | extraLabels: `Extra/One`\n\n" + AnalysisPromptBuilder.ExtraLabelsInstruction + "\n\n"
+            + AnalysisPromptBuilder.PolicyHeading + "\n- sender: news@example.com | topicLabel: Topic/News | mailType: - | action: label\n\n"
+            + "Emails to classify (1):");
     }
 
     [Fact]
-    public void Allowed_extras_are_the_union_of_the_hints_and_empty_for_a_template_without_memory()
+    public void Without_approved_hint_extras_the_model_is_never_told_about_them()
+    {
+        var plain = new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5);
+        var builder = new AnalysisPromptBuilder(PromptTemplate.BuiltIn);
+
+        foreach (var memory in new MemoryHint[][] { [], [plain], [plain with { Outcome = "rejected", ExtraLabels = ["Extra/A"] }], [plain with { ExtraLabels = [" "] }] })
+        {
+            var input = Input([Email(1)], memory: memory);
+            string.Join('\n', builder.Build(input).Select(m => m.Text)).ShouldNotContain("extraLabels");
+            builder.AllowedExtraLabels(input).ShouldBeEmpty();
+        }
+    }
+
+    [Fact]
+    public void Allowed_extras_map_the_shown_form_of_approved_hints_to_the_stored_spelling()
     {
         var hint = new MemoryHint("news@example.com", null, "Topic/News", false, false, "approved", 0.5);
-        IReadOnlyList<MemoryHint> memory = [hint with { ExtraLabels = ["Extra/A", "Extra/B"] }, hint with { ExtraLabels = ["extra/a", "Extra/C"] }, hint];
+        var input = Input([Email(1)], memory:
+        [
+            hint with { ExtraLabels = ["Extra/A", " Extra\nB "] }, hint with { ExtraLabels = ["extra/a", "Extra/C"] },
+            hint with { ExtraLabels = ["Extra/Rejected"], Outcome = "rejected" }, hint,
+        ]);
 
-        new AnalysisPromptBuilder(PromptTemplate.BuiltIn).AllowedExtraLabels(memory).ShouldBe(["Extra/A", "Extra/B", "Extra/C"]);
-        new AnalysisPromptBuilder(PromptTemplate.FromSettings("Past: {{memory}}\n{{emails}}")).AllowedExtraLabels(memory).Count.ShouldBe(3);
-        new AnalysisPromptBuilder(PromptTemplate.FromSettings("Rules only.\n{{emails}}")).AllowedExtraLabels(memory).ShouldBeEmpty();
+        var allowed = new AnalysisPromptBuilder(PromptTemplate.BuiltIn).AllowedExtraLabels(input);
+
+        allowed.Keys.ShouldBe(["Extra/A", "Extra B", "Extra/C"]);
+        allowed["EXTRA b"].ShouldBe("Extra\nB");
+        allowed["extra/a"].ShouldBe("Extra/A");
+        new AnalysisPromptBuilder(PromptTemplate.FromSettings("Past: {{memory}}\n{{emails}}")).AllowedExtraLabels(input).Count.ShouldBe(3);
+        new AnalysisPromptBuilder(PromptTemplate.FromSettings("Rules only.\n{{emails}}")).AllowedExtraLabels(input).ShouldBeEmpty();
     }
 
     [Fact]

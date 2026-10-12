@@ -10,7 +10,7 @@ public sealed class SuggestionOutputParserExtraLabelsTests
     private static readonly HashSet<string> Ids = ["m1"];
     private static readonly string[] Configured = ["Action/Test", "Delete/Test"];
 
-    private static SuggestionParseContext Context(params string[] allowed) => new(LabelTreeIndex.Empty, Configured, AllowedExtraLabels: allowed);
+    private static SuggestionParseContext Context(params string[] allowed) => new(LabelTreeIndex.Empty, Configured, AllowedExtraLabels: ExtraLabelsOutput.Allowed(allowed));
 
     private static string Item(string extras, string label = "Topic/Sub") =>
         $$"""{"suggestions":[{"id":"m1","topicLabel":"{{label}}","mailType":"receipt","needsAction":false,"toBeDeleted":false,"unsubscribeSuggested":false,"confidence":0.9,"reason":"Synthetic reason","documentTypeLabel":"Types/Invoice"{{extras}}}]}""";
@@ -41,6 +41,17 @@ public sealed class SuggestionOutputParserExtraLabelsTests
         result.Errors.ShouldBeEmpty();
         result.Valid.ShouldHaveSingleItem().ExtraLabels.ShouldBe(["Extra/A", "Extra/B"]);
         result.Dropped.ShouldHaveSingleItem().ShouldBe("Email 'm1': 2 'extraLabels' entries not among the similar past decisions' extras; dropped.");
+    }
+
+    [Fact]
+    public void Blank_entries_are_ignored_and_quoted_entries_match_as_shown()
+    {
+        var json = Item(""","extraLabels":[""," ","``","`extra/b`","Extra, C"]""");
+
+        var result = SuggestionOutputParser.Parse(json, Ids, documentTypeParent: Parent, context: Context(" Extra/B ", "Extra, C"));
+
+        result.Dropped.ShouldBeEmpty();
+        result.Valid.ShouldHaveSingleItem().ExtraLabels.ShouldBe(["Extra, C", "Extra/B"]);
     }
 
     [Fact]

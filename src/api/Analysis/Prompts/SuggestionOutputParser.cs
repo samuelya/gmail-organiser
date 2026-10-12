@@ -341,11 +341,15 @@ public static class SuggestionOutputParser
 
         if (skipped > 0)
         {
-            dropped.Add($"Email '{id}': {skipped} 'replaceLabels' entr{(skipped == 1 ? "y" : "ies")} not among its replaceable current labels; dropped.");
+            dropped.Add(DroppedNote(id, "replaceLabels", skipped, "not among its replaceable current labels"));
         }
 
         return labels.Count == 0 ? [] : labels;
     }
+
+    /// <summary>The note for <paramref name="count"/> entries of an array field dropped for <paramref name="why"/>.</summary>
+    internal static string DroppedNote(string id, string field, int count, string why) =>
+        $"Email '{id}': {count} '{field}' entr{(count == 1 ? "y" : "ies")} {why}; dropped.";
 
     /// <summary>
     /// The optional <c>documentTypeLabel</c> by <see cref="DocumentTypePath"/>: 1 to <see cref="DocumentTypePath.MaxDepth"/>
