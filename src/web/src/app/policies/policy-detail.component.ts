@@ -33,12 +33,10 @@ import {
   STALE_RULES_ERROR,
   approveSummary,
   ApprovePolicyResponse,
-  editRequest,
   label,
-  policyForm,
-  PolicyForm,
   SenderPolicyDetailDto,
 } from './policies.models';
+import { editRequest, policyForm, PolicyForm } from './policy-form.models';
 import { PoliciesService } from './policies.service';
 import { PolicyFormComponent } from './policy-form.component';
 import { PolicyRulesTable, RuleDecision } from './policy-rules-table.component';
@@ -111,7 +109,7 @@ export class PolicyDetail {
   readonly reapply = signal(false);
   readonly labels = signal<string[]>([]);
   readonly documentTypeParent = signal<string | null>(null);
-  private readonly labelDtos = toSignal(
+  readonly labelDtos = toSignal(
     inject(LabelsService)
       .labels()
       .pipe(catchError(() => of([]))),

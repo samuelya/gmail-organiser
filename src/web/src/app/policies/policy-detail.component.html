@@ -97,6 +97,7 @@
           <app-policy-form
             [form]="f"
             [labels]="labelNames()"
+            [labelDtos]="labelDtos()"
             [documentTypes]="documentTypes()"
             [documentTypeParent]="documentTypeParent()"
           />
@@ -104,6 +105,7 @@
             [form]="f"
             [saved]="d.rules"
             [labels]="labelNames()"
+            [labelDtos]="labelDtos()"
             [documentTypes]="documentTypes()"
             [decisionsDisabled]="dirty() || busy()"
             [readonly]="p.status === 'rejected'"

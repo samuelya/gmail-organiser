@@ -7,19 +7,22 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { switchMap } from 'rxjs';
+import { ExtraLabelsField } from '../review/extra-labels-field.component';
+import { LabelDto } from '../review/labels.models';
 import {
   controlError,
   label,
   MAIL_TYPES,
   matchingOptions,
   POLICY_ACTIONS,
-  PolicyForm,
 } from './policies.models';
+import { PolicyForm } from './policy-form.models';
 
 /** The policy's own fields: its default outcome and whether it is mixed. Rules are the rules table's. */
 @Component({
   selector: 'app-policy-form',
   imports: [
+    ExtraLabelsField,
     MatAutocompleteModule,
     MatFormFieldModule,
     MatInputModule,
@@ -72,6 +75,17 @@ import {
             <mat-hint>A label under {{ parent }}, or blank for none.</mat-hint>
           }
         </mat-form-field>
+      }
+
+      @if (!f.controls.isMixed.value) {
+        <app-extra-labels-field
+          class="md:col-span-2"
+          formControlName="extraLabels"
+          [labels]="labelDtos()"
+          [exclude]="[f.controls.topicLabel.value, f.controls.documentTypeLabel.value]"
+          [serverError]="serverError(f.controls.extraLabels)"
+          data-testid="policy-extra-labels"
+        />
       }
 
       <mat-form-field>
@@ -142,6 +156,8 @@ export class PolicyFormComponent {
   readonly form = input.required<PolicyForm>();
   /** Gmail label names for the autocomplete. */
   readonly labels = input<readonly string[]>([]);
+  /** Every Gmail label, for the additional-labels autocomplete; null while loading. */
+  readonly labelDtos = input<readonly LabelDto[] | null>(null);
   /** Document-type labels (full paths) under `documentTypeParent`. */
   readonly documentTypes = input<readonly string[]>([]);
   /** From settings; null hides the document-type field. */
@@ -156,6 +172,11 @@ export class PolicyFormComponent {
   error(control: AbstractControl): string | null {
     this.changes();
     return controlError(control);
+  }
+  /** The server's message for the control, if it still holds the refused value. */
+  serverError(control: AbstractControl): string | null {
+    this.changes();
+    return (control.errors?.['server'] as string | undefined) ?? null;
   }
   readonly options = matchingOptions;
 }

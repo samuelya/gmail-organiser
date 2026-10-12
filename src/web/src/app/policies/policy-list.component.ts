@@ -73,6 +73,11 @@ import { label, PAGE_SIZES, SenderPolicyDto } from './policies.models';
             @if (row.documentTypeLabel) {
               <div class="muted text-sm">{{ row.documentTypeLabel }}</div>
             }
+            @if (row.extraLabels?.length) {
+              <div class="muted text-sm" data-testid="policy-extra-labels">
+                + {{ row.extraLabels.join(', ') }}
+              </div>
+            }
           </td>
         </ng-container>
         <ng-container matColumnDef="mailType">

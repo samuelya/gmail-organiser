@@ -279,6 +279,55 @@ describe('PolicyDetail', () => {
     expect(q('rule-label-error')!.textContent).toContain('Required.');
   });
 
+  it('edits extra labels: hidden while mixed, shown on rules, cleared when switched to mixed', async () => {
+    const { q, all, stable } = await render();
+    expect(q('policy-extra-labels')).toBeNull();
+    api.get.mockReturnValue(
+      of({
+        ...detail({ isMixed: false, topicLabel: 'Shopping', extraLabels: ['Projects/Alpha'] }),
+        rules: [rule({ extraLabels: ['Tax', 'Home'] })],
+      }),
+    );
+    jobs.reconnects.set(1);
+    await stable();
+    expect(q('rule-outcome')!.textContent).toContain('Shopping/Receipts + Tax, Home · keep');
+    expect(q('policy-extra-labels')!.textContent).toContain('Projects/Alpha');
+
+    q('rule-toggle')!.click();
+    await stable();
+    const ruleChips = q('rule-extra-labels')!.querySelectorAll('[data-testid="extra-label-chip"]');
+    expect([...ruleChips].map((c) => c.textContent)).toEqual([
+      expect.stringContaining('Tax'),
+      expect.stringContaining('Home'),
+    ]);
+
+    q('policy-mixed')!.querySelector('button')!.click();
+    await stable();
+    expect(q('policy-extra-labels')).toBeNull();
+    api.edit.mockReturnValue(
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            status: 400,
+            error: { errors: { 'rules[0].extraLabels': ['Too many labels.'] } },
+          }),
+      ),
+    );
+    q('save')!.click();
+    await stable();
+    expect(api.edit).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({
+        isMixed: true,
+        extraLabels: [],
+        rules: [expect.objectContaining({ extraLabels: ['Tax', 'Home'] })],
+      }),
+    );
+    expect(all('extra-labels-error').map((e) => e.textContent)).toEqual([
+      expect.stringContaining('Too many labels.'),
+    ]);
+  });
+
   it('shows an error on a rule id at form level, keeps Save usable and offers a reload', async () => {
     const { q, all, stable } = await render();
     api.edit.mockReturnValue(
