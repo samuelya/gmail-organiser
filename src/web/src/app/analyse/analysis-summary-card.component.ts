@@ -113,8 +113,8 @@ import { AnalysisStatusChart } from './analysis-status-chart.component';
 export class AnalysisSummaryCard {
   private readonly store = inject(AnalysisSummaryStore);
 
-  readonly summary = this.store.summary.asReadonly();
-  readonly loadFailed = this.store.loadFailed.asReadonly();
+  readonly summary = this.store.summary;
+  readonly loadFailed = this.store.loadFailed;
   readonly savings = computed(() => {
     const s = this.summary();
     return s

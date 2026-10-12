@@ -9,7 +9,8 @@ import {
   signal,
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-import { ChartTable } from './chart.models';
+import { RouterLink } from '@angular/router';
+import { ChartLinkCell, ChartTable } from './chart.models';
 
 let nextId = 0;
 
@@ -21,7 +22,7 @@ let nextId = 0;
  */
 @Component({
   selector: 'app-chart-panel',
-  imports: [DecimalPipe, MatButtonModule, NgTemplateOutlet],
+  imports: [DecimalPipe, MatButtonModule, NgTemplateOutlet, RouterLink],
   template: `
     <section class="flex flex-col gap-2" [attr.aria-labelledby]="headingId">
       <div class="flex flex-wrap items-center gap-2">
@@ -60,7 +61,15 @@ let nextId = 0;
                 <tr>
                   @for (cell of row; track $index) {
                     <td [class.num]="isNumber(cell)">
-                      {{ isNumber(cell) ? (cell | number) : cell }}
+                      @if (isNumber(cell)) {
+                        {{ cell | number }}
+                      } @else if (isLink(cell)) {
+                        <a [routerLink]="cell.link" [queryParams]="cell.queryParams">{{
+                          cell.text
+                        }}</a>
+                      } @else {
+                        {{ cell }}
+                      }
                     </td>
                   }
                 </tr>
@@ -108,6 +117,9 @@ let nextId = 0;
     .chart-table td.num {
       text-align: end;
     }
+    .chart-table a {
+      color: var(--mat-sys-primary);
+    }
   `,
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -125,7 +137,11 @@ export class ChartPanel {
   readonly showTable = signal(false);
   readonly hasRows = computed(() => this.table().rows.length > 0);
 
-  isNumber(cell: string | number): cell is number {
+  isNumber(cell: string | number | ChartLinkCell): cell is number {
     return typeof cell === 'number';
+  }
+
+  isLink(cell: string | number | ChartLinkCell): cell is ChartLinkCell {
+    return typeof cell === 'object';
   }
 }

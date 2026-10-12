@@ -12,6 +12,8 @@ const TOKENS = [
   'on-surface-variant',
   'inverse-surface',
   'inverse-on-surface',
+  'tertiary-container',
+  'surface',
 ];
 
 /** Gives every token a distinct synthetic rgb() per scheme, keyed off the class ThemeService sets on <html>. */
@@ -77,6 +79,8 @@ describe('chart theme', () => {
       text: 'text',
       tooltipBackground: 'tip-bg',
       tooltipText: 'tip-fg',
+      tertiaryContainer: 'tc',
+      surface: 'surface',
       fontFamily: 'Synthetic Sans',
     };
 

@@ -1,9 +1,5 @@
-import { computed, DestroyRef, effect, inject, Injectable, signal, untracked } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { catchError, of, Subject, switchMap } from 'rxjs';
-import { JobsService } from '../core/jobs.service';
-import { fetchJobStatusKey } from '../dashboard/fetch.models';
-import { AnalysisSummaryDto, analysisJobsKey } from './analysis.models';
+import { inject, Injectable } from '@angular/core';
+import { mailboxCounts } from '../dashboard/mailbox-counts';
 import { AnalysisService } from './analysis.service';
 
 /**
@@ -13,37 +9,14 @@ import { AnalysisService } from './analysis.service';
 @Injectable()
 export class AnalysisSummaryStore {
   private readonly api = inject(AnalysisService);
-  private readonly jobs = inject(JobsService);
-  private readonly refresh = new Subject<void>();
+  private readonly counts = mailboxCounts(() => this.api.summary());
 
   /** The last summary that loaded; kept after a failed reload. */
-  readonly summary = signal<AnalysisSummaryDto | null>(null);
+  readonly summary = this.counts.value;
   /** The latest request failed. */
-  readonly loadFailed = signal(false);
-
-  /** Counts change when an analysis or fetch job appears or changes status, or after a reconnect. */
-  private readonly refreshKey = computed(
-    () =>
-      `${analysisJobsKey(this.jobs.jobs())}|${fetchJobStatusKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
-  );
-
-  constructor() {
-    this.refresh
-      .pipe(
-        switchMap(() => this.api.summary().pipe(catchError(() => of(null)))),
-        takeUntilDestroyed(inject(DestroyRef)),
-      )
-      .subscribe((summary) => {
-        if (summary) this.summary.set(summary);
-        this.loadFailed.set(!summary);
-      });
-    effect(() => {
-      this.refreshKey();
-      untracked(() => this.load());
-    });
-  }
+  readonly loadFailed = this.counts.loadFailed;
 
   load(): void {
-    this.refresh.next();
+    this.counts.load();
   }
 }

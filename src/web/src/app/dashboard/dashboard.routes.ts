@@ -1,8 +1,10 @@
 import { Routes } from '@angular/router';
 import {
+  ArcElement,
   BarController,
   BarElement,
   CategoryScale,
+  DoughnutController,
   Legend,
   LinearScale,
   LineController,
@@ -25,6 +27,8 @@ const routes: Routes = [
           LineController,
           LineElement,
           PointElement,
+          DoughnutController,
+          ArcElement,
           CategoryScale,
           LinearScale,
           Tooltip,
