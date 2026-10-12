@@ -9,7 +9,7 @@
     [matTooltip]="label()"
   >
     <!-- The button label carries the count; the icon and its badge stay out of the a11y tree. -->
-    <mat-icon aria-hidden="true" [matBadge]="jobs.length" matBadgeSize="small">{{
+    <mat-icon aria-hidden="true" [matBadge]="jobs.length">{{
       reconnecting() ? 'sync_problem' : 'sync'
     }}</mat-icon>
   </button>
