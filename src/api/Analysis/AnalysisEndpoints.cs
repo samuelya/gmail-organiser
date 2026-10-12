@@ -104,10 +104,12 @@ public static class AnalysisEndpoints
 
     /// <summary>
     /// Newest first; <c>active</c> filters queued/running (true) or finished (false) runs, <c>status</c>
-    /// (<c>queued | running | completed | failed | cancelled</c>) one status.
+    /// (<c>queued | running | completed | failed | cancelled</c>) one status, <c>kind</c>
+    /// (<c>analyse | compare</c>) one run kind.
     /// </summary>
     private static async Task<Results<Ok<IReadOnlyList<AnalysisRunDto>>, ValidationProblem>> ListAsync(
-        AnalysisRunService runs, CancellationToken ct, bool? active = null, string? status = null, int limit = DefaultListLimit)
+        AnalysisRunService runs, CancellationToken ct, bool? active = null, string? status = null, string? kind = null,
+        int limit = DefaultListLimit)
     {
         if (limit is < 1 or > AnalysisRunService.MaxListLimit)
         {
@@ -131,7 +133,21 @@ public static class AnalysisEndpoints
             parsed = match;
         }
 
-        return TypedResults.Ok(await runs.ListAsync(active, parsed, limit, ct));
+        AnalysisRunKind? parsedKind = null;
+        if (kind is not null)
+        {
+            if (!SnakeCaseEnumConverter<AnalysisRunKind>.TryFromDb(kind, out var match))
+            {
+                return TypedResults.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["kind"] = [$"Must be one of {SnakeCaseEnumConverter<AnalysisRunKind>.NamesList}."],
+                });
+            }
+
+            parsedKind = match;
+        }
+
+        return TypedResults.Ok(await runs.ListAsync(active, parsed, parsedKind, limit, ct));
     }
 
     private static async Task<Results<Ok<AnalysisRunDto>, NotFound>> GetAsync(Guid id, AnalysisRunService runs, CancellationToken ct) =>

@@ -193,7 +193,8 @@ public sealed partial class AnalysisRunService(
         await tx.CommitAsync(ct);
     }
 
-    public async Task<IReadOnlyList<AnalysisRunDto>> ListAsync(bool? active, AnalysisRunStatus? status, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<AnalysisRunDto>> ListAsync(
+        bool? active, AnalysisRunStatus? status, AnalysisRunKind? kind, int limit, CancellationToken ct)
     {
         await SyncEndedJobsAsync(ct);
         var query = db.AnalysisRuns.AsNoTracking();
@@ -207,6 +208,11 @@ public sealed partial class AnalysisRunService(
         if (status is { } s)
         {
             query = query.Where(r => r.Status == s);
+        }
+
+        if (kind is { } k)
+        {
+            query = query.Where(r => r.Kind == k);
         }
 
         var rows = await WithStalled(query)
