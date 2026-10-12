@@ -232,9 +232,9 @@ public sealed class AlternativeService(
 
     /// <summary>
     /// The user labels the suggestion's not-undone apply rows added that the message still carries and the new outcome
-    /// <paramref name="s"/> doesn't add (topic, applied document type, action and delete label, by name): the old
-    /// outcome's labels apply removes. A log row's added names are aligned with its sorted added ids; the id stands in
-    /// for a name the row doesn't have. Apply drops any it adds again.
+    /// <paramref name="s"/> doesn't add (topic, applied document type and additional labels, action and delete label, by
+    /// name): the old outcome's labels apply removes. A log row's added names are aligned with its sorted added ids; the
+    /// id stands in for a name the row doesn't have. Apply drops any it adds again.
     /// </summary>
     private static IEnumerable<(string Id, string Name)> OldOutcomeLabels(
         IEnumerable<ActionLogRow> rows, SuggestionRow s, MessageRow m, AppSettings settings)
@@ -245,6 +245,7 @@ public sealed class AlternativeService(
             kept.Add(type.Trim());
         }
 
+        kept.UnionWith(s.ExtraLabels.Where(l => ActionPlanner.AppliesExtraLabel(l, settings)).Select(l => l.Trim()));
         if (s.NeedsAction)
         {
             kept.Add(settings.ActionLabelName.Trim());

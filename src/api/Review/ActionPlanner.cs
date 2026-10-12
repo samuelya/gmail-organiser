@@ -9,8 +9,8 @@ namespace GmailOrganiser.Review;
 public sealed record ActionPlan(IReadOnlyList<string> Add, IReadOnlyList<string> Remove, string? Note);
 
 /// <summary>
-/// Turns an approved suggestion into label changes (DESIGN §6.3 outcome table): topic and document-type label, plus
-/// the action label and staying in the inbox when it needs action, plus the delete label when deletable; everything
+/// Turns an approved suggestion into label changes (DESIGN §6.3 outcome table): topic, document-type and additional
+/// labels, plus the action label and staying in the inbox when it needs action, plus the delete label when deletable; everything
 /// else leaves the inbox, unless it is to be kept there (a policy's keep).
 /// A protected message (§6.4) never gets the delete label, whichever way it was asked for. The replaced labels
 /// (labelled phase, or an applied outcome an accepted alternative replaces) are removed when the message carries them:
@@ -37,7 +37,8 @@ public static class ActionPlanner
         [MessageProtection.StarredLabel, MessageProtection.ImportantLabel, "UNREAD"], StringComparer.Ordinal);
 
     /// <param name="labelIds">Label path to Gmail label id (case-insensitive): the topic label, the document-type label
-    /// when <see cref="AppliesDocumentType"/> (otherwise it is skipped), the action label when the suggestion needs
+    /// when <see cref="AppliesDocumentType"/> (otherwise it is skipped), each additional label when
+    /// <see cref="AppliesExtraLabel"/> (likewise), the action label when the suggestion needs
     /// action and the delete label when it is deletable and not protected.</param>
     /// <param name="removable">Ids of the user labels Gmail has now (the action and delete label included: an accepted
     /// alternative replaces them); a replaced label not in it (deleted) is skipped. Null removes no replaced label.</param>
@@ -71,6 +72,8 @@ public static class ActionPlanner
         {
             add.Add(labelIds[type]);
         }
+
+        add.AddRange(suggestion.ExtraLabels.Where(l => AppliesExtraLabel(l, settings)).Select(l => labelIds[l]));
 
         if (suggestion.NeedsAction)
         {
@@ -117,4 +120,10 @@ public static class ActionPlanner
         LabelResolver.IsValid(type)
         && !string.Equals(type, settings.ActionLabelName.Trim(), StringComparison.OrdinalIgnoreCase)
         && !string.Equals(type, settings.DeleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether a stored additional label is applied: as <see cref="AppliesDocumentType"/>, a path Gmail accepts that is
+    /// not the current action or delete label (settings may have changed since it was approved).
+    /// </summary>
+    public static bool AppliesExtraLabel(string label, AppSettings settings) => AppliesDocumentType(label, settings);
 }
