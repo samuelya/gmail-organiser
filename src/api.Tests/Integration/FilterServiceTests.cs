@@ -329,6 +329,12 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
             ("n0", "Synthetic/News", false, false, SuggestionStatus.Approved),
             ("b0", "Synthetic/Bills", true, true, SuggestionStatus.Approved),
             ("b1", "Synthetic/Bills", true, true, SuggestionStatus.Approved));
+        await using (var db = postgres.CreateDbContext())
+        {
+            // Agreed extras (#531): the topic filter adds them, the delete-label filter doesn't.
+            await db.Suggestions.ExecuteUpdateAsync(u => u.SetProperty(s => s.ExtraLabels, new[] { "Synthetic/Extra" }), Ct);
+        }
+
         await SyncAsync();
 
         var page = (await host.CreateClient().GetFromJsonAsync<PagedDto<FilterProposalDto>>("/api/rules/filters/proposals", Ct))
@@ -341,11 +347,12 @@ public sealed class FilterServiceTests(ApiFactory factory, PostgresFixture postg
         (shop.MessageCount, shop.DisplayName, shop.Pattern.TopicLabel).ShouldBe((4, "Synthetic shop", "Synthetic/Offers"));
         shop.Suggested.Criteria.From.ShouldBe(Shop);
         shop.Suggested.Criteria.NegatedQuery.ShouldBeNull();
-        shop.Suggested.Action.ShouldBe(new FilterActionRequest(["Synthetic/Offers"], SkipInbox: true, MarkRead: false), new ActionComparer());
+        shop.Suggested.Action.ShouldBe(new FilterActionRequest(["Synthetic/Offers", "Synthetic/Extra"], SkipInbox: true, MarkRead: false), new ActionComparer());
+        shop.Note.ShouldBe("Also adds \"Synthetic/Extra\".");
         var billing = page.Items[1];
         billing.Suggested.Criteria.NegatedQuery.ShouldBe("has:attachment");
         billing.Suggested.Action.AddLabelNames.ShouldBe([DeleteLabel]);
-        billing.Suggested.Action.SkipInbox.ShouldBeTrue();
+        (billing.Suggested.Action.SkipInbox, billing.Note).ShouldBe((true, null));
     }
 
     [Fact]

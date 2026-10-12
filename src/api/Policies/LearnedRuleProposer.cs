@@ -114,6 +114,7 @@ public sealed class LearnedRuleProposer(AppDbContext db, ISettingsStore settings
             Match = match,
             TopicLabel = suggestion.TopicLabel,
             DocumentTypeLabel = suggestion.DocumentTypeLabel,
+            ExtraLabels = [.. suggestion.ExtraLabels],
             MailType = suggestion.MailType,
             Action = suggestion.ToBeDeleted ? PolicyAction.Delete : suggestion.NeedsAction ? PolicyAction.Keep : PolicyAction.Archive,
             Status = PolicyStatus.Proposed,
@@ -123,6 +124,11 @@ public sealed class LearnedRuleProposer(AppDbContext db, ISettingsStore settings
         }, allowlist.Reason(message.FromAddress) is not null, settings);
         if (rule is not null)
         {
+            // The check may drop or renormalise the document type: keep the extras canonical against what remains. A
+            // delete rule has none: additional labels never go with delete.
+            rule.ExtraLabels = rule.Action == PolicyAction.Delete
+                ? []
+                : ExtraLabelList.Clean(rule.ExtraLabels, rule.TopicLabel, rule.DocumentTypeLabel, ExtraLabelList.Reserved(settings));
             db.SenderPolicyRules.Add(rule);
         }
     }

@@ -18,7 +18,7 @@ namespace GmailOrganiser.Tests.Integration;
 /// chunk so every walk spans several checkpoints.
 /// </summary>
 [Collection(PostgresCollection.Name)]
-public sealed class PolicyApplyJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed partial class PolicyApplyJobTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
 {
     private const string ActionLabel = "Synthetic Action/Open";
     private const string DeleteLabel = "Synthetic Delete";

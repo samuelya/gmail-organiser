@@ -357,11 +357,11 @@ public sealed partial class FilterChecksTests
 
     private static FilterProposalDto DomainProposal() => Proposal("@example.com", null, "Synthetic/Shop");
 
-    private static FilterProposalDto Proposal(string? from, string? query, string label, bool skipInbox = false) => new(
-        from?.TrimStart('@') ?? "list", null, 1, null, new SenderPatternDto(label, false, false, 0, 1, 0, null),
+    private static FilterProposalDto Proposal(string? from, string? query, string label, bool skipInbox = false, string[]? extras = null) => new(
+        from?.TrimStart('@') ?? "list", null, 1, null, new SenderPatternDto(label, false, false, 0, 1, 0, null, extras),
         new FilterSuggestionDto(
             new FilterCriteriaDto(from, null, null, query, null, null, null, null, null),
-            new FilterActionRequest([label], skipInbox, false)),
+            new FilterActionRequest([label, .. extras ?? []], skipInbox, false)),
         "policy:1", FilterProposalSources.Policy, Guid.NewGuid());
 
     private static IReadOnlyList<FilterFindingDraft> Run(IEnumerable<FilterRow> rows) => FilterChecks.Run(rows, Labels, NotEvaluable, 365);

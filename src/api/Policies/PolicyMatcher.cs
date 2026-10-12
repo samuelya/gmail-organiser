@@ -6,7 +6,8 @@ namespace GmailOrganiser.Policies;
 
 /// <summary>
 /// A policy's outcome for one message. <see cref="Rule"/> is the matched sub-rule, null for the policy default;
-/// <see cref="Guarded"/> means the transactional guard turned a delete into an archive.
+/// <see cref="Guarded"/> means the transactional guard turned a delete into an archive; <see cref="ExtraLabels"/> are the
+/// rule's or the default's additional labels (#531).
 /// </summary>
 public sealed record PolicyMatch(
     SenderPolicyRuleRow? Rule,
@@ -15,7 +16,21 @@ public sealed record PolicyMatch(
     MailType? MailType,
     int? RetentionDays,
     PolicyAction Action,
-    bool Guarded);
+    bool Guarded,
+    IReadOnlyList<string>? ExtraLabels = null)
+{
+    /// <summary>Never null: a null (from the constructor or a <c>with</c>) is <c>[]</c>.</summary>
+    public IReadOnlyList<string> ExtraLabels { get; init => field = value ?? []; } = ExtraLabels ?? [];
+
+    /// <summary>Value equality, the additional labels compared as a list (<see cref="ExtraLabelList.SameList"/>).</summary>
+    public bool Equals(PolicyMatch? other) =>
+        other is not null && Rule == other.Rule && TopicLabel == other.TopicLabel && DocumentTypeLabel == other.DocumentTypeLabel
+        && MailType == other.MailType && RetentionDays == other.RetentionDays && Action == other.Action && Guarded == other.Guarded
+        && ExtraLabelList.SameList(ExtraLabels, other.ExtraLabels);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(Rule, TopicLabel, DocumentTypeLabel, MailType, RetentionDays, Action, Guarded, ExtraLabels.Count);
+}
 
 /// <summary>
 /// Decides what a sender policy does to one message, without the LLM (DESIGN §6.2). Pure: reads only the message, the
@@ -50,7 +65,7 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
 
         if (rule is not null)
         {
-            return new PolicyMatch(rule, rule.TopicLabel, rule.DocumentTypeLabel, rule.MailType, rule.RetentionDays, rule.Action, false);
+            return new PolicyMatch(rule, rule.TopicLabel, rule.DocumentTypeLabel, rule.MailType, rule.RetentionDays, rule.Action, false, rule.ExtraLabels);
         }
 
         return policy.IsMixed ? null : Default(policy);
@@ -82,7 +97,7 @@ public sealed class PolicyMatcher(TransactionalGuard guard)
         : 0;
 
     private static PolicyMatch Default(SenderPolicyRow policy) =>
-        new(null, policy.TopicLabel ?? "", policy.DocumentTypeLabel, policy.MailType, policy.RetentionDays, policy.Action, false);
+        new(null, policy.TopicLabel ?? "", policy.DocumentTypeLabel, policy.MailType, policy.RetentionDays, policy.Action, false, policy.ExtraLabels);
 
     private static bool Holds(RuleMatch match, MessageRow m, string? canonicalAddress)
     {

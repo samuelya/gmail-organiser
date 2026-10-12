@@ -61,6 +61,44 @@ public sealed partial class FilterChecksTests
         findings.Single(f => f.FilterIds[0] == "in").Fix.Create!.Criteria.Query.ShouldBe("-from:x@example.com -from:y@example.com");
     }
 
+    // #531: a policy that gained additional labels after its filter was created; the filter's negations aren't PlainCriteria.
+    [Fact]
+    public void The_policys_own_filter_without_its_additional_labels_is_a_conflict_whose_fix_is_the_proposal()
+    {
+        const string negation = "-has:attachment -invoice";
+        var proposal = Proposal("a@example.com", negation, "Synthetic/Shop", skipInbox: true, extras: ["Synthetic/News"]);
+        FilterRow[] rows =
+        [
+            Row("stale", new(From: "a@example.com", Query: negation), new(["Label_1"], ["INBOX"])),
+            Row("current", new(From: "a@example.com", Query: negation), new(["Label_1", "Label_2"], ["INBOX"])),
+            Row("starred", new(From: "a@example.com", Query: negation), new(["Label_1", "STARRED"], ["INBOX"])),
+        ];
+
+        var labels = Labels.Append(new("STARRED", "STARRED", GmailLabelType.System)).ToList();
+
+        var finding = PolicyFindings(FilterChecks.Run(rows, labels, NotEvaluable, 365, [proposal])).ShouldHaveSingleItem();
+
+        (finding.Kind, finding.FilterIds.Single(), finding.Fix.Kind, finding.Fix.PolicyId)
+            .ShouldBe((FilterFindingKind.PolicyConflict, "stale", FilterFixKind.Relabel, proposal.PolicyId));
+        finding.Description.ShouldContain("doesn't add Synthetic/News, which the policy adds now");
+        finding.Fix.Create!.Action.AddLabelIds.ShouldBe(["Label_1", "Label_2"]);
+        (finding.Fix.Create.Criteria.Query, finding.Fix.Create.Action.RemoveLabelIds.Single()).ShouldBe((negation, "INBOX"));
+    }
+
+    [Fact]
+    public void A_proposal_whose_additional_label_the_mailbox_lacks_still_takes_part_and_its_fix_names_the_label()
+    {
+        var proposal = Proposal("@example.com", null, "Synthetic/Shop", extras: ["Synthetic/Missing"]);
+        var labels = Labels.Append(new("TRASH", "TRASH", GmailLabelType.System)).ToList();
+        FilterRow[] rows = [Row("trash", new(From: "b@example.com"), new(["TRASH"], []))];
+
+        var finding = PolicyFindings(FilterChecks.Run(rows, labels, NotEvaluable, 365, [proposal])).ShouldHaveSingleItem();
+
+        finding.Kind.ShouldBe(FilterFindingKind.PolicyConflict);
+        finding.Description.ShouldContain("The fix doesn't add 'Synthetic/Missing' yet: the mailbox has no such label.");
+        finding.Fix.Create!.Action.AddLabelIds.ShouldBe(["Label_1"]);
+    }
+
     [Fact]
     public void A_relabel_names_the_filters_other_actions_the_policy_filter_drops()
     {

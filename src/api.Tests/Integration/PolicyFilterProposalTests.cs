@@ -118,6 +118,71 @@ public sealed class PolicyFilterProposalTests(ApiFactory factory, PostgresFixtur
     }
 
     [Fact]
+    public async Task Policy_and_rule_filters_add_their_extras_and_merge_only_with_the_same_labels()
+    {
+        string[] extras = ["Synthetic/Extra A", "Synthetic/Extra B"];
+        await using (var db = Postgres.CreateDbContext())
+        {
+            foreach (var address in new[] { "one@example.com", "two@example.com", "three@example.com", "mixed@example.com" })
+            {
+                db.Senders.Add(Sender(address, address));
+            }
+
+            var one = Policy(PolicyScope.Sender, "one@example.com", PolicyAction.Archive, null);
+            var two = Policy(PolicyScope.Sender, "two@example.com", PolicyAction.Archive, null);
+            (one.ExtraLabels, two.ExtraLabels) = (extras, extras);
+            var mixed = Policy(PolicyScope.Sender, "mixed@example.com", PolicyAction.Archive, null);
+            mixed.IsMixed = true;
+            mixed.Rules = [Rule(mixed.Id, 0, new RuleMatch { SubjectContains = "Daily deal" }, PolicyAction.Archive)];
+            mixed.Rules.First().ExtraLabels = ["Synthetic/Extra A"];
+            db.SenderPolicies.AddRange(one, two, Policy(PolicyScope.Sender, "three@example.com", PolicyAction.Archive, null), mixed);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var items = (await ProposalsAsync("policy")).Items;
+
+        var merged = items.Single(p => p.Suggested.Criteria.From == "one@example.com OR two@example.com");
+        merged.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic", .. extras]);
+        merged.Pattern.ExtraLabels.ShouldBe(extras);
+        merged.Note.ShouldNotBeNull().ShouldContain("Also adds \"Synthetic/Extra A\", \"Synthetic/Extra B\"");
+        var plain = items.Single(p => p.Suggested.Criteria.From == "three@example.com");
+        plain.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic"]);
+        plain.Note.ShouldNotBeNull().ShouldNotContain("Also adds");
+        var rule = items.Single(p => p.RuleId != null);
+        rule.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic", "Synthetic/Extra A"]);
+        rule.Note.ShouldNotBeNull().ShouldContain("Also adds \"Synthetic/Extra A\"");
+    }
+
+    // Policy apply writes no additional labels next to the delete label (#554).
+    [Fact]
+    public async Task Delete_policy_and_delete_rule_filters_add_only_the_topic()
+    {
+        string[] extras = ["Synthetic/Extra A"];
+        await using (var db = Postgres.CreateDbContext())
+        {
+            db.Senders.AddRange(Sender("deals@example.com", "deals@example.com"), Sender("mixed@example.com", "mixed@example.com"));
+            var delete = Policy(PolicyScope.Sender, "deals@example.com", PolicyAction.Delete, null);
+            delete.ExtraLabels = extras;
+            var mixed = Policy(PolicyScope.Sender, "mixed@example.com", PolicyAction.Archive, null);
+            mixed.IsMixed = true;
+            mixed.Rules = [Rule(mixed.Id, 0, new RuleMatch { SubjectContains = "Daily deal" }, PolicyAction.Delete)];
+            mixed.Rules.First().ExtraLabels = extras;
+            db.SenderPolicies.AddRange(delete, mixed);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var items = (await ProposalsAsync("policy")).Items;
+
+        var policy = items.Single(p => p.Suggested.Criteria.From == "deals@example.com");
+        policy.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic"]);
+        policy.Pattern.ExtraLabels.ShouldBeEmpty();
+        policy.Note.ShouldNotBeNull().ShouldNotContain("Also adds");
+        var rule = items.Single(p => p.RuleId != null);
+        rule.Suggested.Action.AddLabelNames.ShouldBe(["Synthetic/Topic"]);
+        rule.Note.ShouldNotBeNull().ShouldNotContain("Also adds");
+    }
+
+    [Fact]
     public async Task An_exact_sender_archive_or_delete_policy_skips_the_inbox_without_the_delete_label_and_with_every_keyword_excluded()
     {
         await using (var db = Postgres.CreateDbContext())

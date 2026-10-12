@@ -15,7 +15,7 @@ namespace GmailOrganiser.Rules;
 /// Filters to propose from approved sender policies (#373, DESIGN §6.5): for each policy no active filter covers, one
 /// for a non-mixed policy's default, or one per approved rule of a mixed policy. Gmail search can't reproduce
 /// <see cref="PolicyMatcher"/> (whole words, no relay-decoded addresses, no first-match order) or
-/// <see cref="MessageProtection"/>, so a proposed filter only adds the policy's topic label, never the delete label, and
+/// <see cref="MessageProtection"/>, so a proposed filter only adds the topic and additional labels, never the delete label, and
 /// excludes the mail of the narrower policies the portal knows (<see cref="PolicyLookup"/>: sender before list before
 /// domain). It skips the inbox only where the portal's decision can't differ for any message it matches: an exact
 /// sender-address, non-mixed policy that archives or deletes, with transactional mail excluded, while
@@ -178,7 +178,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         [.. values.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).Select(v => $"-{op}:{v}")];
 
     /// <summary>
-    /// A non-mixed policy's filter: the topic label, and skip inbox only when nothing in the portal can decide otherwise
+    /// A non-mixed policy's filter: the topic and additional labels, and skip inbox only when nothing in the portal can decide otherwise
     /// for any matching message (<see cref="PolicyLookup.For"/> ranks a sender policy first, <see cref="PolicyMatcher"/>
     /// ignores a single-label policy's rules and <see cref="ActionPlanner"/> leaves the inbox for every archive or
     /// delete outcome except action mail); null when the exclusions don't fit the cap or the filter would do nothing.
@@ -207,8 +207,9 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         }
 
         List<string> query = skip ? [.. scope.Base, .. scope.Narrower, negation] : [.. scope.Base, .. scope.Narrower];
-        var action = new FilterActionRequest(topic is null ? [] : [topic], skip, false);
-        var pattern = new SenderPatternDto(topic, needsAction, false, 0, 1, 0, null);
+        var extras = Extras(policy.Action, policy.ExtraLabels);
+        var action = new FilterActionRequest(topic is null ? [] : FilterProposalQuery.Labels(topic, extras), skip, false);
+        var pattern = new SenderPatternDto(topic, needsAction, false, 0, 1, 0, null, topic is null ? null : extras);
         return Unit.Fitting(policy, null, scope, query, action, pattern, false, notes);
     }
 
@@ -239,11 +240,15 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
         }
 
         notes.Add(LabelOnlyNote(MixedNote, settings));
-        var action = new FilterActionRequest([topic], false, false);
-        var pattern = new SenderPatternDto(topic, false, false, 0, 1, 0, null);
+        var extras = Extras(rule.Action, rule.ExtraLabels);
+        var action = new FilterActionRequest(FilterProposalQuery.Labels(topic, extras), false, false);
+        var pattern = new SenderPatternDto(topic, false, false, 0, 1, 0, null, extras);
         return Unit.Fitting(
             policy, rule, scope, [.. scope.Base, .. scope.Narrower, .. terms.Query, .. earlier], action, pattern, terms.Wider || untestable.Count > 0, notes);
     }
+
+    /// <summary>The additional labels a filter adds: none for delete, as policy apply writes none next to the delete label.</summary>
+    private static string[] Extras(PolicyAction action, string[] extras) => action == PolicyAction.Delete ? [] : extras;
 
     /// <summary>The label a filter may add: the topic label, unless it is empty or the delete label.</summary>
     private static string? Topic(string? label, AppSettings settings) =>
@@ -398,7 +403,7 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     private static FilterProposalDto Dto(Unit first, List<Unit> units, string? from, string key)
     {
         var policies = units.Select(u => u.Policy.Id).Distinct().Count();
-        List<string> notes = [.. units.SelectMany(u => u.Notes).Distinct(StringComparer.Ordinal)];
+        List<string> notes = [.. units.SelectMany(u => u.Notes).Append(FilterProposalQuery.ExtrasNote(first.Action)).OfType<string>().Distinct()];
         if (policies > 1)
         {
             notes.Insert(0, $"Merges the filters of {policies} policies");
@@ -447,58 +452,4 @@ public sealed partial class PolicyFilterProposalQuery(AppDbContext db, ISettings
     /// <summary>A query token: a run of non-blank text in which a quoted phrase or a parenthesised group may hold blanks.</summary>
     [GeneratedRegex(@"(?:""[^""]*""|\([^)]*\)|\S)+", RegexOptions.CultureInvariant)]
     private static partial Regex QueryToken();
-
-    /// <param name="Wider">Whether the filter matches more than the rule: a dropped condition or a subject template.</param>
-    private sealed record Terms(List<string> Query, List<string> Notes, bool Wider);
-
-    private sealed record RawSender(string Address, string CanonicalAddress, string CanonicalDomain, int TotalCount);
-
-    /// <summary>
-    /// What the portal knows for the exclusions: the policies' senders, keys and every canonical domain seen; and the
-    /// stored List-Ids (loaded only with a list policy), as stored, for the list count.
-    /// </summary>
-    private sealed record Known(List<RawSender> Senders, string[] SenderKeys, List<string> ListKeys, List<string> Domains, List<string> ListIds)
-    {
-        /// <summary>The raw addresses of the sender policies whose key passes <paramref name="where"/>, or the key when none is stored.</summary>
-        public IEnumerable<string> PolicyAddresses(Func<string, bool> where) =>
-            SenderKeys.Where(where).SelectMany(k => Senders.Where(s => s.CanonicalAddress == k).Select(s => s.Address).DefaultIfEmpty(k))
-                .Select(a => a.ToLowerInvariant());
-    }
-
-    /// <param name="From">The <c>from</c> terms; empty for a list scope.</param>
-    /// <param name="List">The <c>list:</c> term of a list scope.</param>
-    /// <param name="Narrower">Exclusions of the mail a narrower policy decides, or a subdomain's.</param>
-    private sealed record Scope(List<string> From, string? List, List<string> Narrower, int MessageCount)
-    {
-        public List<string> Base => List is { } list ? [list] : [];
-    }
-
-    private sealed record Unit(
-        SenderPolicyRow Policy,
-        SenderPolicyRuleRow? Rule,
-        List<string> From,
-        string Query,
-        FilterActionRequest Action,
-        SenderPatternDto Pattern,
-        bool Partial,
-        List<string> Notes,
-        int MessageCount)
-    {
-        /// <summary>The unit, or null when its query doesn't fit the cap: a wider filter is never proposed instead.</summary>
-        public static Unit? Fitting(
-            SenderPolicyRow policy, SenderPolicyRuleRow? rule, Scope scope, List<string> query, FilterActionRequest action, SenderPatternDto pattern, bool partial, List<string> notes)
-        {
-            if (!FitsAlone(scope.From, query))
-            {
-                return null;
-            }
-
-            if (scope.Narrower.Count > 0)
-            {
-                notes.Add(scope.List is null ? "Excludes the mail of narrower policies and known subdomains" : "Excludes the mail of narrower policies");
-            }
-
-            return new Unit(policy, rule, scope.From, string.Join(' ', query), action, pattern, partial, notes, scope.MessageCount);
-        }
-    }
 }

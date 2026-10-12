@@ -106,6 +106,35 @@ public sealed class LearnedRuleTests(ApiFactory factory, PostgresFixture postgre
     }
 
     [Fact]
+    public async Task A_learned_rule_copies_the_suggestions_additional_labels()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a00").ExecuteUpdateAsync(
+                u => u.SetProperty(s => s.ExtraLabels, new[] { "Example/Extra A", "Example/Extra B" }).SetProperty(s => s.ToBeDeleted, false), Ct);
+        }
+
+        await DecideAsync("a00", "approve");
+
+        (await LearnedAsync()).ShouldHaveSingleItem().ExtraLabels.ShouldBe(["Example/Extra A", "Example/Extra B"]);
+    }
+
+    [Fact]
+    public async Task A_learned_delete_rule_has_no_additional_labels()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a00")
+                .ExecuteUpdateAsync(u => u.SetProperty(s => s.ExtraLabels, new[] { "Example/Extra A" }), Ct);
+        }
+
+        await DecideAsync("a00", "approve");
+
+        var rule = (await LearnedAsync()).ShouldHaveSingleItem();
+        (rule.Action, rule.ExtraLabels.Length).ShouldBe((PolicyAction.Delete, 0));
+    }
+
+    [Fact]
     public async Task A_bulk_approve_in_one_transaction_proposes_one_rule()
     {
         var response = await h.PostAsync("/api/review/bulk-approve", new BulkApproveRequest(SettingsValidation.MinBulkApproveThreshold));
