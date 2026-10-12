@@ -1,3 +1,6 @@
+import { HttpErrorResponse } from '@angular/common/http';
+import { plural } from '../clean-up/clean-up.models';
+import { ConfirmDialogData } from '../core/confirm-dialog';
 import { ActionBatchDto, FlagLabels, percent } from './review.models';
 
 /** The sender's most approved outcome; the outcome fields are null when nothing is approved yet. */
@@ -80,4 +83,26 @@ export function applyRestMessage(created: number, protectedAdjusted: number): st
     ? `; ${protectedAdjusted} protected ${protectedAdjusted === 1 ? 'message is' : 'messages are'} not marked for deletion`
     : '';
   return `Created ${created} ${created === 1 ? 'suggestion' : 'suggestions'}${adjusted}.`;
+}
+
+/** The confirm for applying every sender's `n` approved suggestions. */
+export function applyAllConfirm(n: number): ConfirmDialogData {
+  return {
+    title: 'Apply all approved suggestions?',
+    message:
+      `${plural(n, 'approved suggestion')} from every sender ${n === 1 ? 'is' : 'are'} applied ` +
+      `to Gmail. You can undo the batch from History.`,
+    confirm: 'Apply all',
+  };
+}
+
+/**
+ * Apply all answers 409 when no approved suggestion is applicable: what is still counted as approved
+ * has a label Gmail refuses. Null for any other error, which the error interceptor already showed.
+ */
+export function applyAllFailure(error: unknown): string | null {
+  return error instanceof HttpErrorResponse && error.status === 409
+    ? 'Nothing to apply: the approved suggestions left have labels Gmail refuses. ' +
+        'Edit their labels, then apply again.'
+    : null;
 }

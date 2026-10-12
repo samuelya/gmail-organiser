@@ -35,6 +35,7 @@ import {
   PENDING_AGAIN_NOTE,
   repends,
 } from './alternative.models';
+import { ApplyAllButton } from './apply-all-button.component';
 import { ApplyTracker } from './apply-tracker';
 import { CardReanalyse } from './card-reanalyse';
 import { bulkApproveData, openBulkApprove } from './bulk-approve-dialog.component';
@@ -75,6 +76,7 @@ import { SenderList } from './sender-list.component';
 @Component({
   selector: 'app-review-page',
   imports: [
+    ApplyAllButton,
     ClaudeSenderActions,
     GroupCard,
     MatButtonModule,
@@ -148,6 +150,8 @@ export class ReviewPage {
   });
   /** Suggestions with a re-analysis result waiting, from the summary; null until loaded. */
   readonly alternatives = signal<number | null>(null);
+  /** Approved suggestions across every sender, from the summary. */
+  readonly approvedTotal = signal(0);
   /** "Use new" re-pended an approved or applied suggestion. */
   readonly pendingAgain = signal(false);
   /** Ids the last group or bulk approve left pending. */
@@ -270,7 +274,11 @@ export class ReviewPage {
         switchMap(() => analysis.summary().pipe(orNull())),
         takeUntilDestroyed(this.destroyRef),
       )
-      .subscribe((summary) => summary && this.alternatives.set(summary.alternatives));
+      .subscribe((summary) => {
+        // A failed load hides "Apply all" rather than offering a stale count.
+        this.approvedTotal.set(summary?.approved ?? 0);
+        if (summary) this.alternatives.set(summary.alternatives);
+      });
 
     this.jobs.externalReviewChanges
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -420,29 +428,25 @@ export class ReviewPage {
     if (!address || !pattern || this.apply.jobId()) return;
     const parent = this.settings()?.documentTypeParent ?? null;
     const request = applyRestRequest(pattern, parent);
-    openConfirm(this.dialog, {
+    const confirmed = openConfirm(this.dialog, {
       title: 'Apply to rest of sender?',
       message: patternSummary(pattern, this.flagLabels()),
       confirm: 'Apply',
-    })
-      .pipe(
-        filter((confirmed) => confirmed),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe(() =>
-        this.run(this.review.applyRest(address, request), (r) => {
-          const jobId = r.batch?.jobId ?? null;
-          this.apply.track(jobId);
-          const created = applyRestMessage(r.created, r.protectedAdjusted);
-          // The apply job's completion snackbar replaces this one, so the offer moves there.
-          if (jobId) {
-            this.apply.offerFilterAfter(jobId, r.filterCandidate.from);
-            this.snackBar.open(created, 'Dismiss', { duration: 10_000 });
-          } else {
-            this.apply.offerFilter(created, r.filterCandidate.from);
-          }
-        }),
-      );
+    });
+    this.onYes(confirmed, () =>
+      this.run(this.review.applyRest(address, request), (r) => {
+        const jobId = r.batch?.jobId ?? null;
+        this.apply.track(jobId);
+        const created = applyRestMessage(r.created, r.protectedAdjusted);
+        // The apply job's completion snackbar replaces this one, so the offer moves there.
+        if (jobId) {
+          this.apply.offerFilterAfter(jobId, r.filterCandidate.from);
+          this.snackBar.open(created, 'Dismiss', { duration: 10_000 });
+        } else {
+          this.apply.offerFilter(created, r.filterCandidate.from);
+        }
+      }),
+    );
   }
 
   private reportGroup(verb: string, r: GroupDecisionResponse): void {
@@ -452,14 +456,14 @@ export class ReviewPage {
     this.snackBar.open(message, 'Dismiss', { duration: r.skipped.length ? 10_000 : 4000 });
   }
 
+  /** Runs `then` once a dialog answers yes: a confirm, or an edit or bulk approve that changed something. */
+  private onYes(answer: Observable<boolean>, then: () => void): void {
+    answer.pipe(filter(Boolean), takeUntilDestroyed(this.destroyRef)).subscribe(() => then());
+  }
+
   /** Re-fetches once a dialog says it changed something. */
   private refreshAfter(saved: Observable<boolean>): void {
-    saved
-      .pipe(
-        filter((s) => s),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe(() => this.refresh());
+    this.onYes(saved, () => this.refresh());
   }
 
   /** Runs one action at a time, then re-fetches whatever happened (an error may mean the state moved). */
@@ -479,7 +483,7 @@ export class ReviewPage {
       .subscribe({ next: (value) => next?.(value), error: () => undefined });
   }
 
-  private refresh(): void {
+  refresh(): void {
     this.version.update((v) => v + 1);
   }
 

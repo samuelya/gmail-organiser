@@ -141,6 +141,7 @@ describe('ReviewPage', () => {
     groups = [group()],
     alternatives = 0,
     url = '/',
+    approved = 0,
   ) {
     const jobs = new FakeJobs();
     const firstPage = [sender(), sender({ address: 'shop@example.com', displayName: null })];
@@ -178,7 +179,7 @@ describe('ReviewPage', () => {
       discardAlternatives: vi.fn(() => of({ accepted: 0, discarded: 2, skipped: 0 })),
     };
     const analysis = {
-      summary: vi.fn(() => of({ alternatives })),
+      summary: vi.fn(() => of({ alternatives, approved })),
       startCompareRun: vi.fn(() => of({ id: 'run-2' })),
     };
     const edit = { editGroup: vi.fn(() => of(true)), editMember: vi.fn(() => of(false)) };
@@ -741,17 +742,22 @@ describe('ReviewPage', () => {
   });
 
   it('filters by Re-analysed with the count from the summary', async () => {
-    const { api, el, q, settle } = await render(noPattern, 'off', [group()], 4);
+    const { api, el, q, settle } = await render(noPattern, 'off', [group()], 4, '/', 7);
     expect(q('filter-reanalysed')!.textContent).toContain('Re-analysed (4)');
+    expect(q('apply-all')!.textContent).toContain('Apply all approved (7)');
     el.querySelector<HTMLButtonElement>('[data-testid="filter-reanalysed"] button')!.click();
     await settle();
     expect(api.listSenders).toHaveBeenLastCalledWith('pending', '', 1, 25, true, []);
     expect(api.sender).toHaveBeenLastCalledWith('news@example.com', 'pending', 1, 20, true, []);
   });
 
-  it('hides the Re-analysed filter while nothing waits', async () => {
-    const { q } = await render();
+  it('hides the Re-analysed filter while nothing waits, and Apply all once a reload fails', async () => {
+    const { analysis, jobs, q, settle } = await render(noPattern, 'off', [group()], 0, '/', 3);
     expect(q('filter-reanalysed')).toBeNull();
+    analysis.summary.mockReturnValue(throwError(() => new HttpErrorResponse({ status: 500 })));
+    jobs.reconnects.set(1);
+    await settle();
+    expect(q('apply-all')).toBeNull();
   });
 
   it('Use new on an approved member notes it is pending again; Keep current on a card names the group and tab', async () => {

@@ -12,6 +12,12 @@
   >
     Bulk approve…
   </button>
+  <app-review-apply-all
+    actions
+    [count]="approvedTotal()"
+    [disabled]="busy()"
+    (changed)="refresh()"
+  />
 </app-page-header>
 
 @if (apply.jobId()) {
