@@ -3,12 +3,12 @@ import { Routes } from '@angular/router';
 const routes: Routes = [
   {
     path: '',
-    title: 'Policies',
+    title: 'Sender policies',
     loadComponent: () => import('./policies-page.component').then((m) => m.PoliciesPage),
   },
   {
     path: ':id',
-    title: 'Policy',
+    title: 'Sender policy',
     loadComponent: () => import('./policy-detail.component').then((m) => m.PolicyDetail),
   },
 ];

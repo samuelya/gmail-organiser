@@ -301,7 +301,7 @@ describe('FiltersTab', () => {
     const toggles = [
       ...document.querySelectorAll<HTMLElement>('[data-testid="proposals-source"] button'),
     ];
-    expect(toggles.map((b) => b.textContent!.trim())).toEqual(['All', 'Policies', 'Patterns']);
+    expect(toggles.map((b) => b.textContent!.trim())).toEqual(['All', 'Sender policies', 'Patterns']);
     toggles[2].click();
     await settle();
     expect(api.proposals).toHaveBeenLastCalledWith(1, 'pattern');

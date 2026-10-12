@@ -171,7 +171,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
                 [queryParams]="{ status: 'proposed' }"
                 data-testid="run-review-policies"
               >
-                Review policies
+                Review sender policies
               </a>
             }
             @if (run.messagesCovered > 0 && !isTopSenders(run)) {

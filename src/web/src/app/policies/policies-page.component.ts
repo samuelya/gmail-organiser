@@ -63,7 +63,7 @@ const TAB_LABELS: Readonly<Record<PolicyStatus, string>> = {
   ],
   template: `
     <app-page-header
-      title="Policies"
+      title="Sender policies"
       description="A policy decides all mail from one sender, domain or list. Approving it applies it to past mail (undo from History) and to new mail as it arrives."
     />
     <mat-card appearance="outlined">

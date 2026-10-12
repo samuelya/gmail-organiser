@@ -128,7 +128,7 @@ export type ProposalSource = 'policy' | 'pattern';
 export type ProposalSourceFilter = 'all' | ProposalSource;
 export const PROPOSAL_SOURCES: readonly { value: ProposalSourceFilter; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'policy', label: 'Policies' },
+  { value: 'policy', label: 'Sender policies' },
   { value: 'pattern', label: 'Patterns' },
 ];
 

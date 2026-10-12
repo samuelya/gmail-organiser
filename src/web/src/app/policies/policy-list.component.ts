@@ -28,7 +28,7 @@ import { label, PAGE_SIZES, SenderPolicyDto } from './policies.models';
         [dataSource]="page().items"
         [trackBy]="trackRow"
         class="w-full"
-        aria-label="Policies, most mail first"
+        aria-label="Sender policies, most mail first"
       >
         <ng-container matColumnDef="sender">
           <th mat-header-cell *matHeaderCellDef>Sender</th>
@@ -97,7 +97,7 @@ import { label, PAGE_SIZES, SenderPolicyDto } from './policies.models';
       [pageSize]="page().pageSize"
       [pageSizeOptions]="pageSizes"
       (page)="paged.emit($event)"
-      aria-label="Policies pages"
+      aria-label="Sender policies pages"
     />
   `,
   styles: `

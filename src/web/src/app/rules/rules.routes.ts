@@ -3,7 +3,7 @@ import { Routes } from '@angular/router';
 const routes: Routes = [
   {
     path: '',
-    title: 'Rules',
+    title: 'Gmail filters',
     loadComponent: () => import('./rules-page.component').then((m) => m.RulesPage),
   },
 ];

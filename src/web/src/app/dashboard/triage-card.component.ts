@@ -33,7 +33,7 @@ import { TriageService } from './triage.service';
     <mat-card appearance="outlined" role="region" aria-labelledby="dashboard-triage">
       <mat-card-content class="flex flex-col gap-4" data-testid="triage-card">
         <div class="flex flex-wrap items-center gap-2">
-          <h2 id="dashboard-triage" class="card-title flex-1">Triage</h2>
+          <h2 id="dashboard-triage" class="card-title flex-1">Inbox health</h2>
           @if (metrics()?.current; as c) {
             <span class="muted text-sm" data-testid="triage-taken-at">
               As of {{ c.takenAt | date: 'medium' }}
