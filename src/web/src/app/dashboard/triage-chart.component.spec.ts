@@ -13,6 +13,8 @@ const palette: ChartPalette = {
   text: 'rgb(7, 0, 0)',
   tooltipBackground: 'rgb(8, 0, 0)',
   tooltipText: 'rgb(9, 0, 0)',
+  tertiaryContainer: 'rgb(10, 0, 0)',
+  surface: 'rgb(11, 0, 0)',
   fontFamily: 'Synthetic Sans',
 };
 

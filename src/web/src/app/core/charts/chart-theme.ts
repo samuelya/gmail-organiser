@@ -8,8 +8,12 @@ export interface ChartPalette {
   secondary: string;
   tertiary: string;
   error: string;
+  /** A neutral categorical tone, for a series that isn't primary, secondary or tertiary and isn't a failure. */
+  tertiaryContainer: string;
   outline: string;
   grid: string;
+  /** The card background, for gaps between doughnut slices. */
+  surface: string;
   text: string;
   tooltipBackground: string;
   tooltipText: string;
@@ -42,25 +46,40 @@ export function resolveColours(doc: Document, tokens: readonly string[]): string
 }
 
 export function chartPalette(doc: Document): ChartPalette {
-  const [primary, secondary, tertiary, error, outline, grid, text, tooltipBackground, tooltipText] =
-    resolveColours(doc, [
-      'primary',
-      'secondary',
-      'tertiary',
-      'error',
-      'outline',
-      'outline-variant',
-      'on-surface-variant',
-      'inverse-surface',
-      'inverse-on-surface',
-    ]);
+  const [
+    primary,
+    secondary,
+    tertiary,
+    error,
+    tertiaryContainer,
+    outline,
+    grid,
+    surface,
+    text,
+    tooltipBackground,
+    tooltipText,
+  ] = resolveColours(doc, [
+    'primary',
+    'secondary',
+    'tertiary',
+    'error',
+    'tertiary-container',
+    'outline',
+    'outline-variant',
+    'surface',
+    'on-surface-variant',
+    'inverse-surface',
+    'inverse-on-surface',
+  ]);
   return {
     primary,
     secondary,
     tertiary,
     error,
+    tertiaryContainer,
     outline,
     grid,
+    surface,
     text,
     tooltipBackground,
     tooltipText,

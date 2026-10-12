@@ -12,7 +12,7 @@ export interface CategoryCountsDto {
   forums: number;
 }
 
-/** Suggestions with one snake_case mail type. */
+/** Suggestions (pending, approved or applied; not rejected) with one snake_case mail type. */
 export interface MailTypeCountDto {
   mailType: string;
   count: number;
@@ -67,12 +67,10 @@ export function categorySlices(categories: CategoryCountsDto): CategorySlice[] {
 export function mailTypeBars(dto: MailboxBreakdownDto): MailTypeBar[] {
   const bars = dto.mailTypes
     .filter((t) => t.count > 0)
-    .map((t) => ({
-      label: mailTypeLabel(t.mailType),
-      count: t.count,
-      classified: true,
-      link: reviewLink(t),
-    }))
+    .map((t) => {
+      const label = mailTypeLabel(t.mailType);
+      return { label, count: t.count, classified: true, link: reviewLink(t.mailType, label) };
+    })
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   if (dto.unclassified > 0) {
     bars.push({
@@ -85,12 +83,13 @@ export function mailTypeBars(dto: MailboxBreakdownDto): MailTypeBar[] {
   return bars;
 }
 
-/** The pending suggestions of one type on the review page. */
-function reviewLink(t: MailTypeCountDto): ChartLinkCell | null {
-  const param = mailTypesParam([t.mailType]);
-  if (!param) return null;
-  const text = mailTypeLabel(t.mailType);
-  return { text, link: '/review', queryParams: { [MAIL_TYPE_PARAM]: param, status: 'pending' } };
+/**
+ * The review page filtered to one type. No tab is named: the bar counts every status but rejected, which no single
+ * tab shows, so the page opens on its default tab and the filter stays on when the user switches tabs.
+ */
+function reviewLink(mailType: string, text: string): ChartLinkCell | null {
+  const param = mailTypesParam([mailType]);
+  return param ? { text, link: '/review', queryParams: { [MAIL_TYPE_PARAM]: param } } : null;
 }
 
 /** The largest tab and its share: the doughnut's text alternative. */
@@ -115,7 +114,7 @@ export function mailTypeSummary(bars: readonly MailTypeBar[], locale: string): s
       : 'No suggestions yet.';
   }
   const classified = typed.reduce((sum, b) => sum + b.count, 0);
-  return `${capitalise(top.label)} is the most common mail type (${count(top.count)} of ${count(classified)} classified).`;
+  return `${capitalise(top.label)} is the most common mail type (${count(top.count)} of ${count(classified)} classified, not counting rejected).`;
 }
 
 export function categoryTable(slices: readonly CategorySlice[]): ChartTable {
@@ -128,7 +127,7 @@ export function categoryTable(slices: readonly CategorySlice[]): ChartTable {
 /** The bars as rows; a clickable bar's label links where the bar goes. */
 export function mailTypeTable(bars: readonly MailTypeBar[]): ChartTable {
   return {
-    columns: ['Mail type', 'Suggestions'],
+    columns: ['Mail type', 'Suggestions (not rejected)'],
     rows: bars.map((b) => [b.link ?? b.label, b.count]),
   };
 }

@@ -59,7 +59,7 @@ describe('breakdown models', () => {
     expect(mailTypeBars(breakdown({ mailTypes: [], unclassified: 0 }))).toEqual([]);
   });
 
-  it('links each typed bar to its pending suggestions; Unclassified and unknown types go nowhere', () => {
+  it('links each typed bar to the review page filtered to its type; Unclassified and unknown types go nowhere', () => {
     const bars = mailTypeBars(
       breakdown({
         mailTypes: [
@@ -72,7 +72,7 @@ describe('breakdown models', () => {
     expect(bars[0].link).toEqual({
       text: 'newsletter',
       link: '/review',
-      queryParams: { mailType: 'newsletter', status: 'pending' },
+      queryParams: { mailType: 'newsletter' },
     });
     expect(bars[1].link).toBeNull();
     expect(bars[2].link).toBeNull();
@@ -81,12 +81,12 @@ describe('breakdown models', () => {
   it('puts the same links in the table', () => {
     const table = mailTypeTable(mailTypeBars(breakdown()));
 
-    expect(table.columns).toEqual(['Mail type', 'Suggestions']);
+    expect(table.columns).toEqual(['Mail type', 'Suggestions (not rejected)']);
     expect(table.rows[0]).toEqual([
       {
         text: 'newsletter',
         link: '/review',
-        queryParams: { mailType: 'newsletter', status: 'pending' },
+        queryParams: { mailType: 'newsletter' },
       },
       120,
     ]);
@@ -95,14 +95,16 @@ describe('breakdown models', () => {
 
   it('names the commonest type out of the classified suggestions', () => {
     expect(mailTypeSummary(mailTypeBars(breakdown()), 'en-US')).toBe(
-      'Newsletter is the most common mail type (120 of 200 classified).',
+      'Newsletter is the most common mail type (120 of 200 classified, not counting rejected).',
     );
     expect(
       mailTypeSummary(
         mailTypeBars(breakdown({ mailTypes: [{ mailType: 'newsletter', count: 1200 }] })),
         'en-US',
       ),
-    ).toBe('Newsletter is the most common mail type (1,200 of 1,200 classified).');
+    ).toBe(
+      'Newsletter is the most common mail type (1,200 of 1,200 classified, not counting rejected).',
+    );
     expect(mailTypeSummary(mailTypeBars(breakdown({ mailTypes: [] })), 'en-US')).toBe(
       'None of the 7 suggestions has a mail type yet.',
     );

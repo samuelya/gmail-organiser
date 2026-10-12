@@ -1,16 +1,5 @@
 import { formatNumber } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  DestroyRef,
-  effect,
-  inject,
-  LOCALE_ID,
-  signal,
-  untracked,
-} from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ChangeDetectionStrategy, Component, computed, inject, LOCALE_ID } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
@@ -18,11 +7,8 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { Router } from '@angular/router';
 import type { ActiveElement, ChartData, ChartOptions } from 'chart.js';
 import { BaseChartDirective } from 'ng2-charts';
-import { catchError, of, Subject, switchMap } from 'rxjs';
-import { analysisJobsKey } from '../analyse/analysis.models';
 import { ChartPanel } from '../core/charts/chart-panel.component';
 import { ChartTheme, chartAxis } from '../core/charts/chart-theme';
-import { JobsService } from '../core/jobs.service';
 import {
   categorySlices,
   categorySummary,
@@ -33,7 +19,7 @@ import {
   mailTypeTable,
 } from './breakdown.models';
 import { BreakdownService } from './breakdown.service';
-import { fetchJobStatusKey } from './fetch.models';
+import { mailboxCounts } from './mailbox-counts';
 
 /** Doughnut height in pixels; the width follows the container. */
 export const DOUGHNUT_HEIGHT = 220;
@@ -120,14 +106,13 @@ const BAR_AXIS_HEIGHT = 40;
 })
 export class MailboxMixCard {
   private readonly api = inject(BreakdownService);
-  private readonly jobs = inject(JobsService);
   private readonly router = inject(Router);
   private readonly theme = inject(ChartTheme);
   private readonly locale = inject(LOCALE_ID);
-  private readonly refresh = new Subject<void>();
+  private readonly counts = mailboxCounts<MailboxBreakdownDto>(() => this.api.get());
 
-  readonly breakdown = signal<MailboxBreakdownDto | null>(null);
-  readonly loadFailed = signal(false);
+  readonly breakdown = this.counts.value;
+  readonly loadFailed = this.counts.loadFailed;
   readonly doughnutHeight = DOUGHNUT_HEIGHT;
 
   readonly slices = computed(() => {
@@ -154,8 +139,8 @@ export class MailboxMixCard {
         {
           label: 'Messages',
           data: slices.map((s) => s.count),
-          backgroundColor: [p.primary, p.secondary, p.tertiary, p.error, p.outline],
-          borderColor: p.tooltipText,
+          backgroundColor: [p.primary, p.secondary, p.tertiary, p.tertiaryContainer, p.outline],
+          borderColor: p.surface,
           borderWidth: 2,
         },
       ],
@@ -224,33 +209,11 @@ export class MailboxMixCard {
     };
   });
 
-  constructor() {
-    this.refresh
-      .pipe(
-        switchMap(() => this.api.get().pipe(catchError(() => of(null)))),
-        takeUntilDestroyed(inject(DestroyRef)),
-      )
-      .subscribe((breakdown) => {
-        if (breakdown) this.breakdown.set(breakdown);
-        this.loadFailed.set(!breakdown);
-      });
-    // Counts change when an analysis or fetch job appears or changes status, or after a reconnect.
-    const refreshKey = computed(
-      () =>
-        `${analysisJobsKey(this.jobs.jobs())}|${fetchJobStatusKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
-    );
-    effect(() => {
-      refreshKey();
-      untracked(() => this.load());
-    });
-  }
-
   load(): void {
-    this.loadFailed.set(false);
-    this.refresh.next();
+    this.counts.load();
   }
 
-  /** Opens the review page on the clicked bar's pending suggestions; "Unclassified" goes nowhere. */
+  /** Opens the review page filtered to the clicked bar's type; "Unclassified" goes nowhere. */
   openBar(elements: readonly ActiveElement[]): void {
     const link = this.barAt(elements)?.link;
     if (link) void this.router.navigate([link.link], { queryParams: link.queryParams });

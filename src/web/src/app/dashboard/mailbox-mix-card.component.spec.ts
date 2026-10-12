@@ -5,6 +5,7 @@ import { provideRouter, Router } from '@angular/router';
 import type { ActiveElement } from 'chart.js';
 import { of, Subject, throwError } from 'rxjs';
 import { ANALYSIS_RUN_JOB } from '../analyse/analysis.models';
+import { ChartTheme } from '../core/charts/chart-theme';
 import { JobDto } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { MailboxBreakdownDto } from './breakdown.models';
@@ -71,7 +72,22 @@ describe('MailboxMixCard', () => {
     );
     expect(labels).toEqual([
       'Most of your mail is in Promotions (48%).',
-      'Newsletter is the most common mail type (120 of 120 classified).',
+      'Newsletter is the most common mail type (120 of 120 classified, not counting rejected).',
+    ]);
+  });
+
+  it('paints slices in neutral categorical tones with surface-coloured gaps', async () => {
+    const { fixture } = await render(() => of(breakdown));
+    const p = TestBed.inject(ChartTheme).palette();
+
+    const [slices] = fixture.componentInstance.categoryData().datasets;
+    expect(slices.borderColor).toBe(p.surface);
+    expect(slices.backgroundColor).toEqual([
+      p.primary,
+      p.secondary,
+      p.tertiary,
+      p.tertiaryContainer,
+      p.outline,
     ]);
   });
 
@@ -108,7 +124,7 @@ describe('MailboxMixCard', () => {
     expect(api.get).toHaveBeenCalledTimes(2);
   });
 
-  it('opens the pending suggestions of a clicked bar; Unclassified goes nowhere', async () => {
+  it('opens the review page filtered to a clicked bar type; Unclassified goes nowhere', async () => {
     const { fixture } = await render(() => of(breakdown));
     const router = TestBed.inject(Router);
     const navigate = vi.spyOn(router, 'navigate').mockResolvedValue(true);
@@ -117,7 +133,7 @@ describe('MailboxMixCard', () => {
 
     card.openBar(at(0));
     expect(navigate).toHaveBeenCalledWith(['/review'], {
-      queryParams: { mailType: 'newsletter', status: 'pending' },
+      queryParams: { mailType: 'newsletter' },
     });
 
     navigate.mockClear();
@@ -136,7 +152,7 @@ describe('MailboxMixCard', () => {
 
     const link = panel.querySelector('table a')!;
     expect(link.textContent!.trim()).toBe('newsletter');
-    expect(link.getAttribute('href')).toBe('/review?mailType=newsletter&status=pending');
+    expect(link.getAttribute('href')).toBe('/review?mailType=newsletter');
     expect(panel.querySelectorAll('table a').length).toBe(1);
   });
 });
