@@ -2,9 +2,11 @@ import {
   afterNextRender,
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   ElementRef,
   inject,
+  Injector,
   OnInit,
   signal,
 } from '@angular/core';
@@ -65,6 +67,27 @@ import { SettingsService } from './settings.service';
 /** Same bounds as the API's `fetchChunkSize` validation; `step` only sets the arrow-key increment. */
 export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
 
+/** The cards in page order; `id` is the heading's `settings-<id>` and the `?section=` value. */
+export const SECTIONS = [
+  { id: 'setup', label: 'Setup' },
+  { id: 'google', label: 'Google' },
+  { id: 'gmail', label: 'Gmail connection' },
+  { id: 'llm-provider', label: 'Analysis model provider' },
+  { id: 'ollama', label: 'Ollama' },
+  { id: 'fetch', label: 'Fetch' },
+  { id: 'labels', label: 'Labels' },
+  { id: 'analysis', label: 'Analysis' },
+  { id: 'taxonomy', label: 'Taxonomy' },
+  { id: 'attachments', label: 'Attachments' },
+  { id: 'protection', label: 'Protection' },
+  { id: 'apps-script', label: 'Apps Script' },
+  { id: 'retention', label: 'Retention' },
+  { id: 'claude', label: 'Claude review' },
+  { id: 'data', label: 'Data' },
+] as const;
+
+export type SettingsSection = (typeof SECTIONS)[number];
+
 /**
  * `/settings` (M1): the wizard's step components, one section each. Every step saves only its own
  * fields (the API leaves missing fields unchanged), so saving one section never resets another.
@@ -107,6 +130,15 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
       color: var(--mat-sys-on-surface-variant);
       margin: 0.25rem 0 1rem;
     }
+    .index-title {
+      font: var(--mat-sys-title-small);
+      color: var(--mat-sys-on-surface-variant);
+      margin: 0 0 0.25rem;
+    }
+    /* Short labels would centre in the button's minimum width and break the column's edge. */
+    .settings-index button {
+      min-width: 0;
+    }
     .app-version {
       font: var(--mat-sys-body-small);
       color: var(--mat-sys-on-surface-variant);
@@ -125,6 +157,7 @@ export class SettingsPage implements OnInit {
   private readonly router = inject(Router);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly versionApi = inject(VersionService);
+  private readonly injector = inject(Injector);
 
   /** Set when the OAuth callback redirected back here (`/settings?gmail=…`); read once. */
   readonly connectResult: ConnectResult | null;
@@ -175,11 +208,26 @@ export class SettingsPage implements OnInit {
   /** `null` until loaded, and on an older API without protection rules, which hides the section. */
   readonly protection = signal<ProtectionSettings | null>(null);
 
+  /** The index lists only the cards on the page: an older API hides some of them. */
+  readonly sections = computed<readonly SettingsSection[]>(() =>
+    SECTIONS.filter(
+      (s) =>
+        (s.id !== 'attachments' || !!this.attachments()?.attachments) &&
+        (s.id !== 'protection' || !!this.protection()) &&
+        (s.id !== 'claude' || !!this.claude()),
+    ),
+  );
+
+  /** `?section=<id>` from a deep link; scrolled to once the settings have loaded. */
+  private readonly initialSection: string | null;
+
   /** The api's version for the footer; `null` until loaded or when the api is unreachable. */
   readonly version = signal<string | null>(null);
 
   constructor() {
     const params = this.route.snapshot.queryParamMap;
+    const section = params.get('section');
+    this.initialSection = SECTIONS.some((s) => s.id === section) ? section : null;
     this.connectResult = parseConnectResult(params.get('gmail'), params.get('reason'));
     if (this.connectResult) {
       // Cleared so a refresh doesn't show the result again.
@@ -200,7 +248,8 @@ export class SettingsPage implements OnInit {
   jumpToSection(headingId: string): void {
     const heading = this.host.nativeElement.querySelector<HTMLElement>(`#${headingId}`);
     if (!heading) return;
-    heading.scrollIntoView?.({ block: 'start' });
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    heading.scrollIntoView?.({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
     heading.setAttribute('tabindex', '-1');
     heading.addEventListener('blur', () => heading.removeAttribute('tabindex'), { once: true });
     heading.focus({ preventScroll: true });
@@ -225,9 +274,10 @@ export class SettingsPage implements OnInit {
           this.attachments.set(attachmentsOf(settings));
           this.claude.set(claudeOf(settings));
           this.protection.set(settings.protection ?? null);
+          this.scrollToInitialSection();
         },
         // The error interceptor shows why; the field stays disabled without a saved value.
-        error: () => undefined,
+        error: () => this.scrollToInitialSection(),
       });
     this.loadDefaultPrompt();
     this.versionApi
@@ -235,6 +285,13 @@ export class SettingsPage implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       // The error interceptor shows why; the footer stays hidden.
       .subscribe({ next: (version) => this.version.set(version), error: () => undefined });
+  }
+
+  /** Waits for the load: the optional cards only render once their settings are in. */
+  private scrollToInitialSection(): void {
+    const section = this.initialSection;
+    if (!section) return;
+    afterNextRender(() => this.jumpToSection(`settings-${section}`), { injector: this.injector });
   }
 
   onClientChange(client: GoogleClientSettings): void {

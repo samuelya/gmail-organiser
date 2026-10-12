@@ -15,7 +15,7 @@ import {
   SetupStatus,
 } from '../setup/setup.service';
 import { connectErrorMessage } from '../setup/steps/connect-gmail-step.component';
-import { SettingsPage } from './settings-page.component';
+import { SECTIONS, SettingsPage } from './settings-page.component';
 import { AttachmentSettings, ClaudeSettings, SettingsDto } from './settings.models';
 
 const EMAIL = 'user@example.com';
@@ -129,6 +129,7 @@ describe('SettingsPage', () => {
         else if (path === '/api/analysis/prompt/default') req.flush(defaultPrompt);
         else if (path === '/api/rules/apps-script/config') req.flush(appsScriptConfig);
         else if (path === '/api/clean-up/retention') req.flush(retentionStatus);
+        else if (path === '/api/senders') req.flush({ items: [], page: 1, pageSize: 50, total: 0 });
         else if (path === '/healthz') req.flush({ status: 'ok', version: VERSION });
         else throw new Error(`unexpected GET ${path}`);
       }
@@ -145,9 +146,9 @@ describe('SettingsPage', () => {
   }
 
   /** Opens the page through the router, as the OAuth callback redirect does. */
-  async function openAt(url: string, gmailConnected = true) {
+  async function openAt(url: string, gmailConnected = true, dto = settings()) {
     const navigate = vi.fn();
-    configure(gmailConnected, settings(), navigate);
+    configure(gmailConnected, dto, navigate);
     const harness = await RouterTestingHarness.create();
     await harness.navigateByUrl(url, SettingsPage);
     await flushLoads(harness.fixture);
@@ -231,6 +232,121 @@ describe('SettingsPage', () => {
     expect(document.activeElement).toBe(heading);
     heading.blur();
     expect(heading.hasAttribute('tabindex')).toBe(false);
+  });
+
+  describe('section index', () => {
+    /** Every optional block present, so every card renders. */
+    const full = () =>
+      settings({
+        claudeReviewerMode: 'off',
+        claudeSuggestLowConfidence: false,
+        claudeSuggestThreshold: 0.6,
+        claudeSuggestNewLabels: false,
+        claudeRunTimeoutSeconds: 600,
+        claudeMaxItemsPerRun: 10,
+        claudeMaxTurns: 80,
+        claudeModel: null,
+        claudeTokenSet: false,
+        protection: {
+          attachments: true,
+          starred: true,
+          important: true,
+          repliedThreads: true,
+          allowlistedDomains: [],
+        },
+        attachments: {
+          enabled: false,
+          types: [],
+          maxBytes: 1024,
+          maxImageBytes: 1024,
+          maxChars: 1000,
+          maxPerMessage: 1,
+        },
+      });
+    const links = (el: HTMLElement) =>
+      [...el.querySelectorAll<HTMLElement>('nav[aria-label="Settings sections"] li button')].map(
+        (b) => b.textContent!.trim(),
+      );
+    const headings = (el: HTMLElement) =>
+      [...el.querySelectorAll<HTMLElement>('mat-card h2')].map((h) => h.textContent!.trim());
+
+    /** Replaces `scrollIntoView` (jsdom has none) and the reduced-motion query for one test. */
+    function stubScroll(reduceMotion: boolean) {
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      // Other queries (the CDK breakpoint observer) never match, as in jsdom.
+      window.matchMedia = vi.fn((query: string) =>
+        query === '(prefers-reduced-motion: reduce)'
+          ? ({ matches: reduceMotion } as MediaQueryList)
+          : ({
+              matches: false,
+              addListener: () => undefined,
+              removeListener: () => undefined,
+            } as unknown as MediaQueryList),
+      );
+      return scroll;
+    }
+    const originalScroll = Element.prototype.scrollIntoView;
+    const originalMatchMedia = window.matchMedia;
+    afterEach(() => {
+      Element.prototype.scrollIntoView = originalScroll;
+      window.matchMedia = originalMatchMedia;
+    });
+
+    it('shows the page description', async () => {
+      const { q } = await render();
+      expect(q('page-description')?.textContent).toContain('Each section saves on its own.');
+    });
+
+    it('lists every section heading in page order, as buttons rather than hash links', async () => {
+      const { el } = await render(true, full());
+      expect(headings(el)).toEqual(SECTIONS.map((s) => s.label));
+      expect(links(el)).toEqual(headings(el));
+      for (const s of SECTIONS) expect(el.querySelector(`#settings-${s.id}`)).not.toBeNull();
+      expect(el.querySelector('nav a[href]')).toBeNull();
+    });
+
+    it('leaves out the cards an older API hides', async () => {
+      const { el } = await render();
+      expect(links(el)).not.toContain('Claude review');
+      expect(links(el)).toEqual(headings(el));
+    });
+
+    it('clicking a link scrolls smoothly to the section and focuses its heading', async () => {
+      const scroll = stubScroll(false);
+      const { el, q } = await render();
+      q('index-retention')!.click();
+      const heading = el.querySelector<HTMLElement>('#settings-retention')!;
+      expect(document.activeElement).toBe(heading);
+      expect(heading.getAttribute('tabindex')).toBe('-1');
+      expect(scroll.mock.contexts[0]).toBe(heading);
+      expect(scroll).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' });
+    });
+
+    it('scrolls without animation under prefers-reduced-motion', async () => {
+      const scroll = stubScroll(true);
+      const { q } = await render();
+      q('index-data')!.click();
+      expect(window.matchMedia).toHaveBeenCalledWith('(prefers-reduced-motion: reduce)');
+      expect(scroll).toHaveBeenCalledWith({ block: 'start', behavior: 'auto' });
+    });
+
+    it('?section=claude focuses Claude review once the settings load', async () => {
+      const scroll = stubScroll(false);
+      const { harness, el } = await openAt('/settings?section=claude', true, full());
+      await harness.fixture.whenStable();
+      const heading = el.querySelector<HTMLElement>('#settings-claude')!;
+      expect(document.activeElement).toBe(heading);
+      expect(scroll.mock.contexts[0]).toBe(heading);
+    });
+
+    it('an unknown ?section= does nothing', async () => {
+      const scroll = stubScroll(false);
+      const { harness } = await openAt('/settings?section=nope');
+      await harness.fixture.whenStable();
+      expect(scroll).not.toHaveBeenCalled();
+      expect(document.activeElement?.tagName).not.toBe('H2');
+    });
   });
 
   it('callback connected: shows the result on the Gmail card, scrolls to it, clears the params', async () => {
