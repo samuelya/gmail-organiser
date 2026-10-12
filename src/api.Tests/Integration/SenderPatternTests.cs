@@ -290,6 +290,78 @@ public sealed class SenderPatternTests(ApiFactory factory, PostgresFixture postg
         (pattern.TopicLabel, pattern.ToBeDeleted, pattern.Approvals).ShouldBe((Topic, false, 2));
     }
 
+    [Fact]
+    public async Task The_patterns_additional_labels_are_the_list_every_approval_of_the_top_outcome_agrees_on()
+    {
+        await SeedAsync(
+            ("a00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm),
+            ("a01", Topic, false, SuggestionStatus.Applied, SuggestionSource.Llm),
+            ("a02", "Example/Other", false, SuggestionStatus.Approved, SuggestionSource.Llm),
+            ("b00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm),
+            ("b01", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm));
+        await SetExtrasAsync(["a00", "a01", "b00"], "Example/Extra");
+        await SetExtrasAsync(["a02"], "Example/Elsewhere");
+
+        (await PatternAsync(AnalysisRunHarness.Shop)).ExtraLabels.ShouldBe(["Example/Extra"]);
+        (await PatternAsync(AnalysisRunHarness.News)).ShouldBe(new SenderPatternDto(Topic, false, false, 2, 1, 4));
+    }
+
+    [Fact]
+    public async Task Apply_rest_carries_the_patterns_additional_labels_unless_the_request_sets_them()
+    {
+        await SeedAsync(
+            ("a00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm),
+            ("b00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm),
+            ("c00", Topic, false, SuggestionStatus.Approved, SuggestionSource.Llm));
+        await SetExtrasAsync(["a00", "b00", "c00"], "Example/Extra", "Example/Second");
+
+        (await h.PostAsync($"/api/review/senders/{AnalysisRunHarness.Shop}/apply-rest", new ApplyRestRequest()))
+            .StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        (await h.PostAsync($"/api/review/senders/{AnalysisRunHarness.News}/apply-rest", new ApplyRestRequest(ExtraLabels: [])))
+            .StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        (await h.PostAsync(
+                $"/api/review/senders/{AnalysisRunHarness.Billing}/apply-rest",
+                new ApplyRestRequest(TopicLabel: "Example/Second", ExtraLabels: [" Example/Third ", "Example/Second"])))
+            .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await h.PostAsync(
+                $"/api/review/senders/{AnalysisRunHarness.Billing}/apply-rest",
+                new ApplyRestRequest(TopicLabel: "Example/Second", NeedsAction: true)))
+            .StatusCode.ShouldBe(HttpStatusCode.Accepted);
+
+        await using var db = postgres.CreateDbContext();
+        var created = await db.Suggestions.Where(s => s.Source == SuggestionSource.SenderPattern).ToListAsync(Ct);
+        created.Where(s => s.SenderAddress == AnalysisRunHarness.Shop).ShouldAllBe(s => s.ExtraLabels.SequenceEqual(new[] { "Example/Extra", "Example/Second" }));
+        created.Where(s => s.SenderAddress == AnalysisRunHarness.News).ShouldAllBe(s => s.ExtraLabels.Length == 0);
+        // The pattern's extra that is now the topic is dropped; the rest is kept.
+        created.Where(s => s.SenderAddress == AnalysisRunHarness.Billing).ShouldAllBe(s => s.ExtraLabels.SequenceEqual(new[] { "Example/Extra" }));
+        var decisions = await db.Decisions.Where(d => d.Source == SuggestionSource.SenderPattern).ToDictionaryAsync(d => d.SenderAddress, Ct);
+        decisions[AnalysisRunHarness.Shop].ExtraLabels.ShouldBe(["Example/Extra", "Example/Second"]);
+        decisions[AnalysisRunHarness.News].ExtraLabels.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Apply_rest_sets_the_requested_additional_labels_and_applies_them()
+    {
+        var response = await h.PostAsync(
+            $"/api/review/senders/{AnalysisRunHarness.News}/apply-rest",
+            new ApplyRestRequest(TopicLabel: Topic, ExtraLabels: [" Example/Extra ", "example/extra", "Example/Another"]));
+        response.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+        await h.RunNextAsync();
+
+        await using var db = postgres.CreateDbContext();
+        (await db.Suggestions.Where(s => s.SenderAddress == AnalysisRunHarness.News).ToListAsync(Ct))
+            .ShouldAllBe(s => s.ExtraLabels.SequenceEqual(new[] { "Example/Another", "Example/Extra" }) && s.Status == SuggestionStatus.Applied);
+        var ids = (await h.Gmail.Inner.ListLabelsAsync(Ct)).ToDictionary(l => l.Name, l => l.Id);
+        Labels("b00").ShouldContain(ids["Example/Extra"]);
+        Labels("b00").ShouldContain(ids["Example/Another"]);
+    }
+
+    private async Task SetExtrasAsync(string[] messageIds, params string[] extras)
+    {
+        await using var db = postgres.CreateDbContext();
+        await db.Suggestions.Where(s => messageIds.Contains(s.MessageId)).ExecuteUpdateAsync(s => s.SetProperty(x => x.ExtraLabels, extras), Ct);
+    }
+
     private async Task<SenderPatternDto> PatternAsync(string address)
     {
         var response = await h.GetAsync($"/api/review/senders/{address}/pattern");

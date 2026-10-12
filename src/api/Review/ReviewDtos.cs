@@ -214,6 +214,15 @@ public sealed record SenderPatternDto(
     string? DocumentTypeLabel = null, string[]? ExtraLabels = null)
 {
     public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
+
+    /// <summary>Value equality, the additional labels compared as a list (<see cref="Analysis.ExtraLabelList.SameList"/>).</summary>
+    public bool Equals(SenderPatternDto? other) =>
+        other is not null && TopicLabel == other.TopicLabel && NeedsAction == other.NeedsAction && ToBeDeleted == other.ToBeDeleted
+        && Approvals == other.Approvals && Agreement.Equals(other.Agreement) && Remaining == other.Remaining
+        && DocumentTypeLabel == other.DocumentTypeLabel && Analysis.ExtraLabelList.SameList(ExtraLabels, other.ExtraLabels);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(TopicLabel, NeedsAction, ToBeDeleted, Approvals, Agreement, Remaining, DocumentTypeLabel, ExtraLabels.Length);
 }
 
 /// <summary>Each value overrides the pattern's; without a pattern the topic label is required and the flags default to false.</summary>
