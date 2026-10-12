@@ -30,6 +30,7 @@ const sender = (address: string, total: number, unread: number, displayName: str
 const page = (items: SenderDto[]) => ({ items, page: 1, pageSize: 10, total: items.length });
 
 /** jsdom has no canvas; the chart's data and options are read from the component. */
+// eslint-disable-next-line @angular-eslint/directive-selector -- stands in for ng2-charts' selector
 @Directive({ selector: 'canvas[baseChart]' })
 class StubChart {
   readonly type = input<string>();
@@ -104,7 +105,7 @@ describe('TopSendersCard', () => {
     await fixture.whenStable();
     const link = q('chart-table')?.querySelector('a');
     expect(link?.textContent?.trim()).toBe('Alpha');
-    expect(link?.getAttribute('href')).toBe('/senders?search=a%2Bb%40example.com');
+    expect(link?.getAttribute('href')).toBe('/senders?search=a%2Bb@example.com');
   });
 
   it('clicking a bar opens that sender', async () => {
