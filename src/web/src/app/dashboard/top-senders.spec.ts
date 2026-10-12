@@ -69,8 +69,11 @@ describe('top senders', () => {
     expect(senderLink('a+b@example.com')).toEqual({
       text: 'a+b@example.com',
       link: '/senders',
-      queryParams: { search: 'a+b@example.com' },
+      queryParams: expect.objectContaining({ search: 'a+b@example.com', page: null }),
     });
+    expect(senderLink(' a@example.com\t').queryParams).toEqual(
+      expect.objectContaining({ search: 'a@example.com' }),
+    );
   });
 
   it('summarises the senders’ share of the stored messages', () => {
@@ -87,6 +90,9 @@ describe('top senders', () => {
       'The top sender sent 1,000 of your 3,000 stored messages (33%).',
     );
     expect(topSendersSummary([], 10, 'en-US')).toBe('No senders yet.');
+    expect(topSendersSummary(rows, 1000, 'en-US')).toBe(
+      'The top 2 senders sent 1,240 of your 1,000 stored messages (100%).',
+    );
   });
 
   it('builds the table with the full name, address and a link on the sender', () => {
@@ -94,7 +100,11 @@ describe('top senders', () => {
     expect(table.columns).toEqual(['Sender', 'Address', 'Total', 'Unread']);
     expect(table.rows).toEqual([
       [
-        { text: 'Example News', link: '/senders', queryParams: { search: 'news@example.com' } },
+        {
+          text: 'Example News',
+          link: '/senders',
+          queryParams: expect.objectContaining({ search: 'news@example.com' }),
+        },
         'news@example.com',
         7,
         2,

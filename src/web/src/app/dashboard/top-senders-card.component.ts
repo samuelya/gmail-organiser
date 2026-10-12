@@ -6,9 +6,7 @@ import {
   computed,
   inject,
   input,
-  signal,
 } from '@angular/core';
-import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
@@ -16,11 +14,11 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { Router } from '@angular/router';
 import type { ChartData, ChartOptions } from 'chart.js';
 import { BaseChartDirective } from 'ng2-charts';
-import { catchError, distinctUntilChanged, map, merge, of, Subject, switchMap } from 'rxjs';
+import { map } from 'rxjs';
 import { ChartPanel } from '../core/charts/chart-panel.component';
 import { ChartPalette, ChartTheme, chartAxis } from '../core/charts/chart-theme';
-import { SenderDto } from '../senders/senders.models';
 import { SendersService } from '../senders/senders.service';
+import { mailboxCounts } from './mailbox-counts';
 import {
   TOP_SENDERS_QUERY,
   TopSender,
@@ -88,7 +86,7 @@ export function topSendersData(rows: readonly TopSender[], p: ChartPalette): Cha
           <mat-progress-bar mode="indeterminate" aria-label="Loading the top senders" />
         }
 
-        @if (senders() !== null) {
+        @if (!loadFailed() && senders() !== null) {
           <app-chart-panel
             heading="Most mail"
             [summary]="summary()"
@@ -118,14 +116,17 @@ export class TopSendersCard {
   private readonly theme = inject(ChartTheme);
   private readonly router = inject(Router);
   private readonly locale = inject(LOCALE_ID);
-  private readonly retry = new Subject<void>();
+  /** Reloads when a fetch or analysis job changes status, not on every progress tick. */
+  private readonly counts = mailboxCounts(() =>
+    this.sendersApi.list(TOP_SENDERS_QUERY).pipe(map((page) => page.items)),
+  );
 
-  /** `FetchStatusDto.messagesStored`; null until the page has the status. A change reloads the list. */
+  /** `FetchStatusDto.messagesStored`, for the summary's share; null until the page has the status. */
   readonly messagesStored = input<number | null>(null);
 
   /** Null until the first answer. */
-  readonly senders = signal<SenderDto[] | null>(null);
-  readonly loadFailed = signal(false);
+  readonly senders = this.counts.value;
+  readonly loadFailed = this.counts.loadFailed;
 
   readonly rows = computed(() => topSenders(this.senders() ?? []));
   readonly summary = computed(() =>
@@ -141,6 +142,8 @@ export class TopSendersCard {
     return {
       ...base,
       indexAxis: 'y',
+      // A click anywhere on a sender's row counts, so short bars stay clickable.
+      interaction: { mode: 'y', intersect: false },
       onClick: (_event, elements) => {
         const row = elements.length ? this.rows()[elements[0].index] : undefined;
         if (row) this.open(row.address);
@@ -182,26 +185,8 @@ export class TopSendersCard {
     };
   });
 
-  constructor() {
-    merge(toObservable(this.messagesStored).pipe(distinctUntilChanged()), this.retry)
-      .pipe(
-        switchMap(() =>
-          this.sendersApi.list(TOP_SENDERS_QUERY).pipe(
-            map((page) => page.items),
-            catchError(() => of(null)),
-          ),
-        ),
-        takeUntilDestroyed(),
-      )
-      .subscribe((items) => {
-        if (items) this.senders.set(items);
-        this.loadFailed.set(!items);
-      });
-  }
-
   load(): void {
-    this.loadFailed.set(false);
-    this.retry.next();
+    this.counts.load();
   }
 
   open(address: string): void {

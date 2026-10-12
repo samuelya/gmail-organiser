@@ -1,6 +1,12 @@
 import { formatNumber } from '@angular/common';
-import { ChartLink, ChartTable } from '../core/charts/chart.models';
-import { DEFAULT_SENDER_QUERY, SenderDto, SenderQuery } from '../senders/senders.models';
+import { ChartLinkCell, ChartTable } from '../core/charts/chart.models';
+import {
+  cleanSearch,
+  DEFAULT_SENDER_QUERY,
+  SenderDto,
+  SenderQuery,
+  senderQueryParams,
+} from '../senders/senders.models';
 
 /** How many senders the chart shows. */
 export const TOP_SENDERS = 10;
@@ -51,8 +57,9 @@ export function topSenders(senders: readonly SenderDto[]): TopSender[] {
 }
 
 /** The senders list searched for one address: where a bar and its table row lead. */
-export function senderLink(address: string): ChartLink {
-  return { text: address, link: '/senders', queryParams: { search: address } };
+export function senderLink(address: string): ChartLinkCell {
+  const queryParams = senderQueryParams({ ...DEFAULT_SENDER_QUERY, search: cleanSearch(address) });
+  return { text: address, link: '/senders', queryParams };
 }
 
 /** "The top 10 senders sent 1,240 of your 5,000 stored messages (25%)."; no share without a stored count. */
@@ -66,7 +73,8 @@ export function topSendersSummary(
   const sum = rows.reduce((total, r) => total + r.total, 0);
   const who = rows.length === 1 ? 'The top sender' : `The top ${rows.length} senders`;
   if (!messagesStored) return `${who} sent ${count(sum)} messages.`;
-  const share = Math.round((sum / messagesStored) * 100);
+  // Sender stats and the stored count are kept up to date separately, so the sum can run ahead.
+  const share = Math.min(100, Math.round((sum / messagesStored) * 100));
   return `${who} sent ${count(sum)} of your ${count(messagesStored)} stored messages (${share}%).`;
 }
 
