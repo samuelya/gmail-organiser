@@ -22,6 +22,8 @@ public sealed record ReviewSenderDetailDto(
 /// <param name="DocumentTypeIsNew">A listed member with the shown document-type label would create it in Gmail.</param>
 /// <param name="Alternative">The listed members' compare-run alternative (<see cref="SuggestionAlternativeDto.Mixed"/> when they disagree); null when none has one.</param>
 /// <param name="NewLabelPending">A listed member is <see cref="SuggestionDto.NewLabelPending"/>.</param>
+/// <param name="ExtraLabels">The shown outcome's additional labels (#522); part of the card's outcome.</param>
+/// <param name="ExtraLabelsNew">Those Gmail lacks (<see cref="Analysis.ExtraLabelList.New"/>).</param>
 public sealed record ReviewGroupDto(
     string? GroupKey,
     string Display,
@@ -46,7 +48,13 @@ public sealed record ReviewGroupDto(
     string? DocumentTypeLabel = null,
     bool DocumentTypeIsNew = false,
     SuggestionAlternativeDto? Alternative = null,
-    bool NewLabelPending = false);
+    bool NewLabelPending = false,
+    string[]? ExtraLabels = null,
+    string[]? ExtraLabelsNew = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
+    public string[] ExtraLabelsNew { get; init; } = ExtraLabelsNew ?? [];
+}
 
 /// <param name="ReplaceLabels">Current labels apply removes: the replaced labels the message still carries, never the topic label.</param>
 /// <param name="CurrentLabels">The message's personal (user) label names; empty when Gmail is not reachable.</param>
@@ -58,6 +66,8 @@ public sealed record ReviewGroupDto(
 /// <param name="MailType">The snake_case <c>MailType</c> (#365); null when none.</param>
 /// <param name="NewLabelPending">The taxonomy is locked and this pending suggestion proposes a label Gmail still lacks (#367): bulk
 /// approve skips it until it is approved individually or edited to an existing label.</param>
+/// <param name="ExtraLabels">Additional labels the person added (#522), canonical (<see cref="Analysis.ExtraLabelList.Clean"/>).</param>
+/// <param name="ExtraLabelsNew">The subset Gmail lacks, computed from the label list (empty when it is unknown); never stored.</param>
 public sealed record SuggestionDto(
     Guid Id,
     string MessageId,
@@ -84,7 +94,13 @@ public sealed record SuggestionDto(
     bool DocumentTypeIsNew = false,
     SuggestionAlternativeDto? Alternative = null,
     string? MailType = null,
-    bool NewLabelPending = false);
+    bool NewLabelPending = false,
+    string[]? ExtraLabels = null,
+    string[]? ExtraLabelsNew = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
+    public string[] ExtraLabelsNew { get; init; } = ExtraLabelsNew ?? [];
+}
 
 /// <summary>A compare run's alternative to a suggestion, shown next to it; nothing changes until it is accepted.</summary>
 /// <param name="ReplaceLabels">As on <see cref="SuggestionDto.ReplaceLabels"/>, for the alternative's topic label.</param>
@@ -119,13 +135,16 @@ public sealed record LabelDto(string Id, string Name, string Type);
 /// <param name="ReplaceLabels">Current labels of the message to replace; null leaves them unchanged.</param>
 /// <param name="DocumentTypeLabel">Null leaves it unchanged, <c>""</c> clears it (<see cref="DocumentTypeEdit"/>).</param>
 /// <param name="MailType">A snake_case <c>MailType</c>; null leaves it unchanged, <c>""</c> clears it.</param>
+/// <param name="ExtraLabels">Additional labels (#522): null leaves them unchanged, <c>[]</c> clears, a list replaces them
+/// (<see cref="Analysis.ExtraLabelList.Normalise"/>).</param>
 public sealed record EditSuggestionRequest(
     string? TopicLabel, bool? NeedsAction, bool? ToBeDeleted, string[]? ReplaceLabels = null, string? DocumentTypeLabel = null,
-    string? MailType = null);
+    string? MailType = null, string[]? ExtraLabels = null);
 
 /// <param name="TopicLabel">Approve only: the outcome the card shows; only members with exactly this outcome are approved.</param>
 /// <param name="ReplaceLabels">Approve only, optional: each approved member keeps only its own replaced labels named here; none are added.</param>
 /// <param name="DocumentTypeLabel">Approve only: the card's document-type label; absent or blank approves only members without one.</param>
+/// <param name="ExtraLabels">Approve only: the card's additional labels; absent or empty approves only members without any.</param>
 public sealed record GroupDecisionRequest(
     string? SenderAddress,
     string? GroupKey,
@@ -133,7 +152,8 @@ public sealed record GroupDecisionRequest(
     bool? NeedsAction = null,
     bool? ToBeDeleted = null,
     string[]? ReplaceLabels = null,
-    string? DocumentTypeLabel = null);
+    string? DocumentTypeLabel = null,
+    string[]? ExtraLabels = null);
 
 /// <param name="Skipped">Pending members left pending (another outcome than the card's, or a protected deletion), at most <see cref="ReviewService.MaxSkippedIds"/>.</param>
 public sealed record GroupDecisionResponse(int Changed, IReadOnlyList<Guid> Skipped);

@@ -163,7 +163,7 @@ public static class ReviewEndpoints
     /// then 400 naming the replaced labels the message does not carry and 503 when the Gmail label list cannot be loaded.
     /// A document-type label needs the document-type parent setting (<see cref="DocumentTypeEdit.Validate"/>); 400 too
     /// when the topic label would equal the document type the suggestion keeps, and when it is the delete label on an
-    /// email not to be deleted (any source).
+    /// email not to be deleted (any source), and on invalid additional labels (<see cref="ExtraLabelList.Normalise"/>).
     /// </summary>
     private static async Task<Results<Ok<SuggestionDto>, ValidationProblem, ProblemHttpResult>> EditAsync(
         Guid id, EditSuggestionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct)
@@ -180,13 +180,14 @@ public static class ReviewEndpoints
             ? DocumentTypeChange.Unchanged
             : DocumentTypeEdit.Validate(request.DocumentTypeLabel, current.DocumentTypeParent, label, errors);
         var mailType = MailTypeChange.Validate(request.MailType, errors);
+        var extras = ExtraLabelList.Normalise(request.ExtraLabels, label, type.Label, current, errors);
         if (errors.Count > 0)
         {
             return TypedResults.ValidationProblem(errors);
         }
 
         var (result, suggestion, unknown) = await review.EditAsync(
-            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type, mailType, ct);
+            id, label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type, mailType, extras, ct);
         return result == ReviewResult.InvalidReplaceLabels
             ? ReplaceLabelsUnknown("the email does not carry", unknown)
             : ToResult((result, suggestion));
@@ -208,8 +209,16 @@ public static class ReviewEndpoints
                 errors["documentTypeLabel"] = [$"Up to five '/'-separated parts, at most {GmailLimits.LabelNameMaxLength} characters."];
             }
 
+            var extras = request.ExtraLabels is { Length: > ExtraLabelList.Max }
+                || request.ExtraLabels?.Any(l => string.IsNullOrWhiteSpace(l) || !LabelResolver.IsValid(l.Trim())) == true;
+            if (extras)
+            {
+                errors[ExtraLabelList.Field] = [$"At most {ExtraLabelList.Max} label paths Gmail accepts."];
+            }
+
             shown = errors.Count == 0
-                ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type)
+                ? new GroupOutcome(label!, request.NeedsAction!.Value, request.ToBeDeleted!.Value, request.ReplaceLabels, type,
+                    ExtraLabelList.Clean(request.ExtraLabels, null, null, []))
                 : null;
         }
 
