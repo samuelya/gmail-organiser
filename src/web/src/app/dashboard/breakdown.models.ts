@@ -2,6 +2,7 @@ import { formatNumber } from '@angular/common';
 import { ChartLinkCell, ChartTable } from '../core/charts/chart.models';
 import { mailTypeLabel } from '../review/mail-type-chip.component';
 import { MAIL_TYPE_PARAM, mailTypesParam } from '../review/mail-type-filter';
+import { NOT_REJECTED_TAB, REVIEW_STATUS_PARAM, ReviewTab } from '../review/review.models';
 
 /** Live messages per Gmail category tab. */
 export interface CategoryCountsDto {
@@ -83,13 +84,17 @@ export function mailTypeBars(dto: MailboxBreakdownDto): MailTypeBar[] {
   return bars;
 }
 
-/**
- * The review page filtered to one type. No tab is named: the bar counts every status but rejected, which no single
- * tab shows, so the page opens on its default tab and the filter stays on when the user switches tabs.
- */
+/** The review page filtered to one type on "All but rejected": the bar counts every status but rejected. */
 function reviewLink(mailType: string, text: string): ChartLinkCell | null {
   const param = mailTypesParam([mailType]);
-  return param ? { text, link: '/review', queryParams: { [MAIL_TYPE_PARAM]: param } } : null;
+  const tab: ReviewTab = NOT_REJECTED_TAB.value;
+  return param
+    ? {
+        text,
+        link: '/review',
+        queryParams: { [REVIEW_STATUS_PARAM]: tab, [MAIL_TYPE_PARAM]: param },
+      }
+    : null;
 }
 
 /** The largest tab and its share: the doughnut's text alternative. */

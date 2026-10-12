@@ -9,7 +9,7 @@ import { ExternalReviewDto } from '../core/claude.models';
 import { ClaudeReviewerMode } from '../settings/settings.models';
 import { AlternativeCompare } from './alternative-compare.component';
 import { AlternativeTarget } from './alternative.models';
-import { CARD_TOO_LARGE_TOOLTIP } from './card-reanalyse';
+import { ALL_BUT_REJECTED_TOOLTIP, CARD_TOO_LARGE_TOOLTIP } from './card-reanalyse';
 import { ClaudeVerdict } from './claude-verdict.component';
 import { LabelChangeChip } from './label-change-chip.component';
 import { commonMailType, MailTypeChip } from './mail-type-chip.component';
@@ -121,7 +121,7 @@ export const MEMBERS_STEP = 20;
             (changed)="claudeChange.emit($event)"
           />
         }
-        @if (g.alternative; as alt) {
+        @if (!allButRejected() && g.alternative; as alt) {
           <app-alternative-compare
             [current]="g"
             [alternative]="alt"
@@ -206,6 +206,7 @@ export const MEMBERS_STEP = 20;
                 [busy]="busy()"
                 [runActive]="runActive()"
                 [reanalysing]="!reanalysingCard() && reanalysing().has(m.id)"
+                [alternatives]="!allButRejected()"
                 (reanalyse)="reanalyseMember.emit(m)"
                 (approve)="approveMember.emit(m)"
                 (reject)="rejectMember.emit(m)"
@@ -295,6 +296,8 @@ export class GroupCard {
   readonly reanalysing = input<ReadonlySet<string>>(new Set());
   /** That re-analysis was started from a whole card rather than one member. */
   readonly reanalysingCard = input(false);
+  /** Listed on "All but rejected": no re-analysis, and only a pending card takes card actions. */
+  readonly allButRejected = input(false);
   readonly approveAll = output<void>();
   readonly rejectAll = output<void>();
   /** The #120 edit dialog hook: the page opens it for this group. */
@@ -321,11 +324,16 @@ export class GroupCard {
   readonly newLabel = computed(() => isNewGroupLabel(this.group()));
   /** The listed members' mail type when they share one. */
   readonly mailType = computed(() => commonMailType(this.group().members));
-  /** Applied members can no longer change. */
-  readonly actionable = computed(() => this.group().members.some((m) => m.status !== 'applied'));
+  /** Applied members can no longer change; on "All but rejected" approved and applied cards are read-only. */
+  readonly actionable = computed(() =>
+    this.allButRejected()
+      ? this.group().status === 'pending'
+      : this.group().members.some((m) => m.status !== 'applied'),
+  );
   readonly pending = computed(() => this.group().members.some((m) => m.status === 'pending'));
   /** Why "Re-analyse" is off (a tooltip), `null` when it may run. */
   readonly reanalyseTooltip = computed(() => {
+    if (this.allButRejected()) return ALL_BUT_REJECTED_TOOLTIP;
     if (this.runActive()) return RUN_ACTIVE_TOOLTIP;
     if (this.group().members.length > MAX_COMPARE) return CARD_TOO_LARGE_TOOLTIP;
     return null;
@@ -334,5 +342,10 @@ export class GroupCard {
     const ids = this.reanalysing();
     return this.reanalysingCard() && this.group().members.some((m) => ids.has(m.id));
   });
-  readonly claude = computed(() => claudeCardTarget(this.senderAddress(), this.group()));
+  /** On "All but rejected" a group's Claude review shows on its pending card only. */
+  readonly claude = computed(() =>
+    this.allButRejected() && this.group().status !== 'pending'
+      ? null
+      : claudeCardTarget(this.senderAddress(), this.group()),
+  );
 }

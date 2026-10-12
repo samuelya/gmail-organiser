@@ -106,6 +106,7 @@
             <app-review-selection-actions
               [selection]="selection()"
               [hasApplied]="selectionHasApplied()"
+              [allButRejected]="allButRejected()"
               [busy]="busy()"
               (started)="onSelectionStarted()"
             />
@@ -130,7 +131,7 @@
         </mat-card-content>
       </mat-card>
 
-      @for (g of d.groups; track g.groupKey ?? g.members[0]?.id) {
+      @for (g of d.groups; track (g.groupKey ?? g.members[0]?.id) + '|' + g.status) {
         <app-group-card
           [group]="g"
           [senderAddress]="d.sender.address"
@@ -142,6 +143,7 @@
           [runActive]="reanalyse.blocked()"
           [reanalysing]="reanalyse.ids()"
           [reanalysingCard]="reanalyse.fromCard()"
+          [allButRejected]="allButRejected()"
           (reanalyseGroup)="reanalyse.card($event)"
           (reanalyseMember)="reanalyse.member($event)"
           (approveAll)="approveGroup(g)"

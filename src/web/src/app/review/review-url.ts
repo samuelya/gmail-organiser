@@ -4,12 +4,7 @@ import { ActivatedRoute, ParamMap, Router } from '@angular/router';
 import { catchError, EMPTY, map, Observable, of, Subject, switchMap } from 'rxjs';
 import { PagedDto } from '../core/paging.models';
 import { MailTypeFilter } from './mail-type-filter';
-import {
-  parseReviewParams,
-  ReviewSenderDto,
-  ReviewStatus,
-  SENDER_PAGE_SIZE,
-} from './review.models';
+import { parseReviewParams, ReviewSenderDto, ReviewTab, SENDER_PAGE_SIZE } from './review.models';
 import { ReviewService } from './review.service';
 
 /** The page's senders list and "Re-analysed" filter, which decide whether a sender is listed. */
@@ -30,7 +25,7 @@ export class ReviewUrl {
   private readonly review = inject(ReviewService);
   private readonly mailTypes = inject(MailTypeFilter);
 
-  private readonly statusState = signal<ReviewStatus>('pending');
+  private readonly statusState = signal<ReviewTab>('pending');
   private readonly selectedState = signal<string | null>(null);
   private readonly listedState = signal(true);
   readonly status = this.statusState.asReadonly();
@@ -63,7 +58,7 @@ export class ReviewUrl {
     this.list = list;
   }
 
-  setStatus(status: ReviewStatus): void {
+  setStatus(status: ReviewTab): void {
     if (status !== this.status()) this.navigate({ status, sender: null }, true);
   }
 
@@ -113,7 +108,7 @@ export class ReviewUrl {
   }
 
   /** `?status=bogus` or a blank sender is replaced, so a tab click and a shared link see what the page shows. */
-  private normalise(params: ParamMap, status: ReviewStatus, sender: string | null): void {
+  private normalise(params: ParamMap, status: ReviewTab, sender: string | null): void {
     const fixed: Record<string, string | null> = {};
     const rawStatus = params.get('status');
     const rawSender = params.get('sender');

@@ -18,7 +18,7 @@ import {
   GroupOutcome,
   ReviewSenderDetailDto,
   ReviewSenderDto,
-  ReviewStatus,
+  ReviewTab,
   SenderPatternDto,
   SuggestionDto,
 } from './review.models';
@@ -29,7 +29,7 @@ export class ReviewService {
   private readonly http = inject(HttpClient);
 
   listSenders(
-    status: ReviewStatus,
+    status: ReviewTab,
     search: string,
     page: number,
     pageSize: number,
@@ -47,7 +47,7 @@ export class ReviewService {
 
   sender(
     address: string,
-    status: ReviewStatus,
+    status: ReviewTab,
     page: number,
     pageSize: number,
     hasAlternative = false,

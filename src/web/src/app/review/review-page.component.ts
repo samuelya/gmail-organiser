@@ -49,6 +49,7 @@ import {
   DEFAULT_FLAG_LABELS,
   GROUP_PAGE_SIZE,
   GroupDecisionResponse,
+  isSingleStatus,
   keptSelection,
   outcomeOf,
   patchClaudeReview,
@@ -57,7 +58,7 @@ import {
   ReviewGroupDto,
   ReviewSenderDetailDto,
   ReviewSenderDto,
-  ReviewStatus,
+  ReviewTab,
   SENDER_PAGE_SIZE,
   SenderPatternDto,
   skippedMessage,
@@ -123,8 +124,10 @@ export class ReviewPage {
   /** The tab and selected sender, fed from the query string. */
   private readonly url = inject(ReviewUrl);
   readonly status = this.url.status;
-  /** The "Re-analysed" filter: only suggestions with a re-analysis result waiting. */
-  readonly reanalysed = signal(false);
+  readonly allButRejected = computed(() => !isSingleStatus(this.status()));
+  /** The "Re-analysed" filter; "All but rejected" shows no re-analysis results, so it is off there. */
+  private readonly reanalysedOn = signal(false);
+  readonly reanalysed = computed(() => !this.allButRejected() && this.reanalysedOn());
   private readonly search = signal('');
   private readonly senderPage = signal(1);
   readonly selected = this.url.selected;
@@ -293,12 +296,12 @@ export class ReviewPage {
     });
   }
 
-  onStatus(status: ReviewStatus): void {
+  onStatus(status: ReviewTab): void {
     this.url.setStatus(status);
   }
 
   onReanalysed(on: boolean): void {
-    this.reanalysed.set(on);
+    this.reanalysedOn.set(on);
     this.senderPage.set(1);
     this.resetDetail();
   }
@@ -397,8 +400,9 @@ export class ReviewPage {
   /** "Use new" (accept) or "Keep current" (discard) for a member or a whole group card. */
   decideAlternative(decision: AlternativeDecision, target: AlternativeTarget): void {
     const address = this.selected();
-    if (!address) return;
-    const request = alternativeRequest(target, address, this.status());
+    const status = this.status();
+    if (!address || !isSingleStatus(status)) return;
+    const request = alternativeRequest(target, address, status);
     const call =
       decision === 'accept'
         ? this.review.acceptAlternatives(request)

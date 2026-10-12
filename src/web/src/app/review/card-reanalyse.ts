@@ -12,6 +12,8 @@ import { ReviewGroupDto, SuggestionDto } from './review.models';
 import { ReviewService } from './review.service';
 
 /** Tooltip of a card's "Re-analyse" when it holds more members than one re-analysis takes. */
+/** Tooltip of "Re-analyse" on "All but rejected", which shows no re-analysis results. */
+export const ALL_BUT_REJECTED_TOOLTIP = 'Switch to a single-status tab to re-analyse and compare';
 export const CARD_TOO_LARGE_TOOLTIP = `At most ${MAX_COMPARE} at a time`;
 
 /**

@@ -1,7 +1,5 @@
 import { InjectionToken } from '@angular/core';
-import { ParamMap } from '@angular/router';
 import { Observable } from 'rxjs';
-import { parseSenderParam } from '../analyse/analysis.models';
 import {
   CreateExternalReviewsRequest,
   ExternalReviewDto,
@@ -9,26 +7,10 @@ import {
 } from '../core/claude.models';
 import type { SuggestionAlternativeDto } from './alternative.models';
 import { LabelDto } from './labels.models';
+import type { ReviewStatus } from './review-tab';
 
+export * from './review-tab';
 export * from './sender-pattern.models';
-
-/** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. Applied is read-only. */
-export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'applied';
-export const REVIEW_STATUSES: readonly { value: ReviewStatus; label: string }[] = [
-  { value: 'pending', label: 'Pending' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Rejected' },
-  { value: 'applied', label: 'Applied' },
-];
-
-/** The page's tab and sender from `/review?status=<status>&sender=<address>`; anything invalid falls back. */
-export function parseReviewParams(params: ParamMap): {
-  status: ReviewStatus;
-  sender: string | null;
-} {
-  const status = REVIEW_STATUSES.find((s) => s.value === params.get('status'))?.value ?? 'pending';
-  return { status, sender: parseSenderParam(params) };
-}
 
 /** `SuggestionStatus` as the API writes it. */
 export type SuggestionStatus = ReviewStatus;
@@ -131,6 +113,8 @@ export interface ReviewGroupDto {
   alternative?: SuggestionAlternativeDto | null;
   /** A listed member is `newLabelPending`. */
   newLabelPending?: boolean;
+  /** The members' status: "All but rejected" lists one card per group and status. */
+  status?: SuggestionStatus;
   /** The shown outcome's additional labels and those Gmail does not have yet; missing is none. */
   extraLabels?: string[];
   extraLabelsNew?: string[];
@@ -479,10 +463,13 @@ export function patchClaudeReview(
     return item;
   };
   const sameSender = detail.sender.address.toLowerCase() === item.senderAddress.toLowerCase();
+  // "All but rejected" lists a group once per status; a group review belongs to its pending card.
+  const sameKey = (g: ReviewGroupDto) => g.groupKey !== null && g.groupKey === item.groupKey;
+  const pendingCard = detail.groups.some((g) => sameKey(g) && g.status === 'pending');
   let changed = false;
   const groups = detail.groups.map((g) => {
     if (item.targetType === 'group') {
-      if (!sameSender || g.groupKey === null || g.groupKey !== item.groupKey) return g;
+      if (!sameSender || !sameKey(g) || (pendingCard && g.status !== 'pending')) return g;
       changed = true;
       return { ...g, claudeReview: next(g.claudeReview) };
     }

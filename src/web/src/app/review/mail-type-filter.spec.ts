@@ -8,6 +8,15 @@ describe('mail-type filter', () => {
     expect(emptyGroupsText('approved', false, [])).toBe('No approved suggestions for this sender.');
   });
 
+  it('phrases the "All but rejected" empty state', () => {
+    expect(emptyGroupsText('not_rejected', false, [])).toBe(
+      'No suggestions other than rejected for this sender.',
+    );
+    expect(emptyGroupsText('not_rejected', false, ['receipt'])).toBe(
+      'No suggestions other than rejected of the selected mail types for this sender.',
+    );
+  });
+
   it('keys a senders list by tab, Re-analysed and mail types', () => {
     expect(listedKey('pending', false, [])).not.toBe(listedKey('pending', false, ['receipt']));
     expect(listedKey('pending', true, ['receipt'])).toBe('pending|true|receipt');

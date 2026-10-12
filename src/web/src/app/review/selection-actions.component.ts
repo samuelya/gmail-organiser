@@ -22,6 +22,7 @@ import {
   MAX_COMPARE,
   RUN_ACTIVE_TOOLTIP,
 } from '../analyse/compare-run';
+import { ALL_BUT_REJECTED_TOOLTIP } from './card-reanalyse';
 import { MAX_ANALYSE_INDIVIDUALLY } from './review.models';
 import { ReviewService } from './review.service';
 
@@ -77,6 +78,8 @@ export class SelectionActions {
   /** The selection holds an applied suggestion. */
   readonly hasApplied = input(false);
   readonly busy = input(false);
+  /** On "All but rejected", which shows no re-analysis results. */
+  readonly allButRejected = input(false);
   /** A run was queued for the selection: the page clears it and re-fetches. */
   readonly started = output<void>();
 
@@ -92,6 +95,7 @@ export class SelectionActions {
   });
 
   readonly reanalyseBlocked = computed(() => {
+    if (this.allButRejected()) return ALL_BUT_REJECTED_TOOLTIP;
     if (this.runActive()) return RUN_ACTIVE_TOOLTIP;
     if (this.selection().size > MAX_COMPARE) return `At most ${MAX_COMPARE} at a time`;
     return this.busy() || this.starting() ? '' : null;

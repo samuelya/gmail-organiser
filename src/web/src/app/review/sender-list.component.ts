@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   inject,
   input,
@@ -21,7 +22,14 @@ import { debounceTime, distinctUntilChanged, filter, map } from 'rxjs';
 import { PagedDto } from '../core/paging.models';
 import { cleanSearch, MAX_SEARCH_LENGTH } from '../senders/senders.models';
 import { MAIL_TYPES, mailTypeLabel } from './mail-type-chip.component';
-import { REVIEW_STATUSES, ReviewSenderDto, ReviewStatus } from './review.models';
+import { suggestionsKind } from './mail-type-filter';
+import {
+  isSingleStatus,
+  NOT_REJECTED_TAB,
+  REVIEW_STATUSES,
+  ReviewSenderDto,
+  ReviewTab,
+} from './review.models';
 
 export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
 
@@ -47,13 +55,15 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
         (change)="statusChange.emit($event.value)"
         aria-label="Suggestion status"
         hideSingleSelectionIndicator
+        class="status-filter"
         data-testid="status-filter"
       >
         @for (s of statuses; track s.value) {
           <mat-button-toggle [value]="s.value">{{ s.label }}</mat-button-toggle>
         }
       </mat-button-toggle-group>
-      @if (reanalysed() || (alternatives() ?? 0) > 0) {
+      <!-- A re-analysis decision names one status, which "All but rejected" doesn't have. -->
+      @if (single() && (reanalysed() || (alternatives() ?? 0) > 0)) {
         <mat-slide-toggle
           [checked]="reanalysed()"
           (change)="reanalysedChange.emit($event.checked)"
@@ -89,9 +99,7 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
         <p class="muted m-0" data-testid="senders-failed">The senders could not be loaded.</p>
       } @else if (result()?.items?.length === 0) {
         <p class="muted m-0" data-testid="senders-empty">
-          No senders with {{ status() }} suggestions{{
-            mailTypes().length ? ' of the selected mail types' : ''
-          }}.
+          No senders with {{ kind() }}{{ mailTypes().length ? ' of the selected mail types' : '' }}.
         </p>
       }
       <mat-action-list aria-label="Senders" data-testid="sender-list">
@@ -108,7 +116,7 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
               <span class="min-w-0 flex-1 truncate">{{ s.displayName || s.address }}</span>
               <span
                 class="count"
-                [attr.aria-label]="countOf(s) + ' ' + status()"
+                [attr.aria-label]="countOf(s) + ' ' + countLabel()"
                 data-testid="sender-count"
                 >{{ countOf(s) }}</span
               >
@@ -133,6 +141,14 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
     .muted {
       color: var(--mat-sys-on-surface-variant);
     }
+    /* Five tabs don't fit the 22rem pane: they wrap onto a second row. */
+    .status-filter {
+      flex-wrap: wrap;
+      border-radius: 1.25rem;
+    }
+    .status-filter mat-button-toggle {
+      flex: 1 1 auto;
+    }
     .count {
       background: var(--mat-sys-primary-container);
       color: var(--mat-sys-on-primary-container);
@@ -145,7 +161,7 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
 })
 export class SenderList {
   readonly result = input<PagedDto<ReviewSenderDto> | null>(null);
-  readonly status = input.required<ReviewStatus>();
+  readonly status = input.required<ReviewTab>();
   readonly selected = input<string | null>(null);
   readonly pageSize = input.required<number>();
   readonly loading = input(false);
@@ -158,12 +174,16 @@ export class SenderList {
   readonly mailTypes = input<readonly string[]>([]);
   readonly mailTypesChange = output<string[]>();
   readonly reanalysedChange = output<boolean>();
-  readonly statusChange = output<ReviewStatus>();
+  readonly statusChange = output<ReviewTab>();
   readonly searchChange = output<string>();
   readonly pageChange = output<number>();
   readonly selectSender = output<string>();
 
   readonly statuses = REVIEW_STATUSES;
+  readonly single = computed(() => isSingleStatus(this.status()));
+  readonly kind = computed(() => suggestionsKind(this.status(), false));
+  /** The badge's text alternative after the count. */
+  readonly countLabel = computed(() => (this.single() ? this.status() : NOT_REJECTED_TAB.phrase));
   readonly allMailTypes = MAIL_TYPES;
   readonly mailTypeLabel = mailTypeLabel;
   readonly maxSearch = MAX_SEARCH_LENGTH;
@@ -184,9 +204,12 @@ export class SenderList {
       .subscribe((value) => this.searchChange.emit(value));
   }
 
-  /** The badge counts the suggestions in the filtered status. */
+  /** The badge counts the suggestions in the filtered status, or every status but rejected. */
   countOf(sender: ReviewSenderDto): number {
-    return sender[this.status()];
+    const status = this.status();
+    return isSingleStatus(status)
+      ? sender[status]
+      : NOT_REJECTED_TAB.statuses.reduce((sum, s) => sum + sender[s], 0);
   }
 
   onPage(event: PageEvent): void {
