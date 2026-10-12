@@ -1,13 +1,6 @@
-import {
-  AbstractControl,
-  FormArray,
-  FormControl,
-  FormGroup,
-  ValidationErrors,
-  Validators,
-} from '@angular/forms';
+import { AbstractControl, ValidationErrors } from '@angular/forms';
 import { ParamMap, Params } from '@angular/router';
-import { labelPathValidator } from '../review/labels.service';
+import type { PolicyForm } from './policy-form.models';
 
 /** `PolicyApplyJob.JobType`: the job an approve or "Apply again" queues. */
 export const POLICY_APPLY_JOB = 'policy_apply';
@@ -53,6 +46,8 @@ export interface SenderPolicyDto {
   isMixed: boolean;
   topicLabel: string | null;
   documentTypeLabel: string | null;
+  /** Labels added next to the topic; missing from older APIs. */
+  extraLabels?: string[];
   mailType: string | null;
   retentionDays: number | null;
   action: PolicyAction;
@@ -91,6 +86,7 @@ export interface PolicyRuleDto {
   match: RuleMatchDto;
   topicLabel: string;
   documentTypeLabel: string | null;
+  extraLabels?: string[];
   mailType: string | null;
   retentionDays: number | null;
   action: PolicyAction;
@@ -141,6 +137,8 @@ export interface EditPolicyRuleRequest {
   match: RuleMatchDto;
   topicLabel: string;
   documentTypeLabel: string | null;
+  /** The full list; `[]` clears it. */
+  extraLabels: string[];
   mailType: string | null;
   retentionDays: number | null;
   action: PolicyAction;
@@ -149,6 +147,8 @@ export interface EditPolicyRuleRequest {
 export interface EditPolicyRequest {
   topicLabel: string | null;
   documentTypeLabel: string | null;
+  /** The full list; `[]` clears it, as a mixed policy's default must. */
+  extraLabels: string[];
   mailType: string | null;
   retentionDays: number | null;
   action: PolicyAction;
@@ -256,164 +256,6 @@ export function approveSummary(detail: SenderPolicyDetailDto): ApproveSummary {
   };
 }
 
-export type MatchForm = FormGroup<{
-  fromAddress: FormControl<string>;
-  fromSubdomain: FormControl<string>;
-  subjectTemplate: FormControl<string>;
-  subjectContains: FormControl<string>;
-  category: FormControl<string>;
-  /** `''` any, `'yes'` or `'no'`. */
-  listIdPresent: FormControl<TriState>;
-  listUnsubscribePresent: FormControl<TriState>;
-}>;
-export type TriState = '' | 'yes' | 'no';
-
-export type RuleForm = FormGroup<{
-  /** Null for a rule added here. */
-  id: FormControl<string | null>;
-  name: FormControl<string>;
-  match: MatchForm;
-  topicLabel: FormControl<string>;
-  documentTypeLabel: FormControl<string>;
-  mailType: FormControl<string>;
-  retentionDays: FormControl<number | null>;
-  action: FormControl<PolicyAction>;
-}>;
-
-export type PolicyForm = FormGroup<{
-  topicLabel: FormControl<string>;
-  documentTypeLabel: FormControl<string>;
-  mailType: FormControl<string>;
-  retentionDays: FormControl<number | null>;
-  action: FormControl<PolicyAction>;
-  isMixed: FormControl<boolean>;
-  rules: FormArray<RuleForm>;
-}>;
-
-const retentionValidators = [Validators.min(1), Validators.pattern(/^\d+$/)];
-
-/** `labelPathValidator` for a label that may be left blank. */
-export function optionalLabelPath(control: AbstractControl): ValidationErrors | null {
-  return String(control.value ?? '').trim() ? labelPathValidator(control) : null;
-}
-
-/** At least one match field is set (the API's `RuleMatch.IsEmpty`). */
-export function matchRequired(control: AbstractControl): ValidationErrors | null {
-  const v = (control as MatchForm).getRawValue();
-  const set = Object.values(v).some((x) => typeof x === 'string' && x.trim() !== '');
-  return set ? null : { matchEmpty: 'Set at least one match field.' };
-}
-
-export function ruleForm(rule?: PolicyRuleDto): RuleForm {
-  const m = rule?.match;
-  const text = (v: string | null | undefined) => new FormControl(v ?? '', { nonNullable: true });
-  const tri = (v: boolean | null | undefined) =>
-    new FormControl<TriState>(v === true ? 'yes' : v === false ? 'no' : '', { nonNullable: true });
-  return new FormGroup({
-    id: new FormControl(rule?.id ?? null),
-    name: new FormControl(rule?.name ?? '', {
-      nonNullable: true,
-      validators: [Validators.required, Validators.maxLength(MAX_RULE_NAME_LENGTH)],
-    }),
-    match: new FormGroup(
-      {
-        fromAddress: text(m?.fromAddress),
-        fromSubdomain: text(m?.fromSubdomain),
-        subjectTemplate: text(m?.subjectTemplate),
-        subjectContains: text(m?.subjectContains),
-        category: text(m?.category),
-        listIdPresent: tri(m?.listIdPresent),
-        listUnsubscribePresent: tri(m?.listUnsubscribePresent),
-      },
-      { validators: matchRequired },
-    ),
-    topicLabel: new FormControl(rule?.topicLabel ?? '', {
-      nonNullable: true,
-      validators: [labelPathValidator],
-    }),
-    documentTypeLabel: new FormControl(rule?.documentTypeLabel ?? '', {
-      nonNullable: true,
-      validators: [optionalLabelPath],
-    }),
-    mailType: new FormControl(rule?.mailType ?? '', { nonNullable: true }),
-    retentionDays: new FormControl(rule?.retentionDays ?? null, {
-      validators: retentionValidators,
-    }),
-    action: new FormControl<PolicyAction>(rule?.action ?? 'keep', { nonNullable: true }),
-  });
-}
-
-/** The edit form for a policy and its rules in saved order. */
-export function policyForm(detail: SenderPolicyDetailDto): PolicyForm {
-  const p = detail.policy;
-  return new FormGroup({
-    topicLabel: new FormControl(p.topicLabel ?? '', {
-      nonNullable: true,
-      validators: [optionalLabelPath],
-    }),
-    documentTypeLabel: new FormControl(p.documentTypeLabel ?? '', {
-      nonNullable: true,
-      validators: [optionalLabelPath],
-    }),
-    mailType: new FormControl(p.mailType ?? '', { nonNullable: true }),
-    retentionDays: new FormControl(p.retentionDays, { validators: retentionValidators }),
-    action: new FormControl<PolicyAction>(p.action, { nonNullable: true }),
-    isMixed: new FormControl(p.isMixed, { nonNullable: true }),
-    rules: new FormArray(
-      [...detail.rules].sort((a, b) => a.position - b.position).map((r) => ruleForm(r)),
-    ),
-  });
-}
-
-/** Moves the rule at `index` by `delta` places; out-of-range moves do nothing. */
-export function moveRule(rules: FormArray<RuleForm>, index: number, delta: -1 | 1): void {
-  const target = index + delta;
-  if (index < 0 || target < 0 || index >= rules.length || target >= rules.length) return;
-  const rule = rules.at(index);
-  rules.removeAt(index, { emitEvent: false });
-  rules.insert(target, rule);
-  rules.markAsDirty();
-}
-
-const orNull = (text: string) => text.trim() || null;
-const triValue = (v: TriState) => (v === 'yes' ? true : v === 'no' ? false : null);
-
-/** A rule form's match as the API takes it; blank fields are null. */
-export function matchValue(m: ReturnType<MatchForm['getRawValue']>): RuleMatchDto {
-  return {
-    fromAddress: orNull(m.fromAddress),
-    fromSubdomain: orNull(m.fromSubdomain),
-    subjectTemplate: orNull(m.subjectTemplate),
-    subjectContains: orNull(m.subjectContains),
-    category: orNull(m.category),
-    listIdPresent: triValue(m.listIdPresent),
-    listUnsubscribePresent: triValue(m.listUnsubscribePresent),
-  };
-}
-
-/** The `PUT` body: rule positions are the array order; blank text is null. */
-export function editRequest(form: PolicyForm): EditPolicyRequest {
-  const v = form.getRawValue();
-  return {
-    topicLabel: orNull(v.topicLabel),
-    documentTypeLabel: orNull(v.documentTypeLabel),
-    mailType: orNull(v.mailType),
-    retentionDays: v.retentionDays ?? null,
-    action: v.action,
-    isMixed: v.isMixed,
-    rules: v.rules.map((r) => ({
-      id: r.id,
-      name: r.name.trim(),
-      match: matchValue(r.match),
-      topicLabel: r.topicLabel.trim(),
-      documentTypeLabel: orNull(r.documentTypeLabel),
-      mailType: orNull(r.mailType),
-      retentionDays: r.retentionDays ?? null,
-      action: r.action,
-    })),
-  };
-}
-
 /** Server field errors by control, held with the value they were given for. */
 const SERVER_ERRORS = new WeakMap<AbstractControl, { value: string; message: string }>();
 
@@ -460,6 +302,11 @@ export function applyServerErrors(form: PolicyForm, errors: Record<string, strin
     control.markAsTouched();
   }
   return unplaced;
+}
+
+/** The server's message for the control, if it still holds the refused value. */
+export function serverErrorOf(control: AbstractControl): string | null {
+  return (control.errors?.['server'] as string | undefined) ?? null;
 }
 
 /** A control's first error message: the server's, or the client validator's. */

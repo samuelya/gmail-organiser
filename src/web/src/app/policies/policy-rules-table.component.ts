@@ -10,21 +10,27 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { switchMap } from 'rxjs';
+import { ExtraLabelsField } from '../review/extra-labels-field.component';
+import { LabelDto } from '../review/labels.models';
 import {
   controlError,
   label,
   MAIL_TYPES,
   matchingOptions,
-  matchValue,
   matchSummary,
   MESSAGE_CATEGORIES,
-  moveRule,
   POLICY_ACTIONS,
-  PolicyForm,
   PolicyRuleDto,
+  serverErrorOf,
+} from './policies.models';
+import {
+  matchValue,
+  moveRule,
+  outcomeSummary,
+  PolicyForm,
   RuleForm,
   ruleForm,
-} from './policies.models';
+} from './policy-form.models';
 
 /** A per-rule approve or reject. */
 export interface RuleDecision {
@@ -40,6 +46,7 @@ export interface RuleDecision {
   selector: 'app-policy-rules-table',
   imports: [
     DecimalPipe,
+    ExtraLabelsField,
     MatAutocompleteModule,
     MatButtonModule,
     MatFormFieldModule,
@@ -128,12 +135,7 @@ export interface RuleDecision {
                     }
                   </td>
                   <td data-testid="rule-match">{{ summary(rule) }}</td>
-                  <td>
-                    {{ v.topicLabel }} · {{ v.action }}
-                    @if (v.mailType) {
-                      · {{ label(v.mailType) }}
-                    }
-                  </td>
+                  <td data-testid="rule-outcome">{{ outcome(v) }}</td>
                   <td>
                     @if (saved) {
                       <span
@@ -260,6 +262,14 @@ export interface RuleDecision {
                             <mat-error>{{ e }}</mat-error>
                           }
                         </mat-form-field>
+                        <app-extra-labels-field
+                          class="md:col-span-3"
+                          formControlName="extraLabels"
+                          [labels]="labelDtos()"
+                          [exclude]="[v.topicLabel, v.documentTypeLabel, ...reserved()]"
+                          [serverError]="serverError(rule.controls.extraLabels)"
+                          data-testid="rule-extra-labels"
+                        />
                         <mat-form-field>
                           <mat-label>Mail type</mat-label>
                           <mat-select formControlName="mailType">
@@ -396,6 +406,10 @@ export class PolicyRulesTable {
   /** The saved rules with their preview, by id. */
   readonly saved = input<readonly PolicyRuleDto[]>([]);
   readonly labels = input<readonly string[]>([]);
+  /** Every Gmail label, for the additional-labels autocomplete; null while loading. */
+  readonly labelDtos = input<readonly LabelDto[] | null>(null);
+  /** The app's flag labels, which can't be additional labels. */
+  readonly reserved = input<readonly string[]>([]);
   readonly documentTypes = input<readonly string[]>([]);
   /** Per-rule decisions wait for this to be false (unsaved edits or a request in flight). */
   readonly decisionsDisabled = input(false);
@@ -416,6 +430,11 @@ export class PolicyRulesTable {
     this.changes();
     return controlError(control);
   }
+  serverError(control: AbstractControl): string | null {
+    this.changes();
+    return serverErrorOf(control);
+  }
+  readonly outcome = outcomeSummary;
   readonly options = matchingOptions;
 
   savedRule(rule: RuleForm): PolicyRuleDto | undefined {

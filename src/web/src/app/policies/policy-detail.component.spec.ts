@@ -4,11 +4,15 @@ import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
 import { provideRouter } from '@angular/router';
+import { By } from '@angular/platform-browser';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { of, Subject, throwError } from 'rxjs';
+import { Observable, of, Subject, throwError } from 'rxjs';
 import { isActiveJob, JobDto, JobsConnectionState } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
+import { ExtraLabelsField } from '../review/extra-labels-field.component';
+import { LabelDto } from '../review/labels.models';
 import { LabelsService } from '../review/labels.service';
+import { SettingsDto } from '../settings/settings.models';
 import { SettingsService } from '../settings/settings.service';
 import { POLICY_APPLY_JOB, PolicyRuleDto, SenderPolicyDetailDto } from './policies.models';
 import { PoliciesService } from './policies.service';
@@ -96,7 +100,10 @@ describe('PolicyDetail', () => {
   let jobs: FakeJobs;
   let snack: { open: ReturnType<typeof vi.fn> };
 
-  async function render() {
+  async function render(
+    labels: Observable<LabelDto[]> = of([]),
+    settings: Partial<SettingsDto> = { documentTypeParent: null },
+  ) {
     api = {
       get: vi.fn(() => of(detail())),
       edit: vi.fn(),
@@ -111,11 +118,8 @@ describe('PolicyDetail', () => {
         provideRouter([{ path: 'policies/:id', component: PolicyDetail }]),
         { provide: JobsService, useValue: (jobs = new FakeJobs()) },
         { provide: PoliciesService, useValue: api },
-        { provide: LabelsService, useValue: { labels: () => of([]) } },
-        {
-          provide: SettingsService,
-          useValue: { getSettings: () => of({ documentTypeParent: null }) },
-        },
+        { provide: LabelsService, useValue: { labels: () => labels } },
+        { provide: SettingsService, useValue: { getSettings: () => of(settings) } },
         { provide: MatSnackBar, useValue: snack },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
@@ -277,6 +281,85 @@ describe('PolicyDetail', () => {
 
     expect(q('policy-action-error')!.textContent).toContain('cannot delete');
     expect(q('rule-label-error')!.textContent).toContain('Required.');
+  });
+
+  it('excludes the flag labels from settings and marks nothing new until the labels load', async () => {
+    const labels = new Subject<LabelDto[]>();
+    const { harness, q, all, stable } = await render(labels, {
+      documentTypeParent: null,
+      actionLabelName: 'Flag/Act',
+      deleteLabelName: 'Flag/Bin',
+    });
+    api.get.mockReturnValue(
+      of({
+        ...detail({ isMixed: false, topicLabel: 'Shopping', extraLabels: ['Projects/Alpha'] }),
+      }),
+    );
+    jobs.reconnects.set(1);
+    await stable();
+    const field = harness.fixture.debugElement.query(By.directive(ExtraLabelsField))
+      .componentInstance as ExtraLabelsField;
+    expect(field.exclude()).toEqual(['Shopping', '', 'Flag/Act', 'Flag/Bin']);
+    expect(q('policy-extra-labels')!.textContent).toContain('Projects/Alpha');
+    expect(all('extra-label-new')).toEqual([]);
+
+    labels.error(new Error('offline'));
+    await stable();
+    expect(all('extra-label-new')).toEqual([]);
+  });
+
+  it('edits extra labels: hidden while mixed, shown on rules, not sent while mixed', async () => {
+    const { q, all, stable } = await render();
+    expect(q('policy-extra-labels')).toBeNull();
+    api.get.mockReturnValue(
+      of({
+        ...detail({ isMixed: false, topicLabel: 'Shopping', extraLabels: ['Projects/Alpha'] }),
+        rules: [rule({ extraLabels: ['Tax', 'Home'] })],
+      }),
+    );
+    jobs.reconnects.set(1);
+    await stable();
+    expect(q('rule-outcome')!.textContent).toContain('Shopping/Receipts + Tax, Home · keep');
+    expect(q('policy-extra-labels')!.textContent).toContain('Projects/Alpha');
+
+    q('rule-toggle')!.click();
+    await stable();
+    const ruleChips = q('rule-extra-labels')!.querySelectorAll('[data-testid="extra-label-chip"]');
+    expect([...ruleChips].map((c) => c.textContent)).toEqual([
+      expect.stringContaining('Tax'),
+      expect.stringContaining('Home'),
+    ]);
+
+    q('policy-mixed')!.querySelector('button')!.click();
+    await stable();
+    expect(q('policy-extra-labels')).toBeNull();
+    q('policy-mixed')!.querySelector('button')!.click();
+    await stable();
+    expect(q('policy-extra-labels')!.textContent).toContain('Projects/Alpha');
+    q('policy-mixed')!.querySelector('button')!.click();
+    await stable();
+    api.edit.mockReturnValue(
+      throwError(
+        () =>
+          new HttpErrorResponse({
+            status: 400,
+            error: { errors: { 'rules[0].extraLabels': ['Too many labels.'] } },
+          }),
+      ),
+    );
+    q('save')!.click();
+    await stable();
+    expect(api.edit).toHaveBeenCalledWith(
+      'p1',
+      expect.objectContaining({
+        isMixed: true,
+        extraLabels: [],
+        rules: [expect.objectContaining({ extraLabels: ['Tax', 'Home'] })],
+      }),
+    );
+    expect(all('extra-labels-error').map((e) => e.textContent)).toEqual([
+      expect.stringContaining('Too many labels.'),
+    ]);
   });
 
   it('shows an error on a rule id at form level, keeps Save usable and offers a reload', async () => {

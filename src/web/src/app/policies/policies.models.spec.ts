@@ -7,17 +7,14 @@ import {
   STALE_RULES_ERROR,
   approveSummary,
   controlError,
-  editRequest,
   matchSummary,
-  moveRule,
   parsePolicyQuery,
-  policyForm,
   policyQueryParams,
   PolicyRuleDto,
-  ruleForm,
   SenderPolicyDetailDto,
   SenderPolicyDto,
 } from './policies.models';
+import { editRequest, moveRule, outcomeSummary, policyForm, ruleForm } from './policy-form.models';
 import { PoliciesService } from './policies.service';
 
 export const policy = (over: Partial<SenderPolicyDto> = {}): SenderPolicyDto => ({
@@ -178,6 +175,49 @@ describe('policy form', () => {
       listIdPresent: null,
       listUnsubscribePresent: null,
     });
+  });
+
+  it('sends extra labels in full, [] when none, and pre-fills a missing list as []', () => {
+    const form = policyForm(
+      detail({
+        policy: policy({ extraLabels: ['Projects/Alpha'] }),
+        rules: [rule({ id: 'a', extraLabels: ['Tax', 'Home'] }), rule({ id: 'b', position: 1 })],
+      }),
+    );
+    expect(form.controls.rules.at(1).controls.extraLabels.value).toEqual([]);
+    const body = editRequest(form);
+    expect(body.extraLabels).toEqual(['Projects/Alpha']);
+    expect(body.rules.map((r) => r.extraLabels)).toEqual([['Tax', 'Home'], []]);
+  });
+
+  it('sends no default extra labels while mixed, and keeps them for when mixed is turned off', () => {
+    const form = policyForm(detail({ policy: policy({ extraLabels: ['Projects/Alpha'] }) }));
+    form.controls.isMixed.setValue(true);
+    expect(editRequest(form).extraLabels).toEqual([]);
+    form.controls.isMixed.setValue(false);
+    expect(form.controls.extraLabels.value).toEqual(['Projects/Alpha']);
+    expect(editRequest(form).extraLabels).toEqual(['Projects/Alpha']);
+  });
+
+  it('puts server errors under extraLabels on the field controls', () => {
+    const form = policyForm(detail({ rules: [rule()] }));
+    applyServerErrors(form, {
+      extraLabels: ['Too many.'],
+      'rules[0].extraLabels[1]': ['Not a label.'],
+    });
+    expect(form.controls.extraLabels.errors).toEqual({ server: 'Too many.' });
+    expect(form.controls.rules.at(0).controls.extraLabels.errors).toEqual({
+      server: 'Not a label.',
+    });
+    form.controls.extraLabels.setValue(['Other']);
+    expect(form.controls.extraLabels.errors).toBeNull();
+  });
+
+  it('summarises a rule outcome with its extra labels', () => {
+    const v = ruleForm(rule({ extraLabels: ['A', 'B'], action: 'archive' })).getRawValue();
+    expect(outcomeSummary(v)).toBe('Shopping/Receipts + A, B · archive · receipt');
+    expect(outcomeSummary({ ...v, extraLabels: [] })).toBe('Shopping/Receipts · archive · receipt');
+    expect(outcomeSummary({ ...v, topicLabel: '' })).toBe('A, B · archive · receipt');
   });
 
   it('validates labels, retention and a new rule', () => {
