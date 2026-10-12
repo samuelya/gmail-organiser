@@ -43,6 +43,9 @@ public sealed class DecisionRow
     /// </summary>
     public string? DocumentTypeParent { get; set; }
 
+    /// <summary>The decided additional labels (#522), canonical like <see cref="SuggestionRow.ExtraLabels"/>.</summary>
+    public string[] ExtraLabels { get; set; } = [];
+
     /// <summary>The decided mail type (#365); null when the suggestion had none.</summary>
     public MailType? MailType { get; set; }
     public bool NeedsAction { get; set; }
@@ -74,6 +77,7 @@ public sealed class DecisionRow
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.SenderAddress).IsRequired();
             e.Property(r => r.TopicLabel).IsRequired();
+            e.Property(r => r.ExtraLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.Outcome).IsRequired().HasConversion(new SnakeCaseEnumConverter<DecisionOutcome>());
             e.Property(r => r.Source).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionSource>());
             e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());

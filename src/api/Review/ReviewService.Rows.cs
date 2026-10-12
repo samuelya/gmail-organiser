@@ -1,4 +1,5 @@
 using GmailOrganiser.Analysis;
+using GmailOrganiser.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Review;
@@ -56,6 +57,22 @@ public sealed partial class ReviewService
     /// <summary>Loads and locks the rows until the transaction ends; uncomposed so the lock clause stays at the top level.</summary>
     private Task<List<SuggestionRow>> LockAsync(Guid[] ids, CancellationToken ct) =>
         db.Suggestions.FromSql($"SELECT * FROM suggestions WHERE id = ANY({ids}) ORDER BY id FOR UPDATE").ToListAsync(ct);
+
+    /// <summary>The suggestion's stored document-type label; null when it has none or does not exist.</summary>
+    public Task<string?> DocumentTypeOfAsync(Guid id, CancellationToken ct) =>
+        db.Suggestions.AsNoTracking().Where(s => s.Id == id).Select(s => s.DocumentTypeLabel).SingleOrDefaultAsync(ct);
+
+    /// <summary>The personal labels by id; <see cref="PersonalLabels.None"/> (no names) when Gmail is not reachable.</summary>
+    private async Task<PersonalLabels> PersonalLabelsAsync(CancellationToken ct) =>
+        await PersonalLabels.LoadAsync(labels, await settingsStore.GetAsync(ct), ct);
+
+    /// <summary>The allowlist for <paramref name="senders"/>, the protection rules and the settings, from one settings read.</summary>
+    private async Task<(Allowlist Allowlist, ProtectionSettings Rules, AppSettings Settings)> ProtectionAsync(
+        IReadOnlyCollection<string> senders, CancellationToken ct)
+    {
+        var settings = await settingsStore.GetAsync(ct);
+        return (await AllowlistLoader.LoadAsync(db, settings, senders, ct), settings.Protection, settings);
+    }
 
     /// <summary>Whether Gmail lacks the label; null without a Gmail connection or when the label list cannot be loaded.</summary>
     private async Task<bool?> IsNewLabelAsync(string label, CancellationToken ct)

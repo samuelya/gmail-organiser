@@ -53,6 +53,12 @@ public sealed class SuggestionRow
     /// <summary><see cref="DocumentTypeLabel"/> was not in the label tree at analysis time (case-insensitive).</summary>
     public bool DocumentTypeIsNew { get; set; }
 
+    /// <summary>
+    /// Additional labels the person added in review (#522), by name: canonical (<see cref="ExtraLabelList.Clean"/>), so
+    /// array equality is outcome equality.
+    /// </summary>
+    public string[] ExtraLabels { get; set; } = [];
+
     /// <summary>What kind of mail it is (#365); null when the model, memory or policy gave none.</summary>
     public MailType? MailType { get; set; }
 
@@ -172,6 +178,7 @@ public sealed class SuggestionRow
             e.Property(r => r.Reason).IsRequired();
             e.Property(r => r.ReplaceLabelIds).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.ReplaceLabels).IsRequired().HasDefaultValueSql("'{}'");
+            e.Property(r => r.ExtraLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.FilterCriteria).HasColumnType("jsonb");
             e.Property(r => r.Status).IsRequired().HasConversion(new SnakeCaseEnumConverter<SuggestionStatus>());
             e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());

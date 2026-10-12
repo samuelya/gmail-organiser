@@ -1,4 +1,3 @@
-using System.Linq.Expressions;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Analysis.Grouping;
 using GmailOrganiser.Claude;
@@ -157,10 +156,10 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var keys = pageStats.ConvertAll(g => g.Key);
         var outcomes = (await inStatus
                 .Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId))
-                .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel })
+                .GroupBy(s => new { Key = s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId, s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel, s.ExtraLabels })
                 .Select(g => new OutcomeCount(
                     g.Key.Key, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
-                    g.Count(s => s.Source == SuggestionSource.Llm) > 0))
+                    g.Count(s => s.Source == SuggestionSource.Llm) > 0, g.Key.ExtraLabels))
                 .ToListAsync(ct))
             .ToLookup(o => o.Key, StringComparer.Ordinal);
 
@@ -189,10 +188,11 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var allowlist = await AllowlistLoader.LoadAsync(db, claude.Settings, ct);
         var personal = await PersonalLabels.LoadAsync(labelCatalog, claude.Settings, ct);
         var labelNames = personal.IsUnavailable ? null : personal.Names;
+        var existing = ExtraLabelList.Existing(labelNames);
         foreach (var (g, members) in loaded)
         {
             groups.Add(ToGroup(
-                g, outcomes[g.Key], members, allowlist, claude, labelNames, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
+                g, outcomes[g.Key], members, allowlist, claude, labelNames, existing, personal.AppLabelIds, alternatives, alternativeCounts.GetValueOrDefault(g.Key)));
         }
 
         var policies = await PolicyLookup.ForSendersAsync(db, [counts.Address], ct);
@@ -207,10 +207,10 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     {
         var outcomes = await db.Suggestions.AsNoTracking()
             .Where(s => s.SenderAddress == senderAddress && s.GroupKey == groupKey && s.Status == SuggestionStatus.Pending)
-            .GroupBy(s => new { s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel })
+            .GroupBy(s => new { s.TopicLabel, s.NeedsAction, s.ToBeDeleted, s.DocumentTypeLabel, s.ExtraLabels })
             .Select(g => new OutcomeCount(
                 groupKey, g.Key.TopicLabel, g.Key.NeedsAction, g.Key.ToBeDeleted, g.Key.DocumentTypeLabel, g.Count(),
-                g.Count(s => s.Source == SuggestionSource.Llm) > 0))
+                g.Count(s => s.Source == SuggestionSource.Llm) > 0, g.Key.ExtraLabels))
             .ToListAsync(ct);
         if (outcomes.Count == 0)
         {
@@ -218,7 +218,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         }
 
         var shown = Shown(outcomes);
-        return new GroupOutcome(shown.TopicLabel, shown.NeedsAction, shown.ToBeDeleted, DocumentTypeLabel: shown.DocumentTypeLabel);
+        return new GroupOutcome(
+            shown.TopicLabel, shown.NeedsAction, shown.ToBeDeleted, DocumentTypeLabel: shown.DocumentTypeLabel, ExtraLabels: shown.ExtraLabels);
     }
 
     /// <summary>
@@ -250,8 +251,11 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         IReadOnlyDictionary<string, string>? labelNames = null,
         IReadOnlyList<string>? appLabelIds = null,
         bool taxonomyLocked = false) =>
-        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds, taxonomyLocked: taxonomyLocked);
+        ToDto(s, m, allowlist, rules, labelNames, null, false, appLabelIds: appLabelIds, taxonomyLocked: taxonomyLocked,
+            existingLabels: ExtraLabelList.Existing(labelNames));
 
+    /// <param name="existingLabels"><see cref="ExtraLabelList.Existing"/> of <paramref name="labelNames"/>, built once per
+    /// request; null lists no additional label as new.</param>
     public static SuggestionDto ToDto(
         SuggestionRow s,
         MessageRow m,
@@ -262,7 +266,8 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         bool suggestedForClaude,
         SuggestionAlternativeRow? alternative = null,
         IReadOnlyList<string>? appLabelIds = null,
-        bool taxonomyLocked = false)
+        bool taxonomyLocked = false,
+        IReadOnlySet<string>? existingLabels = null)
     {
         var current = CurrentLabels(m, labelNames);
         var replaced = Replaced(s.Replaced(labelNames), s.TopicLabel, m, labelNames, appLabelIds);
@@ -292,31 +297,9 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         s.DocumentTypeIsNew,
         alternative is null ? null : ToDto(alternative, m, current, labelNames),
         s.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
-        taxonomyLocked && s.Status == SuggestionStatus.Pending && IsStillNew(s, labelNames));
-    }
-
-    /// <summary>
-    /// Whether the suggestion's new topic label is still missing from Gmail: <see cref="SuggestionRow.IsNewLabel"/> is
-    /// set at analysis and never updated, so a label created since no longer counts. Without the label list
-    /// (<paramref name="labelNames"/> null) the stored flag stands.
-    /// </summary>
-    public static bool IsStillNew(SuggestionRow s, IReadOnlyDictionary<string, string>? labelNames) =>
-        s.IsNewLabel
-        && (labelNames is null || !labelNames.Values.Any(n => string.Equals(n.Trim(), s.TopicLabel.Trim(), StringComparison.OrdinalIgnoreCase)));
-
-    /// <summary>
-    /// <see cref="IsStillNew"/> as SQL, negated: the suggestion proposes no new label, or one Gmail has since. The bulk
-    /// approve skip and its <see cref="BulkApproveResponse.ExcludedNewLabel"/> count both take it.
-    /// </summary>
-    public static Expression<Func<SuggestionRow, bool>> NotStillNew(IReadOnlyDictionary<string, string>? labelNames)
-    {
-        if (labelNames is null)
-        {
-            return s => !s.IsNewLabel;
-        }
-
-        var existing = labelNames.Values.Select(n => n.Trim().ToLowerInvariant()).Distinct().ToList();
-        return s => !s.IsNewLabel || existing.Contains(s.TopicLabel.Trim().ToLower());
+        taxonomyLocked && s.Status == SuggestionStatus.Pending && IsStillNew(s, labelNames),
+        s.ExtraLabels,
+        ExtraLabelList.New(s.ExtraLabels, existingLabels));
     }
 
     /// <summary>
@@ -390,6 +373,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         Allowlist allowlist,
         ClaudeLookup claude,
         IReadOnlyDictionary<string, string>? labelNames,
+        IReadOnlySet<string>? existingLabels,
         IReadOnlyList<string> appLabelIds,
         IReadOnlyDictionary<Guid, SuggestionAlternativeRow> alternatives,
         int alternativeCount)
@@ -398,7 +382,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var shared = Shown(all);
         bool Matches(SuggestionRow s) =>
             s.TopicLabel == shared.TopicLabel && s.NeedsAction == shared.NeedsAction && s.ToBeDeleted == shared.ToBeDeleted
-            && s.DocumentTypeLabel == shared.DocumentTypeLabel;
+            && s.DocumentTypeLabel == shared.DocumentTypeLabel && ExtraLabelList.SameList(s.ExtraLabels, shared.ExtraLabels);
         var representative = members.FirstOrDefault(x => Matches(x.S) && x.S.Source == SuggestionSource.Llm);
         if (representative.S is null)
         {
@@ -417,7 +401,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         var dtos = members.Select(x => ToDto(
                 x.S, x.M, allowlist, settings.Protection, labelNames, claude.Suggestions.GetValueOrDefault(x.S.Id),
                 IsSuggestedForClaude(settings, x.S.Confidence, x.S.IsNewLabel), alternatives.GetValueOrDefault(x.S.Id), appLabelIds,
-                settings.TaxonomyLocked))
+                settings.TaxonomyLocked, existingLabels))
             .ToList();
         var change = Combined(dtos.Select(d => d.LabelChange));
         return new ReviewGroupDto(
@@ -445,10 +429,12 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
             shared.DocumentTypeLabel is not null
                 && members.Any(x => x.S.DocumentTypeIsNew && x.S.DocumentTypeLabel == shared.DocumentTypeLabel),
             GroupAlternative(dtos, alternativeCount),
-            dtos.Any(d => d.NewLabelPending));
+            dtos.Any(d => d.NewLabelPending),
+            shared.ExtraLabels,
+            ExtraLabelList.New(shared.ExtraLabels, existingLabels));
     }
 
-    /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags and type.</summary>
+    /// <summary>The card's outcome: the most common, then one with a model answer, then by label, flags, type and extras.</summary>
     private static OutcomeCount Shown(IEnumerable<OutcomeCount> outcomes) => outcomes
         .OrderByDescending(o => o.Count)
         .ThenByDescending(o => o.HasLlm)
@@ -456,6 +442,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         .ThenBy(o => o.NeedsAction)
         .ThenBy(o => o.ToBeDeleted)
         .ThenBy(o => o.DocumentTypeLabel, StringComparer.Ordinal)
+        .ThenBy(o => string.Join('\n', o.ExtraLabels), StringComparer.Ordinal)
         .First();
 
     private static ReviewSenderDto ToDto(StatusCounts c, SenderRow? sender, Dictionary<string, Guid> policies) => new(
@@ -490,5 +477,6 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         AppSettings Settings, Dictionary<Guid, ExternalReviewDto> Suggestions, Dictionary<string, ExternalReviewDto> Groups);
 
     private sealed record OutcomeCount(
-        string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, string? DocumentTypeLabel, int Count, bool HasLlm);
+        string Key, string TopicLabel, bool NeedsAction, bool ToBeDeleted, string? DocumentTypeLabel, int Count, bool HasLlm,
+        string[] ExtraLabels);
 }

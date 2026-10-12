@@ -14,8 +14,10 @@ namespace GmailOrganiser.Review;
 /// Each member keeps only its own replaced labels named here (never gains one; empty clears them); null leaves them.
 /// </param>
 /// <param name="DocumentTypeLabel">The card's document-type label; null matches only members without one.</param>
+/// <param name="ExtraLabels">The card's additional labels, canonical; null or empty matches only members without any.</param>
 public sealed record GroupOutcome(
-    string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels = null, string? DocumentTypeLabel = null);
+    string TopicLabel, bool NeedsAction, bool ToBeDeleted, IReadOnlyList<string>? ReplaceLabels = null, string? DocumentTypeLabel = null,
+    IReadOnlyList<string>? ExtraLabels = null);
 
 /// <summary>
 /// An edit of a group's members (or one suggestion) to an outcome. Unlike <see cref="GroupOutcome"/>, which matches
@@ -79,14 +81,15 @@ public sealed partial class ReviewService(
     /// <paramref name="replaceLabels"/> (null: unchanged) are current labels of the message, by name; one it does not
     /// carry is <see cref="ReviewResult.InvalidReplaceLabels"/> with the names it does not carry in <c>Unknown</c>,
     /// no label list <see cref="ReviewResult.LabelsUnavailable"/>. Replaced action and delete labels stay
-    /// (<see cref="ReplacedLabels"/>).
+    /// (<see cref="ReplacedLabels"/>). <paramref name="extraLabels"/> are stored in Gmail's spelling (<see cref="ExtraLabelList.Apply"/>).
     /// </summary>
     public async Task<(ReviewResult Result, SuggestionDto? Suggestion, IReadOnlyList<string> Unknown)> EditAsync(
         Guid id, string topicLabel, bool needsAction, bool toBeDeleted, IReadOnlyList<string>? replaceLabels,
-        DocumentTypeChange documentType, MailTypeChange mailType, CancellationToken ct)
+        DocumentTypeChange documentType, MailTypeChange mailType, ExtraLabelsChange extraLabels, CancellationToken ct)
     {
         var isNewLabel = await IsNewLabelAsync(topicLabel, ct);
         var (type, typeIsNew) = await DocumentTypeEdit.ResolveAsync(labels, documentType, ct);
+        var extras = await ExtraLabelList.ResolveAsync(labels, extraLabels, ct);
         var settings = await settingsStore.GetAsync(ct);
         IReadOnlyList<string> unknown = [];
         var (result, suggestion) = await ChangeOneAsync(id, _ => true, (s, m, personal) =>
@@ -120,6 +123,7 @@ public sealed partial class ReviewService(
             s.NeedsAction = needsAction;
             s.ToBeDeleted = toBeDeleted;
             DocumentTypeEdit.Apply(s, type, typeIsNew);
+            ExtraLabelList.Apply(s, extras, settings);
             if (mailType.IsSet)
             {
                 s.MailType = mailType.Value;
@@ -207,6 +211,7 @@ public sealed partial class ReviewService(
                 if (outcome == DecisionOutcome.Rejected
                     || (s.TopicLabel == shown!.TopicLabel && s.NeedsAction == shown.NeedsAction && s.ToBeDeleted == shown.ToBeDeleted
                         && s.DocumentTypeLabel == shown.DocumentTypeLabel
+                        && ExtraLabelList.SameList(s.ExtraLabels, shown.ExtraLabels ?? [])
                         && !(s.ToBeDeleted && MessageProtection.IsProtected(m, allowlist, rules))))
                 {
                     if (outcome == DecisionOutcome.Approved)
@@ -353,7 +358,8 @@ public sealed partial class ReviewService(
 
     /// <summary>
     /// The edit for <see cref="ChangeChunkAsync"/>: skips (and lists) a protected message the outcome would delete. A
-    /// member's document type equal to the new topic label is dropped with a warning (the callers are Claude verdicts).
+    /// member's document type equal to the new topic label is dropped with a warning (the callers are Claude verdicts),
+    /// an additional label equal to the new topic or document type silently.
     /// </summary>
     private async Task<Func<SuggestionRow, MessageRow, bool>> EditToAsync(
         GroupEdit outcome, IReadOnlyCollection<string> senders, List<Guid> skipped, CancellationToken ct)
@@ -385,22 +391,12 @@ public sealed partial class ReviewService(
                 DocumentTypeEdit.Apply(s, DocumentTypeChange.Clear, null);
             }
 
+            ExtraLabelList.Apply(s, ExtraLabelsChange.Unchanged, settings);
+
             ReplacedLabels.Keep(s, outcome.ReplaceLabels, names, settings);
             s.Edited = true;
             return true;
         };
-    }
-
-    /// <summary>The personal labels by id; <see cref="PersonalLabels.None"/> (no names) when Gmail is not reachable.</summary>
-    private async Task<PersonalLabels> PersonalLabelsAsync(CancellationToken ct) =>
-        await PersonalLabels.LoadAsync(labels, await settingsStore.GetAsync(ct), ct);
-
-    /// <summary>The allowlist for <paramref name="senders"/>, the protection rules and the settings, from one settings read.</summary>
-    private async Task<(Allowlist Allowlist, ProtectionSettings Rules, AppSettings Settings)> ProtectionAsync(
-        IReadOnlyCollection<string> senders, CancellationToken ct)
-    {
-        var settings = await settingsStore.GetAsync(ct);
-        return (await AllowlistLoader.LoadAsync(db, settings, senders, ct), settings.Protection, settings);
     }
 
     private static SuggestionStatus ToStatus(DecisionOutcome outcome) =>

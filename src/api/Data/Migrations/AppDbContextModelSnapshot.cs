@@ -375,6 +375,13 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("edited");
 
+                    b.PrimitiveCollection<string[]>("ExtraLabels")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("extra_labels")
+                        .HasDefaultValueSql("'{}'");
+
                     b.Property<string>("FilterCriteria")
                         .HasColumnType("jsonb")
                         .HasColumnName("filter_criteria");
@@ -1105,6 +1112,13 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("EmbeddingModel")
                         .HasColumnType("text")
                         .HasColumnName("embedding_model");
+
+                    b.PrimitiveCollection<string[]>("ExtraLabels")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("extra_labels")
+                        .HasDefaultValueSql("'{}'");
 
                     b.Property<string>("ListId")
                         .HasColumnType("text")

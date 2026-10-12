@@ -100,7 +100,7 @@ public sealed class AlternativeService(
                 wasApplied.Add(suggestion.MessageId);
             }
 
-            Copy(alternative, suggestion);
+            Copy(alternative, suggestion, settings);
             var message = messages[suggestion.MessageId];
             if (logs[suggestion.Id].Any())
             {
@@ -264,8 +264,11 @@ public sealed class AlternativeService(
             .Where(l => GmailLabelIds.IsUser(l.Id) && m.LabelIds.Contains(l.Id, StringComparer.Ordinal) && !kept.Contains(l.Name.Trim()));
     }
 
-    /// <summary>The alternative's outcome and provenance; the suggestion keeps its id, message, sender and group.</summary>
-    private static void Copy(SuggestionAlternativeRow a, SuggestionRow s)
+    /// <summary>
+    /// The alternative's outcome and provenance; the suggestion keeps its id, message, sender and group, and its
+    /// additional labels, re-cleaned against the new topic and document type (<see cref="ExtraLabelList.Apply"/>).
+    /// </summary>
+    private static void Copy(SuggestionAlternativeRow a, SuggestionRow s, AppSettings settings)
     {
         s.Source = a.Source;
         s.RunId = a.RunId;
@@ -285,5 +288,6 @@ public sealed class AlternativeService(
         s.Model = a.Model;
         s.PromptVersion = a.PromptVersion;
         s.Edited = false;
+        ExtraLabelList.Apply(s, ExtraLabelsChange.Unchanged, settings);
     }
 }
