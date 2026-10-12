@@ -77,18 +77,37 @@ public sealed class ReviewStatusFilterTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
-    public async Task Sender_detail_lists_pending_approved_and_applied_members_with_their_own_status()
+    public async Task Sender_detail_lists_one_card_per_status_with_counts_and_alternatives_of_that_status()
     {
+        foreach (var id in new[] { "a00", "a02", "a05", "a06" })
+        {
+            await AddAlternativeAsync(id);
+        }
+
         var detail = await GetAsync<ReviewSenderDetailDto>(
             $"/api/review/senders/{Uri.EscapeDataString(AnalysisRunHarness.Shop)}?status=not_rejected");
-        var members = detail.Groups.SelectMany(g => g.Members).ToList();
-        members.Count.ShouldBe(7);
-        members.GroupBy(m => m.Status).ToDictionary(g => g.Key, g => g.Count())
+        detail.Groups.Select(g => (g.GroupKey, g.Status)).ShouldBeUnique();
+        detail.Groups.GroupBy(g => g.Status).ToDictionary(g => g.Key, g => g.Sum(x => x.Size))
             .ShouldBe(new Dictionary<string, int> { ["pending"] = 5, ["approved"] = 1, ["applied"] = 1 }, ignoreOrder: true);
+        foreach (var g in detail.Groups)
+        {
+            g.Members.ShouldAllBe(m => m.Status == g.Status);
+            g.Size.ShouldBe(g.Members.Count);
+            (g.Alternative?.Count ?? 0).ShouldBe(g.Members.Count(m => m.Alternative != null), $"{g.GroupKey} {g.Status}");
+        }
 
-        var billing = $"/api/review/senders/{Uri.EscapeDataString(AnalysisRunHarness.Billing)}";
-        (await h.GetAsync($"{billing}?status=not_rejected")).StatusCode.ShouldBe(HttpStatusCode.NotFound);
-        (await GetAsync<ReviewSenderDetailDto>($"{billing}?status=pending")).Groups.ShouldBeEmpty();
+        detail.Groups.Sum(g => g.Alternative?.Count ?? 0).ShouldBe(4);
+        (await GetAsync<ReviewSenderDetailDto>($"/api/review/senders/{Uri.EscapeDataString(AnalysisRunHarness.Shop)}"))
+            .Groups.ShouldAllBe(g => g.Status == "pending");
+    }
+
+    [Theory]
+    [InlineData("not_rejected")]
+    [InlineData("pending")]
+    public async Task Sender_detail_with_nothing_in_the_filter_is_ok_with_no_groups(string status)
+    {
+        var billing = $"/api/review/senders/{Uri.EscapeDataString(AnalysisRunHarness.Billing)}?status={status}";
+        (await GetAsync<ReviewSenderDetailDto>(billing)).Groups.ShouldBeEmpty();
     }
 
     [Theory]
@@ -99,7 +118,25 @@ public sealed class ReviewStatusFilterTests(ApiFactory factory, PostgresFixture 
         var response = await h.GetAsync(path);
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         var errors = (await response.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors;
-        errors["status"].ShouldBe(["Must be pending, approved, rejected, applied or not_rejected."]);
+        errors["status"].ShouldBe([ReviewQuery.StatusFilterError]);
+    }
+
+    private async Task AddAlternativeAsync(string messageId)
+    {
+        await using var db = postgres.CreateDbContext();
+        var id = await db.Suggestions.Where(s => s.MessageId == messageId).Select(s => s.Id).SingleAsync(Ct);
+        db.SuggestionAlternatives.Add(new SuggestionAlternativeRow
+        {
+            Id = Guid.CreateVersion7(),
+            SuggestionId = id,
+            MessageId = messageId,
+            Source = SuggestionSource.Llm,
+            TopicLabel = "Synthetic",
+            Confidence = 0.8,
+            Reason = "Synthetic reason",
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        await db.SaveChangesAsync(Ct);
     }
 
     private async Task<T> GetAsync<T>(string path)

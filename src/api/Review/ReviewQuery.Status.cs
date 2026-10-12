@@ -5,6 +5,9 @@ namespace GmailOrganiser.Review;
 /// <summary>The review read paths' status filter (#536): one status, or every status but rejected.</summary>
 public sealed partial class ReviewQuery
 {
+    /// <summary>The validation message for a status <see cref="ParseStatusFilter"/> refuses.</summary>
+    public const string StatusFilterError = "Must be pending, approved, rejected, applied or not_rejected.";
+
     private static readonly IReadOnlyList<SuggestionStatus> NotRejected =
         [SuggestionStatus.Pending, SuggestionStatus.Approved, SuggestionStatus.Applied];
 
@@ -16,27 +19,19 @@ public sealed partial class ReviewQuery
     public static IReadOnlyList<SuggestionStatus>? ParseStatusFilter(string? value) =>
         value?.Trim().ToLowerInvariant() == "not_rejected" ? NotRejected : ParseStatus(value) is { } s ? [s] : null;
 
-    /// <summary>Senders with at least one suggestion in <paramref name="statuses"/>, the most of them first.</summary>
-    private static IOrderedQueryable<StatusCounts> InStatuses(IQueryable<StatusCounts> counts, IReadOnlyList<SuggestionStatus> statuses) =>
-        statuses switch
-        {
-            [SuggestionStatus.Approved] => counts.Where(c => c.Approved > 0).OrderByDescending(c => c.Approved),
-            [SuggestionStatus.Rejected] => counts.Where(c => c.Rejected > 0).OrderByDescending(c => c.Rejected),
-            [SuggestionStatus.Applied] => counts.Where(c => c.Applied > 0).OrderByDescending(c => c.Applied),
-            [SuggestionStatus.Pending] => counts.Where(c => c.Pending > 0).OrderByDescending(c => c.Pending),
-            _ => counts.Where(c => c.Pending + c.Approved + c.Applied > 0).OrderByDescending(c => c.Pending + c.Approved + c.Applied),
-        };
-
     /// <summary>
-    /// Whether a multi-status filter (<c>not_rejected</c>) matches none of the sender's suggestions; a single status keeps
-    /// listing the sender with no groups, as before.
+    /// Per sender, the suggestions per status and <see cref="StatusCounts.InFilter"/>, those in <paramref name="statuses"/>.
     /// </summary>
-    private static bool IsEmptyFilter(StatusCounts c, IReadOnlyList<SuggestionStatus> statuses) =>
-        statuses.Count > 1 && statuses.Sum(s => s switch
-        {
-            SuggestionStatus.Pending => c.Pending,
-            SuggestionStatus.Approved => c.Approved,
-            SuggestionStatus.Rejected => c.Rejected,
-            _ => c.Applied,
-        }) == 0;
+    private static IQueryable<StatusCounts> CountsBySender(IQueryable<SuggestionRow> suggestions, IReadOnlyList<SuggestionStatus> statuses) =>
+        suggestions
+            .GroupBy(s => s.SenderAddress)
+            .Select(g => new StatusCounts
+            {
+                Address = g.Key,
+                Pending = g.Count(s => s.Status == SuggestionStatus.Pending),
+                Approved = g.Count(s => s.Status == SuggestionStatus.Approved),
+                Rejected = g.Count(s => s.Status == SuggestionStatus.Rejected),
+                Applied = g.Count(s => s.Status == SuggestionStatus.Applied),
+                InFilter = g.Count(s => statuses.Contains(s.Status)),
+            });
 }

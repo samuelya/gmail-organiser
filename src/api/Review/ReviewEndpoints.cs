@@ -55,7 +55,7 @@ public static class ReviewEndpoints
         var parsed = ReviewQuery.ParseStatusFilter(status);
         if (parsed is null)
         {
-            errors["status"] = ["Must be pending, approved, rejected, applied or not_rejected."];
+            errors["status"] = [ReviewQuery.StatusFilterError];
         }
 
         var types = ParseMailTypes(mailType, errors);
@@ -65,10 +65,10 @@ public static class ReviewEndpoints
     }
 
     /// <summary>
-    /// One page of the sender's groups in <c>status</c> (<c>not_rejected</c>: pending, approved and applied, each member
-    /// with its own status), largest first (<c>hasAlternative=true</c>: only suggestions with
+    /// One page of the sender's groups in <c>status</c> (<c>not_rejected</c>: pending, approved and applied, each
+    /// status a card of its own), largest first (<c>hasAlternative=true</c>: only suggestions with
     /// a compare-run alternative; <c>mailType=a,b</c>: only groups with a member of those mail types, listed whole); 404
-    /// when the sender has no such suggestions.
+    /// when the sender has no such suggestions, 200 with no groups when none is in <c>status</c>.
     /// </summary>
     private static async Task<Results<Ok<ReviewSenderDetailDto>, NotFound, ValidationProblem>> GetSenderAsync(
         string address, ReviewQuery query, CancellationToken ct, string? status = null, int? page = null, int? pageSize = null,
@@ -88,7 +88,7 @@ public static class ReviewEndpoints
         var parsed = ReviewQuery.ParseStatusFilter(status);
         if (parsed is null)
         {
-            errors["status"] = ["Must be pending, approved, rejected, applied or not_rejected."];
+            errors["status"] = [ReviewQuery.StatusFilterError];
         }
 
         var types = ParseMailTypes(mailType, errors);
