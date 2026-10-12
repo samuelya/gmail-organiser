@@ -3,6 +3,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import { map } from 'rxjs';
 import { MAIL_TYPES } from './mail-type-chip.component';
+import { isSingleStatus, ReviewTab } from './review.models';
 
 /** The review page's query parameter: comma-separated snake_case mail types. */
 export const MAIL_TYPE_PARAM = 'mailType';
@@ -24,13 +25,19 @@ export function listedKey(status: string, reanalysed: boolean, types: readonly s
   return `${status}|${reanalysed}|${types.join(',')}`;
 }
 
+/** The suggestions a tab lists, for its empty texts: "pending re-analysed suggestions", "suggestions other than rejected". */
+export function suggestionsKind(status: ReviewTab, reanalysed: boolean): string {
+  if (!isSingleStatus(status)) return 'suggestions other than rejected';
+  return `${status} ${reanalysed ? 're-analysed ' : ''}suggestions`;
+}
+
 /** The detail's empty state: the sender has no suggestions of this kind, or none of the selected mail types. */
 export function emptyGroupsText(
-  status: string,
+  status: ReviewTab,
   reanalysed: boolean,
   types: readonly string[],
 ): string {
-  const kind = `${status} ${reanalysed ? 're-analysed ' : ''}suggestions`;
+  const kind = suggestionsKind(status, reanalysed);
   return types.length
     ? `No ${kind} of the selected mail types for this sender.`
     : `No ${kind} for this sender.`;
@@ -60,7 +67,7 @@ export class MailTypeFilter {
     });
   }
 
-  emptyText(status: string, reanalysed: boolean): string {
+  emptyText(status: ReviewTab, reanalysed: boolean): string {
     return emptyGroupsText(status, reanalysed, this.selected());
   }
 }

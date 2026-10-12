@@ -12,18 +12,26 @@ import { LabelDto } from './labels.models';
 
 export * from './sender-pattern.models';
 
-/** The statuses `GET /api/review/senders` and `…/senders/{address}` filter by. Applied is read-only. */
+/** A suggestion's status. Applied is read-only. */
 export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'applied';
-export const REVIEW_STATUSES: readonly { value: ReviewStatus; label: string }[] = [
+/** The tabs `GET /api/review/senders` and `…/senders/{address}` filter by: one status, or every status but rejected. */
+export type ReviewTab = ReviewStatus | 'not_rejected';
+export const REVIEW_STATUSES: readonly { value: ReviewTab; label: string }[] = [
   { value: 'pending', label: 'Pending' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'applied', label: 'Applied' },
+  { value: 'not_rejected', label: 'All but rejected' },
 ];
+
+/** The tab names one status; "All but rejected" mixes them. */
+export function isSingleStatus(tab: ReviewTab): tab is ReviewStatus {
+  return tab !== 'not_rejected';
+}
 
 /** The page's tab and sender from `/review?status=<status>&sender=<address>`; anything invalid falls back. */
 export function parseReviewParams(params: ParamMap): {
-  status: ReviewStatus;
+  status: ReviewTab;
   sender: string | null;
 } {
   const status = REVIEW_STATUSES.find((s) => s.value === params.get('status'))?.value ?? 'pending';
@@ -128,6 +136,8 @@ export interface ReviewGroupDto {
   alternative?: SuggestionAlternativeDto | null;
   /** A listed member is `newLabelPending`. */
   newLabelPending?: boolean;
+  /** The members' status: "All but rejected" lists one card per group and status. */
+  status?: SuggestionStatus;
 }
 
 export interface ReviewSenderDetailDto {

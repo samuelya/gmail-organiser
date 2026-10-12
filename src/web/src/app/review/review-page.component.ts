@@ -49,6 +49,7 @@ import {
   DEFAULT_FLAG_LABELS,
   GROUP_PAGE_SIZE,
   GroupDecisionResponse,
+  isSingleStatus,
   keptSelection,
   outcomeOf,
   patchClaudeReview,
@@ -57,7 +58,7 @@ import {
   ReviewGroupDto,
   ReviewSenderDetailDto,
   ReviewSenderDto,
-  ReviewStatus,
+  ReviewTab,
   SENDER_PAGE_SIZE,
   SenderPatternDto,
   skippedMessage,
@@ -184,6 +185,7 @@ export class ReviewPage {
     this.url.connect({ senders: this.senders, reanalysed: this.reanalysed });
     this.url.changed.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((change) => {
       if (change === 'status') this.senderPage.set(1);
+      if (!isSingleStatus(this.status())) this.reanalysed.set(false);
       this.resetDetail();
     });
 
@@ -293,7 +295,7 @@ export class ReviewPage {
     });
   }
 
-  onStatus(status: ReviewStatus): void {
+  onStatus(status: ReviewTab): void {
     this.url.setStatus(status);
   }
 
@@ -397,8 +399,9 @@ export class ReviewPage {
   /** "Use new" (accept) or "Keep current" (discard) for a member or a whole group card. */
   decideAlternative(decision: AlternativeDecision, target: AlternativeTarget): void {
     const address = this.selected();
-    if (!address) return;
-    const request = alternativeRequest(target, address, this.status());
+    const status = this.status();
+    if (!address || !isSingleStatus(status)) return;
+    const request = alternativeRequest(target, address, status);
     const call =
       decision === 'accept'
         ? this.review.acceptAlternatives(request)

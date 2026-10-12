@@ -142,6 +142,7 @@
           [runActive]="reanalyse.blocked()"
           [reanalysing]="reanalyse.ids()"
           [reanalysingCard]="reanalyse.fromCard()"
+          [allButRejected]="status() === 'not_rejected'"
           (reanalyseGroup)="reanalyse.card($event)"
           (reanalyseMember)="reanalyse.member($event)"
           (approveAll)="approveGroup(g)"

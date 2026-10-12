@@ -931,6 +931,57 @@ describe('ReviewPage', () => {
     ]);
   });
 
+  it('the All but rejected tab counts every status but rejected and leaves approved cards read-only', async () => {
+    const { api, el, q, all, expand, settle } = await render(
+      noPattern,
+      'off',
+      [
+        group({ status: 'pending', alternative: alternative() }),
+        group({
+          groupKey: 'key-2',
+          status: 'approved',
+          members: [member('c', { status: 'approved', alternative: alternative() })],
+        }),
+      ],
+      4,
+      '/?status=not_rejected',
+    );
+    const tabs = [...el.querySelectorAll<HTMLButtonElement>('mat-button-toggle button')];
+    expect(tabs.at(-1)!.textContent?.trim()).toBe('All but rejected');
+    expect(api.listSenders).toHaveBeenLastCalledWith('not_rejected', '', 1, 25, false, []);
+    expect(api.sender).toHaveBeenLastCalledWith(
+      'news@example.com',
+      'not_rejected',
+      1,
+      20,
+      false,
+      [],
+    );
+    expect(all('sender-count')[0].textContent).toContain('5');
+    expect(all('sender-count')[0].getAttribute('aria-label')).toBe('5 other than rejected');
+    expect(q('filter-reanalysed')).toBeNull();
+    expect(all('group-approve')).toHaveLength(1);
+    await expand();
+    expect(all('alternative')).toHaveLength(0);
+    // The approved member row keeps the actions its status allows.
+    expect(all('member-reject').length).toBeGreaterThan(0);
+
+    tabs[0].click();
+    await settle();
+    expect(q('filter-reanalysed')).not.toBeNull();
+    expect(all('alternative').length).toBeGreaterThan(0);
+  });
+
+  it('the All but rejected tab phrases its empty state', async () => {
+    const { api, q, settle } = await render();
+    api.listSenders.mockReturnValue(of({ items: [], page: 1, pageSize: 25, total: 0 }));
+    await TestBed.inject(Router).navigateByUrl('/?status=not_rejected');
+    await settle();
+    expect(q('senders-empty')!.textContent?.trim()).toBe(
+      'No senders with suggestions other than rejected.',
+    );
+  });
+
   describe('history', () => {
     // The router handles a popstate on the next macrotask.
     const go = async (settle: () => Promise<void>, step: 'back' | 'forward') => {

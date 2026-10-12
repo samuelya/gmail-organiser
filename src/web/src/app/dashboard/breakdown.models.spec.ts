@@ -59,7 +59,7 @@ describe('breakdown models', () => {
     expect(mailTypeBars(breakdown({ mailTypes: [], unclassified: 0 }))).toEqual([]);
   });
 
-  it('links each typed bar to the review page filtered to its type; Unclassified and unknown types go nowhere', () => {
+  it('links each typed bar to the "All but rejected" review tab filtered to its type; Unclassified and unknown types go nowhere', () => {
     const bars = mailTypeBars(
       breakdown({
         mailTypes: [
@@ -72,7 +72,7 @@ describe('breakdown models', () => {
     expect(bars[0].link).toEqual({
       text: 'newsletter',
       link: '/review',
-      queryParams: { mailType: 'newsletter' },
+      queryParams: { status: 'not_rejected', mailType: 'newsletter' },
     });
     expect(bars[1].link).toBeNull();
     expect(bars[2].link).toBeNull();
@@ -86,7 +86,7 @@ describe('breakdown models', () => {
       {
         text: 'newsletter',
         link: '/review',
-        queryParams: { mailType: 'newsletter' },
+        queryParams: { status: 'not_rejected', mailType: 'newsletter' },
       },
       120,
     ]);

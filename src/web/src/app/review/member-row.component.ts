@@ -117,7 +117,7 @@ import { FlagLabels, percent, SOURCE_LABELS, SuggestionDto } from './review.mode
           [sendable]="s.status === 'pending'"
           (changed)="claudeChange.emit($event)"
         />
-        @if (s.alternative; as alt) {
+        @if (alternatives() && s.alternative; as alt) {
           <app-alternative-compare
             class="mt-2 block"
             [current]="values()"
@@ -247,6 +247,8 @@ export class MemberRow {
   readonly runActive = input(false);
   /** This member's own re-analysis is running. */
   readonly reanalysing = input(false);
+  /** Show its re-analysis result: "All but rejected" hides them. */
+  readonly alternatives = input(true);
   readonly approve = output<void>();
   readonly reject = output<void>();
   readonly edit = output<void>();

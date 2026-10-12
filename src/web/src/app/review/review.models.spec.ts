@@ -11,6 +11,10 @@ describe('parseReviewParams', () => {
     });
   });
 
+  it('reads the "All but rejected" tab', () => {
+    expect(parse({ status: 'not_rejected' }).status).toBe('not_rejected');
+  });
+
   it('falls back to pending with no sender when the params are missing or unknown', () => {
     expect(parse({})).toEqual({ status: 'pending', sender: null });
     expect(parse({ status: 'deleted', sender: '   ' })).toEqual({
