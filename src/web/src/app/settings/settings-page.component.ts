@@ -2,11 +2,14 @@ import {
   afterNextRender,
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   ElementRef,
   inject,
+  Injector,
   OnInit,
   signal,
+  viewChild,
 } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -65,6 +68,42 @@ import { SettingsService } from './settings.service';
 /** Same bounds as the API's `fetchChunkSize` validation; `step` only sets the arrow-key increment. */
 export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
 
+/** The cards in page order; `id` is the heading's `settings-<id>` and the `?section=` value. */
+export const SECTIONS = [
+  { id: 'setup', label: 'Setup' },
+  { id: 'google', label: 'Google' },
+  { id: 'gmail', label: 'Gmail connection' },
+  { id: 'llm-provider', label: 'Analysis model provider' },
+  { id: 'ollama', label: 'Ollama' },
+  { id: 'fetch', label: 'Fetch' },
+  { id: 'labels', label: 'Labels' },
+  { id: 'analysis', label: 'Analysis' },
+  { id: 'taxonomy', label: 'Taxonomy' },
+  { id: 'attachments', label: 'Attachments' },
+  { id: 'protection', label: 'Protection' },
+  { id: 'apps-script', label: 'Apps Script' },
+  { id: 'retention', label: 'Retention' },
+  { id: 'claude', label: 'Claude review' },
+  { id: 'data', label: 'Data' },
+] as const;
+
+export type SettingsSection = (typeof SECTIONS)[number];
+export type SettingsSectionId = SettingsSection['id'];
+
+/** Each card's heading text, by section id. */
+const SECTION_LABEL = Object.fromEntries(SECTIONS.map((s) => [s.id, s.label])) as Record<
+  SettingsSectionId,
+  string
+>;
+
+/**
+ * How long the deep link keeps its heading in view while the cards above load (the models list
+ * waits on the LLM host), unless the user scrolls first.
+ */
+export const SECTION_FOLLOW_MS = 5000;
+/** Any of these means the user took over the scroll, so the deep link stops following. */
+const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+
 /**
  * `/settings` (M1): the wizard's step components, one section each. Every step saves only its own
  * fields (the API leaves missing fields unchanged), so saving one section never resets another.
@@ -107,6 +146,15 @@ export const FETCH_CHUNK = { min: 10, max: 5000, step: 10 } as const;
       color: var(--mat-sys-on-surface-variant);
       margin: 0.25rem 0 1rem;
     }
+    .index-title {
+      font: var(--mat-sys-title-small);
+      color: var(--mat-sys-on-surface-variant);
+      margin: 0 0 0.25rem;
+    }
+    /* Short labels would centre in the button's minimum width and break the column's edge. */
+    .settings-index button {
+      min-width: 0;
+    }
     .app-version {
       font: var(--mat-sys-body-small);
       color: var(--mat-sys-on-surface-variant);
@@ -125,6 +173,7 @@ export class SettingsPage implements OnInit {
   private readonly router = inject(Router);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly versionApi = inject(VersionService);
+  private readonly injector = inject(Injector);
 
   /** Set when the OAuth callback redirected back here (`/settings?gmail=…`); read once. */
   readonly connectResult: ConnectResult | null;
@@ -175,11 +224,36 @@ export class SettingsPage implements OnInit {
   /** `null` until loaded, and on an older API without protection rules, which hides the section. */
   readonly protection = signal<ProtectionSettings | null>(null);
 
+  /**
+   * The optional cards' settings, `null` where the card is hidden (still loading, or an older API
+   * without that block). The template's `@if`s and the index both read this.
+   */
+  readonly optionalCards = computed(() => ({
+    attachments: this.attachments()?.attachments ?? null,
+    protection: this.protection(),
+    claude: this.claude(),
+  }));
+
+  /** The index lists only the cards on the page. */
+  readonly sections = computed<readonly SettingsSection[]>(() => {
+    const cards: Partial<Record<SettingsSectionId, unknown>> = this.optionalCards();
+    return SECTIONS.filter((s) => !(s.id in cards) || cards[s.id] !== null);
+  });
+
+  readonly label = SECTION_LABEL;
+
+  private readonly cards = viewChild.required<ElementRef<HTMLElement>>('cards');
+
+  /** `?section=<id>` from a deep link; scrolled to once the settings have loaded. */
+  private readonly initialSection: string | null;
+
   /** The api's version for the footer; `null` until loaded or when the api is unreachable. */
   readonly version = signal<string | null>(null);
 
   constructor() {
     const params = this.route.snapshot.queryParamMap;
+    const section = params.get('section');
+    this.initialSection = SECTIONS.some((s) => s.id === section) ? section : null;
     this.connectResult = parseConnectResult(params.get('gmail'), params.get('reason'));
     if (this.connectResult) {
       // Cleared so a refresh doesn't show the result again.
@@ -196,14 +270,22 @@ export class SettingsPage implements OnInit {
     }
   }
 
-  /** Scrolls to a card from an in-page link and moves focus to its heading until it is left. */
-  jumpToSection(headingId: string): void {
+  /**
+   * Scrolls to a card from an in-page link and moves focus to its heading until it is left.
+   * Smooth unless the user prefers reduced motion or the caller asks for `auto`.
+   */
+  jumpToSection(headingId: string, behavior?: ScrollBehavior): HTMLElement | null {
     const heading = this.host.nativeElement.querySelector<HTMLElement>(`#${headingId}`);
-    if (!heading) return;
-    heading.scrollIntoView?.({ block: 'start' });
+    if (!heading) return null;
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    heading.scrollIntoView?.({
+      block: 'start',
+      behavior: behavior ?? (reduceMotion ? 'auto' : 'smooth'),
+    });
     heading.setAttribute('tabindex', '-1');
     heading.addEventListener('blur', () => heading.removeAttribute('tabindex'), { once: true });
     heading.focus({ preventScroll: true });
+    return heading;
   }
 
   ngOnInit(): void {
@@ -225,9 +307,10 @@ export class SettingsPage implements OnInit {
           this.attachments.set(attachmentsOf(settings));
           this.claude.set(claudeOf(settings));
           this.protection.set(settings.protection ?? null);
+          this.scrollToInitialSection();
         },
         // The error interceptor shows why; the field stays disabled without a saved value.
-        error: () => undefined,
+        error: () => this.scrollToInitialSection(),
       });
     this.loadDefaultPrompt();
     this.versionApi
@@ -235,6 +318,46 @@ export class SettingsPage implements OnInit {
       .pipe(takeUntilDestroyed(this.destroyRef))
       // The error interceptor shows why; the footer stays hidden.
       .subscribe({ next: (version) => this.version.set(version), error: () => undefined });
+  }
+
+  /**
+   * Waits for the load: the optional cards only render once their settings are in. Skipped after
+   * the OAuth callback, whose result on the Gmail card is the thing to see.
+   */
+  private scrollToInitialSection(): void {
+    const section = this.initialSection;
+    if (!section || this.connectResult) return;
+    afterNextRender(
+      () => {
+        const heading = this.jumpToSection(`settings-${section}`, 'auto');
+        if (heading) this.followWhileCardsLoad(heading);
+      },
+      { injector: this.injector },
+    );
+  }
+
+  /**
+   * The cards above the target load their own data after the jump and grow, pushing the heading
+   * down where the browser has no scroll anchoring. Re-scrolls on every change in the cards' height
+   * for `SECTION_FOLLOW_MS`, or until the user scrolls, clicks or presses a key.
+   */
+  private followWhileCardsLoad(heading: HTMLElement): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() =>
+      heading.scrollIntoView?.({ block: 'start', behavior: 'auto' }),
+    );
+    const timer = setTimeout(stop, SECTION_FOLLOW_MS);
+    const removeDestroy = this.destroyRef.onDestroy(() => stop());
+    function stop() {
+      observer.disconnect();
+      clearTimeout(timer);
+      for (const type of USER_SCROLL_EVENTS) window.removeEventListener(type, stop, true);
+      removeDestroy();
+    }
+    for (const type of USER_SCROLL_EVENTS) {
+      window.addEventListener(type, stop, { capture: true, passive: true });
+    }
+    observer.observe(this.cards().nativeElement);
   }
 
   onClientChange(client: GoogleClientSettings): void {

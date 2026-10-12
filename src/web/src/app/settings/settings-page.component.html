@@ -1,213 +1,241 @@
-<app-page-header title="Settings" />
-<div class="flex flex-col gap-4">
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-setup">
-    <mat-card-content data-testid="section-setup">
-      <h2 id="settings-setup" class="section-title">Setup</h2>
-      <p class="section-hint">Walk through the setup steps again.</p>
-      <a mat-stroked-button routerLink="/setup" data-testid="rerun-setup">Run setup again</a>
-    </mat-card-content>
-  </mat-card>
-
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-google">
-    <mat-card-content data-testid="section-google">
-      <h2 id="settings-google" class="section-title">Google</h2>
-      <p class="section-hint">The OAuth client the organiser signs in with.</p>
-      <app-google-client-step (clientChange)="onClientChange($event)" />
-    </mat-card-content>
-  </mat-card>
-
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-gmail">
-    <mat-card-content data-testid="section-gmail">
-      <h2 id="settings-gmail" class="section-title">Gmail connection</h2>
-      <p class="section-hint">The mailbox the organiser reads and labels.</p>
-      <app-connect-gmail-step
-        [clientSaved]="clientSaved()"
-        [confirmDisconnect]="true"
-        [result]="connectResult"
-        returnTo="settings"
-        clientLocation="in the Google section"
-      />
-    </mat-card-content>
-  </mat-card>
-
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-llm-provider">
-    <mat-card-content data-testid="section-llm-provider">
-      <h2 id="settings-llm-provider" class="section-title">Analysis model provider</h2>
-      <p class="section-hint">Which LLM answers the analysis prompts.</p>
-      <app-llm-provider-settings
-        [settings]="llmProvider()"
-        (saved)="llmProvider.set($event)"
-        (jump)="jumpToSection($event)"
-      />
-    </mat-card-content>
-  </mat-card>
-
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-ollama">
-    <mat-card-content data-testid="section-ollama">
-      <h2 id="settings-ollama" class="section-title">Ollama</h2>
-      <p class="section-hint">The local LLM server and the models it runs.</p>
-      <div class="flex flex-col gap-6">
-        <app-ollama-url-step (saved)="ollamaUrl.set($event)" />
-        <app-models-step
-          [baseUrl]="ollamaUrl()"
-          (saved)="embeddingModel.set($event.embeddingModel)"
-        />
-        <app-triage-model-settings [baseUrl]="ollamaUrl()" />
-      </div>
-    </mat-card-content>
-  </mat-card>
-
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-fetch">
-    <mat-card-content data-testid="section-fetch">
-      <h2 id="settings-fetch" class="section-title">Fetch</h2>
-      <p class="section-hint">How the mailbox fetch reads Gmail.</p>
-      <form
-        [formGroup]="fetchForm"
-        (ngSubmit)="saveFetch()"
-        class="flex max-w-2xl flex-col gap-2"
-        novalidate
-      >
-        <mat-form-field subscriptSizing="dynamic">
-          <mat-label>Fetch chunk size</mat-label>
-          <input
-            matInput
-            type="number"
-            formControlName="fetchChunkSize"
-            [min]="chunk.min"
-            [max]="chunk.max"
-            [step]="chunk.step"
-            data-testid="fetch-chunk-size"
-          />
-          @if (fetchChunkSize.hasError('required')) {
-            <mat-error>The fetch chunk size is required.</mat-error>
-          } @else if (fetchChunkSize.hasError('min') || fetchChunkSize.hasError('max')) {
-            <mat-error>Enter a number from {{ chunk.min }} to {{ chunk.max }}.</mat-error>
-          } @else if (fetchChunkSize.hasError('integer')) {
-            <mat-error>Enter a whole number.</mat-error>
-          }
-          <mat-hint
-            >Messages fetched per chunk; a paused fetch resumes after the last full chunk.</mat-hint
-          >
-        </mat-form-field>
-        <div>
+<app-page-header
+  title="Settings"
+  description="Everything Setup asked for, plus how fetch, analysis, clean-up and Claude review behave. Each section saves on its own."
+/>
+<div class="flex flex-col gap-4 lg:flex-row lg:items-start">
+  <nav
+    aria-label="Settings sections"
+    class="settings-index shrink-0 lg:sticky lg:top-4 lg:w-52 lg:max-h-[calc(100dvh-6rem)] lg:overflow-y-auto lg:pb-1"
+    data-testid="settings-index"
+  >
+    <p class="index-title">On this page</p>
+    <ul class="m-0 flex list-none flex-wrap gap-1 p-0 lg:flex-col">
+      @for (section of sections(); track section.id) {
+        <li>
           <button
-            mat-flat-button
-            type="submit"
-            [disabled]="!fetchLoaded() || fetchSaving()"
-            data-testid="save-fetch"
+            mat-button
+            type="button"
+            [attr.data-testid]="'index-' + section.id"
+            (click)="jumpToSection('settings-' + section.id)"
           >
-            Save
+            {{ section.label }}
           </button>
-        </div>
-      </form>
-    </mat-card-content>
-  </mat-card>
+        </li>
+      }
+    </ul>
+  </nav>
 
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-labels">
-    <mat-card-content data-testid="section-labels">
-      <h2 id="settings-labels" class="section-title">Labels</h2>
-      <p class="section-hint">The Gmail labels the organiser applies for action and deletion.</p>
-      <app-labels-settings [settings]="labels()" />
-    </mat-card-content>
-  </mat-card>
+  <div #cards class="flex min-w-0 flex-1 flex-col gap-4">
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-setup">
+      <mat-card-content data-testid="section-setup">
+        <h2 id="settings-setup" class="section-title">{{ label.setup }}</h2>
+        <p class="section-hint">Walk through the setup steps again.</p>
+        <a mat-stroked-button routerLink="/setup" data-testid="rerun-setup">Run setup again</a>
+      </mat-card-content>
+    </mat-card>
 
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-analysis">
-    <mat-card-content data-testid="section-analysis">
-      <h2 id="settings-analysis" class="section-title">Analysis</h2>
-      <p class="section-hint">How analysis batches group emails and what the LLM is asked.</p>
-      <app-analysis-settings
-        [settings]="analysis()"
-        [embeddingModel]="embeddingModel()"
-        [saving]="analysisSaving()"
-        [serverErrors]="analysisErrors()"
-        [defaultPrompt]="defaultPrompt()"
-        (changed)="saveAnalysis($event)"
-        (resetPrompt)="loadDefaultPrompt()"
-      />
-      <app-pack-settings class="mt-6 block" />
-    </mat-card-content>
-  </mat-card>
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-google">
+      <mat-card-content data-testid="section-google">
+        <h2 id="settings-google" class="section-title">{{ label.google }}</h2>
+        <p class="section-hint">The OAuth client the organiser signs in with.</p>
+        <app-google-client-step (clientChange)="onClientChange($event)" />
+      </mat-card-content>
+    </mat-card>
 
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-taxonomy">
-    <mat-card-content data-testid="section-taxonomy">
-      <h2 id="settings-taxonomy" class="section-title">Taxonomy</h2>
-      <p class="section-hint">Which labels the analysis may use and create.</p>
-      <app-taxonomy-settings />
-    </mat-card-content>
-  </mat-card>
-
-  @if (attachments()?.attachments; as attachmentSettings) {
-    <mat-card appearance="outlined" role="region" aria-labelledby="settings-attachments">
-      <mat-card-content data-testid="section-attachments">
-        <h2 id="settings-attachments" class="section-title">Attachments</h2>
-        <p class="section-hint">Which attachments analysis reads, and how much of each.</p>
-        <app-attachment-settings
-          [settings]="attachmentSettings"
-          [visionModel]="attachments()?.visionModel"
-          [baseUrl]="ollamaUrl()"
-          [saving]="attachmentsSaving()"
-          [serverErrors]="attachmentsErrors()"
-          (changed)="saveAttachments($event)"
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-gmail">
+      <mat-card-content data-testid="section-gmail">
+        <h2 id="settings-gmail" class="section-title">{{ label.gmail }}</h2>
+        <p class="section-hint">The mailbox the organiser reads and labels.</p>
+        <app-connect-gmail-step
+          [clientSaved]="clientSaved()"
+          [confirmDisconnect]="true"
+          [result]="connectResult"
+          returnTo="settings"
+          clientLocation="in the Google section"
         />
       </mat-card-content>
     </mat-card>
-  }
 
-  @if (protection(); as protectionSettings) {
-    <mat-card appearance="outlined" role="region" aria-labelledby="settings-protection">
-      <mat-card-content data-testid="section-protection">
-        <h2 id="settings-protection" class="section-title">Protection</h2>
-        <p class="section-hint">Mail that is never marked for deletion.</p>
-        <app-protection-settings [settings]="protectionSettings" />
-      </mat-card-content>
-    </mat-card>
-  }
-
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-apps-script">
-    <mat-card-content data-testid="section-apps-script">
-      <h2 id="settings-apps-script" class="section-title">Apps Script</h2>
-      <p class="section-hint">
-        Time-based archiving by the script that runs in your Google account.
-      </p>
-      <app-apps-script-settings #appsScriptSection />
-    </mat-card-content>
-  </mat-card>
-
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-retention">
-    <mat-card-content data-testid="section-retention">
-      <h2 id="settings-retention" class="section-title">Retention</h2>
-      <p class="section-hint">
-        How long each type of mail is kept before it is marked for deletion.
-      </p>
-      <app-retention-settings (appsScriptSaved)="appsScriptSection.loadConfig()" />
-    </mat-card-content>
-  </mat-card>
-
-  @if (claude(); as claudeSettings) {
-    <mat-card appearance="outlined" role="region" aria-labelledby="settings-claude">
-      <mat-card-content data-testid="section-claude">
-        <h2 id="settings-claude" class="section-title">Claude review</h2>
-        <p class="section-hint">An optional second opinion from Claude on the items you send.</p>
-        <app-claude-settings
-          [settings]="claudeSettings"
-          [saving]="claudeSaving()"
-          [serverErrors]="claudeErrors()"
-          (changed)="saveClaude($event)"
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-llm-provider">
+      <mat-card-content data-testid="section-llm-provider">
+        <h2 id="settings-llm-provider" class="section-title">{{ label['llm-provider'] }}</h2>
+        <p class="section-hint">Which LLM answers the analysis prompts.</p>
+        <app-llm-provider-settings
+          [settings]="llmProvider()"
+          (saved)="llmProvider.set($event)"
           (jump)="jumpToSection($event)"
         />
       </mat-card-content>
     </mat-card>
-  }
 
-  <mat-card appearance="outlined" role="region" aria-labelledby="settings-data">
-    <mat-card-content data-testid="section-data">
-      <h2 id="settings-data" class="section-title">Data</h2>
-      <p class="section-hint">The local copy of what the organiser fetched and produced.</p>
-      <app-data-settings />
-    </mat-card-content>
-  </mat-card>
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-ollama">
+      <mat-card-content data-testid="section-ollama">
+        <h2 id="settings-ollama" class="section-title">{{ label.ollama }}</h2>
+        <p class="section-hint">The local LLM server and the models it runs.</p>
+        <div class="flex flex-col gap-6">
+          <app-ollama-url-step (saved)="ollamaUrl.set($event)" />
+          <app-models-step
+            [baseUrl]="ollamaUrl()"
+            (saved)="embeddingModel.set($event.embeddingModel)"
+          />
+          <app-triage-model-settings [baseUrl]="ollamaUrl()" />
+        </div>
+      </mat-card-content>
+    </mat-card>
 
-  @if (version(); as v) {
-    <p class="app-version" data-testid="app-version">Gmail Organiser v{{ v }}</p>
-  }
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-fetch">
+      <mat-card-content data-testid="section-fetch">
+        <h2 id="settings-fetch" class="section-title">{{ label.fetch }}</h2>
+        <p class="section-hint">How the mailbox fetch reads Gmail.</p>
+        <form
+          [formGroup]="fetchForm"
+          (ngSubmit)="saveFetch()"
+          class="flex max-w-2xl flex-col gap-2"
+          novalidate
+        >
+          <mat-form-field subscriptSizing="dynamic">
+            <mat-label>Fetch chunk size</mat-label>
+            <input
+              matInput
+              type="number"
+              formControlName="fetchChunkSize"
+              [min]="chunk.min"
+              [max]="chunk.max"
+              [step]="chunk.step"
+              data-testid="fetch-chunk-size"
+            />
+            @if (fetchChunkSize.hasError('required')) {
+              <mat-error>The fetch chunk size is required.</mat-error>
+            } @else if (fetchChunkSize.hasError('min') || fetchChunkSize.hasError('max')) {
+              <mat-error>Enter a number from {{ chunk.min }} to {{ chunk.max }}.</mat-error>
+            } @else if (fetchChunkSize.hasError('integer')) {
+              <mat-error>Enter a whole number.</mat-error>
+            }
+            <mat-hint
+              >Messages fetched per chunk; a paused fetch resumes after the last full
+              chunk.</mat-hint
+            >
+          </mat-form-field>
+          <div>
+            <button
+              mat-flat-button
+              type="submit"
+              [disabled]="!fetchLoaded() || fetchSaving()"
+              data-testid="save-fetch"
+            >
+              Save
+            </button>
+          </div>
+        </form>
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-labels">
+      <mat-card-content data-testid="section-labels">
+        <h2 id="settings-labels" class="section-title">{{ label.labels }}</h2>
+        <p class="section-hint">The Gmail labels the organiser applies for action and deletion.</p>
+        <app-labels-settings [settings]="labels()" />
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-analysis">
+      <mat-card-content data-testid="section-analysis">
+        <h2 id="settings-analysis" class="section-title">{{ label.analysis }}</h2>
+        <p class="section-hint">How analysis batches group emails and what the LLM is asked.</p>
+        <app-analysis-settings
+          [settings]="analysis()"
+          [embeddingModel]="embeddingModel()"
+          [saving]="analysisSaving()"
+          [serverErrors]="analysisErrors()"
+          [defaultPrompt]="defaultPrompt()"
+          (changed)="saveAnalysis($event)"
+          (resetPrompt)="loadDefaultPrompt()"
+        />
+        <app-pack-settings class="mt-6 block" />
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-taxonomy">
+      <mat-card-content data-testid="section-taxonomy">
+        <h2 id="settings-taxonomy" class="section-title">{{ label.taxonomy }}</h2>
+        <p class="section-hint">Which labels the analysis may use and create.</p>
+        <app-taxonomy-settings />
+      </mat-card-content>
+    </mat-card>
+
+    @if (optionalCards().attachments; as attachmentSettings) {
+      <mat-card appearance="outlined" role="region" aria-labelledby="settings-attachments">
+        <mat-card-content data-testid="section-attachments">
+          <h2 id="settings-attachments" class="section-title">{{ label.attachments }}</h2>
+          <p class="section-hint">Which attachments analysis reads, and how much of each.</p>
+          <app-attachment-settings
+            [settings]="attachmentSettings"
+            [visionModel]="attachments()?.visionModel"
+            [baseUrl]="ollamaUrl()"
+            [saving]="attachmentsSaving()"
+            [serverErrors]="attachmentsErrors()"
+            (changed)="saveAttachments($event)"
+          />
+        </mat-card-content>
+      </mat-card>
+    }
+
+    @if (optionalCards().protection; as protectionSettings) {
+      <mat-card appearance="outlined" role="region" aria-labelledby="settings-protection">
+        <mat-card-content data-testid="section-protection">
+          <h2 id="settings-protection" class="section-title">{{ label.protection }}</h2>
+          <p class="section-hint">Mail that is never marked for deletion.</p>
+          <app-protection-settings [settings]="protectionSettings" />
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-apps-script">
+      <mat-card-content data-testid="section-apps-script">
+        <h2 id="settings-apps-script" class="section-title">{{ label['apps-script'] }}</h2>
+        <p class="section-hint">
+          Time-based archiving by the script that runs in your Google account.
+        </p>
+        <app-apps-script-settings #appsScriptSection />
+      </mat-card-content>
+    </mat-card>
+
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-retention">
+      <mat-card-content data-testid="section-retention">
+        <h2 id="settings-retention" class="section-title">{{ label.retention }}</h2>
+        <p class="section-hint">
+          How long each type of mail is kept before it is marked for deletion.
+        </p>
+        <app-retention-settings (appsScriptSaved)="appsScriptSection.loadConfig()" />
+      </mat-card-content>
+    </mat-card>
+
+    @if (optionalCards().claude; as claudeSettings) {
+      <mat-card appearance="outlined" role="region" aria-labelledby="settings-claude">
+        <mat-card-content data-testid="section-claude">
+          <h2 id="settings-claude" class="section-title">{{ label.claude }}</h2>
+          <p class="section-hint">An optional second opinion from Claude on the items you send.</p>
+          <app-claude-settings
+            [settings]="claudeSettings"
+            [saving]="claudeSaving()"
+            [serverErrors]="claudeErrors()"
+            (changed)="saveClaude($event)"
+            (jump)="jumpToSection($event)"
+          />
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <mat-card appearance="outlined" role="region" aria-labelledby="settings-data">
+      <mat-card-content data-testid="section-data">
+        <h2 id="settings-data" class="section-title">{{ label.data }}</h2>
+        <p class="section-hint">The local copy of what the organiser fetched and produced.</p>
+        <app-data-settings />
+      </mat-card-content>
+    </mat-card>
+
+    @if (version(); as v) {
+      <p class="app-version" data-testid="app-version">Gmail Organiser v{{ v }}</p>
+    }
+  </div>
 </div>

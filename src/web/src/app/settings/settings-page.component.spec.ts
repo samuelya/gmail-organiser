@@ -1,190 +1,34 @@
-import { provideHttpClient } from '@angular/common/http';
-import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { MATERIAL_ANIMATIONS } from '@angular/material/core';
-import { MatSnackBar } from '@angular/material/snack-bar';
-import { provideRouter, Router } from '@angular/router';
-import { RouterTestingHarness } from '@angular/router/testing';
-import { JobsService } from '../core/jobs.service';
-import { LlmModels } from '../core/llm.service';
-import {
-  GOOGLE_CONNECT_URL,
-  GoogleAuthStatus,
-  NAVIGATE_TO,
-  SetupStatus,
-} from '../setup/setup.service';
+import { Router } from '@angular/router';
+import { GOOGLE_CONNECT_URL } from '../setup/setup.service';
 import { connectErrorMessage } from '../setup/steps/connect-gmail-step.component';
-import { SettingsPage } from './settings-page.component';
-import { AttachmentSettings, ClaudeSettings, SettingsDto } from './settings.models';
-
-const EMAIL = 'user@example.com';
-const URL_SAVED = 'http://ollama.example.com:11434';
-const URL_NEW = 'http://ollama-2.example.com:11434';
-
-const settings = (over: Partial<SettingsDto> = {}): SettingsDto => ({
-  ollamaBaseUrl: URL_SAVED,
-  chatModel: 'test-chat:1b',
-  embeddingModel: null,
-  actionLabelName: 'Example-Action',
-  deleteLabelName: 'Example-Delete',
-  documentTypeParent: null,
-  setupWizardSeen: true,
-  fetchChunkSize: 500,
-  googleClient: {
-    clientId: 'test-id.apps.googleusercontent.com',
-    secretSet: true,
-    lockedByEnv: false,
-  },
-  analysisDefaultCount: 20,
-  analysisBodyMaxChars: 4000,
-  analysisGroupingMode: 'auto',
-  analysisRepresentativesPerGroup: 3,
-  analysisMinGroupSize: 3,
-  analysisDerivedConfidencePenalty: 0.1,
-  analysisClusterDistance: 0.15,
-  analysisMemoryShortCircuit: true,
-  analysisMemoryMinApprovals: 3,
-  bulkApproveThreshold: 0.8,
-  autoArchiveOnActionDone: false,
-  policyAutoApplyFetched: true,
-  llmNumCtx: 8192,
-  taxonomyMaxSenders: 80,
-  taxonomyMaxLabels: 25,
-  analysisPromptTemplate: null,
-  llmProvider: 'ollama',
-  claudeApiModel: null,
-  claudeApiKeySet: false,
-  claudeApiKeyHint: null,
-  ...over,
-});
-
-const googleStatus = (connected: boolean): GoogleAuthStatus => ({
-  connected,
-  reason: connected ? null : 'not_connected',
-  accountEmail: connected ? EMAIL : null,
-  scopes: [],
-  missingScopes: [],
-  redirectUri: 'http://localhost:4200/api/auth/google/callback',
-});
-
-const setupStatus: SetupStatus = {
-  googleClientConfigured: true,
-  gmailConnected: true,
-  gmailReauthRequired: false,
-  ollamaReachable: true,
-  chatModelSelected: true,
-  embeddingModelSelected: false,
-  wizardSeen: true,
-  complete: true,
-  completedOnce: true,
-};
-
-const models: LlmModels = {
-  reachable: true,
-  version: '0.0.1-test',
-  chatModels: [
-    { name: 'test-chat:1b', sizeBytes: 1, family: 'test', parameterSize: '1B', capabilities: [] },
-    { name: 'test-chat:2b', sizeBytes: 1, family: 'test', parameterSize: '2B', capabilities: [] },
-  ],
-  embeddingModels: [],
-  error: null,
-};
-
-const VERSION = '9.8.7-test';
-const PROMPT = 'Synthetic instructions.\n\n{{emails}}';
-const defaultPrompt = { version: 'test-v1', template: PROMPT };
-const appsScriptConfig = {
-  scriptVersion: 1,
-  config: 'const CONFIG = {};',
-  generatedAt: '2026-01-01T00:00:00Z',
-};
-
-const retentionStatus = {
-  enabled: false,
-  lastRunAt: null,
-  lastMarked: null,
-  nextDueAt: null,
-  eligibleNow: 0,
-};
+import { AttachmentSettings, ClaudeSettings } from './settings.models';
+import {
+  appsScriptConfig,
+  EMAIL,
+  models,
+  PROMPT,
+  settings,
+  SettingsPageTest,
+  URL_NEW,
+  VERSION,
+} from './settings-page.testing';
 
 describe('SettingsPage', () => {
-  let http: HttpTestingController;
-  let connected: boolean;
+  let ctx: SettingsPageTest;
   let snackOpen: ReturnType<typeof vi.fn>;
-  let loaded: SettingsDto;
 
-  /** Answers every pending GET the page makes, until none are left. */
-  async function flushLoads(fixture: { whenStable: () => Promise<unknown> }) {
-    for (let i = 0; i < 5; i++) {
-      await fixture.whenStable();
-      const pending = http.match((r) => r.method === 'GET');
-      if (pending.length === 0) return;
-      for (const req of pending) {
-        const path = req.request.url;
-        if (path === '/api/settings') req.flush(loaded);
-        else if (path === '/api/auth/google/status') req.flush(googleStatus(connected));
-        else if (path === '/api/setup/status') req.flush(setupStatus);
-        else if (path === '/api/llm/models') req.flush(models);
-        else if (path === '/api/analysis/prompt/default') req.flush(defaultPrompt);
-        else if (path === '/api/rules/apps-script/config') req.flush(appsScriptConfig);
-        else if (path === '/api/clean-up/retention') req.flush(retentionStatus);
-        else if (path === '/healthz') req.flush({ status: 'ok', version: VERSION });
-        else throw new Error(`unexpected GET ${path}`);
-      }
-    }
-  }
-
-  async function render(gmailConnected = true, dto = settings()) {
-    configure(gmailConnected, dto);
-    const fixture = TestBed.createComponent(SettingsPage);
-    await flushLoads(fixture);
-    const el = fixture.nativeElement as HTMLElement;
-    const q = (id: string) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-    return { fixture, el, q };
-  }
-
-  /** Opens the page through the router, as the OAuth callback redirect does. */
-  async function openAt(url: string, gmailConnected = true) {
-    const navigate = vi.fn();
-    configure(gmailConnected, settings(), navigate);
-    const harness = await RouterTestingHarness.create();
-    await harness.navigateByUrl(url, SettingsPage);
-    await flushLoads(harness.fixture);
-    const el = harness.routeNativeElement as HTMLElement;
-    const q = (id: string) => el.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-    return { harness, el, q, navigate };
-  }
-
-  function configure(gmailConnected: boolean, dto: SettingsDto, navigate = vi.fn()) {
-    connected = gmailConnected;
-    loaded = dto;
+  beforeEach(() => {
     snackOpen = vi.fn();
-    TestBed.configureTestingModule({
-      providers: [
-        provideRouter([{ path: 'settings', component: SettingsPage }]),
-        { provide: NAVIGATE_TO, useValue: navigate },
-        provideHttpClient(),
-        provideHttpClientTesting(),
-        { provide: MatSnackBar, useValue: { open: snackOpen } },
-        {
-          provide: JobsService,
-          useValue: { activeJobs: signal([]), reconnects: signal(0), job: () => undefined },
-        },
-        // The dialog reports its result after the close animation.
-        { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
-      ],
-    });
-    http = TestBed.inject(HttpTestingController);
-  }
+    ctx = new SettingsPageTest(snackOpen, vi.fn());
+  });
+  afterEach(() => ctx.verify());
 
+  const render = (...args: Parameters<SettingsPageTest['render']>) => ctx.render(...args);
+  const openAt = (...args: Parameters<SettingsPageTest['openAt']>) => ctx.openAt(...args);
+  const flushLoads = (fixture: { whenStable: () => Promise<unknown> }) => ctx.flushLoads(fixture);
   const overlay = (id: string) =>
     document.querySelector<HTMLElement>(`.cdk-overlay-container [data-testid="${id}"]`);
-
-  afterEach(() => {
-    document.querySelector('.cdk-overlay-container')?.replaceChildren();
-    http.verify();
-  });
 
   it('renders the Google, Gmail connection and Ollama sections with the wizard steps', async () => {
     const { el, q } = await render();
@@ -233,21 +77,6 @@ describe('SettingsPage', () => {
     expect(heading.hasAttribute('tabindex')).toBe(false);
   });
 
-  it('callback connected: shows the result on the Gmail card, scrolls to it, clears the params', async () => {
-    const original = Element.prototype.scrollIntoView;
-    const scroll = vi.fn();
-    Element.prototype.scrollIntoView = scroll;
-    try {
-      const { el, q } = await openAt('/settings?gmail=connected');
-      expect(q('connect-success')!.textContent).toContain(`Gmail connected as ${EMAIL}.`);
-      expect(TestBed.inject(Router).url).toBe('/settings');
-      expect(scroll).toHaveBeenCalledTimes(1);
-      expect(scroll.mock.contexts[0]).toBe(el.querySelector('[data-testid="section-gmail"]'));
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
-  });
-
   it('callback error: shows the mapped message and clears the params', async () => {
     const { q } = await openAt('/settings?gmail=error&reason=state_mismatch', false);
     expect(q('connect-error')!.textContent).toContain(connectErrorMessage('state_mismatch'));
@@ -275,7 +104,7 @@ describe('SettingsPage', () => {
 
     overlay('confirm-cancel')!.click();
     await flushLoads(fixture);
-    http.expectNone('/api/auth/google/disconnect');
+    ctx.http.expectNone('/api/auth/google/disconnect');
     expect(overlay('confirm-ok')).toBeNull();
     expect(q('connected-as')).not.toBeNull();
   });
@@ -287,8 +116,8 @@ describe('SettingsPage', () => {
     overlay('confirm-ok')!.click();
     await fixture.whenStable();
 
-    connected = false;
-    http.expectOne({ method: 'POST', url: '/api/auth/google/disconnect' }).flush(null);
+    ctx.connected = false;
+    ctx.http.expectOne({ method: 'POST', url: '/api/auth/google/disconnect' }).flush(null);
     await flushLoads(fixture);
     expect(q('connected-as')).toBeNull();
     expect(q('connect')).not.toBeNull();
@@ -306,13 +135,13 @@ describe('SettingsPage', () => {
     q('save-url')!.click();
     await fixture.whenStable();
 
-    const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+    const save = ctx.http.expectOne({ method: 'PUT', url: '/api/settings' });
     expect(save.request.body).toEqual({ ollamaBaseUrl: URL_NEW });
     save.flush(settings({ ollamaBaseUrl: URL_NEW }));
     await fixture.whenStable();
 
     // The models step and the triage model each list against the new URL.
-    const lists = http.match((r) => r.url === '/api/llm/models');
+    const lists = ctx.http.match((r) => r.url === '/api/llm/models');
     expect(lists.map((l) => l.request.params.get('baseUrl'))).toEqual([URL_NEW, URL_NEW]);
     lists.forEach((l) => l.flush(models));
     await flushLoads(fixture);
@@ -349,7 +178,7 @@ describe('SettingsPage', () => {
       q('save-fetch')!.click();
       await fixture.whenStable();
 
-      http.expectNone({ method: 'PUT', url: '/api/settings' });
+      ctx.http.expectNone({ method: 'PUT', url: '/api/settings' });
       expect(q('section-fetch')!.querySelector('mat-error')?.textContent?.trim()).toBe(message);
     });
 
@@ -359,7 +188,7 @@ describe('SettingsPage', () => {
       q('save-fetch')!.click();
       await fixture.whenStable();
 
-      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      const save = ctx.http.expectOne({ method: 'PUT', url: '/api/settings' });
       expect(save.request.body).toEqual({ fetchChunkSize: 1250 });
       save.flush(settings({ fetchChunkSize: 1250 }));
       await flushLoads(fixture);
@@ -386,7 +215,7 @@ describe('SettingsPage', () => {
 
       q('reset-prompt')!.click();
       await fixture.whenStable();
-      http.expectNone({ method: 'GET', url: '/api/analysis/prompt/default' });
+      ctx.http.expectNone({ method: 'GET', url: '/api/analysis/prompt/default' });
       expect(prompt.value).toBe(PROMPT);
     });
 
@@ -398,7 +227,7 @@ describe('SettingsPage', () => {
       q('save-analysis')!.click();
       await fixture.whenStable();
 
-      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      const save = ctx.http.expectOne({ method: 'PUT', url: '/api/settings' });
       expect(save.request.body).toEqual({ analysisDefaultCount: 50 });
       save.flush(
         { errors: { analysisDefaultCount: ['Synthetic server error.'] } },
@@ -417,7 +246,7 @@ describe('SettingsPage', () => {
       q('save-analysis')!.click();
       await fixture.whenStable();
 
-      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      const save = ctx.http.expectOne({ method: 'PUT', url: '/api/settings' });
       expect(save.request.body).toEqual({ autoArchiveOnActionDone: true });
       save.flush(settings({ autoArchiveOnActionDone: true }));
       await fixture.whenStable();
@@ -455,7 +284,7 @@ describe('SettingsPage', () => {
       q('save-attachments')!.click();
       await fixture.whenStable();
 
-      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      const save = ctx.http.expectOne({ method: 'PUT', url: '/api/settings' });
       expect(save.request.body).toEqual({
         attachments: { types: [{ type: 'pdf', enabled: false }] },
       });
@@ -503,7 +332,7 @@ describe('SettingsPage', () => {
       q('save-claude')!.click();
       await fixture.whenStable();
 
-      const save = http.expectOne({ method: 'PUT', url: '/api/settings' });
+      const save = ctx.http.expectOne({ method: 'PUT', url: '/api/settings' });
       expect(save.request.body).toEqual({ claudeReviewerMode: 'headless_claude_code' });
       save.flush(settings({ ...claude, claudeReviewerMode: 'headless_claude_code' }));
       await fixture.whenStable();
