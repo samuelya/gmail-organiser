@@ -9,7 +9,8 @@ import {
 } from '@angular/core';
 import type { ChartData, ChartOptions } from 'chart.js';
 import { BaseChartDirective } from 'ng2-charts';
-import { ChartPanel, ChartTable } from '../core/charts/chart-panel.component';
+import { ChartPanel } from '../core/charts/chart-panel.component';
+import { ChartTable } from '../core/charts/chart.models';
 import { ChartPalette, ChartTheme } from '../core/charts/chart-theme';
 import { AnalysisSummaryDto } from './analysis.models';
 

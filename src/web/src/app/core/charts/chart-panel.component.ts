@@ -9,12 +9,7 @@ import {
   signal,
 } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
-
-/** A chart's data as a table: the text alternative a "Show table" toggle swaps in. */
-export interface ChartTable {
-  columns: string[];
-  rows: (string | number)[][];
-}
+import { ChartTable } from './chart.models';
 
 let nextId = 0;
 

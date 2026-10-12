@@ -89,13 +89,7 @@ import { TriageService } from './triage.service';
               No snapshot yet. Refresh takes the first one.
             </p>
           }
-          @if (points().length > 0) {
-            <app-triage-chart [points]="points()" />
-          } @else {
-            <p class="muted m-0" data-testid="triage-no-history">
-              The chart fills in once snapshots exist; one is taken every hour and after each job.
-            </p>
-          }
+          <app-triage-chart [points]="points()" />
         }
       </mat-card-content>
     </mat-card>

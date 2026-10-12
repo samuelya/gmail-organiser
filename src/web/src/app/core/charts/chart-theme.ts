@@ -1,5 +1,5 @@
 import { DOCUMENT, Injectable, computed, inject, signal } from '@angular/core';
-import type { ChartOptions } from 'chart.js';
+import type { ChartOptions, ChartType } from 'chart.js';
 import { ThemeService } from '../theme.service';
 
 /** Chart colours resolved from the Material theme for the active scheme, as `rgb(...)` strings canvas can paint. */
@@ -68,15 +68,23 @@ export function chartPalette(doc: Document): ChartPalette {
   };
 }
 
-/** Base options for cartesian charts (bar, line): themed grid, ticks, legend and tooltip. */
-export function cartesianOptions(p: ChartPalette, reducedMotion: boolean): ChartOptions<'bar'> {
-  const font = { family: p.fontFamily };
-  const axis = {
+/** Themed grid, border and ticks for one cartesian axis; spread into a typed scale. */
+export function chartAxis(p: ChartPalette) {
+  return {
     grid: { color: p.grid },
     border: { color: p.grid },
-    ticks: { color: p.text, font },
+    ticks: { color: p.text, font: { family: p.fontFamily } },
   };
-  return {
+}
+
+/** Base options for cartesian charts (bar, line): themed grid, ticks, legend and tooltip. */
+export function cartesianOptions<T extends ChartType = 'bar'>(
+  p: ChartPalette,
+  reducedMotion: boolean,
+): ChartOptions<T> {
+  const font = { family: p.fontFamily };
+  const axis = chartAxis(p);
+  const options: ChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     animation: reducedMotion ? false : undefined,
@@ -93,6 +101,8 @@ export function cartesianOptions(p: ChartPalette, reducedMotion: boolean): Chart
     },
     scales: { x: axis, y: axis },
   };
+  // Scale and plugin types differ only per chart type, not in the themed fields set here.
+  return options as ChartOptions<T>;
 }
 
 /** The chart palette and motion preference, recomputed when the effective theme changes. */

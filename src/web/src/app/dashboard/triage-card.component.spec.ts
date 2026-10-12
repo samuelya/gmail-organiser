@@ -1,10 +1,12 @@
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { of, Subject, throwError } from 'rxjs';
 import { TriageCard } from './triage-card.component';
-import { MetricPointDto, MetricSnapshotDto, TriageMetricsDto } from './triage.models';
+import { TriageChart } from './triage-chart.component';
+import { MetricPointDto, MetricSnapshotDto, TriageMetricsDto, TriagePoint } from './triage.models';
 import { TriageService } from './triage.service';
 
 const snapshot = (over: Partial<MetricSnapshotDto> = {}): MetricSnapshotDto => ({
@@ -47,6 +49,16 @@ const metrics = (over: Partial<TriageMetricsDto> = {}): TriageMetricsDto => ({
   ...over,
 });
 
+/** jsdom has no canvas: the chart's builders and empty state are covered by its own spec. */
+@Component({
+  selector: 'app-triage-chart',
+  template: `<span data-testid="triage-chart">{{ points().length }}</span>`,
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+class StubTriageChart {
+  readonly points = input.required<readonly TriagePoint[]>();
+}
+
 describe('TriageCard', () => {
   let triage: { get: ReturnType<typeof vi.fn>; snapshot: ReturnType<typeof vi.fn> };
 
@@ -57,6 +69,10 @@ describe('TriageCard', () => {
         { provide: TriageService, useValue: triage },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
+    });
+    TestBed.overrideComponent(TriageCard, {
+      remove: { imports: [TriageChart] },
+      add: { imports: [StubTriageChart] },
     });
     const fixture = TestBed.createComponent(TriageCard);
     await fixture.whenStable();
@@ -75,17 +91,15 @@ describe('TriageCard', () => {
     expect(q('triage-taken-at')?.textContent).toContain('2026');
   });
 
-  it('draws both series with one point per day', async () => {
+  it('passes one chart point per day', async () => {
     const { q } = await render(metrics());
-    expect(q('unread-path')?.getAttribute('d')?.match(/[ML]/g)).toHaveLength(3);
-    expect(q('coverage-path')?.getAttribute('d')?.match(/[ML]/g)).toHaveLength(3);
+    expect(q('triage-chart')?.textContent).toBe('3');
   });
 
   it('shows the empty states before the first snapshot', async () => {
     const { q } = await render({ current: null, history: [], llmHours: 0 });
     expect(q('triage-no-snapshot')).not.toBeNull();
-    expect(q('triage-no-history')).not.toBeNull();
-    expect(q('triage-chart')).toBeNull();
+    expect(q('triage-chart')?.textContent).toBe('0');
     expect(q('triage-policy')).toBeNull();
   });
 
@@ -137,25 +151,6 @@ describe('TriageCard', () => {
     await fixture.whenStable();
     expect(q('triage-llm')?.textContent?.trim()).toBe('4.0 h');
     expect(q('triage-error')).toBeNull();
-  });
-
-  it('arrow keys move the chart tooltip from the latest day; Escape hides it', async () => {
-    const { fixture, q } = await render(metrics());
-    const chart = q('triage-chart')!;
-    const press = async (key: string) => {
-      chart.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-      await fixture.whenStable();
-    };
-    await press('ArrowLeft');
-    expect(q('chart-tooltip')?.textContent).toContain('Inbox unread: 20');
-    expect(q('chart-tooltip')?.textContent).toContain('42.5%');
-    await press('ArrowLeft');
-    expect(q('chart-tooltip')?.textContent).toContain('Inbox unread: 30');
-    await press('Home');
-    expect(q('chart-tooltip')?.textContent).toContain('Inbox unread: 40');
-    expect(q('chart-tooltip')?.textContent).toContain('10.0%');
-    await press('Escape');
-    expect(q('chart-tooltip')).toBeNull();
   });
 });
 
