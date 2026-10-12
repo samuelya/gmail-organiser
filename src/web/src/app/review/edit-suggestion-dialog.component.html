@@ -73,6 +73,14 @@
       }
     </div>
 
+    <app-extra-labels-field
+      formControlName="extraLabels"
+      [labels]="labels()"
+      [exclude]="extraLabelsExclude()"
+      [serverError]="form.controls.extraLabels.errors?.['server'] ?? null"
+      data-testid="edit-extra-labels"
+    />
+
     @if (documentTypeParent()) {
       <mat-form-field class="w-full">
         <mat-label>Document type</mat-label>

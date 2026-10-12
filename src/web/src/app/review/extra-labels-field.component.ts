@@ -244,7 +244,6 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
 
   remove(label: string): void {
     this.commit(this.value().filter((l) => l !== label));
-    this.input().nativeElement.focus();
   }
 
   type(text: string): void {

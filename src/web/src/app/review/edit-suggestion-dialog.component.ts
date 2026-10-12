@@ -42,6 +42,7 @@ import {
   LabelsService,
 } from './labels.service';
 import { LabelTreePicker } from './label-tree-picker.component';
+import { ExtraLabelsField } from './extra-labels-field.component';
 import { commonMailType, MAIL_TYPES, mailTypeLabel } from './mail-type-chip.component';
 import {
   currentLabelsOf,
@@ -72,6 +73,8 @@ export interface EditSuggestionDialogData {
   currentLabels: string[];
   /** The document-type label the dialog starts from: the member's, or the group card's. */
   documentTypeLabel: string | null;
+  /** The additional labels the dialog starts from: the member's, or the group card's. */
+  extraLabels: string[];
 }
 
 /** A member whose save failed, with the server's reason. */
@@ -88,6 +91,7 @@ export const EDIT_PROGRESS_THRESHOLD = 20;
 @Component({
   selector: 'app-edit-suggestion-dialog',
   imports: [
+    ExtraLabelsField,
     LabelTreePicker,
     MatAutocompleteModule,
     MatButtonModule,
@@ -141,6 +145,7 @@ export class EditSuggestionDialog {
       nonNullable: true,
       validators: [(c) => this.documentTypeValidator(String(c.value ?? ''))],
     }),
+    extraLabels: new FormControl(this.data.extraLabels, { nonNullable: true }),
     /** Null while the members' types differ and none is picked. */
     mailType: new FormControl<string | null>(this.startMailType.value),
     /** One per `data.currentLabels`, checked = every member carrying it replaces it. */
@@ -188,6 +193,12 @@ export class EditSuggestionDialog {
       ? documentTypeOptions(labels, parent).some((t) => t.toLowerCase() === text.toLowerCase())
       : false;
     return exists ? `Existing label under ${parent}` : `New: ${text} under ${parent}`;
+  });
+
+  readonly extraLabelsExclude = computed(() => {
+    const parent = this.documentTypeParent();
+    const type = parent ? toDocumentTypeLabel(parent, this.documentType()) : null;
+    return [this.path(), type, this.flagLabels().action, this.flagLabels().delete];
   });
 
   readonly protectedCount = this.data.members.filter((m) => m.protected).length;
@@ -254,10 +265,12 @@ export class EditSuggestionDialog {
     const decisions = this.replaceDecisions();
     const documentType = this.documentTypeChange();
     const mailType = this.mailTypeChange();
+    const extras = this.form.controls.extraLabels;
     const failures: EditFailure[] = [];
     let labelError: string | null = null;
     let typeError: string | null = null;
     let mailTypeError: string | null = null;
+    let extrasError: string | null = null;
     this.setSaving(true);
     this.error.set(null);
     this.failures.set([]);
@@ -265,10 +278,16 @@ export class EditSuggestionDialog {
       .pipe(
         concatMap((m) =>
           this.review
-            .edit(
-              m.id,
-              editRequest(m, outcome, decidedReplaceLabels(m, decisions), documentType, mailType),
-            )
+            .edit(m.id, {
+              ...editRequest(
+                m,
+                outcome,
+                decidedReplaceLabels(m, decisions),
+                documentType,
+                mailType,
+              ),
+              ...(extras.dirty && { extraLabels: extras.value }),
+            })
             .pipe(
               map(() => ({ member: m, err: null as unknown })),
               catchError((err: unknown) => of({ member: m, err })),
@@ -289,6 +308,7 @@ export class EditSuggestionDialog {
           labelError ??= fieldError ?? null;
           typeError ??= documentTypeError ?? null;
           mailTypeError ??= fields['mailType']?.[0] ?? null;
+          extrasError ??= fields['extraLabels']?.[0] ?? null;
           failures.push({
             id: member.id,
             name: member.subject || '(no subject)',
@@ -296,13 +316,14 @@ export class EditSuggestionDialog {
               fieldError ??
               documentTypeError ??
               fields['mailType']?.[0] ??
+              fields['extraLabels']?.[0] ??
               fields['replaceLabels']?.[0] ??
               (err instanceof HttpErrorResponse ? errorMessage(err) : 'Saving failed.'),
           });
         },
         complete: () =>
           failures.length
-            ? this.failed(failures, labelError, typeError, mailTypeError)
+            ? this.failed(failures, labelError, typeError, mailTypeError, extrasError)
             : this.ref.close(true),
       });
   }
@@ -337,6 +358,7 @@ export class EditSuggestionDialog {
     labelError: string | null,
     typeError: string | null,
     mailTypeError: string | null,
+    extrasError: string | null,
   ): void {
     this.setSaving(false);
     if (labelError) {
@@ -351,8 +373,9 @@ export class EditSuggestionDialog {
       this.form.controls.mailType.setErrors({ server: mailTypeError });
       this.form.controls.mailType.markAsTouched();
     }
-    // A single edit rejected for its label, document type or mail type only needs the inline field error.
-    if (this.total === 1 && (labelError || typeError || mailTypeError)) return;
+    if (extrasError) this.form.controls.extraLabels.setErrors({ server: extrasError });
+    // A single edit rejected for one of its fields only needs the inline field error.
+    if (this.total === 1 && (labelError || typeError || mailTypeError || extrasError)) return;
     this.failures.set(this.total > 1 ? failures : []);
     const saved = this.done() ? ` ${this.done()} of ${this.total} were saved.` : '';
     this.error.set(
@@ -445,6 +468,7 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       group: { display: group.display, truncated: group.truncated },
       currentLabels: currentLabelsOf(editableMembers(group.members)),
       documentTypeLabel: group.documentTypeLabel,
+      extraLabels: group.extraLabels ?? [],
     });
   }
 
@@ -459,6 +483,7 @@ export class MatReviewEditDialog implements ReviewEditDialog {
       group: null,
       currentLabels: suggestion.currentLabels,
       documentTypeLabel: suggestion.documentTypeLabel,
+      extraLabels: suggestion.extraLabels ?? [],
     });
   }
 
