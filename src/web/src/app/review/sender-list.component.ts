@@ -49,6 +49,7 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
         (change)="statusChange.emit($event.value)"
         aria-label="Suggestion status"
         hideSingleSelectionIndicator
+        class="status-filter"
         data-testid="status-filter"
       >
         @for (s of statuses; track s.value) {
@@ -133,6 +134,14 @@ export const REVIEW_SEARCH_DEBOUNCE_MS = 300;
   styles: `
     .muted {
       color: var(--mat-sys-on-surface-variant);
+    }
+    /* Five tabs don't fit the 22rem pane: they wrap onto a second row. */
+    .status-filter {
+      flex-wrap: wrap;
+      border-radius: 1.25rem;
+    }
+    .status-filter mat-button-toggle {
+      flex: 1 1 auto;
     }
     .count {
       background: var(--mat-sys-primary-container);
