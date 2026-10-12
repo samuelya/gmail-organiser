@@ -164,6 +164,39 @@ public sealed class AnalysisRunEndpointsTests(ApiFactory factory, PostgresFixtur
         (summary.TriageCalls, summary.EscalatedCalls, summary.PackedMessages, summary.PackRetries).ShouldBe((7L, 3L, 6L, 3L));
     }
 
+    [Fact]
+    public async Task List_filters_by_kind_combined_with_status_and_limit()
+    {
+        var analyse = Enumerable.Range(0, 25).Select(i => At(Run(AnalysisRunKind.Analyse, 0, 0, 0, 0, 0, 0, 0, 0), i)).ToList();
+        await using (var db = postgres.CreateDbContext())
+        {
+            db.AnalysisRuns.AddRange(analyse);
+            db.AnalysisRuns.AddRange(Enumerable.Range(100, 25).Select(i => At(Run(AnalysisRunKind.Compare, 0, 0, 0, 0, 0, 0, 0, 0), i)));
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var newest = await ListAsync("active=false&status=completed&kind=analyse&limit=20");
+        newest.Select(r => r.Id).ShouldBe(analyse.OrderByDescending(r => r.CreatedAt).Take(20).Select(r => r.Id));
+        (await ListAsync("kind=compare&limit=200")).Select(r => r.Kind).Distinct().ShouldBe(["compare"]);
+        (await ListAsync("limit=200")).Count.ShouldBe(50);
+
+        var invalid = await h.GetAsync("/api/analysis/runs?kind=everything");
+        invalid.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        var body = await invalid.Content.ReadAsStringAsync(Ct);
+        body.ShouldContain("\"kind\"");
+        body.ShouldContain("analyse");
+        body.ShouldContain("compare");
+    }
+
+    private async Task<List<AnalysisRunDto>> ListAsync(string query) =>
+        (await (await h.GetAsync($"/api/analysis/runs?{query}")).Content.ReadFromJsonAsync<List<AnalysisRunDto>>(Ct))!;
+
+    private static AnalysisRunRow At(AnalysisRunRow run, int minutes)
+    {
+        run.CreatedAt = DateTimeOffset.UnixEpoch.AddMinutes(minutes);
+        return run;
+    }
+
     private static AnalysisRunRow Run(
         AnalysisRunKind kind, int policies, long prompt, long completion, long ms, int triage, int escalated, int packed, int retries) => new()
         {
