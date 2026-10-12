@@ -157,8 +157,9 @@ export class RulesService {
 const PLANS = '/api/rules/labels/plans';
 
 /**
- * The dialog's form value for a request: the first label is the label path, a second one that is
- * an archive-rule label fills the archive select. With no request, only `from` is filled.
+ * The dialog's form value for a request: the first label is the label path, the first later one that
+ * is an archive-rule label fills the archive select, every other later one is an additional label.
+ * With no request, only `from` is filled.
  */
 export function filterEdit(
   request: FilterRequest | null,
@@ -167,7 +168,8 @@ export function filterEdit(
 ): FilterEdit {
   const c = request?.criteria;
   const names = request?.action.addLabelNames ?? [];
-  const archive = names.slice(1).find((n) => archiveLabels.includes(n)) ?? '';
+  const later = names.slice(1);
+  const archiveAt = later.findIndex((n) => archiveLabels.includes(n));
   return {
     from: c?.from ?? from,
     to: c?.to ?? '',
@@ -176,17 +178,22 @@ export function filterEdit(
     query: c?.query ?? '',
     negatedQuery: c?.negatedQuery ?? '',
     labelPath: names[0] ?? '',
-    archiveLabel: archive,
+    archiveLabel: later[archiveAt] ?? '',
+    extraLabels: later.filter((_, i) => i !== archiveAt),
     skipInbox: request?.action.skipInbox ?? false,
     markRead: request?.action.markRead ?? false,
   };
 }
 
-/** The API request for a form value: blank fields are unset, label names trimmed and de-duplicated. */
+/**
+ * The API request for a form value: blank fields are unset; the label path, archive label and
+ * additional labels (only with a label path) are trimmed and de-duplicated, in that order.
+ */
 export function filterRequest(edit: FilterEdit): FilterRequest {
   const text = (v: string) => v.trim() || null;
   const names: string[] = [];
-  for (const raw of [edit.labelPath, edit.archiveLabel]) {
+  const extras = edit.labelPath.trim() ? edit.extraLabels : [];
+  for (const raw of [edit.labelPath, edit.archiveLabel, ...extras]) {
     const name = raw.trim();
     if (name && !names.some((n) => n.toLowerCase() === name.toLowerCase())) names.push(name);
   }

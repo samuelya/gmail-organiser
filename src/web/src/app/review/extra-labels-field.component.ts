@@ -44,7 +44,8 @@ export function sameLabels(a: readonly string[], b: readonly string[]): boolean 
 /**
  * "Additional labels" (#524): a chip per label, picked from the label list or typed as a new path and
  * added on Enter or comma. A form control (value `string[]`) that is invalid while a chip equals an
- * `exclude`d name, there are more than `max`, or typed text has not been added.
+ * `exclude`d name, there are more than `max`, or typed text has not been added; the last case also sets
+ * `extraLabelsPending`, so a host can preview the added chips while text is being typed.
  */
 @Component({
   selector: 'app-extra-labels-field',
@@ -131,6 +132,8 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   readonly labels = input<readonly LabelDto[] | null>(null);
   /** Names a chip must not be, compared case-insensitively: the topic, document-type and flag labels. */
   readonly exclude = input<readonly (string | null | undefined)[]>([]);
+  /** What the `exclude`d names are, completing "'X' is already …". */
+  readonly excludeText = input('the topic, document type or a flag label');
   readonly max = input(MAX_EXTRA_LABELS);
   /** A message from the server for the list, such as a 400 under `extraLabels`. */
   readonly serverError = input<string | null>(null);
@@ -159,7 +162,7 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   /** Why the current chips are invalid: one equals an excluded name, or there are too many. */
   readonly conflict = computed(() => {
     const clash = this.value().find((l) => this.excluded().has(l.toLowerCase()));
-    if (clash) return `'${clash}' is already the topic, document type or a flag label.`;
+    if (clash) return `'${clash}' is already ${this.excludeText()}.`;
     return this.value().length > this.max() ? `At most ${this.max()} additional labels.` : null;
   });
   readonly error = computed(
@@ -197,6 +200,9 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   private onChange: (value: string[]) => void = () => undefined;
   private onTouched: () => void = () => undefined;
   private onValidatorChange: () => void = () => undefined;
+  /** The validation state `validate` last returned to the host; undefined before the first call. */
+  private reported: string | null | undefined;
+  private readonly state = computed(() => this.conflict() ?? (this.pending() ? 'pending' : null));
 
   constructor() {
     effect(() => {
@@ -206,10 +212,13 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
         if (message) this.chips.markAsTouched();
       });
     });
+    // Re-validate the host control only when the result differs from what it last saw: not on start
+    // (the host validated on attach), nor on each keystroke of text that is already pending.
     effect(() => {
-      this.conflict();
-      this.pending();
-      untracked(() => this.onValidatorChange());
+      const state = this.state();
+      if (this.reported !== undefined && state !== this.reported) {
+        untracked(() => this.onValidatorChange());
+      }
     });
   }
 
@@ -231,8 +240,11 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   }
 
   validate(): ValidationErrors | null {
-    const message = this.conflict() ?? this.pending();
-    return message ? { extraLabels: message } : null;
+    this.reported = this.state();
+    const conflict = this.conflict();
+    if (conflict) return { extraLabels: conflict };
+    const pending = this.pending();
+    return pending ? { extraLabels: pending, extraLabelsPending: true } : null;
   }
 
   registerOnValidatorChange(fn: () => void): void {
@@ -290,9 +302,7 @@ export class ExtraLabelsField implements ControlValueAccessor, Validator {
   private rejection(label: string): string | null {
     const key = label.toLowerCase();
     if (this.value().some((l) => l.toLowerCase() === key)) return `'${label}' is already added.`;
-    if (this.excluded().has(key)) {
-      return `'${label}' is already the topic, document type or a flag label.`;
-    }
+    if (this.excluded().has(key)) return `'${label}' is already ${this.excludeText()}.`;
     if (this.full()) return `At most ${this.max()} additional labels.`;
     return labelPathError(label);
   }

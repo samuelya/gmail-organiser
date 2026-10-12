@@ -22,12 +22,24 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { catchError, debounceTime, EMPTY, map, Observable, of, startWith, switchMap } from 'rxjs';
+import {
+  catchError,
+  debounceTime,
+  distinctUntilChanged,
+  EMPTY,
+  map,
+  Observable,
+  of,
+  startWith,
+  switchMap,
+} from 'rxjs';
 import { errorMessage } from '../core/error.interceptor';
 import { fieldErrors } from '../review/edit-suggestion-dialog.component';
+import { ExtraLabelsField } from '../review/extra-labels-field.component';
 import { LabelTreePicker } from '../review/label-tree-picker.component';
 import { LabelDto } from '../review/labels.models';
 import { labelPathError, LabelsService } from '../review/labels.service';
+import { MAX_EXTRA_LABELS } from '../review/review.models';
 import { SettingsService } from '../settings/settings.service';
 import { FilterDto, FilterEdit, FilterPreviewDto, FilterRequest } from './rules.models';
 import { filterEdit, filterRequest, filterRequestProblem, RulesService } from './rules.service';
@@ -55,6 +67,7 @@ function optionalLabelPath(control: AbstractControl): ValidationErrors | null {
   selector: 'app-filter-preview-dialog',
   imports: [
     DecimalPipe,
+    ExtraLabelsField,
     LabelTreePicker,
     MatButtonModule,
     MatCheckboxModule,
@@ -85,6 +98,9 @@ export class FilterPreviewDialog {
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly initial = filterEdit(this.data.request, this.data.from, []);
+  /** The proposal's additional labels left out of the field because there were more than the field takes. */
+  readonly maxExtras = MAX_EXTRA_LABELS;
+  readonly droppedExtras = signal(Math.max(0, this.initial.extraLabels.length - MAX_EXTRA_LABELS));
   readonly form = new FormGroup({
     from: new FormControl(this.initial.from, { nonNullable: true }),
     to: new FormControl(this.initial.to, { nonNullable: true }),
@@ -97,6 +113,13 @@ export class FilterPreviewDialog {
       validators: [optionalLabelPath],
     }),
     archiveLabel: new FormControl(this.initial.archiveLabel, { nonNullable: true }),
+    extraLabels: new FormControl(
+      {
+        value: this.initial.extraLabels.slice(0, MAX_EXTRA_LABELS),
+        disabled: !this.initial.labelPath.trim(),
+      },
+      { nonNullable: true },
+    ),
     skipInbox: new FormControl(this.initial.skipInbox, { nonNullable: true }),
     markRead: new FormControl(this.initial.markRead, { nonNullable: true }),
   });
@@ -108,6 +131,9 @@ export class FilterPreviewDialog {
   readonly path = toSignal(this.form.controls.labelPath.valueChanges, {
     initialValue: this.form.controls.labelPath.value,
   });
+  readonly archive = toSignal(this.form.controls.archiveLabel.valueChanges, {
+    initialValue: this.form.controls.archiveLabel.value,
+  });
 
   readonly previewing = signal(false);
   readonly preview = signal<FilterPreviewDto | null>(null);
@@ -117,6 +143,17 @@ export class FilterPreviewDialog {
   readonly error = signal<string | null>(null);
 
   constructor() {
+    // A chip equal to the archive label would clash with it; the request adds that label anyway.
+    this.form.controls.archiveLabel.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((archive) => {
+        const key = archive.trim().toLowerCase();
+        const extras = this.form.controls.extraLabels;
+        if (key && extras.value.some((n) => n.toLowerCase() === key)) {
+          extras.setValue(extras.value.filter((n) => n.toLowerCase() !== key));
+        }
+      });
+
     inject(SettingsService)
       .getSettings()
       .pipe(
@@ -126,17 +163,37 @@ export class FilterPreviewDialog {
       )
       .subscribe((labels) => {
         this.archiveLabels.set(labels);
-        const archive = filterEdit(this.data.request, this.data.from, labels).archiveLabel;
-        if (archive && !this.form.controls.archiveLabel.value) {
-          this.form.controls.archiveLabel.setValue(archive);
+        const edit = filterEdit(this.data.request, this.data.from, labels);
+        if (edit.archiveLabel && !this.form.controls.archiveLabel.value) {
+          // The proposal's archive label was an additional label until the rules were known; untouched
+          // extras get the slot it frees.
+          const extras = this.form.controls.extraLabels;
+          if (extras.pristine) {
+            extras.setValue(edit.extraLabels.slice(0, MAX_EXTRA_LABELS));
+            this.droppedExtras.set(Math.max(0, edit.extraLabels.length - MAX_EXTRA_LABELS));
+          }
+          this.form.controls.archiveLabel.setValue(edit.archiveLabel);
         }
       });
 
+    // An additional label needs a main label.
+    this.form.controls.labelPath.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((path) => {
+        const extras = this.form.controls.extraLabels;
+        if (path.trim()) extras.enable({ emitEvent: false });
+        else extras.disable({ emitEvent: false });
+      });
+
+    // Text typed into the extra labels but not added yet re-validates the form without changing
+    // the request; the same request is not previewed twice.
     this.form.valueChanges
       .pipe(
         debounceTime(PREVIEW_DEBOUNCE_MS),
         startWith(null),
-        switchMap(() => this.previewRequest()),
+        map(() => this.request(true)),
+        distinctUntilChanged((a, b) => !!a && !!b && sameRequest(a, b)),
+        switchMap((request) => this.previewRequest(request)),
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe((preview) => {
@@ -188,9 +245,12 @@ export class FilterPreviewDialog {
     if (!this.saving()) this.ref.close();
   }
 
-  /** The request when the form can be sent; otherwise the problems say why not. */
-  private request(): FilterRequest | null {
-    if (this.form.invalid) {
+  /**
+   * The request when the form can be sent; otherwise the problems say why not. A preview uses the
+   * added chips while extra-label text is still being typed; only Create waits for it.
+   */
+  private request(preview = false): FilterRequest | null {
+    if (this.form.invalid && !(preview && this.onlyTyping())) {
       this.problems.set([this.pathError() ?? 'Check the highlighted fields.']);
       return null;
     }
@@ -200,8 +260,18 @@ export class FilterPreviewDialog {
     return problem ? null : request;
   }
 
-  private previewRequest(): Observable<FilterPreviewDto | null> {
-    const request = this.request();
+  /** The only error is extra-label text not added yet. */
+  private onlyTyping(): boolean {
+    const { extraLabels, ...rest } = this.form.controls;
+    const errors = extraLabels.errors ?? {};
+    return (
+      Object.values(rest).every((c) => c.valid || c.disabled) &&
+      Object.keys(errors).every((k) => k === 'extraLabels' || k === 'extraLabelsPending') &&
+      errors['extraLabelsPending'] === true
+    );
+  }
+
+  private previewRequest(request: FilterRequest | null): Observable<FilterPreviewDto | null> {
     if (!request) return of(null);
     this.previewing.set(true);
     return this.rules.preview(request).pipe(
@@ -224,6 +294,10 @@ export class FilterPreviewDialog {
       error: () => this.labelsFailed.set(true),
     });
   }
+}
+
+function sameRequest(a: FilterRequest, b: FilterRequest): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Opens the preview dialog; emits the created filter, or `undefined` when cancelled. */

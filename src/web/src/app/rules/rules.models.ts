@@ -106,7 +106,7 @@ export interface FilterProposalDto {
   suggested: FilterRequest;
 }
 
-/** The preview dialog's form value: one label path plus the optional archive-rule label. */
+/** The preview dialog's form value: one label path plus the optional archive-rule and additional labels. */
 export interface FilterEdit {
   from: string;
   to: string;
@@ -117,6 +117,8 @@ export interface FilterEdit {
   labelPath: string;
   /** A label of `settings.appsScript.rules`, or '' for none. */
   archiveLabel: string;
+  /** Further labels the filter adds (#533); ignored without a label path. */
+  extraLabels: string[];
   skipInbox: boolean;
   markRead: boolean;
 }

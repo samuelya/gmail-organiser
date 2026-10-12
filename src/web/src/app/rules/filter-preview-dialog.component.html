@@ -62,6 +62,19 @@
           <mat-progress-bar mode="indeterminate" aria-label="Loading labels" />
         }
       </div>
+      <app-extra-labels-field
+        formControlName="extraLabels"
+        [labels]="labels()"
+        [exclude]="[path(), archive()]"
+        excludeText="the filter's label or archive label"
+        data-testid="preview-extra-labels"
+      />
+      @if (droppedExtras(); as dropped) {
+        <p class="muted m-0 text-sm" data-testid="preview-extras-dropped">
+          {{ dropped }} more suggested {{ dropped === 1 ? 'label was' : 'labels were' }} left out;
+          at most {{ maxExtras }} additional labels.
+        </p>
+      }
       @if (archiveLabels().length) {
         <mat-form-field class="w-full">
           <mat-label>Also apply archive-rule label</mat-label>

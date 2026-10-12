@@ -247,11 +247,18 @@ export class FilterProposals implements OnInit {
       });
   }
 
-  /** "Topic · Act" with the settings' flag label names. */
+  /**
+   * "Topic + A, B · Act" with the settings' flag label names; A, B are the labels the filter adds
+   * after the topic (#533).
+   */
   pattern(p: FilterProposalDto): string {
     const flags = this.flags();
+    const [first, ...extras] = p.suggested.action.addLabelNames;
+    const topic = p.pattern.topicLabel;
+    const key = (n: string | null | undefined) => n?.trim().toLowerCase();
+    const withExtras = topic && key(first) === key(topic) && extras.length;
     return [
-      p.pattern.topicLabel,
+      withExtras ? `${topic} + ${extras.join(', ')}` : topic,
       p.pattern.needsAction ? flags.action : null,
       p.pattern.toBeDeleted ? flags.delete : null,
     ]
