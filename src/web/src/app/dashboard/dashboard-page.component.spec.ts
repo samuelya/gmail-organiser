@@ -77,7 +77,10 @@ describe('DashboardPage', () => {
         { provide: JobsService, useValue: jobs },
         { provide: FetchService, useValue: fetch },
         { provide: SetupService, useValue: setup },
-        { provide: AnalysisService, useValue: { summary: () => of(analysisSummary) } },
+        {
+          provide: AnalysisService,
+          useValue: { summary: () => of(analysisSummary), listRuns: () => of([]) },
+        },
         {
           provide: TriageService,
           useValue: { get: () => of({ current: null, history: [], llmHours: 0 }) },

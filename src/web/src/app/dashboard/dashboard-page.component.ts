@@ -39,6 +39,7 @@ import {
 import { FetchService } from './fetch.service';
 import { MailboxMixCard } from './mailbox-mix-card.component';
 import { NextStepsCard } from './next-steps-card.component';
+import { RunCostCard } from './run-cost-card.component';
 import { TopSendersCard } from './top-senders-card.component';
 import { TriageCard } from './triage-card.component';
 
@@ -63,6 +64,7 @@ export const STATUS_REFRESH_MS = 5000;
     NextStepsCard,
     PageHeader,
     RouterLink,
+    RunCostCard,
     TopSendersCard,
     TriageCard,
   ],
