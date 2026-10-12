@@ -32,7 +32,8 @@ dotnet restore GmailOrganiser.slnx
 dotnet format GmailOrganiser.slnx --verify-no-changes --no-restore   # lint; drop --verify-no-changes to fix
 dotnet build GmailOrganiser.slnx -warnaserror --no-restore
 dotnet test --solution GmailOrganiser.slnx                           # integration tests need Docker running; OCR tests skip without tesseract
-dotnet test --filter "FullyQualifiedName~<Name>"                     # single test or class
+dotnet test --project src/api.Tests --filter-class "<Namespace.Class>"   # one class (xUnit v3 / MTP; --filter "FullyQualifiedName~" runs zero tests)
+dotnet test --project src/api.Tests --filter-method "<Namespace.Class.Method>"   # one test
 ```
 
 Web (`src/web`; Node per `.nvmrc`):
