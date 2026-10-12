@@ -37,6 +37,7 @@ import {
   resyncDisabled,
 } from './fetch.models';
 import { FetchService } from './fetch.service';
+import { MailboxMixCard } from './mailbox-mix-card.component';
 import { NextStepsCard } from './next-steps-card.component';
 import { TriageCard } from './triage-card.component';
 
@@ -57,6 +58,7 @@ export const STATUS_REFRESH_MS = 5000;
     MatIconModule,
     MatProgressBarModule,
     MatTooltipModule,
+    MailboxMixCard,
     NextStepsCard,
     PageHeader,
     RouterLink,

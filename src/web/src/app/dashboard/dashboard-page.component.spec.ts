@@ -7,6 +7,7 @@ import { isActiveJob, JobDto, JobsConnectionState } from '../core/jobs.models';
 import { AnalysisSummaryDto } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { JobsService } from '../core/jobs.service';
+import { BreakdownService } from './breakdown.service';
 import { DashboardPage, STATUS_REFRESH_MS } from './dashboard-page.component';
 import { FetchStatusDto } from './fetch.models';
 import { FetchService } from './fetch.service';
@@ -79,6 +80,17 @@ describe('DashboardPage', () => {
         {
           provide: TriageService,
           useValue: { get: () => of({ current: null, history: [], llmHours: 0 }) },
+        },
+        {
+          provide: BreakdownService,
+          useValue: {
+            get: () =>
+              of({
+                categories: { primary: 0, promotions: 0, social: 0, updates: 0, forums: 0 },
+                mailTypes: [],
+                unclassified: 0,
+              }),
+          },
         },
         { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
