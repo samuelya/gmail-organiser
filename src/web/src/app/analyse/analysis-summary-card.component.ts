@@ -1,32 +1,17 @@
 import { DecimalPipe } from '@angular/common';
-import {
-  ChangeDetectionStrategy,
-  Component,
-  computed,
-  DestroyRef,
-  effect,
-  inject,
-  signal,
-  untracked,
-} from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCardModule } from '@angular/material/card';
 import { MatIconModule } from '@angular/material/icon';
 import { RouterLink } from '@angular/router';
-import { catchError, of, Subject, switchMap } from 'rxjs';
-import { JobsService } from '../core/jobs.service';
-import {
-  AnalysisSummaryDto,
-  analysisJobsKey,
-  modelCountersText,
-  savingsText,
-  usageText,
-} from './analysis.models';
-import { AnalysisService } from './analysis.service';
+import { modelCountersText, savingsText, usageText } from './analysis.models';
+import { AnalysisSummaryStore } from './analysis-summary-store';
 import { AnalysisStatusChart } from './analysis-status-chart.component';
 
-/** Dashboard card: messages by analysis status, Action and To-Be-Deleted counts, cumulative LLM savings, usage and model counters. */
+/**
+ * Dashboard card: messages by analysis status, Action and To-Be-Deleted counts, cumulative LLM savings,
+ * usage and model counters. The summary comes from the page's `AnalysisSummaryStore`.
+ */
 @Component({
   selector: 'app-analysis-summary-card',
   imports: [
@@ -126,12 +111,10 @@ import { AnalysisStatusChart } from './analysis-status-chart.component';
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class AnalysisSummaryCard {
-  private readonly analysis = inject(AnalysisService);
-  private readonly jobs = inject(JobsService);
-  private readonly refresh = new Subject<void>();
+  private readonly store = inject(AnalysisSummaryStore);
 
-  readonly summary = signal<AnalysisSummaryDto | null>(null);
-  readonly loadFailed = signal(false);
+  readonly summary = this.store.summary.asReadonly();
+  readonly loadFailed = this.store.loadFailed.asReadonly();
   readonly savings = computed(() => {
     const s = this.summary();
     return s
@@ -148,28 +131,7 @@ export class AnalysisSummaryCard {
     return s ? modelCountersText(s) : null;
   });
 
-  /** Counts change when an analysis job appears or changes status, or after a reconnect. */
-  private readonly refreshKey = computed(
-    () => `${analysisJobsKey(this.jobs.jobs())}|${this.jobs.reconnects()}`,
-  );
-
-  constructor() {
-    this.refresh
-      .pipe(
-        switchMap(() => this.analysis.summary().pipe(catchError(() => of(null)))),
-        takeUntilDestroyed(inject(DestroyRef)),
-      )
-      .subscribe((summary) => {
-        if (summary) this.summary.set(summary);
-        this.loadFailed.set(!summary);
-      });
-    effect(() => {
-      this.refreshKey();
-      untracked(() => this.load());
-    });
-  }
-
   load(): void {
-    this.refresh.next();
+    this.store.load();
   }
 }
