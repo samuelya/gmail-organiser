@@ -182,7 +182,7 @@ public sealed record SenderPolicyDetailDto(
 /// <param name="Id">An existing rule of the policy to keep (its status, source and reason stay); null for a new rule.</param>
 /// <param name="MailType">A snake_case <c>MailType</c>, or null.</param>
 /// <param name="Action"><c>keep</c>, <c>archive</c>, <c>delete</c> or <c>unsubscribe</c>.</param>
-/// <param name="ExtraLabels">Additional labels next to the rule's topic (#530); null is <c>[]</c>.</param>
+/// <param name="ExtraLabels">Additional labels next to the rule's topic (#530); null keeps them (none for a new rule), <c>[]</c> clears.</param>
 public sealed record EditPolicyRuleRequest(
     Guid? Id,
     string? Name,
@@ -196,7 +196,7 @@ public sealed record EditPolicyRuleRequest(
 
 /// <summary>Replaces the policy's fields and its whole rule list; rule positions are the array order.</summary>
 /// <param name="DocumentTypeLabel">Null or blank for none; otherwise under the configured document-type parent.</param>
-/// <param name="ExtraLabels">Additional labels next to the topic (#530); null is <c>[]</c>; none on a mixed sender's default.</param>
+/// <param name="ExtraLabels">Additional labels next to the topic (#530); null keeps them, <c>[]</c> clears; none on a mixed sender's default.</param>
 public sealed record EditPolicyRequest(
     string? TopicLabel,
     string? DocumentTypeLabel,

@@ -110,9 +110,22 @@ public sealed class PolicyExtraLabelsTests(ApiFactory factory, PostgresFixture p
             (await db.SenderPolicies.AsNoTracking().SingleAsync(p => p.Id == Single, Ct)).ExtraLabels.ShouldBe(["Alpha", "Fresh", Existing]);
         }
 
-        // The edit replaces the whole policy: no list clears them.
-        (await PutAsync(Single, new EditPolicyRequest(Topic, null, null, null, "archive", false, []))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        // No list keeps them (an editor that does not know extras erases nothing); [] clears them.
+        (await PutAsync(Single, new EditPolicyRequest(Topic, null, null, null, "keep", false, []))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await DetailAsync(Single)).Policy.ExtraLabels.ShouldBe(["Alpha", "Fresh", Existing]);
+        (await PutAsync(Single, new EditPolicyRequest(Topic, null, null, null, "keep", false, [], []))).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await DetailAsync(Single)).Policy.ExtraLabels.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Kept_extras_are_cleaned_against_the_edited_topic()
+    {
+        (await PutAsync(Single, new EditPolicyRequest(Topic, null, null, null, "archive", false, [], ["Alpha", "Beta"])))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await PutAsync(Single, new EditPolicyRequest("alpha", null, null, null, "archive", false, []))).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await DetailAsync(Single)).Policy.ExtraLabels.ShouldBe(["Beta"]);
     }
 
     [Fact]
@@ -125,8 +138,41 @@ public sealed class PolicyExtraLabelsTests(ApiFactory factory, PostgresFixture p
         var body = (await response.Content.ReadFromJsonAsync<EditPolicyResponse>(Ct)).ShouldNotBeNull();
         body.Reapply.ShouldBeFalse();
         body.Policy.Rules.Single().ExtraLabels.ShouldBe(["alpha", "Beta"]);
-        await using var db = postgres.CreateDbContext();
-        (await db.SenderPolicyRules.AsNoTracking().SingleAsync(r => r.Id == MixedRule, Ct)).ExtraLabels.ShouldBe(["alpha", "Beta"]);
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.SenderPolicyRules.AsNoTracking().SingleAsync(r => r.Id == MixedRule, Ct)).ExtraLabels.ShouldBe(["alpha", "Beta"]);
+        }
+
+        // A kept rule without a list keeps its extras; a new rule without one starts with none.
+        var kept = await PutAsync(Mixed, new EditPolicyRequest(null, null, null, null, "keep", true, [Rule(MixedRule, null), Rule(null, null)]));
+        var rules = (await kept.Content.ReadFromJsonAsync<EditPolicyResponse>(Ct)).ShouldNotBeNull().Policy.Rules;
+        rules.Select(r => r.ExtraLabels).ShouldBe([["alpha", "Beta"], []]);
+    }
+
+    [Fact]
+    public async Task Rows_written_without_extras_read_back_empty()
+    {
+        // Rows from before the migration, or from any writer that leaves the column out, get the DEFAULT '{}'.
+        var policyId = Guid.NewGuid();
+        var ruleId = Guid.NewGuid();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($$"""
+                INSERT INTO sender_policies (id, scope, scope_key, is_mixed, action, confidence, reason, status, edited, created_at)
+                VALUES ({{policyId}}, 'sender', 'raw@example.com', true, 'archive', 0.5, 'synthetic', 'proposed', false, {{Created}})
+                """, Ct);
+            await db.Database.ExecuteSqlInterpolatedAsync($$"""
+                INSERT INTO sender_policy_rules (id, policy_id, position, name, match, topic_label, action, status, source, reason, created_at)
+                VALUES ({{ruleId}}, {{policyId}}, 0, 'Synthetic rule', '{"SubjectContains":"deal"}'::jsonb, {{RuleTopic}}, 'archive',
+                        'proposed', 'llm', 'synthetic', {{Created}})
+                """, Ct);
+            (await db.SenderPolicies.AsNoTracking().SingleAsync(p => p.Id == policyId, Ct)).ExtraLabels.ShouldBeEmpty();
+            (await db.SenderPolicyRules.AsNoTracking().SingleAsync(r => r.Id == ruleId, Ct)).ExtraLabels.ShouldBeEmpty();
+        }
+
+        var detail = await DetailAsync(policyId);
+        detail.Policy.ExtraLabels.ShouldBeEmpty();
+        detail.Rules.Single().ExtraLabels.ShouldBeEmpty();
     }
 
     [Fact]
@@ -161,6 +207,11 @@ public sealed class PolicyExtraLabelsTests(ApiFactory factory, PostgresFixture p
             [Rule(MixedRule, null)], ["Alpha"])));
 
         errors[ExtraLabelList.Field].Single().ShouldContain("mixed");
+
+        // Kept extras count too: a default with extras cannot turn mixed (PolicyValidation, shared with the parser).
+        (await PutAsync(Single, new EditPolicyRequest(Topic, null, null, null, "archive", false, [], ["Alpha"]))).StatusCode.ShouldBe(HttpStatusCode.OK);
+        var kept = await ErrorsAsync(await PutAsync(Single, new EditPolicyRequest(null, null, null, null, "keep", true, [Rule(null, null)])));
+        kept[ExtraLabelList.Field].Single().ShouldContain("mixed");
     }
 
     private Task<HttpResponseMessage> PutAsync(Guid id, EditPolicyRequest request) =>
