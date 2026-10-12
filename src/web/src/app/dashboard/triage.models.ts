@@ -1,3 +1,6 @@
+import { formatDate, formatNumber } from '@angular/common';
+import { ChartTable } from '../core/charts/chart-panel.component';
+
 /** `GET /api/dashboard/triage`: one snapshot with its coverage ratios (0–1; 0 when the denominator is 0). */
 export interface MetricSnapshotDto {
   takenAt: string;
@@ -50,71 +53,58 @@ export function hoursText(hours: number): string {
   return `${(Math.round(hours * 10) / 10).toFixed(1)} h`;
 }
 
-/** One chart point: inbox unread and % of messages covered by a policy (0–100). */
+/** One chart point: inbox unread and % of messages covered by a policy and by a filter (0–100). */
 export interface TriagePoint {
   day: string;
   unread: number;
-  coverage: number;
+  policyCoverage: number;
+  filterCoverage: number;
 }
 
 export function triagePoints(history: readonly MetricPointDto[]): TriagePoint[] {
   return history.map((p) => ({
     day: p.day,
     unread: p.inboxUnreadCount,
-    coverage: p.messagesTotal === 0 ? 0 : (p.coveredByPolicy / p.messagesTotal) * 100,
+    policyCoverage: percentOf(p.coveredByPolicy, p.messagesTotal),
+    filterCoverage: percentOf(p.coveredByFilter, p.messagesTotal),
   }));
 }
 
-/** The smallest whole number of 1, 2, 2.5, 5 × 10ⁿ at or above `value` (at least 1), so axis ticks stay round. */
-export function niceMax(value: number): number {
-  if (value <= 1) return 1;
-  const magnitude = 10 ** Math.floor(Math.log10(value));
-  const step =
-    [1, 2, 2.5, 5, 10].find((s) => s * magnitude >= value && Number.isInteger(s * magnitude)) ?? 10;
-  return step * magnitude;
+/** First vs last point, numbers formatted for `locale`: the chart's text alternative. */
+export function triageChartSummary(points: readonly TriagePoint[], locale: string): string {
+  const first = points[0];
+  const last = points.at(-1);
+  if (!first || !last) return 'No history yet.';
+  const count = (n: number) => formatNumber(n, locale, '1.0-0');
+  const percent = (n: number) => `${formatNumber(n, locale, '1.0-0')}%`;
+  if (points.length === 1) {
+    return `Inbox unread is ${count(last.unread)}, policy coverage ${percent(last.policyCoverage)} and filter coverage ${percent(last.filterCoverage)} on the first day.`;
+  }
+  return (
+    `Inbox unread went from ${count(first.unread)} to ${count(last.unread)}, ` +
+    `policy coverage from ${percent(first.policyCoverage)} to ${percent(last.policyCoverage)} ` +
+    `and filter coverage from ${percent(first.filterCoverage)} to ${percent(last.filterCoverage)} ` +
+    `over ${points.length} days.`
+  );
 }
 
-/** Axis values for a count axis up to `max`: 0, the middle when it is a whole number, and `max`. */
-export function countTicks(max: number): number[] {
-  const mid = max / 2;
-  return Number.isInteger(mid) && mid > 0 ? [0, mid, max] : [0, max];
+/** The same points as a table, one row per day, percentages to one decimal. */
+export function triageChartTable(points: readonly TriagePoint[], locale: string): ChartTable {
+  return {
+    columns: ['Day', 'Inbox unread', 'Covered by policy %', 'Covered by filter %'],
+    rows: points.map((p) => [
+      formatDate(p.day, 'mediumDate', locale),
+      p.unread,
+      oneDecimal(p.policyCoverage),
+      oneDecimal(p.filterCoverage),
+    ]),
+  };
 }
 
-/** The plot area inside the SVG, in pixels. */
-export interface PlotBox {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
+function percentOf(part: number, total: number): number {
+  return total === 0 ? 0 : (part / total) * 100;
 }
 
-/** x of point `index` of `count`; a single point sits in the middle. */
-export function xAt(index: number, count: number, box: PlotBox): number {
-  return count <= 1 ? box.left + box.width / 2 : box.left + (index / (count - 1)) * box.width;
-}
-
-/** y of `value` on a 0–`max` axis. */
-export function yAt(value: number, max: number, box: PlotBox): number {
-  return box.top + box.height - (Math.min(value, max) / max) * box.height;
-}
-
-/** SVG path `d` through the values, one segment per point; empty for no values. */
-export function linePath(values: readonly number[], max: number, box: PlotBox): string {
-  return values
-    .map(
-      (v, i) =>
-        `${i === 0 ? 'M' : 'L'}${round(xAt(i, values.length, box))},${round(yAt(v, max, box))}`,
-    )
-    .join(' ');
-}
-
-/** The index of the point nearest to pixel `x`. */
-export function nearestIndex(x: number, count: number, box: PlotBox): number {
-  if (count <= 1) return 0;
-  const i = Math.round(((x - box.left) / box.width) * (count - 1));
-  return Math.max(0, Math.min(count - 1, i));
-}
-
-function round(n: number): number {
+function oneDecimal(n: number): number {
   return Math.round(n * 10) / 10;
 }

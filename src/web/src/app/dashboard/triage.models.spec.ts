@@ -1,17 +1,12 @@
 import {
   hoursText,
-  countTicks,
-  linePath,
   MetricPointDto,
-  nearestIndex,
-  niceMax,
   percentText,
-  PlotBox,
+  triageChartSummary,
+  triageChartTable,
+  TriagePoint,
   triagePoints,
-  xAt,
 } from './triage.models';
-
-const box: PlotBox = { left: 10, top: 5, width: 100, height: 50 };
 
 const point = (over: Partial<MetricPointDto> = {}): MetricPointDto => ({
   day: '2026-01-01',
@@ -43,58 +38,49 @@ describe('triage figures', () => {
     expect(hoursText(12.345)).toBe('12.3 h');
   });
 
-  it('triagePoints derives % covered by policy, 0 for an empty mailbox', () => {
+  it('triagePoints derives % covered by policy and by filter, 0 for an empty mailbox', () => {
     expect(
-      triagePoints([point(), point({ day: '2026-01-02', messagesTotal: 0, coveredByPolicy: 0 })]),
+      triagePoints([
+        point(),
+        point({ day: '2026-01-02', messagesTotal: 0, coveredByPolicy: 0, coveredByFilter: 0 }),
+      ]),
     ).toEqual([
-      { day: '2026-01-01', unread: 12, coverage: 25 },
-      { day: '2026-01-02', unread: 12, coverage: 0 },
+      { day: '2026-01-01', unread: 12, policyCoverage: 25, filterCoverage: 10 },
+      { day: '2026-01-02', unread: 12, policyCoverage: 0, filterCoverage: 0 },
     ]);
-  });
-
-  it('niceMax rounds up to 1, 2, 2.5 or 5 × 10ⁿ', () => {
-    expect(niceMax(0)).toBe(1);
-    expect(niceMax(7)).toBe(10);
-    expect(niceMax(13)).toBe(20);
-    expect(niceMax(240)).toBe(250);
-    expect(niceMax(4100)).toBe(5000);
-    expect(niceMax(500)).toBe(500);
-  });
-
-  it('niceMax skips 2.5 below ten so the unread axis stays whole', () => {
-    expect(niceMax(2.2)).toBe(5);
-    expect(niceMax(24)).toBe(25);
-  });
-
-  it('countTicks keeps the middle tick only when it is a whole number', () => {
-    expect(countTicks(1)).toEqual([0, 1]);
-    expect(countTicks(5)).toEqual([0, 5]);
-    expect(countTicks(25)).toEqual([0, 25]);
-    expect(countTicks(10)).toEqual([0, 5, 10]);
-    expect(countTicks(2)).toEqual([0, 1, 2]);
   });
 });
 
-describe('triage chart geometry', () => {
-  it('linePath draws a fixed series across the plot box', () => {
-    expect(linePath([0, 5, 10], 10, box)).toBe('M10,55 L60,30 L110,5');
+const points: TriagePoint[] = [
+  { day: '2026-01-01', unread: 1200, policyCoverage: 10, filterCoverage: 2.04 },
+  { day: '2026-01-02', unread: 900, policyCoverage: 30, filterCoverage: 4 },
+  { day: '2026-01-03', unread: 85, policyCoverage: 42.46, filterCoverage: 5.5 },
+];
+
+describe('triage chart text', () => {
+  it('summarises the first and the last point', () => {
+    expect(triageChartSummary(points, 'en-US')).toBe(
+      'Inbox unread went from 1,200 to 85, policy coverage from 10% to 42% ' +
+        'and filter coverage from 2% to 6% over 3 days.',
+    );
   });
 
-  it('linePath clamps values above the axis maximum and is empty without values', () => {
-    expect(linePath([20, 0], 10, box)).toBe('M10,5 L110,55');
-    expect(linePath([], 10, box)).toBe('');
+  it('summarises a single day and no history', () => {
+    expect(triageChartSummary(points.slice(0, 1), 'en-US')).toBe(
+      'Inbox unread is 1,200, policy coverage 10% and filter coverage 2% on the first day.',
+    );
+    expect(triageChartSummary([], 'en-US')).toBe('No history yet.');
   });
 
-  it('a single point sits in the middle', () => {
-    expect(xAt(0, 1, box)).toBe(60);
-    expect(linePath([5], 10, box)).toBe('M60,30');
-  });
-
-  it('nearestIndex snaps a pixel to the closest day and clamps outside the plot', () => {
-    expect(nearestIndex(10, 5, box)).toBe(0);
-    expect(nearestIndex(48, 5, box)).toBe(2);
-    expect(nearestIndex(-40, 5, box)).toBe(0);
-    expect(nearestIndex(500, 5, box)).toBe(4);
-    expect(nearestIndex(500, 1, box)).toBe(0);
+  it('builds one table row per day with percentages to one decimal', () => {
+    expect(triageChartTable(points, 'en-US')).toEqual({
+      columns: ['Day', 'Inbox unread', 'Covered by policy %', 'Covered by filter %'],
+      rows: [
+        ['Jan 1, 2026', 1200, 10, 2],
+        ['Jan 2, 2026', 900, 30, 4],
+        ['Jan 3, 2026', 85, 42.5, 5.5],
+      ],
+    });
+    expect(triageChartTable([], 'en-US').rows).toEqual([]);
   });
 });
