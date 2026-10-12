@@ -57,7 +57,14 @@ public sealed class PolicyMatcherTests
 
         policy.IsMixed = true;
         Matcher.Match(Message(listId: "news.example.com"), policy).ShouldNotBeNull().ExtraLabels.ShouldBe(["Shops/Rule extra"]);
-        new PolicyMatch(null, "Shops/Example", null, null, null, PolicyAction.Archive, false).ExtraLabels.ShouldBeEmpty();
+        var bare = new PolicyMatch(null, "Shops/Example", null, null, null, PolicyAction.Archive, false);
+        bare.ExtraLabels.ShouldBeEmpty();
+        (bare with { ExtraLabels = null! }).ExtraLabels.ShouldBeEmpty();
+
+        // Value equality: the extras compare as a list, not by reference.
+        var copy = bare with { ExtraLabels = ["Shops/Extra"] };
+        copy.ShouldBe(bare with { ExtraLabels = new List<string> { "Shops/Extra" } });
+        copy.ShouldNotBe(bare);
     }
 
     [Fact]

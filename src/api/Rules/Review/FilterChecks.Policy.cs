@@ -12,8 +12,10 @@ namespace GmailOrganiser.Rules.Review;
 /// negated tokens, where only a filter with no condition of its own is judged); only a filter whose raw criteria pass
 /// <see cref="PlainCriteria"/> is judged at all. A fix always
 /// creates the proposal as #373 built it, so it never adds the delete label, skips the inbox only where #373 allows and
-/// fits the length cap; a relabel's text names the filter's other actions it drops. A proposal whose label the mailbox
-/// doesn't have yet, or a filter only partly within one, gets no finding.
+/// fits the length cap; a relabel's text names the filter's other actions it drops. A proposal whose topic label the
+/// mailbox doesn't have yet, or a filter only partly within one, gets no finding; an additional label it doesn't have yet
+/// is left out of the fix and named in the text. The policy's own filter that lacks some of the proposal's labels (the
+/// policy gained additional labels after it was created, #531) is a conflict whose fix is the proposal.
 /// </summary>
 public static partial class FilterChecks
 {
@@ -34,8 +36,26 @@ public static partial class FilterChecks
             yield break;
         }
 
+        // The policy's own filter (same criteria, which may hold negations PlainCriteria rejects) lacking some of its labels.
+        var stale = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0))
+        {
+            var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(f.Criteria);
+            if (targets.FirstOrDefault(t => t.From.SequenceEqual(from) && t.Tokens.SequenceEqual(tokens) && Lacks(f.Action, t.Action)) is { } own)
+            {
+                stale.Add(f.Row.Id);
+                var missing = own.Action.AddLabelIds.Except(f.Action.AddLabelIds, StringComparer.Ordinal).Select(id => names.GetValueOrDefault(id, id));
+                yield return new(
+                    FilterFindingKind.PolicyConflict,
+                    [f.Row.Id],
+                    $"{Quote([f])} is the filter of the policy for '{own.Proposal.SenderAddress}' but doesn't add {string.Join(", ", missing)}, "
+                    + $"which the policy adds now; replace it with the policy's filter.{own.MissingNote}",
+                    new FilterFix(FilterFixKind.Relabel, [f.Row.Id], new(own.Criteria, own.Action), own.Proposal.PolicyId));
+            }
+        }
+
         var overlaps = new List<(PolicyTarget Target, List<Parsed> Members)>();
-        foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0 && PlainCriteria(f.Criteria)))
+        foreach (var f in filters.Where(f => !f.Forwards && f.Missing.Count == 0 && !stale.Contains(f.Row.Id) && PlainCriteria(f.Criteria)))
         {
             var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(f.Criteria);
             var within = targets.Where(t => Within(f.Criteria, from, tokens, t)).ToList();
@@ -80,6 +100,8 @@ public static partial class FilterChecks
                     text += $" The policy's filter won't {DescribeDropped(dropped, names)}, as this one does; those actions are dropped.";
                 }
 
+                text += target.MissingNote;
+
                 yield return new(
                     FilterFindingKind.PolicyConflict,
                     [f.Row.Id],
@@ -95,25 +117,38 @@ public static partial class FilterChecks
                 [.. members.Select(f => f.Row.Id)],
                 $"{Quote(members)} {(members.Count == 1 ? "is" : "are")} within the filter the policy for '{target.Proposal.SenderAddress}' "
                 + $"proposes ('{target.Query}'), which would also {Describe(target.Action, names)}; that one filter can replace "
-                + $"{(members.Count == 1 ? "it" : "them")}.",
+                + $"{(members.Count == 1 ? "it" : "them")}.{target.MissingNote}",
                 new FilterFix(FilterFixKind.Merge, [.. members.Select(f => f.Row.Id)], new(target.Criteria, target.Action), target.Proposal.PolicyId));
         }
     }
 
-    /// <summary>The proposal with label ids, or null when it has no policy or a label the mailbox doesn't have.</summary>
+    /// <summary>
+    /// The proposal with label ids, or null when it has no policy or the mailbox lacks its topic (the first label); the
+    /// additional labels the mailbox lacks are left out of the action and named in <see cref="PolicyTarget.MissingNote"/>.
+    /// </summary>
     private static PolicyTarget? Target(FilterProposalDto proposal, Dictionary<string, string> ids)
     {
         if (proposal.PolicyId is null
             || FilterCriteriaMapping.TryRead(proposal.Suggested.Criteria, proposal.Suggested.Action, out _) is not { } spec
-            || spec.AddLabelNames.Any(n => !ids.ContainsKey(n)))
+            || spec.AddLabelNames.Count == 0 || !ids.ContainsKey(spec.AddLabelNames[0]))
         {
             return null;
         }
 
-        var action = new GmailFilterAction([.. spec.AddLabelNames.Select(n => ids[n])], spec.RemoveLabelIds);
+        var action = new GmailFilterAction([.. spec.AddLabelNames.Where(ids.ContainsKey).Select(n => ids[n])], spec.RemoveLabelIds);
+        var missing = spec.AddLabelNames.Where(n => !ids.ContainsKey(n)).ToList();
+        var note = missing.Count == 0 ? ""
+            : $" The fix doesn't add {string.Join(", ", missing.Select(n => $"'{n}'"))} yet: the mailbox has no such label.";
         var (from, tokens) = PolicyFilterProposalQuery.CriteriaTerms(spec.Criteria);
-        return new PolicyTarget(proposal, spec.Criteria, action, ActionKey(action), from, tokens, FilterCriteriaMapping.ToQuery(spec.Criteria));
+        return new PolicyTarget(proposal, spec.Criteria, action, ActionKey(action), from, tokens, FilterCriteriaMapping.ToQuery(spec.Criteria), note);
     }
+
+    /// <summary>Whether a filter adds the proposal's topic, does nothing the proposal doesn't and lacks some of its labels.</summary>
+    private static bool Lacks(GmailFilterAction filter, GmailFilterAction proposal) =>
+        filter.AddLabelIds.Contains(proposal.AddLabelIds[0], StringComparer.Ordinal)
+        && filter.RemoveLabelIds.Order(StringComparer.Ordinal).SequenceEqual(proposal.RemoveLabelIds.Order(StringComparer.Ordinal), StringComparer.Ordinal)
+        && filter.AddLabelIds.All(id => proposal.AddLabelIds.Contains(id, StringComparer.Ordinal))
+        && proposal.AddLabelIds.Any(id => !filter.AddLabelIds.Contains(id, StringComparer.Ordinal));
 
     /// <summary>
     /// Whether the policy decides at least what a filter with these terms matches. The filter's <c>from</c> must be
@@ -252,5 +287,5 @@ public static partial class FilterChecks
 
     private sealed record PolicyTarget(
         FilterProposalDto Proposal, GmailFilterCriteria Criteria, GmailFilterAction Action, string ActionKey,
-        IReadOnlyList<string> From, IReadOnlyList<string> Tokens, string Query);
+        IReadOnlyList<string> From, IReadOnlyList<string> Tokens, string Query, string MissingNote);
 }

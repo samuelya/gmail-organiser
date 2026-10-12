@@ -91,6 +91,7 @@ public sealed class FilterProposalQuery(
     /// Labels the sender's mail with its topic and additional labels and skips the inbox unless it needs action; a to-be-deleted
     /// pattern adds the delete label instead, skips the inbox and leaves mail with attachments alone. An allowlisted
     /// sender or domain is protected (MessageProtection), so it never gets the delete label: its proposal is the topic label.
+    /// Additional labels never go next to the delete label, also when the topic is the delete label.
     /// </summary>
     public static FilterSuggestionDto Suggest(string address, SenderPatternDto pattern, string deleteLabelName, Allowlist allowlist)
     {
@@ -100,7 +101,10 @@ public sealed class FilterProposalQuery(
         var criteria = new FilterCriteriaDto(address, null, null, null, delete ? "has:attachment" : null, null, null, null, null);
         var action = delete
             ? new FilterActionRequest([deleteLabelName], SkipInbox: true, MarkRead: false)
-            : new FilterActionRequest(Labels(pattern.TopicLabel!, pattern.ExtraLabels), SkipInbox: pattern.NeedsAction != true, MarkRead: false);
+            : new FilterActionRequest(
+                Labels(pattern.TopicLabel!, string.Equals(pattern.TopicLabel?.Trim(), deleteLabelName.Trim(), StringComparison.OrdinalIgnoreCase) ? [] : pattern.ExtraLabels),
+                SkipInbox: pattern.NeedsAction != true,
+                MarkRead: false);
         return new FilterSuggestionDto(criteria, action);
     }
 

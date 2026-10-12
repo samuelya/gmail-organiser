@@ -19,7 +19,17 @@ public sealed record PolicyMatch(
     bool Guarded,
     IReadOnlyList<string>? ExtraLabels = null)
 {
-    public IReadOnlyList<string> ExtraLabels { get; init; } = ExtraLabels ?? [];
+    /// <summary>Never null: a null (from the constructor or a <c>with</c>) is <c>[]</c>.</summary>
+    public IReadOnlyList<string> ExtraLabels { get; init => field = value ?? []; } = ExtraLabels ?? [];
+
+    /// <summary>Value equality, the additional labels compared as a list (<see cref="ExtraLabelList.SameList"/>).</summary>
+    public bool Equals(PolicyMatch? other) =>
+        other is not null && Rule == other.Rule && TopicLabel == other.TopicLabel && DocumentTypeLabel == other.DocumentTypeLabel
+        && MailType == other.MailType && RetentionDays == other.RetentionDays && Action == other.Action && Guarded == other.Guarded
+        && ExtraLabelList.SameList(ExtraLabels, other.ExtraLabels);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(Rule, TopicLabel, DocumentTypeLabel, MailType, RetentionDays, Action, Guarded, ExtraLabels.Count);
 }
 
 /// <summary>

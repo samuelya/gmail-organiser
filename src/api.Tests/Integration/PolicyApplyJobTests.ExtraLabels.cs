@@ -51,6 +51,30 @@ public sealed partial class PolicyApplyJobTests
         (await LabelsAsync("b00")).ShouldBe(["INBOX"], ignoreOrder: true);
     }
 
+    [Fact]
+    public async Task A_delete_policy_writes_no_extras()
+    {
+        var policy = await SeedPolicyAsync(AnalysisRunHarness.News, isMixed: false, PolicyAction.Delete);
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.SenderPolicies.Where(p => p.Id == policy)
+                .ExecuteUpdateAsync(u => u.SetProperty(p => p.ExtraLabels, new[] { ExtraA, ExtraB }), Ct);
+        }
+
+        (await h.PostWithoutBodyAsync($"/api/policies/{policy}/approve")).StatusCode.ShouldBe(HttpStatusCode.OK);
+        await h.RunNextAsync();
+        await h.RunNextAsync();
+
+        await using (var check = postgres.CreateDbContext())
+        {
+            var suggestions = await check.Suggestions.AsNoTracking().Where(s => s.PolicyId == policy).ToListAsync(Ct);
+            suggestions.Count.ShouldBe(6);
+            suggestions.ShouldAllBe(s => s.ToBeDeleted && s.ExtraLabels.Length == 0);
+        }
+
+        (await LabelsAsync("b00")).ShouldNotContain(ExtraA);
+    }
+
     /// <summary>This policy's approved suggestion for the default outcome, as an earlier apply left it.</summary>
     private Task SeedOwnAsync(string messageId, Guid policy, string[] extras) =>
         SeedSuggestionAsync(messageId, SuggestionStatus.Approved, s =>

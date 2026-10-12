@@ -272,7 +272,8 @@ public sealed class PolicyApplyJob(
         row.Source = SuggestionSource.Policy;
         row.TopicLabel = match.TopicLabel;
         row.DocumentTypeLabel = match.DocumentTypeLabel;
-        row.ExtraLabels = [.. match.ExtraLabels];
+        // Additional labels never go with delete, as filters never add them next to the delete label (#531).
+        row.ExtraLabels = delete ? [] : [.. match.ExtraLabels];
         row.MailType = match.MailType;
         row.NeedsAction = match.MailType == MailType.ActionBill;
         row.ToBeDeleted = delete && protectedReason is null;
