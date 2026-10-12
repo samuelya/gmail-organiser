@@ -16,19 +16,19 @@ public sealed partial class ReviewQuery
     }
 
     /// <summary>
-    /// The sender's suggestions in <paramref name="status"/>; with <paramref name="hasAlternative"/> or
+    /// The sender's suggestions in <paramref name="statuses"/>; with <paramref name="hasAlternative"/> or
     /// <paramref name="mailTypes"/> only the groups where at least one member matches, listed whole (every member), so a
     /// group card and its approve/reject/edit act on the same members.
     /// </summary>
-    private IQueryable<SuggestionRow> InStatus(string address, SuggestionStatus status, bool hasAlternative, IReadOnlyList<MailType>? mailTypes)
+    private IQueryable<SuggestionRow> InStatus(string address, IReadOnlyList<SuggestionStatus> statuses, bool hasAlternative, IReadOnlyList<MailType>? mailTypes)
     {
-        var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && s.Status == status);
+        var inStatus = db.Suggestions.AsNoTracking().Where(s => s.SenderAddress == address && statuses.Contains(s.Status));
         if (!hasAlternative && mailTypes is not { Count: > 0 })
         {
             return inStatus;
         }
 
-        var keys = Suggestions(hasAlternative, mailTypes).Where(s => s.SenderAddress == address && s.Status == status)
+        var keys = Suggestions(hasAlternative, mailTypes).Where(s => s.SenderAddress == address && statuses.Contains(s.Status))
             .Select(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId);
         return inStatus.Where(s => keys.Contains(s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId));
     }

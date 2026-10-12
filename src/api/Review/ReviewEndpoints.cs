@@ -43,29 +43,30 @@ public static class ReviewEndpoints
     }
 
     /// <summary>
-    /// Senders with suggestions in <c>status</c> (default pending), most of them first; <c>search</c> as on the senders
-    /// page; <c>hasAlternative=true</c> counts only suggestions with a compare-run alternative; <c>mailType=a,b</c> only
-    /// suggestions of those mail types.
+    /// Senders with suggestions in <c>status</c> (default pending; <c>not_rejected</c>: pending, approved or applied),
+    /// most of them first; <c>search</c> as on the senders page; <c>hasAlternative=true</c> counts only suggestions with
+    /// a compare-run alternative; <c>mailType=a,b</c> only suggestions of those mail types.
     /// </summary>
     private static async Task<Results<Ok<PagedDto<ReviewSenderDto>>, ValidationProblem>> ListSendersAsync(
         ReviewQuery query, CancellationToken ct, string? search = null, int? page = null, int? pageSize = null, string? status = null,
         bool hasAlternative = false, string? mailType = null)
     {
         var paging = SenderQuery.Parse(search, page, pageSize, null, null, out var errors);
-        var parsed = ReviewQuery.ParseStatus(status);
+        var parsed = ReviewQuery.ParseStatusFilter(status);
         if (parsed is null)
         {
-            errors["status"] = ["Must be pending, approved, rejected or applied."];
+            errors["status"] = ["Must be pending, approved, rejected, applied or not_rejected."];
         }
 
         var types = ParseMailTypes(mailType, errors);
-        return paging is null || parsed is not { } s || types is null
+        return paging is null || parsed is null || types is null
             ? TypedResults.ValidationProblem(errors)
-            : TypedResults.Ok(await query.ListAsync(s, paging.Search, paging.Page, paging.PageSize, ct, hasAlternative, types));
+            : TypedResults.Ok(await query.ListAsync(parsed, paging.Search, paging.Page, paging.PageSize, ct, hasAlternative, types));
     }
 
     /// <summary>
-    /// One page of the sender's groups in <c>status</c>, largest first (<c>hasAlternative=true</c>: only suggestions with
+    /// One page of the sender's groups in <c>status</c> (<c>not_rejected</c>: pending, approved and applied, each member
+    /// with its own status), largest first (<c>hasAlternative=true</c>: only suggestions with
     /// a compare-run alternative; <c>mailType=a,b</c>: only groups with a member of those mail types, listed whole); 404
     /// when the sender has no such suggestions.
     /// </summary>
@@ -84,10 +85,10 @@ public static class ReviewEndpoints
             errors["pageSize"] = [$"Must be between 1 and {ReviewQuery.MaxGroupPageSize}."];
         }
 
-        var parsed = ReviewQuery.ParseStatus(status);
+        var parsed = ReviewQuery.ParseStatusFilter(status);
         if (parsed is null)
         {
-            errors["status"] = ["Must be pending, approved, rejected or applied."];
+            errors["status"] = ["Must be pending, approved, rejected, applied or not_rejected."];
         }
 
         var types = ParseMailTypes(mailType, errors);
@@ -97,7 +98,7 @@ public static class ReviewEndpoints
         }
 
         return Normalise(address) is { } a
-            && await query.DetailAsync(a, parsed!.Value, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct, hasAlternative, types) is { } detail
+            && await query.DetailAsync(a, parsed!, page ?? 1, pageSize ?? ReviewQuery.DefaultGroupPageSize, ct, hasAlternative, types) is { } detail
             ? TypedResults.Ok(detail)
             : TypedResults.NotFound();
     }

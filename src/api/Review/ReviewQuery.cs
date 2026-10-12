@@ -60,12 +60,12 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     }
 
     /// <summary>
-    /// Senders with at least one suggestion in <paramref name="status"/>, with their counts per status, the most
-    /// suggestions in that status first (pending by default), then by address. With <paramref name="hasAlternative"/>
+    /// Senders with at least one suggestion in <paramref name="statuses"/>, with their counts per status, the most
+    /// suggestions in those statuses first, then by address. With <paramref name="hasAlternative"/>
     /// only suggestions with a compare-run alternative count; with <paramref name="mailTypes"/> only those of one of the types.
     /// </summary>
     public async Task<PagedDto<ReviewSenderDto>> ListAsync(
-        SuggestionStatus status, string? search, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
+        IReadOnlyList<SuggestionStatus> statuses, string? search, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
         IReadOnlyList<MailType>? mailTypes = null)
     {
         var suggestions = Suggestions(hasAlternative, mailTypes);
@@ -85,13 +85,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
                 Rejected = g.Count(s => s.Status == SuggestionStatus.Rejected),
                 Applied = g.Count(s => s.Status == SuggestionStatus.Applied),
             });
-        var ordered = status switch
-        {
-            SuggestionStatus.Approved => counts.Where(c => c.Approved > 0).OrderByDescending(c => c.Approved),
-            SuggestionStatus.Rejected => counts.Where(c => c.Rejected > 0).OrderByDescending(c => c.Rejected),
-            SuggestionStatus.Applied => counts.Where(c => c.Applied > 0).OrderByDescending(c => c.Applied),
-            _ => counts.Where(c => c.Pending > 0).OrderByDescending(c => c.Pending),
-        };
+        var ordered = InStatuses(counts, statuses);
 
         var total = await ordered.LongCountAsync(ct);
         var rows = await ordered.ThenBy(c => c.Address).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
@@ -105,16 +99,16 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
     }
 
     /// <summary>
-    /// One page of the sender's suggestions in <paramref name="status"/>, grouped (a message analysed alone is its own
-    /// group), largest group first; null when the sender has no suggestion at all. Groups are counted and paged in SQL;
-    /// members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
+    /// One page of the sender's suggestions in <paramref name="statuses"/>, grouped (a message analysed alone is its own
+    /// group), largest group first; null when the sender has no suggestion at all, or none in a multi-status filter.
+    /// Groups are counted and paged in SQL; members are loaded per group, newest first, within <see cref="MaxMembers"/> and <see cref="MaxResponseMembers"/>.
     /// With <paramref name="hasAlternative"/> the counts take only suggestions with a compare-run alternative, and only
     /// groups with such a member are listed, whole, so a group card and its approve/reject act on the same members.
     /// With <paramref name="mailTypes"/> the counts take only suggestions of one of the types (null when none is), and only
     /// groups with such a member are listed, whole, each member with its own mail type.
     /// </summary>
     public async Task<ReviewSenderDetailDto?> DetailAsync(
-        string address, SuggestionStatus status, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
+        string address, IReadOnlyList<SuggestionStatus> statuses, int page, int pageSize, CancellationToken ct, bool hasAlternative = false,
         IReadOnlyList<MailType>? mailTypes = null)
     {
         var counts = await Suggestions(hasAlternative, mailTypes)
@@ -129,13 +123,13 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
                 Applied = g.Count(s => s.Status == SuggestionStatus.Applied),
             })
             .SingleOrDefaultAsync(ct);
-        if (counts is null)
+        if (counts is null || IsEmptyFilter(counts, statuses))
         {
             return null;
         }
 
         var sender = await db.Senders.AsNoTracking().SingleOrDefaultAsync(s => s.Address == address, ct);
-        var inStatus = InStatus(address, status, hasAlternative, mailTypes);
+        var inStatus = InStatus(address, statuses, hasAlternative, mailTypes);
         var stats = inStatus
             .GroupBy(s => s.GroupKey ?? AnalysisGrouper.IndividualKeyPrefix + s.MessageId)
             .Select(g => new GroupStats
