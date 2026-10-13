@@ -99,6 +99,10 @@ export const PROMPT_PLACEHOLDERS: readonly { name: string; help: string }[] = [
   { name: EMAILS_PLACEHOLDER, help: 'The emails to analyse (required).' },
   { name: '{{labelTree}}', help: 'Your existing Gmail labels.' },
   { name: '{{memory}}', help: 'Past decisions for similar senders.' },
+  {
+    name: '{{ownerGuidance}}',
+    help: 'Where your re-analysis comment goes. If omitted, it is inserted at the start of the {{emails}} line.',
+  },
   { name: '{{attachments}}', help: 'Attachment names and types.' },
   { name: '{{actionLabel}}', help: 'The action label name from Settings.' },
   { name: '{{deleteLabel}}', help: 'The delete label name from Settings.' },

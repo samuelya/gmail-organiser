@@ -1,7 +1,12 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { AnalysisSettingsSection } from './analysis-settings.component';
-import { ANALYSIS_LIMITS, AnalysisSettings, AnalysisSettingsUpdate } from './settings.models';
+import {
+  ANALYSIS_LIMITS,
+  AnalysisSettings,
+  AnalysisSettingsUpdate,
+  PROMPT_PLACEHOLDERS,
+} from './settings.models';
 
 const analysis = (over: Partial<AnalysisSettings> = {}): AnalysisSettings => ({
   analysisDefaultCount: 20,
@@ -342,5 +347,15 @@ describe('AnalysisSettingsSection', () => {
     await render();
     const names = [...el.querySelectorAll('dt code')].map((c) => c.textContent);
     expect(names).toContain('{{emails}}');
+  });
+
+  it('lists the {{ownerGuidance}} placeholder after {{memory}} with its help', async () => {
+    await render();
+    const list = el.querySelector('dl[aria-label="Prompt placeholders"]')!;
+    const names = [...list.querySelectorAll('dt code')].map((c) => c.textContent);
+    const index = names.indexOf('{{ownerGuidance}}');
+    expect(index).toBe(names.indexOf('{{memory}}') + 1);
+    const entry = PROMPT_PLACEHOLDERS.find((p) => p.name === '{{ownerGuidance}}');
+    expect(list.querySelectorAll('dd')[index]?.textContent?.trim()).toBe(entry?.help);
   });
 });
