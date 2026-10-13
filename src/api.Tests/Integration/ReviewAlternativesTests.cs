@@ -73,6 +73,43 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task Alternatives_carry_their_run_comment_and_a_group_shows_the_comment_of_the_shown_alternative()
+    {
+        compare.OwnerComment.ShouldBeNull();
+        (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem().Alternative.ShouldNotBeNull().Comment.ShouldBeNull();
+
+        var minority = Guid.CreateVersion7();
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.AnalysisRuns.Where(r => r.Id == compare.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.OwnerComment, "Majority note"), Ct);
+            db.AnalysisRuns.Add(new AnalysisRunRow
+            {
+                Id = minority,
+                Kind = AnalysisRunKind.Compare,
+                Scope = AnalysisScope.Messages,
+                Status = AnalysisRunStatus.Completed,
+                OwnerComment = "Minority note",
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+            await db.SaveChangesAsync(Ct);
+            await db.SuggestionAlternatives.Where(a => a.MessageId == "b00")
+                .ExecuteUpdateAsync(s => s.SetProperty(a => a.TopicLabel, "Other").SetProperty(a => a.RunId, minority), Ct);
+            await db.SuggestionAlternatives.Where(a => a.MessageId == "c00").ExecuteUpdateAsync(s => s.SetProperty(a => a.RunId, (Guid?)null), Ct);
+        }
+
+        var shop = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem();
+        shop.Alternative.ShouldNotBeNull().Comment.ShouldBe("Majority note");
+        shop.Members.ShouldAllBe(m => m.Alternative!.Comment == "Majority note");
+
+        var news = (await DetailAsync(AnalysisRunHarness.News)).Groups.ShouldHaveSingleItem();
+        (news.Alternative.ShouldNotBeNull().Mixed, news.Alternative.Comment).ShouldBe((true, "Majority note"));
+        news.Members.Single(m => m.MessageId == "b00").Alternative.ShouldNotBeNull().Comment.ShouldBe("Minority note");
+
+        var billing = (await DetailAsync(AnalysisRunHarness.Billing)).Groups.SelectMany(g => g.Members);
+        billing.Single(m => m.MessageId == "c00").Alternative.ShouldNotBeNull().Comment.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Filter_and_summary_count_only_suggestions_with_an_alternative()
     {
         var discard = await DecideAsync("discard", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Billing, await GroupKeyAsync("c00"))]));

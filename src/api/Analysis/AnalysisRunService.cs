@@ -47,6 +47,16 @@ public sealed partial class AnalysisRunService(
 {
     public const int MaxListLimit = 200;
 
+    /// <summary>Longest compare-run comment after <see cref="NormaliseComment"/> (#559); the web mirrors it.</summary>
+    public const int MaxCommentLength = 500;
+
+    /// <summary>Trims and turns <c>\r\n</c> into <c>\n</c>; empty or whitespace-only is null.</summary>
+    public static string? NormaliseComment(string? comment)
+    {
+        var normalised = comment?.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+        return string.IsNullOrEmpty(normalised) ? null : normalised;
+    }
+
     /// <summary>
     /// Freezes the run's candidates, then stores a queued run and enqueues its job (one per run; the analysis queue
     /// runs them one at a time) in one transaction, so a failed enqueue leaves no run behind.
@@ -105,10 +115,11 @@ public sealed partial class AnalysisRunService(
     /// Starts a compare run (#248) over suggestions of any status: <paramref name="suggestionIds"/>, or every suggestion
     /// <paramref name="runId"/> wrote (or wrote an alternative for). Freezes each message's suggestion; messages deleted
     /// in Gmail and unknown ids count as skipped. Queued like any run, so it never overlaps another analysis run.
+    /// <paramref name="comment"/> (validated by the endpoint) is stored normalised on the run, so a resumed job keeps it.
     /// </summary>
     /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set.</exception>
     public async Task<(CompareRunResult Result, AnalysisRunDto? Run)> StartCompareAsync(
-        Guid[]? suggestionIds, Guid? runId, CancellationToken ct)
+        Guid[]? suggestionIds, Guid? runId, string? comment, CancellationToken ct)
     {
         var settings = await RequireChatModelAsync(ct);
 
@@ -168,6 +179,7 @@ public sealed partial class AnalysisRunService(
             GroupingMode = settings.AnalysisGroupingMode,
             Status = AnalysisRunStatus.Queued,
             SkippedMessages = requested - candidates.Count,
+            OwnerComment = NormaliseComment(comment),
             CreatedAt = now,
         };
 
@@ -419,5 +431,6 @@ public sealed partial class AnalysisRunService(
         newLabels,
         run.PackedMessages,
         run.PackRetries,
-        run.EmbeddingFallback);
+        run.EmbeddingFallback,
+        run.OwnerComment);
 }

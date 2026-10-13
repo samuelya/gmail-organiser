@@ -109,6 +109,7 @@ public sealed record SuggestionDto(
 /// <param name="ReplaceLabels">As on <see cref="SuggestionDto.ReplaceLabels"/>, for the alternative's topic label.</param>
 /// <param name="Mixed">Group only: the listed members' alternatives disagree; the fields show the most common one.</param>
 /// <param name="Count">Listed members with an alternative (1 for a suggestion).</param>
+/// <param name="Comment">The owner comment of the alternative's compare run (#559); null when the run is gone or had none.</param>
 public sealed record SuggestionAlternativeDto(
     string TopicLabel,
     string? DocumentTypeLabel,
@@ -124,7 +125,8 @@ public sealed record SuggestionAlternativeDto(
     DateTimeOffset CreatedAt,
     bool Mixed = false,
     int Count = 1,
-    string? MailType = null);
+    string? MailType = null,
+    string? Comment = null);
 
 /// <summary>Suggestions by id and every suggestion of the named groups (any status); at least one of the two.</summary>
 public sealed record AlternativeDecisionRequest(Guid[]? SuggestionIds, GroupRef[]? Groups);

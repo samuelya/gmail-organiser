@@ -8,6 +8,7 @@ using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -373,8 +374,38 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
         (await check.AnalysisRuns.CountAsync(r => r.Kind == AnalysisRunKind.Compare, Ct)).ShouldBe(0);
     }
 
+    [Fact]
+    public async Task Comment_is_normalised_stored_on_the_run_and_survives_a_restart()
+    {
+        first.OwnerComment.ShouldBeNull();
+        var (run, _) = await CrashAfterFirstGroupAsync("  First line\r\nSecond\tline \n ");
+        run.OwnerComment.ShouldBe("First line\nSecond\tline");
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.OwnerComment).ShouldBe(("completed", "First line\nSecond\tline"));
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, " \r\n\t "))).OwnerComment.ShouldBeNull();
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, $" {new string('x', AnalysisRunService.MaxCommentLength)} ")))
+            .OwnerComment.ShouldBe(new string('x', AnalysisRunService.MaxCommentLength));
+    }
+
+    [Theory]
+    [InlineData(AnalysisRunService.MaxCommentLength + 1)]
+    [InlineData(-1)]
+    public async Task Too_long_or_control_character_comments_are_400_on_comment(int length)
+    {
+        var comment = length < 0 ? "Synthetic\u0007bell" : new string('x', length);
+        var response = await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, first.Id, comment));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors.ShouldContainKey("comment");
+        await using var check = postgres.CreateDbContext();
+        (await check.AnalysisRuns.CountAsync(r => r.Kind == AnalysisRunKind.Compare, Ct)).ShouldBe(0);
+    }
+
     /// <summary>A compare run over the first run that stops during its second model call; returns the stored messages.</summary>
-    private async Task<(AnalysisRunDto Run, string[] Stored)> CrashAfterFirstGroupAsync()
+    private async Task<(AnalysisRunDto Run, string[] Stored)> CrashAfterFirstGroupAsync(string? comment = null)
     {
         using var stop = new CancellationTokenSource();
         var calls = h.Chat.Calls;
@@ -388,7 +419,7 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
 
             return Task.FromResult(AnalysisRunHarness.Agree(ids));
         };
-        var run = await StartCompareAsync(new CompareRunRequest(null, first.Id));
+        var run = await StartCompareAsync(new CompareRunRequest(null, first.Id, comment));
         await h.RunNextAsync(stop.Token);
         (await h.Runner.RecoverAsync(Ct)).ShouldBe(1);
         h.Chat.Respond = (ids, _, _, _) => Task.FromResult(AnalysisRunHarness.Agree(ids));

@@ -101,6 +101,13 @@ public sealed class AnalysisRunRow
 
     /// <summary>The document-type parent pinned when the run first starts (null: off), so a resumed run keeps it.</summary>
     public string? DocumentTypeParent { get; set; }
+
+    /// <summary>
+    /// The owner's comment for the model on a compare run (#559): normalised by
+    /// <see cref="AnalysisRunService.NormaliseComment"/>, at most <see cref="AnalysisRunService.MaxCommentLength"/>
+    /// characters; null for analyse runs and compare runs without one. Untrusted text.
+    /// </summary>
+    public string? OwnerComment { get; set; }
     public string? Error { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
@@ -110,7 +117,8 @@ public sealed class AnalysisRunRow
     {
         modelBuilder.Entity<AnalysisRunRow>(e =>
         {
-            e.ToTable("analysis_runs");
+            e.ToTable("analysis_runs", t => t.HasCheckConstraint(
+                "ck_analysis_runs_owner_comment_length", $"char_length(owner_comment) <= {AnalysisRunService.MaxCommentLength}"));
             e.HasKey(r => r.Id);
             e.Property(r => r.Id).ValueGeneratedNever();
             e.Property(r => r.Kind).IsRequired().HasDefaultValueSql("'analyse'").HasConversion(new SnakeCaseEnumConverter<AnalysisRunKind>());

@@ -242,7 +242,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         IReadOnlyDictionary<string, string>? labelNames,
         ExternalReviewDto? claudeReview,
         bool suggestedForClaude,
-        SuggestionAlternativeRow? alternative = null,
+        LoadedAlternative? alternative = null,
         IReadOnlyList<string>? appLabelIds = null,
         bool taxonomyLocked = false,
         IReadOnlySet<string>? existingLabels = null)
@@ -353,7 +353,7 @@ public sealed partial class ReviewQuery(AppDbContext db, ISettingsStore settings
         IReadOnlyDictionary<string, string>? labelNames,
         IReadOnlySet<string>? existingLabels,
         IReadOnlyList<string> appLabelIds,
-        IReadOnlyDictionary<Guid, SuggestionAlternativeRow> alternatives,
+        IReadOnlyDictionary<Guid, LoadedAlternative> alternatives,
         int alternativeCount)
     {
         var all = outcomes.ToList();
