@@ -152,9 +152,7 @@ import { MAX_COMPARE, RUN_ACTIVE_TOOLTIP, RUN_TOO_LARGE_TOOLTIP } from './compar
             </mat-chip-set>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <span class="min-w-0 flex-1 basis-48" data-testid="run-savings">{{
-              savings(run)
-            }}</span>
+            <span class="min-w-0 flex-1 basis-48" data-testid="run-savings">{{ savings(run) }}</span>
             @if (resumable(run)) {
               <button
                 mat-button
