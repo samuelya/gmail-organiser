@@ -96,7 +96,7 @@ public sealed partial class ReviewQuery
     /// or whether the alternative was copied (#578), and <see cref="SuggestionAlternativeDto.Copied"/> only when every member's was.
     /// <see cref="SuggestionAlternativeDto.Count"/> is <paramref name="count"/>, every member in the status with one.
     /// </summary>
-    private static SuggestionAlternativeDto? GroupAlternative(IReadOnlyList<SuggestionDto> members, int count)
+    public static SuggestionAlternativeDto? GroupAlternative(IReadOnlyList<SuggestionDto> members, int count)
     {
         var alternatives = members.Select(d => d.Alternative).OfType<SuggestionAlternativeDto>().ToList();
         if (alternatives.Count == 0)
@@ -109,14 +109,15 @@ public sealed partial class ReviewQuery
             .OrderByDescending(g => g.Count())
             .ToList();
         var shown = outcomes[0].First();
+        var copied = alternatives.Count(a => a.Copied);
         return shown with
         {
             ReplaceLabels = [.. alternatives.SelectMany(a => a.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
             LabelChange = Combined(alternatives.Select(a => a.LabelChange)),
             Mixed = outcomes.Count > 1
                 || alternatives.Select(a => a.Comment).Distinct(StringComparer.Ordinal).Skip(1).Any()
-                || alternatives.Select(a => a.Copied).Distinct().Skip(1).Any(),
-            Copied = alternatives.TrueForAll(a => a.Copied),
+                || (copied > 0 && copied < alternatives.Count),
+            Copied = copied == alternatives.Count,
             Count = Math.Max(count, alternatives.Count),
         };
     }

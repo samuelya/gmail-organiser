@@ -107,10 +107,12 @@ public sealed record SuggestionDto(
 
 /// <summary>A compare run's alternative to a suggestion, shown next to it; nothing changes until it is accepted.</summary>
 /// <param name="ReplaceLabels">As on <see cref="SuggestionDto.ReplaceLabels"/>, for the alternative's topic label.</param>
-/// <param name="Mixed">Group only: the listed members' alternatives disagree; the fields show the most common one.</param>
+/// <param name="Mixed">Group only: the listed members' alternatives disagree on the outcome or the comment, or some are copied and
+/// some are compare-run answers (#578); the fields show the most common one.</param>
 /// <param name="Count">Listed members with an alternative (1 for a suggestion).</param>
 /// <param name="Comment">The owner comment of the alternative's compare run (#559); null when the run is gone or had none.</param>
-/// <param name="Copied">Copied from another suggestion's outcome (#562), not a compare run's answer; group: the shown alternative is.</param>
+/// <param name="Copied">Copied from another suggestion's outcome (#562), not a compare run's answer; group: every listed member's
+/// alternative is (#578; the web hides the copied chip on a mixed group, PR #576).</param>
 public sealed record SuggestionAlternativeDto(
     string TopicLabel,
     string? DocumentTypeLabel,
