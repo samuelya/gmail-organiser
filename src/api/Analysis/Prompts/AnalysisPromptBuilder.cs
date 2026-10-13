@@ -267,6 +267,15 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     /// </summary>
     private static string DefuseBodyTags(string value) => BodyTagRegex().Replace(value, "[$1");
 
-    [GeneratedRegex(@"<(\s*/?\s*(?:email[\s_-]*body|person[\s_-]*guidance))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    // Format characters (Unicode Cf: zero-width space and joiners, soft hyphen, bidi marks) are invisible, so the
+    // match ignores them anywhere in the tag; otherwise "person\u200Bguidance" would pass as a lookalike.
+    private const string Cf = @"\p{Cf}*";
+    private const string Gap = @"[\s\p{Cf}]*";
+    private const string Sep = @"[\s\p{Cf}_-]*";
+    private const string EmailBody = "e" + Cf + "m" + Cf + "a" + Cf + "i" + Cf + "l" + Sep + "b" + Cf + "o" + Cf + "d" + Cf + "y";
+    private const string PersonGuidance = "p" + Cf + "e" + Cf + "r" + Cf + "s" + Cf + "o" + Cf + "n" + Sep
+        + "g" + Cf + "u" + Cf + "i" + Cf + "d" + Cf + "a" + Cf + "n" + Cf + "c" + Cf + "e";
+
+    [GeneratedRegex("<(" + Gap + "/?" + Gap + "(?:" + EmailBody + "|" + PersonGuidance + "))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BodyTagRegex();
 }
