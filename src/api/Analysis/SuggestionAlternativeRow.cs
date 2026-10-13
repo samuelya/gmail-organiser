@@ -44,6 +44,12 @@ public sealed class SuggestionAlternativeRow
     /// <summary>A copy of another suggestion's outcome (#562), not a compare run's answer; stays true once the source is gone.</summary>
     public bool Copied { get; set; }
 
+    /// <summary>
+    /// A copy's source run (#574): the run whose outcome was copied, null for a compare run's answer. Not a run answer, so
+    /// run-scoped queries don't see it; accept gives it to the suggestion, so its decision is decided like the source's.
+    /// </summary>
+    public Guid? OutcomeRunId { get; set; }
+
     /// <summary>The copied outcome was edited by hand (<see cref="SuggestionRow.Edited"/>); accept carries it. False for a compare run's answer.</summary>
     public bool Edited { get; set; }
 
@@ -58,7 +64,8 @@ public sealed class SuggestionAlternativeRow
     /// <summary>
     /// A copy of <paramref name="source"/>'s current outcome for <paramref name="target"/> (#562), with only those of the
     /// source's replaced labels (by id) that the target's message carries (<paramref name="targetLabelIds"/>). It has no run,
-    /// so run-scoped compare and recovery never take it for the source run's answer, and that run's comment isn't shown on it.
+    /// so run-scoped compare and recovery never take it for the source run's answer, and that run's comment isn't shown on it;
+    /// the source's run is kept as <see cref="OutcomeRunId"/>.
     /// </summary>
     public static SuggestionAlternativeRow CopyOf(
         SuggestionRow source, SuggestionRow target, IReadOnlyCollection<string> targetLabelIds, DateTimeOffset now) =>
@@ -69,6 +76,7 @@ public sealed class SuggestionAlternativeRow
                 alternative.CopiedFromSuggestionId = source.Id;
                 alternative.Copied = true;
                 alternative.Edited = source.Edited;
+                alternative.OutcomeRunId = source.RunId;
             });
 
     /// <summary>The outcome of <paramref name="outcome"/> for one suggestion; the single list of outcome fields.</summary>
@@ -126,6 +134,7 @@ public sealed class SuggestionAlternativeRow
             e.HasIndex(r => r.RunId);
             e.HasOne<SuggestionRow>().WithMany().HasForeignKey(r => r.CopiedFromSuggestionId).OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(r => r.CopiedFromSuggestionId);
+            e.HasOne<AnalysisRunRow>().WithMany().HasForeignKey(r => r.OutcomeRunId).OnDelete(DeleteBehavior.SetNull);
             e.Property(r => r.Copied).HasDefaultValue(false);
             e.Property(r => r.Edited).HasDefaultValue(false);
         });

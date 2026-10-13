@@ -139,6 +139,28 @@ public sealed class AlternativeCopyTests(ApiFactory factory, PostgresFixture pos
     }
 
     [Fact]
+    public async Task An_accepted_copy_keeps_the_source_run_so_its_approval_is_decided_under_the_document_type_parent_like_the_source()
+    {
+        await using var db = postgres.CreateDbContext();
+        var runId = await db.Suggestions.Where(s => s.MessageId == "a00").Select(s => s.RunId).SingleAsync(Ct);
+        await db.AnalysisRuns.Where(r => r.Id == runId).ExecuteUpdateAsync(s => s.SetProperty(r => r.DocumentTypeParent, "Documents"), Ct);
+        var source = (await IdsAsync("a00"))[0];
+        var target = (await IdsAsync("a03"))[0];
+        (await CopyAsync(source, [target])).ShouldBe(new AlternativeCopyResponse(1, 0));
+        var copy = await db.SuggestionAlternatives.AsNoTracking().SingleAsync(a => a.SuggestionId == target, Ct);
+        (copy.RunId, copy.OutcomeRunId).ShouldBe((null, runId), "not a run answer, but carries the source's run");
+
+        (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([target], null))).IsSuccessStatusCode.ShouldBeTrue();
+        (await db.Suggestions.AsNoTracking().SingleAsync(s => s.Id == target, Ct)).RunId.ShouldBe(runId);
+        (await h.PostWithoutBodyAsync($"/api/review/suggestions/{source}/approve")).IsSuccessStatusCode.ShouldBeTrue();
+        (await h.PostWithoutBodyAsync($"/api/review/suggestions/{target}/approve")).IsSuccessStatusCode.ShouldBeTrue();
+        var decisions = await db.Decisions.AsNoTracking().Where(d => d.MessageId == "a00" || d.MessageId == "a03")
+            .OrderBy(d => d.MessageId).ToListAsync(Ct);
+        decisions.Select(d => (d.DocumentTypeDecided, d.DocumentTypeParent, d.DocumentTypeLabel))
+            .ShouldBe([(true, "Documents", "Receipt"), (true, "Documents", "Receipt")]);
+    }
+
+    [Fact]
     public async Task Copies_of_an_outcome_accepted_from_a_compare_run_are_not_that_runs_answers()
     {
         var ids = await IdsAsync("a00", "a01", "a03");

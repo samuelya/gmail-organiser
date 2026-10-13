@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261013103854_M8_AlternativeCopiedFrom")]
+    [Migration("20261013110420_M8_AlternativeCopiedFrom")]
     partial class M8_AlternativeCopiedFrom
     {
         /// <inheritdoc />
@@ -298,6 +298,10 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("needs_action");
 
+                    b.Property<Guid?>("OutcomeRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("outcome_run_id");
+
                     b.Property<string>("PromptVersion")
                         .HasColumnType("text")
                         .HasColumnName("prompt_version");
@@ -356,6 +360,9 @@ namespace GmailOrganiser.Data.Migrations
 
                     b.HasIndex("CopiedFromSuggestionId")
                         .HasDatabaseName("ix_suggestion_alternatives_copied_from_suggestion_id");
+
+                    b.HasIndex("OutcomeRunId")
+                        .HasDatabaseName("ix_suggestion_alternatives_outcome_run_id");
 
                     b.HasIndex("RunId")
                         .HasDatabaseName("ix_suggestion_alternatives_run_id");
@@ -1983,6 +1990,12 @@ namespace GmailOrganiser.Data.Migrations
                         .HasForeignKey("CopiedFromSuggestionId")
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("fk_suggestion_alternatives_suggestions_copied_from_suggestion_");
+
+                    b.HasOne("GmailOrganiser.Analysis.AnalysisRunRow", null)
+                        .WithMany()
+                        .HasForeignKey("OutcomeRunId")
+                        .OnDelete(DeleteBehavior.SetNull)
+                        .HasConstraintName("fk_suggestion_alternatives_analysis_runs_outcome_run_id");
 
                     b.HasOne("GmailOrganiser.Analysis.AnalysisRunRow", null)
                         .WithMany()
