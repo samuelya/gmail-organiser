@@ -140,7 +140,7 @@ For the already-labelled phase, suggestions are different: *merge labels*, *move
 
 ### 6.5 Rules
 - **New filters** from approved senders/patterns: criteria preview + match count → create via Gmail API. Option: apply label, skip inbox, mark read, or apply the `Auto Archive` label (feeds the Apps Script).
-- A filter can add several labels: a proposal adds the topic label plus the pattern's, policy's or rule's additional labels (never next to the delete label).
+- Gmail allows **one user label per filter** (system actions such as skip inbox, mark read and star don't count). A filter with several labels (a proposal adds the topic label plus the pattern's, policy's or rule's additional labels, never next to the delete label) becomes one Gmail filter per user label with the same criteria and system actions, stored as a group (`filters.group_id`) and listed, deleted and restored as one filter. A failed part rolls back the parts created before it; the filter review treats a split group as one filter, never as duplicates or overlaps.
 - **Existing filter review** (deterministic checks + LLM summary): duplicates, overlapping criteria, filters targeting deleted labels, filters matching 0 recent emails, mergeable filters (`from:(a OR b)`), filters inconsistent with the new label tree. Each finding has a proposed fix to approve.
 - **Label review**: empty labels, near-duplicate names, flat → nested migration plan.
 - Gmail limit: ~1000 filters per account — the tool consolidates criteria where possible.

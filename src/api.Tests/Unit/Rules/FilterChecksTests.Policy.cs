@@ -81,7 +81,9 @@ public sealed partial class FilterChecksTests
         (finding.Kind, finding.FilterIds.Single(), finding.Fix.Kind, finding.Fix.PolicyId)
             .ShouldBe((FilterFindingKind.PolicyConflict, "stale", FilterFixKind.Relabel, proposal.PolicyId));
         finding.Description.ShouldContain("doesn't add Synthetic/News, which the policy adds now");
-        finding.Fix.Create!.Action.AddLabelIds.ShouldBe(["Label_1", "Label_2"]);
+        // Gmail allows one user label per filter (#557): the stale filter is the topic's, so only the extra label's is created.
+        finding.Fix.DeleteFilterIds.ShouldBeEmpty();
+        finding.Fix.Create!.Action.AddLabelIds.ShouldBe(["Label_2"]);
         (finding.Fix.Create.Criteria.Query, finding.Fix.Create.Action.RemoveLabelIds.Single()).ShouldBe((negation, "INBOX"));
     }
 
@@ -164,7 +166,9 @@ public sealed partial class FilterChecksTests
         FilterRow[] rows =
         [
             Row("same", new(From: from, Query: query), new(["Label_1"], [])),
-            Row("other", new(From: from, Query: query), new(["Label_2"], [])),
+
+            // Archives too, so the two are not one filter split per label (#557).
+            Row("other", new(From: from, Query: query), new(["Label_2"], ["INBOX"])),
         ];
 
         var findings = PolicyFindings(FilterChecks.Run(rows, Labels, NotEvaluable, 365, [proposal]));

@@ -108,6 +108,29 @@ public sealed class FilterMappingTests
     }
 
     [Fact]
+    public void A_filter_adds_one_user_label_besides_any_system_labels()
+    {
+        var from = new GmailFilterCriteria(From: "a@example.com");
+
+        Should.Throw<ArgumentException>(() => GmailFilter.EnsureValidCreate(from, new GmailFilterAction(["Label_1", "Label_2"], [])))
+            .Message.ShouldContain("Too many user labels in filter");
+        Should.NotThrow(() => GmailFilter.EnsureValidCreate(from, new GmailFilterAction(["Label_1", "STARRED", "IMPORTANT"], ["INBOX"])));
+    }
+
+    [Fact]
+    public void An_action_splits_into_one_per_user_label_each_with_every_system_action()
+    {
+        var action = new GmailFilterAction(["Label_1", "STARRED", "Label_2", "Label_1"], ["INBOX", "UNREAD"]);
+
+        var parts = action.SplitPerUserLabel();
+
+        parts.Select(p => p.AddLabelIds).ShouldBe([["Label_1", "STARRED"], ["Label_2", "STARRED"]]);
+        parts.ShouldAllBe(p => p.RemoveLabelIds.SequenceEqual(new[] { "INBOX", "UNREAD" }));
+        var single = new GmailFilterAction(["Label_1", "STARRED"], ["INBOX"]);
+        single.SplitPerUserLabel().ShouldHaveSingleItem().ShouldBeSameAs(single);
+    }
+
+    [Fact]
     public void Creating_a_filter_gmail_would_reject_is_refused()
     {
         var label = new GmailFilterAction(["Label_1"], []);

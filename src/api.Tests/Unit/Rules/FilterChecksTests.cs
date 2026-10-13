@@ -47,16 +47,76 @@ public sealed partial class FilterChecksTests
     [Fact]
     public void Overlap_merges_the_actions_into_one_filter_and_deletes_every_member()
     {
-        var a = Row("a", new(From: "shop@example.com"), new(["Label_1"], []));
-        var b = Row("b", new(From: "Shop@Example.com"), new(["Label_2"], ["INBOX"]), seenDaysLater: 1);
+        var a = Row("a", new(From: "shop@example.com"), new(["Label_1"], ["INBOX"]));
+        var b = Row("b", new(From: "Shop@Example.com"), new(["Label_1"], ["UNREAD"]), seenDaysLater: 1);
 
         var finding = Run([a, b]).ShouldHaveSingleItem();
 
         finding.Kind.ShouldBe(FilterFindingKind.Overlap);
         finding.Fix.Kind.ShouldBe(FilterFixKind.MergeActions);
         finding.Fix.DeleteFilterIds.ShouldBe(["a", "b"]);
-        finding.Fix.Create.ShouldNotBeNull().Action.AddLabelIds.ShouldBe(["Label_1", "Label_2"]);
+        finding.Fix.Create.ShouldNotBeNull().Action.AddLabelIds.ShouldBe(["Label_1"]);
+        finding.Fix.Create.Action.RemoveLabelIds.ShouldBe(["INBOX", "UNREAD"]);
+    }
+
+    // #557: Gmail allows one user label per filter, so the union of different user labels is one filter per label.
+    [Fact]
+    public void Overlap_of_different_user_labels_creates_the_missing_filter_per_label_and_keeps_the_one_already_there()
+    {
+        var a = Row("a", new(From: "shop@example.com"), new(["Label_1"], []));
+        var b = Row("b", new(From: "Shop@Example.com"), new(["Label_2"], ["INBOX"]), seenDaysLater: 1);
+
+        var finding = Run([a, b]).ShouldHaveSingleItem();
+
+        finding.Kind.ShouldBe(FilterFindingKind.Overlap);
+        finding.Description.ShouldContain("one filter per label can add Synthetic/Shop, Synthetic/News and remove INBOX");
+        finding.Fix.DeleteFilterIds.ShouldBe(["a"]);
+        finding.Fix.Create.ShouldNotBeNull().Action.AddLabelIds.ShouldBe(["Label_1"]);
         finding.Fix.Create.Action.RemoveLabelIds.ShouldBe(["INBOX"]);
+    }
+
+    [Fact]
+    public void A_split_group_is_neither_a_duplicate_nor_an_overlap()
+    {
+        FilterRow[] group =
+        [
+            Row("g1", new(From: "shop@example.com"), new(["Label_1"], ["INBOX", "UNREAD"])),
+            Row("g2", new(From: "shop@example.com"), new(["Label_2"], ["INBOX", "UNREAD"])),
+        ];
+
+        Run(group).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_policys_filter_split_per_label_is_its_own_filter()
+    {
+        var proposal = Proposal("a@example.com", null, "Synthetic/Shop", skipInbox: true, extras: ["Synthetic/News"]);
+        FilterRow[] group =
+        [
+            Row("g1", new(From: "a@example.com"), new(["Label_1"], ["INBOX"])),
+            Row("g2", new(From: "a@example.com"), new(["Label_2"], ["INBOX"])),
+        ];
+
+        FilterChecks.Run(group, Labels, NotEvaluable, 365, [proposal]).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void A_split_group_within_a_policy_is_replaced_as_one_by_the_policys_filters()
+    {
+        var proposal = Proposal("@example.com", null, "Synthetic/Shop", extras: ["Synthetic/News"]);
+        FilterRow[] group =
+        [
+            Row("g1", new(From: "a@example.com"), new(["Label_1"], [])),
+            Row("g2", new(From: "a@example.com"), new(["Label_2"], [])),
+        ];
+
+        var finding = PolicyFindings(FilterChecks.Run(group, Labels, NotEvaluable, 365, [proposal])).ShouldHaveSingleItem();
+
+        finding.Kind.ShouldBe(FilterFindingKind.OverlapsPolicy);
+        finding.FilterIds.ShouldBe(["g1", "g2"]);
+        finding.Fix.DeleteFilterIds.ShouldBe(["g1", "g2"]);
+        finding.Fix.Create!.Action.AddLabelIds.ShouldBe(["Label_1", "Label_2"]);
+        finding.Fix.Create.Criteria.From.ShouldBe("@example.com");
     }
 
     [Fact]

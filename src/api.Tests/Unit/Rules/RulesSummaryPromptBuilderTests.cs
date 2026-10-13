@@ -102,5 +102,5 @@ public sealed class RulesSummaryPromptBuilderTests
     private static FilterDto Filter(string id, string criteria, string? label) => new(
         id, new FilterCriteriaDto(null, null, null, null, null, null, null, null, null), criteria,
         new FilterActionDto([new LabelRefDto("Label_1", label)], [], SkipInbox: true, MarkRead: false, Forwards: false),
-        CreatedByApp: false, Seen, null, false, null);
+        CreatedByApp: false, Seen, null, false, null, [id]);
 }
