@@ -111,6 +111,21 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task A_group_with_one_copied_alternative_among_llm_results_is_mixed_not_copied()
+    {
+        var group = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem();
+        var first = group.Members[0].MessageId;
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.SuggestionAlternatives.Where(a => a.MessageId == first).ExecuteUpdateAsync(s => s.SetProperty(a => a.Copied, true), Ct);
+        }
+
+        var one = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem().Alternative.ShouldNotBeNull();
+        (one.Copied, one.Mixed).ShouldBe((false, true));
+    }
+
+    [Fact]
     public async Task Filter_and_summary_count_only_suggestions_with_an_alternative()
     {
         var discard = await DecideAsync("discard", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Billing, await GroupKeyAsync("c00"))]));
