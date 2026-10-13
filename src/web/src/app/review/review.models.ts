@@ -484,3 +484,14 @@ export function patchClaudeReview(
   });
   return { detail: changed ? { ...detail, groups } : detail, accepted };
 }
+
+/** `GET /api/review/suggestions/{id}/similar`: the sender's other pending emails, newest first, capped. */
+export interface SimilarPendingDto {
+  sourceId: string;
+  /** Total before the cap. */
+  count: number;
+  suggestionIds: string[];
+  /** How many of `suggestionIds` already have a re-analysis result. */
+  withAlternative: number;
+  truncated: boolean;
+}

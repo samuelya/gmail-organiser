@@ -49,6 +49,17 @@ export interface AlternativeDecisionResponse {
 /** "Use new" accepts the alternative, "Keep current" discards it. */
 export type AlternativeDecision = 'accept' | 'discard';
 
+/** `POST /api/review/alternatives/copy`: the source's accepted outcome becomes the targets' alternative. */
+export interface AlternativeCopyRequest {
+  sourceSuggestionId: string;
+  suggestionIds: string[];
+}
+
+export interface AlternativeCopyResponse {
+  copied: number;
+  skipped: number;
+}
+
 /** What a "Use new" or "Keep current" names: one member, or a whole group card. */
 export type AlternativeTarget = { member: SuggestionDto } | { group: ReviewGroupDto };
 

@@ -29,13 +29,13 @@ import { PageHeader } from '../layout/page-header';
 import { SettingsService } from '../settings/settings.service';
 import {
   AlternativeDecision,
-  alternativeMessage,
   alternativeRequest,
   AlternativeTarget,
   PENDING_AGAIN_NOTE,
   repends,
 } from './alternative.models';
 import { ApplyAllButton } from './apply-all-button.component';
+import { ApplySimilar } from './apply-similar';
 import { ApplyTracker } from './apply-tracker';
 import { CardReanalyse } from './card-reanalyse';
 import { bulkApproveData, openBulkApprove } from './bulk-approve-dialog.component';
@@ -91,7 +91,7 @@ import { SenderList } from './sender-list.component';
     SelectionActions,
     SenderList,
   ],
-  providers: [ApplyTracker, CardReanalyse, MailTypeFilter, ReviewUrl],
+  providers: [ApplySimilar, ApplyTracker, CardReanalyse, MailTypeFilter, ReviewUrl],
   templateUrl: './review-page.component.html',
   styles: `
     .muted {
@@ -174,6 +174,8 @@ export class ReviewPage {
   readonly apply = inject(ApplyTracker);
   /** Per-member and per-card "Re-analyse": the run's ids, until it ends. */
   readonly reanalyse = inject(CardReanalyse);
+  /** "Apply to similar" after a "Use new". */
+  private readonly similar = inject(ApplySimilar);
   /** The mail-type filter in the query string. */
   readonly mailTypes = inject(MailTypeFilter);
 
@@ -287,7 +289,7 @@ export class ReviewPage {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((item) => this.onClaudeChange(item));
 
-    merge(this.apply.finished, this.reanalyse.finished)
+    merge(this.apply.finished, this.reanalyse.finished, this.similar.copied)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.refresh());
     // Updates may have been missed while disconnected.
@@ -403,13 +405,9 @@ export class ReviewPage {
     const status = this.status();
     if (!address || !isSingleStatus(status)) return;
     const request = alternativeRequest(target, address, status);
-    const call =
-      decision === 'accept'
-        ? this.review.acceptAlternatives(request)
-        : this.review.discardAlternatives(request);
-    this.run(call, (r) => {
+    this.run(this.review.decideAlternatives(decision, request), (r) => {
       if (decision === 'accept' && r.accepted > 0 && repends(target)) this.pendingAgain.set(true);
-      this.snackBar.open(alternativeMessage(decision, r), 'Dismiss', { duration: 6000 });
+      this.similar.decided(decision, target, r);
     });
   }
 

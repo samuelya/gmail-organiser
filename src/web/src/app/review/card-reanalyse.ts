@@ -90,6 +90,14 @@ export class CardReanalyse {
     this.start(ids, true, () => this.confirmed(ids, note));
   }
 
+  /** The similar pending emails of an accepted re-analysis, with its comment; "Apply to similar" was the confirm. */
+  similar(ids: string[], comment?: string): void {
+    if (ids.length === 0) return;
+    this.start(ids, false, () =>
+      this.analysis.startCompareRun({ suggestionIds: ids, ...(comment ? { comment } : {}) }),
+    );
+  }
+
   private confirmed(ids: string[], note?: string): Observable<AnalysisRunDto> {
     return openCompareConfirm(this.dialog, ids.length, false, note).pipe(
       switchMap((result) => this.analysis.startCompareRun({ suggestionIds: ids, ...result })),

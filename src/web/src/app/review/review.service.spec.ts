@@ -102,4 +102,16 @@ describe('ReviewService', () => {
       suggestionIds: ['a', 'b'],
     });
   });
+  it('looks up similar pending emails, copies alternatives and routes a decision', () => {
+    service.similar('a/b').subscribe();
+    http.expectOne({ method: 'GET', url: '/api/review/suggestions/a%2Fb/similar' }).flush({});
+    service.copyAlternatives({ sourceSuggestionId: 'a', suggestionIds: ['b', 'c'] }).subscribe();
+    const copy = http.expectOne({ method: 'POST', url: '/api/review/alternatives/copy' });
+    expect(copy.request.body).toEqual({ sourceSuggestionId: 'a', suggestionIds: ['b', 'c'] });
+    copy.flush({ copied: 2, skipped: 0 });
+    service.decideAlternatives('accept', { suggestionIds: ['a'] }).subscribe();
+    http.expectOne({ method: 'POST', url: '/api/review/alternatives/accept' }).flush({});
+    service.decideAlternatives('discard', { suggestionIds: ['a'] }).subscribe();
+    http.expectOne({ method: 'POST', url: '/api/review/alternatives/discard' }).flush({});
+  });
 });
