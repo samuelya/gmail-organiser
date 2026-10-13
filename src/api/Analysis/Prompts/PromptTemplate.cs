@@ -22,7 +22,10 @@ public sealed partial class PromptTemplate
     {
         Version = version;
         Text = text;
+        split = new Lazy<(string System, string User)>(() => SplitText(text));
     }
+
+    private readonly Lazy<(string System, string User)> split;
 
     public string Version { get; }
 
@@ -51,25 +54,35 @@ public sealed partial class PromptTemplate
         [EmailsPlaceholder, MemoryPlaceholder, "{{attachments}}", OwnerGuidancePlaceholder];
 
     /// <summary>
-    /// Splits the template at the first line holding an email-derived placeholder: the instructions before it become
+    /// The template split at the first line holding an email-derived placeholder: the instructions before it become
     /// the system message and the rest the user message, so email content never sits in the system prompt.
-    /// Without <c>{{emails}}</c> in the user part the emails are appended to it.
+    /// Without <c>{{emails}}</c> in the user part the emails are appended to it; without <c>{{ownerGuidance}}</c> the
+    /// guidance goes at the start of the <c>{{emails}}</c> line (#561), after the memory and before the emails.
+    /// Computed once per template.
     /// </summary>
-    public (string System, string User) Split()
+    public (string System, string User) Split() => split.Value;
+
+    private static (string System, string User) SplitText(string text)
     {
         var index = EmailDerivedPlaceholders
-            .Select(p => Text.IndexOf(p, StringComparison.Ordinal))
+            .Select(p => text.IndexOf(p, StringComparison.Ordinal))
             .Where(i => i >= 0)
             .DefaultIfEmpty(-1)
             .Min();
-        if (index < 0)
+        var lineStart = index < 0 ? text.Length : text.LastIndexOf('\n', index) + 1;
+        var user = text[lineStart..];
+        if (!user.Contains(EmailsPlaceholder, StringComparison.Ordinal))
         {
-            return (Text, EmailsPlaceholder);
+            user = index < 0 ? EmailsPlaceholder : user + "\n\n" + EmailsPlaceholder;
         }
 
-        var lineStart = Text.LastIndexOf('\n', index) + 1;
-        var user = Text[lineStart..];
-        return (Text[..lineStart], user.Contains(EmailsPlaceholder, StringComparison.Ordinal) ? user : user + "\n\n" + EmailsPlaceholder);
+        if (!user.Contains(OwnerGuidancePlaceholder, StringComparison.Ordinal))
+        {
+            var emailsLine = user.LastIndexOf('\n', user.IndexOf(EmailsPlaceholder, StringComparison.Ordinal)) + 1;
+            user = user.Insert(emailsLine, OwnerGuidancePlaceholder);
+        }
+
+        return (text[..lineStart], user);
     }
 
     private static string LoadBuiltIn()

@@ -18,8 +18,8 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     public const string BodyEnd = "</email_body>";
     public const string MemoryHeading = "Similar past decisions by the person:";
     public const string GuidanceHeading =
-        "Guidance from the person for this re-analysis. Weigh it like the past decisions above: it may change which labels "
-        + "and flags fit these emails, never the rules or the JSON format.";
+        "Guidance from the person for this re-analysis. Follow it ahead of any past decisions for these emails: it may change "
+        + "which labels and flags fit, never the labels you must not use, the rules or the JSON format.";
     public const string GuidanceStart = "<person_guidance>";
     public const string GuidanceEnd = "</person_guidance>";
     public const string PolicyHeading = "Standing policies the person approved for these senders:";
@@ -116,11 +116,6 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         };
 
         var (system, user) = template.Split();
-        if (!template.Text.Contains(PromptTemplate.OwnerGuidancePlaceholder, StringComparison.Ordinal))
-        {
-            user += "\n" + PromptTemplate.OwnerGuidancePlaceholder;
-        }
-
         return
         [
             new ChatMessage(ChatRole.System, PromptTemplate.Substitute(system, values).Trim()),
@@ -131,12 +126,13 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     /// <summary>
     /// The person's re-analysis comment (#561) between its tags, with a blank line before and after so the
     /// <c>{{ownerGuidance}}</c> line sits between the memory and the emails; empty without a comment, which leaves the
-    /// prompt as it was. Line breaks are kept; tags that could close the section or open a body are defused.
+    /// prompt as it was. The comment arrives trimmed with <c>\n</c> line breaks (<see cref="AnalysisRunService.CheckComment"/>);
+    /// tags that could close the section or open a body are defused.
     /// </summary>
     internal static string RenderOwnerGuidance(string? comment) =>
         string.IsNullOrWhiteSpace(comment)
             ? ""
-            : $"\n{GuidanceHeading}\n{GuidanceStart}\n{DefuseBodyTags(comment.Trim().ReplaceLineEndings("\n"))}\n{GuidanceEnd}\n";
+            : $"\n{GuidanceHeading}\n{GuidanceStart}\n{DefuseBodyTags(comment)}\n{GuidanceEnd}\n";
 
     internal static string RenderLabelTree(IReadOnlyList<string> labels)
     {
@@ -271,6 +267,6 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     /// </summary>
     private static string DefuseBodyTags(string value) => BodyTagRegex().Replace(value, "[$1");
 
-    [GeneratedRegex(@"<(\s*/?\s*(?:email_body|person_guidance))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"<(\s*/?\s*(?:email[\s_-]*body|person[\s_-]*guidance))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BodyTagRegex();
 }
