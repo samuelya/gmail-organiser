@@ -1,11 +1,17 @@
 import { computed, inject, Signal } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
 import { filter, Observable, switchMap } from 'rxjs';
-import { openConfirm } from '../core/confirm-dialog';
 import { JobsService } from '../core/jobs.service';
 import { ANALYSIS_LIMITS } from '../settings/settings.models';
 import { ANALYSIS_RUN_JOB, AnalysisRunDto, CompareRunRequest } from './analysis.models';
 import { AnalysisService } from './analysis.service';
+import {
+  ReanalyseDialog,
+  ReanalyseDialogData,
+  ReanalyseDialogResult,
+} from './reanalyse-dialog.component';
+
+export { MAX_REANALYSE_COMMENT } from './reanalyse-dialog.component';
 
 /** The API's `SettingsValidation.MaxAnalysisDefaultCount`: most emails one re-analysis takes. */
 export const MAX_COMPARE = ANALYSIS_LIMITS.analysisDefaultCount.max;
@@ -36,28 +42,36 @@ export function compareConfirmMessage(count: number, upTo = false): string {
 }
 
 /**
- * Asks before a re-analysis of `count` (or `upTo` count) emails; emits `true` only when confirmed.
- * `note`: one more sentence after the standard text.
+ * Asks before a re-analysis of `count` (or `upTo` count) emails, with an optional comment for the AI; emits
+ * only when confirmed, with the dialog's trimmed comment when one was typed. `note`: one more sentence after the
+ * standard text.
  */
 export function openCompareConfirm(
   dialog: MatDialog,
   count: number,
   upTo = false,
   note?: string,
-): Observable<boolean> {
+): Observable<ReanalyseDialogResult> {
   const noun = count === 1 ? 'email' : 'emails';
-  return openConfirm(dialog, {
+  const data: ReanalyseDialogData = {
     title: `Re-analyse ${upTo ? 'up to ' : ''}${count.toLocaleString()} ${noun}?`,
     message: note
       ? `${compareConfirmMessage(count, upTo)} ${note}`
       : compareConfirmMessage(count, upTo),
-    confirm: 'Re-analyse',
-  });
+  };
+  return dialog
+    .open<ReanalyseDialog, ReanalyseDialogData, ReanalyseDialogResult>(ReanalyseDialog, { data })
+    .afterClosed()
+    .pipe(
+      filter(
+        (result): result is ReanalyseDialogResult => typeof result === 'object' && result !== null,
+      ),
+    );
 }
 
 /**
- * Confirms, then starts the re-analysis; emits the queued run, nothing when cancelled. Errors (a 409 among
- * them) are shown by the error interceptor and rethrown.
+ * Confirms, then starts the re-analysis with the comment, if any; emits the queued run, nothing when
+ * cancelled. Errors (a 400 or 409 among them) are shown by the error interceptor and rethrown.
  */
 export function confirmCompareRun(
   dialog: MatDialog,
@@ -67,7 +81,6 @@ export function confirmCompareRun(
   upTo = false,
 ): Observable<AnalysisRunDto> {
   return openCompareConfirm(dialog, count, upTo).pipe(
-    filter((confirmed) => confirmed),
-    switchMap(() => analysis.startCompareRun(request)),
+    switchMap((result) => analysis.startCompareRun({ ...request, ...result })),
   );
 }

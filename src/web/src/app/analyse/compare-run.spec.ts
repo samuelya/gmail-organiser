@@ -10,13 +10,13 @@ import { compareConfirmMessage, confirmCompareRun } from './compare-run';
 
 describe('compare run', () => {
   let open: ReturnType<typeof vi.fn>;
-  let confirmed: boolean;
+  let closed: { comment?: string } | undefined;
   let dialogOpen: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     open = vi.fn();
-    confirmed = true;
-    dialogOpen = vi.fn(() => ({ afterClosed: () => of(confirmed) }));
+    closed = {};
+    dialogOpen = vi.fn(() => ({ afterClosed: () => of(closed) }));
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(withInterceptors([errorInterceptor])),
@@ -70,8 +70,25 @@ describe('compare run', () => {
     backend.verify();
   });
 
+  it("adds the dialog's comment, and leaves it out when the dialog closes without one", () => {
+    const backend = TestBed.inject(HttpTestingController);
+    closed = { comment: 'Fits Topic/Alpha better' };
+    start({ suggestionIds: ['s-1'] }, 1);
+    expect(backend.expectOne('/api/analysis/compare-runs').request.body).toEqual({
+      suggestionIds: ['s-1'],
+      comment: 'Fits Topic/Alpha better',
+    });
+
+    closed = {};
+    start({ runId: 'run-1' }, 3);
+    expect(backend.expectOne('/api/analysis/compare-runs').request.body).toEqual({
+      runId: 'run-1',
+    });
+    backend.verify();
+  });
+
   it('posts nothing when the confirm is cancelled', () => {
-    confirmed = false;
+    closed = undefined;
     const { runs } = start({ runId: 'run-1' }, 5);
     TestBed.inject(HttpTestingController).verify();
     expect(runs).toEqual([]);

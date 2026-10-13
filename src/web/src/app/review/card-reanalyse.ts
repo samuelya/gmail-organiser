@@ -2,7 +2,7 @@ import { computed, DestroyRef, effect, inject, Injectable, signal, untracked } f
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { catchError, filter, Observable, of, Subject, switchMap } from 'rxjs';
+import { catchError, Observable, of, Subject, switchMap } from 'rxjs';
 import { AnalysisRunDto } from '../analyse/analysis.models';
 import { AnalysisService } from '../analyse/analysis.service';
 import { injectAnalysisRunActive, MAX_COMPARE, openCompareConfirm } from '../analyse/compare-run';
@@ -75,9 +75,9 @@ export class CardReanalyse {
     });
   }
 
-  /** One email: no confirm. */
+  /** One email, after the dialog (for its optional comment). */
   member(m: SuggestionDto): void {
-    this.start([m.id], false, () => this.analysis.startCompareRun({ suggestionIds: [m.id] }));
+    this.start([m.id], false, () => this.confirmed([m.id]));
   }
 
   /** Every loaded member of the card, any status, after a confirm. */
@@ -87,12 +87,13 @@ export class CardReanalyse {
     const note = group.truncated
       ? `Only the newest ${ids.length.toLocaleString()} of ${group.size.toLocaleString()} members shown are re-analysed.`
       : undefined;
-    const request = () =>
-      openCompareConfirm(this.dialog, ids.length, false, note).pipe(
-        filter((confirmed) => confirmed),
-        switchMap(() => this.analysis.startCompareRun({ suggestionIds: ids })),
-      );
-    this.start(ids, true, request);
+    this.start(ids, true, () => this.confirmed(ids, note));
+  }
+
+  private confirmed(ids: string[], note?: string): Observable<AnalysisRunDto> {
+    return openCompareConfirm(this.dialog, ids.length, false, note).pipe(
+      switchMap((result) => this.analysis.startCompareRun({ suggestionIds: ids, ...result })),
+    );
   }
 
   private start(ids: string[], fromCard: boolean, request: () => Observable<AnalysisRunDto>): void {
