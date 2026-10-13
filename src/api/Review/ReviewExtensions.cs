@@ -17,6 +17,7 @@ public static class ReviewExtensions
         services.AddScoped<ApplyService>();
         services.AddScoped<SenderPatternService>();
         services.AddScoped<HistoryQuery>();
+        services.AddScoped<SimilarPendingQuery>();
         services.AddScoped<GmailOrganiser.Fetch.IActionDoneScanner, ActionDoneScanner>();
 
         // Their account guard comes with FetchJobTypes.ReadsGmail; a cancel is refused while a chunk is pending.
