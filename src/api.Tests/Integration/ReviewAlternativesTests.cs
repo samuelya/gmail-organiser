@@ -73,7 +73,7 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
-    public async Task Alternatives_carry_their_run_comment_and_a_group_shows_the_comment_of_the_shown_alternative()
+    public async Task Alternatives_carry_their_run_comment_and_a_group_shows_the_shown_comment_and_is_mixed_when_comments_differ()
     {
         compare.OwnerComment.ShouldBeNull();
         (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem().Alternative.ShouldNotBeNull().Comment.ShouldBeNull();
@@ -98,15 +98,16 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
         }
 
         var shop = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem();
-        shop.Alternative.ShouldNotBeNull().Comment.ShouldBe("Majority note");
+        (shop.Alternative.ShouldNotBeNull().Comment, shop.Alternative.Mixed).ShouldBe(("Majority note", false));
         shop.Members.ShouldAllBe(m => m.Alternative!.Comment == "Majority note");
 
         var news = (await DetailAsync(AnalysisRunHarness.News)).Groups.ShouldHaveSingleItem();
         (news.Alternative.ShouldNotBeNull().Mixed, news.Alternative.Comment).ShouldBe((true, "Majority note"));
         news.Members.Single(m => m.MessageId == "b00").Alternative.ShouldNotBeNull().Comment.ShouldBe("Minority note");
 
-        var billing = (await DetailAsync(AnalysisRunHarness.Billing)).Groups.SelectMany(g => g.Members);
-        billing.Single(m => m.MessageId == "c00").Alternative.ShouldNotBeNull().Comment.ShouldBeNull();
+        var billing = (await DetailAsync(AnalysisRunHarness.Billing)).Groups.Single(g => g.Members.Any(m => m.MessageId == "c00"));
+        billing.Members.Single(m => m.MessageId == "c00").Alternative.ShouldNotBeNull().Comment.ShouldBeNull();
+        billing.Alternative.ShouldNotBeNull().Mixed.ShouldBeTrue("same outcome, but the members' comments differ");
     }
 
     [Fact]

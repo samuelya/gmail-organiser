@@ -391,17 +391,38 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
     }
 
     [Theory]
-    [InlineData(AnalysisRunService.MaxCommentLength + 1)]
-    [InlineData(-1)]
-    public async Task Too_long_or_control_character_comments_are_400_on_comment(int length)
+    [MemberData(nameof(InvalidComments))]
+    public async Task Too_long_or_invisible_character_comments_are_400_on_comment(string comment)
     {
-        var comment = length < 0 ? "Synthetic\u0007bell" : new string('x', length);
         var response = await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, first.Id, comment));
 
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors.ShouldContainKey("comment");
         await using var check = postgres.CreateDbContext();
         (await check.AnalysisRuns.CountAsync(r => r.Kind == AnalysisRunKind.Compare, Ct)).ShouldBe(0);
+    }
+
+    public static TheoryData<string> InvalidComments() => new()
+    {
+        new string('x', AnalysisRunService.MaxCommentLength + 1),
+        string.Concat(Enumerable.Repeat("\U0001F600", AnalysisRunService.MaxCommentLength + 1)),
+        new string(' ', 4 * AnalysisRunService.MaxCommentLength + 1),
+        "Synthetic\u0007bell",
+        "Synthetic\0nul",
+        "Synthetic\u007Fdel",
+        "Synthetic\u202Eoverride",
+        "Synthetic\u200Bzero width",
+    };
+
+    [Fact]
+    public async Task Comment_length_counts_code_points_and_a_lone_carriage_return_is_a_line_break()
+    {
+        var emoji = string.Concat(Enumerable.Repeat("\U0001F600", AnalysisRunService.MaxCommentLength));
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, emoji))).OwnerComment.ShouldBe(emoji);
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, "Old\rline\r\nends"))).OwnerComment.ShouldBe("Old\nline\nends");
+
+        // JSON turns a lone surrogate into U+FFFD, so only a direct caller can pass one.
+        AnalysisRunService.CheckComment("Synthetic\uD800lone surrogate", out _).ShouldBe(CompareRunResult.CommentInvalidCharacter);
     }
 
     /// <summary>A compare run over the first run that stops during its second model call; returns the stored messages.</summary>

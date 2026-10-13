@@ -104,8 +104,8 @@ public sealed class AnalysisRunRow
 
     /// <summary>
     /// The owner's comment for the model on a compare run (#559): normalised by
-    /// <see cref="AnalysisRunService.NormaliseComment"/>, at most <see cref="AnalysisRunService.MaxCommentLength"/>
-    /// characters; null for analyse runs and compare runs without one. Untrusted text.
+    /// <see cref="AnalysisRunService.CheckComment"/>, at most <see cref="AnalysisRunService.MaxCommentLength"/>
+    /// code points; null for analyse runs and compare runs without one. Untrusted text.
     /// </summary>
     public string? OwnerComment { get; set; }
     public string? Error { get; set; }

@@ -91,7 +91,7 @@ public sealed partial class ReviewQuery
 
     /// <summary>
     /// The listed members' alternative: the newest member's of the most common outcome (label, flags, type; its comment), with
-    /// the union of the replaced labels; <see cref="SuggestionAlternativeDto.Mixed"/> when members disagree.
+    /// the union of the replaced labels; <see cref="SuggestionAlternativeDto.Mixed"/> when members disagree on the outcome or the comment.
     /// <see cref="SuggestionAlternativeDto.Count"/> is <paramref name="count"/>, every member in the status with one.
     /// </summary>
     private static SuggestionAlternativeDto? GroupAlternative(IReadOnlyList<SuggestionDto> members, int count)
@@ -111,7 +111,7 @@ public sealed partial class ReviewQuery
         {
             ReplaceLabels = [.. alternatives.SelectMany(a => a.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
             LabelChange = Combined(alternatives.Select(a => a.LabelChange)),
-            Mixed = outcomes.Count > 1,
+            Mixed = outcomes.Count > 1 || alternatives.Select(a => a.Comment).Distinct(StringComparer.Ordinal).Skip(1).Any(),
             Count = Math.Max(count, alternatives.Count),
         };
     }
