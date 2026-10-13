@@ -165,13 +165,17 @@ public static class GmailLimits
     /// <summary>Most <c>/</c>-separated levels a label path may have (<see cref="LabelPath.IsValid"/>).</summary>
     public const int LabelMaxSegments = 5;
 
-    /// <summary>Names Gmail refuses for a user label (system label ids and display names), compared case-insensitively.</summary>
-    public static readonly IReadOnlySet<string> ReservedLabelNames = new HashSet<string>(
+    /// <summary>Gmail's system label ids; any other id is a user label.</summary>
+    public static readonly IReadOnlySet<string> SystemLabelIds = new HashSet<string>(
         [
             "INBOX", "UNREAD", "STARRED", "IMPORTANT", "SENT", "DRAFT", "SPAM", "TRASH", "CHAT",
             "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS",
-            "Drafts", "Sent Mail", "All Mail", "Chats", "Scheduled", "Snoozed",
         ],
+        StringComparer.Ordinal);
+
+    /// <summary>Names Gmail refuses for a user label (system label ids and display names), compared case-insensitively.</summary>
+    public static readonly IReadOnlySet<string> ReservedLabelNames = new HashSet<string>(
+        [.. SystemLabelIds, "Drafts", "Sent Mail", "All Mail", "Chats", "Scheduled", "Snoozed"],
         StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Validates a <see cref="IGmailClient.BatchModifyAsync"/> request.</summary>

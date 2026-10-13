@@ -1575,6 +1575,10 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("first_seen_at");
 
+                    b.Property<Guid?>("GroupId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("group_id");
+
                     b.Property<DateTimeOffset>("LastSeenAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("last_seen_at");
@@ -1592,6 +1596,9 @@ namespace GmailOrganiser.Data.Migrations
 
                     b.HasIndex("DeletedAt")
                         .HasDatabaseName("ix_filters_deleted_at");
+
+                    b.HasIndex("GroupId")
+                        .HasDatabaseName("ix_filters_group_id");
 
                     b.ToTable("filters", (string)null);
                 });

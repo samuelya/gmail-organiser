@@ -30,6 +30,12 @@ public sealed class FilterRow
 
     /// <summary>The id of the deleted filter this one re-creates.</summary>
     public string? RestoredFrom { get; set; }
+
+    /// <summary>
+    /// The filters the app created from one request share this id (#557): Gmail allows one user label per filter, so a
+    /// filter with several becomes one Gmail filter per label, listed, deleted and restored as one.
+    /// </summary>
+    public Guid? GroupId { get; set; }
     public DateTimeOffset FirstSeenAt { get; set; }
     public DateTimeOffset LastSeenAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
@@ -59,6 +65,7 @@ public sealed class FilterRow
             e.Property(r => r.Action).HasColumnType("jsonb").IsRequired();
             e.Property(r => r.CriteriaSummary).IsRequired();
             e.HasIndex(r => r.DeletedAt);
+            e.HasIndex(r => r.GroupId);
         });
     }
 }

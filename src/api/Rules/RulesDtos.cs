@@ -14,6 +14,9 @@ public sealed record FilterSyncResultDto(int Total, int Added, int Removed, Date
 /// <param name="Limit">Gmail's per-account filter limit.</param>
 public sealed record FilterListDto(DateTimeOffset? SyncedAt, int ActiveCount, int Limit, IReadOnlyList<FilterDto> Filters);
 
+/// <param name="Id">The filter's Gmail id; for a group (#557), its first member's, which the delete and restore endpoints accept.</param>
+/// <param name="Action">For a group, every member's labels together.</param>
+/// <param name="FilterIds">The Gmail filters this entry stands for: just <paramref name="Id"/>, or every member of a group.</param>
 public sealed record FilterDto(
     string Id,
     FilterCriteriaDto Criteria,
@@ -23,7 +26,8 @@ public sealed record FilterDto(
     DateTimeOffset FirstSeenAt,
     DateTimeOffset? DeletedAt,
     bool DeletedByApp,
-    string? RestoredFrom);
+    string? RestoredFrom,
+    IReadOnlyList<string> FilterIds);
 
 /// <param name="SizeComparison"><c>smaller</c> or <c>larger</c>.</param>
 public sealed record FilterCriteriaDto(

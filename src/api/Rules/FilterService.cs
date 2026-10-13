@@ -2,6 +2,7 @@ using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
+using GmailOrganiser.Rules.Review;
 using Google;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -27,7 +28,7 @@ public sealed record FilterResult(FilterOutcome Outcome, FilterDto? Filter = nul
 /// the only writer of <c>filters</c> rows. Every mutation holds the sync's advisory lock around the limit check, the
 /// Gmail call and the row write, so a concurrent sync neither double-inserts nor marks the new filter deleted.
 /// </summary>
-public sealed class FilterService(
+public sealed partial class FilterService(
     AppDbContext db, IGmailClient gmail, FilterSnapshot snapshot, LabelCatalog catalog, LabelResolver resolver, TimeProvider time)
 {
     /// <summary>Above this relative difference between the local count and Gmail's estimate, the preview says why they can differ.</summary>
@@ -83,9 +84,9 @@ public sealed class FilterService(
     }
 
     /// <summary>
-    /// Under the lock: the limit check, the labels the action names (each recorded in a
-    /// <see cref="ActionKind.FilterLabels"/> batch right after its create), the Gmail filter, then its row
-    /// (<c>created_by_app</c>).
+    /// Under the lock: the limit check, the labels the action names (each recorded in one
+    /// <see cref="ActionKind.FilterLabels"/> batch right after its create), then one Gmail filter per user label (#557)
+    /// and their rows (<c>created_by_app</c>, one group), returned as one filter.
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -95,7 +96,8 @@ public sealed class FilterService(
     {
         await EnsureSyncedAsync(ct);
         await using var tx = await LockAsync(ct);
-        if (await LimitReachedAsync(ct) is { } full)
+        var adding = Math.Max(1, spec.AddLabelNames.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        if (await LimitReachedAsync(ct, adding: adding) is { } full)
         {
             return full;
         }
@@ -112,8 +114,9 @@ public sealed class FilterService(
             var ids = await resolver.EnsureAsync(spec.AddLabelNames, (label, _) => RecordCreatedAsync(batch, label), ct);
             var action = new GmailFilterAction([.. spec.AddLabelNames.Select(n => ids[n])], spec.RemoveLabelIds);
             var names = spec.AddLabelNames.ToDictionary(n => ids[n], n => n, StringComparer.Ordinal);
-            var created = await gmail.CreateFilterAsync(spec.Criteria, action, ct);
-            return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(await AddRowAsync(tx, created, null), names));
+            var parts = action.SplitPerUserLabel();
+            var rows = await CreateGroupAsync(tx, [.. parts.Select(a => new Part(spec.Criteria, a, null))], NewGroup(parts.Count), ct);
+            return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(rows, names));
         }
         catch (LabelLimitException ex)
         {
@@ -128,11 +131,15 @@ public sealed class FilterService(
         }
     }
 
-    /// <summary>Deletes the filter in Gmail and marks its row deleted by the app.</summary>
+    /// <summary>
+    /// Deletes the filter in Gmail and marks its row deleted by the app; with <paramref name="wholeGroup"/>, every active
+    /// member of its group (#557) too, as the user sees one filter. They share a deletion time, so a restore brings them
+    /// back together; without it, a review fix deletes one member and the others stay.
+    /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
-    /// <exception cref="GoogleApiException">Gmail refused the delete.</exception>
-    public async Task<FilterResult> DeleteAsync(string id, CancellationToken ct)
+    /// <exception cref="GoogleApiException">Gmail refused a delete; the members deleted before it stay deleted.</exception>
+    public async Task<FilterResult> DeleteAsync(string id, CancellationToken ct, bool wholeGroup = false)
     {
         await using var tx = await LockAsync(ct);
         var row = await db.Filters.SingleOrDefaultAsync(r => r.Id == id, ct);
@@ -146,22 +153,18 @@ public sealed class FilterService(
             return FilterResult.Conflict("Filter already deleted", $"Filter '{id}' was deleted at {row.DeletedAt:O}.");
         }
 
-        await gmail.DeleteFilterAsync(id, ct);
-
-        // Gmail has changed: the row follows even if the client has gone.
-        var now = time.GetUtcNow();
-        row.DeletedAt = now;
-        row.DeletedByApp = true;
-        row.UpdatedAt = now;
-        await db.SaveChangesAsync(CancellationToken.None);
-        await tx.CommitAsync(CancellationToken.None);
+        var members = wholeGroup && row.GroupId is { } group
+            ? await db.Filters.Where(r => r.GroupId == group && r.DeletedAt == null).OrderBy(r => r.Id).ToListAsync(ct)
+            : [row];
+        await DeleteRowsAsync(tx, members, ct);
         return new FilterResult(FilterOutcome.Ok);
     }
 
     /// <summary>
-    /// Re-creates a deleted filter from its stored criteria and action as a new Gmail filter (new id, new row with
-    /// <c>restored_from</c>); the deleted row stays as it is. Every check runs under the lock, so two restores of one
-    /// row create one filter.
+    /// Re-creates a deleted filter, with the group members (#557) deleted with it, from their stored criteria and actions
+    /// as new Gmail filters (new ids, new rows with <c>restored_from</c>); the deleted rows stay as they are. They form a
+    /// new group, or rejoin their group when members of it are still active (one deleted alone, e.g. by hand in Gmail).
+    /// Every check runs under the lock, so two restores of one row create one filter.
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -175,67 +178,82 @@ public sealed class FilterService(
             return new FilterResult(FilterOutcome.NotFound);
         }
 
-        if (await db.Filters.AnyAsync(r => r.RestoredFrom == id && r.DeletedAt == null, ct))
+        var members = row.GroupId is { } group
+            ? await db.Filters.AsNoTracking()
+                .Where(r => r.GroupId == group && r.DeletedAt == row.DeletedAt)
+                .OrderBy(r => r.FirstSeenAt).ThenBy(r => r.Id)
+                .ToListAsync(ct)
+            : [row];
+        var ids = members.Select(m => m.Id).ToList();
+        if (await db.Filters.AnyAsync(r => r.RestoredFrom != null && ids.Contains(r.RestoredFrom) && r.DeletedAt == null, ct))
         {
             return FilterResult.Conflict("Filter already restored", $"Filter '{id}' was already restored as an active filter.");
         }
 
-        return await CreateCheckedAsync(tx, row.ReadCriteria(), row.ReadAction(), id, ct);
+        var siblings = row.GroupId is { } source
+            ? await db.Filters.Where(r => r.GroupId == source && r.DeletedAt == null).Select(r => r.Id).ToListAsync(ct)
+            : [];
+        return await CreateCheckedAsync(tx, [.. members.Select(m => new Part(m.ReadCriteria(), m.ReadAction(), m.Id))], siblings, ct);
     }
 
     /// <summary>
     /// Creates a filter from label ids, as a filter review fix (#213) does, with a restore's checks: no forwarding, a
     /// criterion and an action, Gmail's limit, and every label still existing. The limit allows for the
-    /// <paramref name="deletesAfter"/> filters the fix deletes once this one exists.
+    /// <paramref name="deletesAfter"/> filters the fix deletes once this one exists. Several user labels make a group
+    /// (#557), which the active filters <paramref name="join"/> (the parts that already exist) become members of.
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
     /// <exception cref="GoogleApiException">Gmail refused the filter.</exception>
     public async Task<FilterResult> CreateFromIdsAsync(
-        GmailFilterCriteria criteria, GmailFilterAction action, int deletesAfter, CancellationToken ct)
+        GmailFilterCriteria criteria, GmailFilterAction action, int deletesAfter, CancellationToken ct, IReadOnlyList<string>? join = null)
     {
         await using var tx = await LockAsync(ct);
-        return await CreateCheckedAsync(tx, criteria, action, null, ct, deletesAfter);
+        return await CreateCheckedAsync(tx, [new Part(criteria, action, null)], join ?? [], ct, deletesAfter);
     }
 
     public static FilterCriteriaDto ToCriteriaDto(GmailFilterCriteria c) => new(
         c.From, c.To, c.Subject, c.Query, c.NegatedQuery, c.HasAttachment, c.ExcludeChats, c.Size, c.SizeComparison?.ToGmailString());
 
     private async Task<FilterResult> CreateCheckedAsync(
-        IDbContextTransaction tx, GmailFilterCriteria criteria, GmailFilterAction action, string? restoredFrom, CancellationToken ct,
-        int deletesAfter = 0)
+        IDbContextTransaction tx, IReadOnlyList<Part> items, IReadOnlyList<string> join, CancellationToken ct, int deletesAfter = 0)
     {
-        if (!string.IsNullOrEmpty(action.Forward))
+        if (items.Any(i => !string.IsNullOrEmpty(i.Action.Forward)))
         {
             return FilterResult.Conflict("Filter forwards mail", "The app never creates a forwarding filter.");
         }
 
-        if (!criteria.MatchesMail || action.IsEmpty)
+        if (items.Any(i => !i.Criteria.MatchesMail || i.Action.IsEmpty))
         {
             return FilterResult.Conflict("Filter cannot be created", "The filter has no criterion or no action.");
         }
 
-        if (await LimitReachedAsync(ct, deletesAfter) is { } full)
+        var parts = items.SelectMany(i => i.Action.SplitPerUserLabel().Select(a => i with { Action = a })).ToList();
+        if (await LimitReachedAsync(ct, deletesAfter, parts.Count) is { } full)
         {
             return full;
         }
 
         var labels = await catalog.GetAsync(ct);
-        if (action.AddLabelIds.Concat(action.RemoveLabelIds).FirstOrDefault(l => !labels.Any(x => x.Id == l)) is { } missing)
+        if (parts.SelectMany(p => p.Action.AddLabelIds.Concat(p.Action.RemoveLabelIds)).FirstOrDefault(l => !labels.Any(x => x.Id == l))
+            is { } missing)
         {
             return FilterResult.Conflict("Label no longer exists", $"The filter's label '{missing}' no longer exists in Gmail.");
         }
 
-        var created = await gmail.CreateFilterAsync(criteria, action, ct);
+        var joined = await db.Filters.Where(r => join.Contains(r.Id) && r.DeletedAt == null).ToListAsync(ct);
+        var group = joined.Select(r => r.GroupId).FirstOrDefault(g => g is not null) ?? NewGroup(parts.Count + joined.Count);
+        var rows = await CreateGroupAsync(tx, parts, group, ct, joined);
         var names = labels.ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
-        return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(await AddRowAsync(tx, created, restoredFrom), names));
+        return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(rows, names));
     }
 
     /// <summary>
     /// Moves filter <paramref name="id"/> from label <paramref name="fromLabelId"/> to <paramref name="toLabelId"/> (a label
     /// merge): creates the retargeted filter first (row <c>restored_from</c> = <paramref name="id"/>), then deletes the
-    /// original. A run that died between the two finds the new row and only deletes. NotFound when the original is
-    /// already deleted.
+    /// original. A run that died between the two finds the new row and only deletes, as it does when an active filter
+    /// already is the retargeted one (a group member with the target label, #557). NotFound when the original is already
+    /// deleted.
     /// </summary>
     /// <exception cref="GmailNotConnectedException">The app is not connected to Gmail.</exception>
     /// <exception cref="GmailRateLimitedException">Gmail kept rate-limiting after the last retry.</exception>
@@ -258,13 +276,21 @@ public sealed class FilterService(
                     return FilterResult.Conflict("Filter forwards mail", "The app never creates a forwarding filter.");
                 }
 
-                if (await LimitReachedAsync(ct) is { } full)
+                var criteria = row.ReadCriteria();
+                var retargeted = new GmailFilterAction(Swap(action.AddLabelIds), Swap(action.RemoveLabelIds));
+                var active = await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null && r.Id != id).ToListAsync(ct);
+                if (active.Any(r => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), criteria, retargeted)))
+                {
+                    await tx.CommitAsync(ct);
+                }
+                else if (await LimitReachedAsync(ct) is { } full)
                 {
                     return full;
                 }
-
-                var retargeted = new GmailFilterAction(Swap(action.AddLabelIds), Swap(action.RemoveLabelIds));
-                await AddRowAsync(tx, await gmail.CreateFilterAsync(row.ReadCriteria(), retargeted, ct), id);
+                else
+                {
+                    await AddRowsAsync(tx, [(await gmail.CreateFilterAsync(criteria, retargeted, ct), id)], row.GroupId);
+                }
             }
             else
             {
@@ -279,34 +305,12 @@ public sealed class FilterService(
             [.. ids.Select(l => string.Equals(l, fromLabelId, StringComparison.Ordinal) ? toLabelId : l).Distinct(StringComparer.Ordinal)];
     }
 
-    /// <summary>A conflict when one more filter, less <paramref name="deletesAfter"/>, would pass Gmail's limit.</summary>
-    private async Task<FilterResult?> LimitReachedAsync(CancellationToken ct, int deletesAfter = 0) =>
-        await db.Filters.CountAsync(r => r.DeletedAt == null, ct) - deletesAfter >= FilterSnapshot.GmailFilterLimit
+    /// <summary>A conflict when <paramref name="adding"/> more filters, less <paramref name="deletesAfter"/>, would pass Gmail's limit.</summary>
+    private async Task<FilterResult?> LimitReachedAsync(CancellationToken ct, int deletesAfter = 0, int adding = 1) =>
+        await db.Filters.CountAsync(r => r.DeletedAt == null, ct) - deletesAfter + adding > FilterSnapshot.GmailFilterLimit
             ? FilterResult.Conflict(
                 "Filter limit reached", $"Gmail allows at most {FilterSnapshot.GmailFilterLimit} filters; delete one first.")
             : null;
-
-    /// <summary>The row of a filter Gmail just created, committed even if the client has gone, so sync never mistakes it.</summary>
-    private async Task<FilterRow> AddRowAsync(IDbContextTransaction tx, GmailFilter created, string? restoredFrom)
-    {
-        var now = time.GetUtcNow();
-        var row = new FilterRow
-        {
-            Id = created.Id,
-            Criteria = FilterRow.WriteCriteria(created.Criteria),
-            Action = FilterRow.WriteAction(created.Action),
-            CriteriaSummary = FilterSnapshot.Summarise(created.Criteria),
-            CreatedByApp = true,
-            RestoredFrom = restoredFrom,
-            FirstSeenAt = now,
-            LastSeenAt = now,
-            UpdatedAt = now,
-        };
-        db.Filters.Add(row);
-        await db.SaveChangesAsync(CancellationToken.None);
-        await tx.CommitAsync(CancellationToken.None);
-        return row;
-    }
 
     /// <summary>Adds a label created for the filter to its batch (inserted with the first), as ApplyActionsJob does.</summary>
     private async Task RecordCreatedAsync(ActionBatchRow batch, GmailLabel label)
@@ -320,10 +324,13 @@ public sealed class FilterService(
         await db.SaveChangesAsync(CancellationToken.None);
     }
 
-    /// <summary>Commits the label batch of a create that failed after creating labels; nothing else was written.</summary>
-    private static async Task KeepCreatedLabelsAsync(IDbContextTransaction tx, ActionBatchRow batch)
+    /// <summary>
+    /// Commits the label batch of a create that failed after creating labels, unless the rows of a group's leftover
+    /// members already committed it.
+    /// </summary>
+    private async Task KeepCreatedLabelsAsync(IDbContextTransaction tx, ActionBatchRow batch)
     {
-        if (batch.CreatedLabelIds.Length > 0)
+        if (batch.CreatedLabelIds.Length > 0 && db.Database.CurrentTransaction is not null)
         {
             await tx.CommitAsync(CancellationToken.None);
         }

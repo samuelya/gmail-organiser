@@ -9,12 +9,6 @@ namespace GmailOrganiser.Gmail.Fake;
 /// </summary>
 public sealed class FakeLabelStore
 {
-    public static readonly IReadOnlyList<string> SystemLabelIds =
-    [
-        "INBOX", "UNREAD", "STARRED", "IMPORTANT", "SENT", "DRAFT", "SPAM", "TRASH",
-        "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS",
-    ];
-
     public static readonly IReadOnlyList<string> SeedUserLabelNames = ["Example", "Example/Nested", "Synthetic Receipts"];
 
     private readonly List<GmailLabel> labels = [];
@@ -22,7 +16,7 @@ public sealed class FakeLabelStore
 
     public FakeLabelStore()
     {
-        labels.AddRange(SystemLabelIds.Select(id => new GmailLabel(id, id, GmailLabelType.System)));
+        labels.AddRange(GmailLimits.SystemLabelIds.Select(id => new GmailLabel(id, id, GmailLabelType.System)));
         foreach (var name in SeedUserLabelNames)
         {
             Create(name);

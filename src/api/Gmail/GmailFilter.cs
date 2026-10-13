@@ -65,7 +65,29 @@ public sealed record GmailFilterCriteria(
 /// <param name="Forward">An address the message is forwarded to; read only, the app never creates a forwarding filter.</param>
 public sealed record GmailFilterAction(IReadOnlyList<string> AddLabelIds, IReadOnlyList<string> RemoveLabelIds, string? Forward = null)
 {
+    /// <summary>Gmail's system label ids; any other id is a user label, of which a filter may add only one.</summary>
+    public static IReadOnlySet<string> SystemLabelIds => GmailLimits.SystemLabelIds;
+
     public bool IsEmpty => AddLabelIds.Count == 0 && RemoveLabelIds.Count == 0 && string.IsNullOrWhiteSpace(Forward);
+
+    /// <summary>The user labels <see cref="AddLabelIds"/> names, without repeats.</summary>
+    public IReadOnlyList<string> UserLabelIds => [.. AddLabelIds.Where(id => !SystemLabelIds.Contains(id)).Distinct(StringComparer.Ordinal)];
+
+    /// <summary>
+    /// One action per user label, each with every system label to add and every label to remove (#557): Gmail allows one
+    /// user label per filter. An action with at most one user label is returned as it is.
+    /// </summary>
+    public IReadOnlyList<GmailFilterAction> SplitPerUserLabel()
+    {
+        var user = UserLabelIds;
+        if (user.Count <= 1)
+        {
+            return [this];
+        }
+
+        var system = AddLabelIds.Where(SystemLabelIds.Contains).Distinct(StringComparer.Ordinal).ToList();
+        return [.. user.Select(l => this with { AddLabelIds = [l, .. system] })];
+    }
 }
 
 public sealed record GmailFilter(string Id, GmailFilterCriteria Criteria, GmailFilterAction Action)
@@ -100,6 +122,11 @@ public sealed record GmailFilter(string Id, GmailFilterCriteria Criteria, GmailF
         if (action.AddLabelIds.Concat(action.RemoveLabelIds).Any(string.IsNullOrWhiteSpace))
         {
             throw new ArgumentException("A filter label id must not be blank.", nameof(action));
+        }
+
+        if (action.UserLabelIds.Count > 1)
+        {
+            throw new ArgumentException("Too many user labels in filter: Gmail allows one per filter.", nameof(action));
         }
     }
 }

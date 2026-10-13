@@ -17,7 +17,7 @@ namespace GmailOrganiser.Tests.Integration;
 /// <summary>
 /// Filter reviews over the fake's seed filters (<c>from:news</c>, a receipt subject that matches nothing, <c>to:lists</c>
 /// adding a missing label) plus <c>from:shop</c> with news' action (mergeable) and an offer subject that adds a missing
-/// label besides <c>Label_1</c> (drop_label).
+/// label besides <c>STARRED</c> (drop_label).
 /// </summary>
 [Collection(PostgresCollection.Name)]
 public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
@@ -66,7 +66,7 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
         }));
         await Gmail.CreateFilterAsync(new GmailFilterCriteria(From: Shop), new GmailFilterAction(["Label_1"], ["INBOX"]), Ct);
         await Gmail.CreateFilterAsync(
-            new GmailFilterCriteria(Subject: "Weekly offer"), new GmailFilterAction(["Label_1", FakeFilterStore.MissingLabelId], []), Ct);
+            new GmailFilterCriteria(Subject: "Weekly offer"), new GmailFilterAction(["STARRED", FakeFilterStore.MissingLabelId], []), Ct);
     }
 
     public async ValueTask DisposeAsync()
@@ -132,7 +132,7 @@ public sealed class FilterReviewTests(ApiFactory factory, PostgresFixture postgr
 
         var gmail = await Gmail.ListFiltersAsync(Ct);
         gmail.ShouldNotContain(f => f.Id == finding.FilterIds[0]);
-        gmail.Where(f => f.Criteria.Subject == "Weekly offer").ShouldHaveSingleItem().Action.AddLabelIds.ShouldBe(["Label_1"]);
+        gmail.Where(f => f.Criteria.Subject == "Weekly offer").ShouldHaveSingleItem().Action.AddLabelIds.ShouldBe(["STARRED"]);
     }
 
     [Fact]
