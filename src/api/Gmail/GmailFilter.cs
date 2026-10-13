@@ -66,11 +66,7 @@ public sealed record GmailFilterCriteria(
 public sealed record GmailFilterAction(IReadOnlyList<string> AddLabelIds, IReadOnlyList<string> RemoveLabelIds, string? Forward = null)
 {
     /// <summary>Gmail's system label ids; any other id is a user label, of which a filter may add only one.</summary>
-    public static readonly IReadOnlySet<string> SystemLabelIds = new HashSet<string>(StringComparer.Ordinal)
-    {
-        "INBOX", "UNREAD", "STARRED", "IMPORTANT", "SENT", "DRAFT", "SPAM", "TRASH", "CHAT",
-        "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS",
-    };
+    public static IReadOnlySet<string> SystemLabelIds => GmailLimits.SystemLabelIds;
 
     public bool IsEmpty => AddLabelIds.Count == 0 && RemoveLabelIds.Count == 0 && string.IsNullOrWhiteSpace(Forward);
 

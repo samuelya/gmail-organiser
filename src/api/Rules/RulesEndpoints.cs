@@ -85,7 +85,7 @@ public static class RulesEndpoints
     {
         try
         {
-            return await filters.DeleteGroupAsync(id, ct) switch
+            return await filters.DeleteAsync(id, ct, wholeGroup: true) switch
             {
                 { Outcome: FilterOutcome.Ok } => TypedResults.NoContent(),
                 { Outcome: FilterOutcome.NotFound } => TypedResults.NotFound(),
