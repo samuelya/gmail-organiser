@@ -212,11 +212,12 @@ public sealed class FilterReviewService(
         var pendingDeletes = fix.DeleteFilterIds.Except(finding.DeletedFilterIds).Count();
         try
         {
+            // Each filter the create splits into (#557) that exists (from an earlier attempt, or by hand) is used, never
+            // deleted; only the others are created, as members of its group. A fix never deletes what it made or reused.
+            var existing = fix.Create is { } made ? await ExistingPartsAsync(made, ct) : [];
+            var keep = existing.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
             if (fix.Create is { } create && finding.CreatedFilterId is null)
             {
-                // Each filter the create splits into (#557) that exists (from an earlier attempt, or by hand) is used, never
-                // deleted; only the others are created, as members of its group.
-                var existing = await ExistingPartsAsync(create, ct);
                 var missing = create.Action.SplitPerUserLabel()
                     .Where(p => !existing.Any(r => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, p)))
                     .ToList();
@@ -233,6 +234,7 @@ public sealed class FilterReviewService(
                     }
 
                     finding.CreatedFilterId = filter.Id;
+                    keep.UnionWith(filter.FilterIds);
                 }
                 else
                 {
@@ -242,17 +244,8 @@ public sealed class FilterReviewService(
                 await db.SaveChangesAsync(CancellationToken.None);
             }
 
-            // The created filter is one of them: a fix never deletes what it made or reused.
-            var keep = fix.Create is { } made
-                ? (await ExistingPartsAsync(made, ct)).Select(r => r.Id).ToHashSet(StringComparer.Ordinal)
-                : [];
-            foreach (var filterId in fix.DeleteFilterIds.Except(finding.DeletedFilterIds).Where(i => !keep.Contains(i)).ToList())
-            {
-                // NotFound or "already deleted" here means a concurrent sync saw the filter gone: the delete is done.
-                await filters.DeleteAsync(filterId, ct);
-                finding.DeletedFilterIds = [.. finding.DeletedFilterIds, filterId];
-                await db.SaveChangesAsync(CancellationToken.None);
-            }
+            await DeleteFixFiltersAsync(
+                finding, [.. fix.DeleteFilterIds.Except(finding.DeletedFilterIds).Where(i => !keep.Contains(i))], rows, ct);
         }
         catch (Exception ex) when (ex is GmailNotConnectedException or GmailRateLimitedException or GoogleApiException)
         {
@@ -265,6 +258,29 @@ public sealed class FilterReviewService(
         finding.Error = null;
         await db.SaveChangesAsync(CancellationToken.None);
         return new FindingResult(FilterOutcome.Ok, await ToFindingDtoAsync(finding, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Deletes a fix's filters, recording each on the finding. Every active member of a group (#557) in the list goes in
+    /// one group delete, so they share a deletion time: the deleted list shows them as one filter and a restore rejoins them.
+    /// </summary>
+    private async Task DeleteFixFiltersAsync(
+        FilterFindingRow finding, List<string> pending, Dictionary<string, FilterRow> rows, CancellationToken ct)
+    {
+        while (pending.Count > 0)
+        {
+            var filterId = pending[0];
+            List<string> members = rows.TryGetValue(filterId, out var row) && row.GroupId is { } group
+                ? await db.Filters.AsNoTracking().Where(r => r.GroupId == group && r.DeletedAt == null).Select(r => r.Id).ToListAsync(ct)
+                : [];
+            var wholeGroup = members.Count > 1 && members.All(pending.Contains);
+            List<string> done = wholeGroup ? members : [filterId];
+            // NotFound or "already deleted" here means a concurrent sync saw the filter gone: the delete is done.
+            await filters.DeleteAsync(filterId, ct, wholeGroup);
+            finding.DeletedFilterIds = [.. finding.DeletedFilterIds, .. done];
+            pending.RemoveAll(done.Contains);
+            await db.SaveChangesAsync(CancellationToken.None);
+        }
     }
 
     /// <summary>The active filters equal to one of the filters <paramref name="create"/> splits into (#557).</summary>
@@ -389,8 +405,10 @@ public sealed class FilterReviewService(
             create = new FilterFixCreateDto(dto.Criteria, dto.Action);
         }
 
+        // A split group (#557) shows as the one filter the user sees.
+        var groups = FilterSnapshot.Groups(f.FilterIds.Where(rows.ContainsKey).Select(i => rows[i]));
         return new FilterFindingDto(
-            f.Id, f.Kind, f.FilterIds, [.. f.FilterIds.Where(rows.ContainsKey).Select(i => FilterSnapshot.ToDto(rows[i], names))],
+            f.Id, f.Kind, f.FilterIds, [.. groups.Select(g => FilterSnapshot.ToDto(g, names))],
             f.Description, new FilterFixDto(fix.Kind, fix.DeleteFilterIds, create), f.Status, f.AppliedAt, f.Error, f.ReviewId,
             fix.PolicyId);
     }

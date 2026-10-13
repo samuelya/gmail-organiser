@@ -98,8 +98,8 @@ public static partial class FilterChecks
 
     /// <summary>
     /// A filter naming a deleted label is re-created without it. Of a split group (#557) only the members still needed
-    /// stay, and a member left with no user label is deleted while others of its group are active: they already carry
-    /// its other actions, so re-creating it would only overlap them.
+    /// stay, and a member left with no user label is deleted while others of its group are active and carry all its
+    /// other actions, so re-creating it would only overlap them.
     /// </summary>
     private static IEnumerable<FilterFindingDraft> DeletedLabels(List<Parsed> filters, Dictionary<string, string> names)
     {
@@ -109,9 +109,12 @@ public static partial class FilterChecks
                 [.. f.Action.AddLabelIds.Where(names.ContainsKey)], [.. f.Action.RemoveLabelIds.Where(names.ContainsKey)]);
             var missing = string.Join(", ", f.Missing.Select(id => $"'{id}'"));
             var text = $"{Quote([f])} names {(f.Missing.Count == 1 ? "a label" : "labels")} the mailbox no longer has ({missing})";
-            var grouped = f.Members is null && f.Row.GroupId is { } group
-                && filters.Any(o => o != f && o.Row.GroupId == group)
-                && f.Action.UserLabelIds.Count > 0 && rest.UserLabelIds.Count == 0;
+            var others = f.Members is null && f.Row.GroupId is { } group
+                ? filters.Where(o => o != f && o.Row.GroupId == group).ToList()
+                : [];
+            var grouped = others.Count > 0 && f.Action.UserLabelIds.Count > 0 && rest.UserLabelIds.Count == 0
+                && rest.AddLabelIds.All(id => others.Any(o => o.Action.AddLabelIds.Contains(id)))
+                && rest.RemoveLabelIds.All(id => others.Any(o => o.Action.RemoveLabelIds.Contains(id)));
             yield return rest.IsEmpty || grouped
                 ? new(FilterFindingKind.DeletedLabel, [.. f.Ids],
                     $"{text}; {(grouped ? "the rest of its group remains" : "nothing else would remain")}.",
@@ -165,29 +168,21 @@ public static partial class FilterChecks
     /// <summary>
     /// The fix that replaces <paramref name="members"/> by <paramref name="criteria"/> with <paramref name="action"/>, one
     /// Gmail filter per user label (#557). A member that already is one of those filters is kept, as Gmail refuses a
-    /// filter equal to an existing one, and the rest of them is created; null when nothing would change.
+    /// filter equal to an existing one; the create names the whole action, and applying it creates only the filters still
+    /// missing, in one group with the kept ones. Null when nothing would change.
     /// </summary>
     private static FilterFix? SplitFix(
         FilterFixKind kind, IEnumerable<Parsed> members, GmailFilterCriteria criteria, GmailFilterAction action, Guid? policyId = null)
     {
         var rows = members.SelectMany(f => f.Members ?? [f]).ToList();
         var key = Normalise(criteria);
-        var parts = action.SplitPerUserLabel().Select(p => (Action: p, Key: ActionKey(p))).ToList();
-        var keepers = rows.Where(f => f.Key == key && parts.Any(p => p.Key == f.ActionKey)).DistinctBy(f => f.ActionKey).ToList();
-        var create = parts.Where(p => !keepers.Any(k => k.ActionKey == p.Key)).Select(p => p.Action).ToList();
+        var parts = action.SplitPerUserLabel().Select(ActionKey).ToHashSet(StringComparer.Ordinal);
+        var keepers = rows.Where(f => f.Key == key && parts.Contains(f.ActionKey)).DistinctBy(f => f.ActionKey).ToList();
         var deletes = rows.Except(keepers).ToList();
-        if (create.Count == 0 && deletes.Count == 0)
-        {
-            return null;
-        }
-
-        return new FilterFix(
-            kind,
-            [.. deletes.Select(f => f.Row.Id)],
-            create.Count == 0
-                ? null
-                : new(criteria, new([.. create.SelectMany(p => p.AddLabelIds).Distinct(StringComparer.Ordinal)], action.RemoveLabelIds)),
-            policyId);
+        var complete = keepers.Count == parts.Count;
+        return complete && deletes.Count == 0
+            ? null
+            : new FilterFix(kind, [.. deletes.Select(f => f.Row.Id)], complete ? null : new(criteria, action), policyId);
     }
 
     /// <summary>
@@ -203,9 +198,8 @@ public static partial class FilterChecks
             var union = new GmailFilterAction(
                 [.. members.SelectMany(f => f.Action.AddLabelIds).Distinct(StringComparer.Ordinal)],
                 [.. members.SelectMany(f => f.Action.RemoveLabelIds).Distinct(StringComparer.Ordinal)]);
-            var parts = union.SplitPerUserLabel().Select(ActionKey).ToHashSet(StringComparer.Ordinal);
-            if (members.Count > 1 && members.All(f => !f.Forwards && parts.Contains(f.ActionKey))
-                && members.Select(f => f.ActionKey).Distinct(StringComparer.Ordinal).Count() == parts.Count)
+            if (members.Count > 1 && !members.Any(f => f.Forwards)
+                && SplitFix(FilterFixKind.MergeActions, members, members[0].Criteria, union) is null)
             {
                 var missing = members.SelectMany(f => f.Missing).Distinct(StringComparer.Ordinal).ToList();
                 result.Add(members[0] with { Action = union, ActionKey = ActionKey(union), Missing = missing, Members = members });

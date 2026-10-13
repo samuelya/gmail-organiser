@@ -243,8 +243,7 @@ public sealed partial class FilterService(
 
         var joined = await db.Filters.Where(r => join.Contains(r.Id) && r.DeletedAt == null).ToListAsync(ct);
         var group = joined.Select(r => r.GroupId).FirstOrDefault(g => g is not null) ?? NewGroup(parts.Count + joined.Count);
-        joined.ForEach(r => r.GroupId = group);
-        var rows = await CreateGroupAsync(tx, parts, group, ct);
+        var rows = await CreateGroupAsync(tx, parts, group, ct, joined);
         var names = labels.ToDictionary(l => l.Id, l => l.Name, StringComparer.Ordinal);
         return new FilterResult(FilterOutcome.Ok, FilterSnapshot.ToDto(rows, names));
     }

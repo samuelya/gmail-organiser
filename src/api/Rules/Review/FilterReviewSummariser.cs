@@ -71,8 +71,9 @@ public sealed class FilterReviewSummariser(
         }
 
         var ids = findings.SelectMany(f => f.FilterIds.Concat(f.ReadFix().DeleteFilterIds)).Distinct().ToList();
-        var filters = (await db.Filters.AsNoTracking().Where(r => ids.Contains(r.Id)).ToListAsync(ct))
-            .OrderBy(r => ids.IndexOf(r.Id)).Select(r => FilterSnapshot.ToDto(r, names)).ToList();
+        // A split group (#557) is one filter to the model, as to the user, not several duplicates.
+        var rows = (await db.Filters.AsNoTracking().Where(r => ids.Contains(r.Id)).ToListAsync(ct)).OrderBy(r => ids.IndexOf(r.Id));
+        var filters = FilterSnapshot.Groups(rows).Select(g => FilterSnapshot.ToDto(g, names)).ToList();
         var messages = RulesSummaryPromptBuilder.Build(filters, [.. findings.Select(f => ToSummaryFinding(f, names))]);
 
         try

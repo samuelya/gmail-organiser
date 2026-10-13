@@ -1,5 +1,4 @@
 using GmailOrganiser.Gmail;
-using Google;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace GmailOrganiser.Rules;
@@ -12,10 +11,12 @@ public sealed partial class FilterService
 
     /// <summary>
     /// Creates <paramref name="parts"/> in Gmail, then their rows, members of <paramref name="group"/> (#557). When a part
-    /// fails, the ones created before it are deleted again; one Gmail would not delete keeps its row, so it stays listed.
+    /// fails, the ones created before it are deleted again; one Gmail would not delete keeps its row, so it stays listed,
+    /// and the first failure is the one that surfaces. The active filters <paramref name="joined"/> become members only
+    /// once every part exists.
     /// </summary>
     private async Task<List<FilterRow>> CreateGroupAsync(
-        IDbContextTransaction tx, IReadOnlyList<Part> parts, Guid? group, CancellationToken ct)
+        IDbContextTransaction tx, IReadOnlyList<Part> parts, Guid? group, CancellationToken ct, IReadOnlyList<FilterRow>? joined = null)
     {
         var created = new List<(GmailFilter Filter, string? RestoredFrom)>();
         try
@@ -36,8 +37,9 @@ public sealed partial class FilterService
                 {
                     await gmail.DeleteFilterAsync(c.Filter.Id, CancellationToken.None);
                 }
-                catch (Exception ex) when (ex is GmailNotConnectedException or GmailRateLimitedException or GoogleApiException)
+                catch (Exception)
                 {
+                    // Any failure here (transport, timeout) only means the part stays: record it, keep the first error.
                     left.Add(c);
                 }
             }
@@ -50,6 +52,7 @@ public sealed partial class FilterService
             throw;
         }
 
+        joined?.ToList().ForEach(r => r.GroupId = group);
         return await AddRowsAsync(tx, created, group);
     }
 
