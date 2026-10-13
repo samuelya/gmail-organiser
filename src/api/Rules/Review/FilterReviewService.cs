@@ -63,6 +63,9 @@ public sealed class FilterReviewService(
                 .Select(f => new { f.FilterIds, f.CreatedFilterId }).ToListAsync(ct))
             .SelectMany(f => f.CreatedFilterId is { } created ? f.FilterIds.Append(created) : f.FilterIds)
             .ToHashSet(StringComparer.Ordinal);
+        // A half-applied fix's created filter is one of a group (#557) when it has several user labels: all of it is busy.
+        var busyGroups = active.Where(r => r.GroupId is not null && busy.Contains(r.Id)).Select(r => r.GroupId).ToHashSet();
+        busy.UnionWith(active.Where(r => busyGroups.Contains(r.GroupId)).Select(r => r.Id));
         var checkedFilters = active.Where(r => !busy.Contains(r.Id)).ToList();
         var now = time.GetUtcNow();
         var counts = await RecentCountsAsync(checkedFilters, now.AddDays(-days), ct);
@@ -211,12 +214,18 @@ public sealed class FilterReviewService(
         {
             if (fix.Create is { } create && finding.CreatedFilterId is null)
             {
-                // A filter equal to the one to create (from an earlier attempt, or by hand) is used, never deleted.
-                var existing = (await db.Filters.AsNoTracking().Where(r => r.DeletedAt == null).ToListAsync(ct))
-                    .FirstOrDefault(r => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, create.Action));
-                if (existing is null)
+                // Each filter the create splits into (#557) that exists (from an earlier attempt, or by hand) is used, never
+                // deleted; only the others are created, as members of its group.
+                var existing = await ExistingPartsAsync(create, ct);
+                var missing = create.Action.SplitPerUserLabel()
+                    .Where(p => !existing.Any(r => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, p)))
+                    .ToList();
+                if (missing.Count > 0)
                 {
-                    var created = await filters.CreateFromIdsAsync(create.Criteria, create.Action, pendingDeletes, ct);
+                    var action = new GmailFilterAction(
+                        [.. missing.SelectMany(p => p.AddLabelIds).Distinct(StringComparer.Ordinal)], create.Action.RemoveLabelIds);
+                    var created = await filters.CreateFromIdsAsync(
+                        create.Criteria, action, pendingDeletes, ct, [.. existing.Select(r => r.Id)]);
                     if (created is not { Outcome: FilterOutcome.Ok, Filter: { } filter })
                     {
                         await RecordErrorAsync(finding, $"{created.Title}: {created.Detail}");
@@ -227,14 +236,17 @@ public sealed class FilterReviewService(
                 }
                 else
                 {
-                    finding.CreatedFilterId = existing.Id;
+                    finding.CreatedFilterId = existing[0].Id;
                 }
 
                 await db.SaveChangesAsync(CancellationToken.None);
             }
 
-            var keep = finding.CreatedFilterId;
-            foreach (var filterId in fix.DeleteFilterIds.Except(finding.DeletedFilterIds).Where(i => i != keep).ToList())
+            // The created filter is one of them: a fix never deletes what it made or reused.
+            var keep = fix.Create is { } made
+                ? (await ExistingPartsAsync(made, ct)).Select(r => r.Id).ToHashSet(StringComparer.Ordinal)
+                : [];
+            foreach (var filterId in fix.DeleteFilterIds.Except(finding.DeletedFilterIds).Where(i => !keep.Contains(i)).ToList())
             {
                 // NotFound or "already deleted" here means a concurrent sync saw the filter gone: the delete is done.
                 await filters.DeleteAsync(filterId, ct);
@@ -253,6 +265,15 @@ public sealed class FilterReviewService(
         finding.Error = null;
         await db.SaveChangesAsync(CancellationToken.None);
         return new FindingResult(FilterOutcome.Ok, await ToFindingDtoAsync(finding, CancellationToken.None));
+    }
+
+    /// <summary>The active filters equal to one of the filters <paramref name="create"/> splits into (#557).</summary>
+    private async Task<List<FilterRow>> ExistingPartsAsync(FilterFixCreate create, CancellationToken ct)
+    {
+        var parts = create.Action.SplitPerUserLabel();
+        var active = await db.Filters.AsNoTracking()
+            .Where(r => r.DeletedAt == null).OrderBy(r => r.FirstSeenAt).ThenBy(r => r.Id).ToListAsync(ct);
+        return [.. active.Where(r => parts.Any(p => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, p)))];
     }
 
     private async Task RecordErrorAsync(FilterFindingRow finding, string error)
