@@ -31,6 +31,7 @@ public static class ReviewEndpoints
         group.MapPost("/suggestions/{id:guid}/reject", (Guid id, ReviewService review, CancellationToken ct) =>
             ToResultAsync(review.DecideAsync(id, DecisionOutcome.Rejected, ct)));
         group.MapPut("/suggestions/{id:guid}", EditAsync);
+        group.MapGet("/suggestions/{id:guid}/similar", GetSimilarAsync);
         group.MapPost("/groups/approve", (GroupDecisionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct) =>
             DecideGroupAsync(request, DecisionOutcome.Approved, review, settings, ct));
         group.MapPost("/groups/reject", (GroupDecisionRequest request, ReviewService review, ISettingsStore settings, CancellationToken ct) =>
@@ -41,6 +42,10 @@ public static class ReviewEndpoints
         group.MapAlternativeEndpoints();
         return endpoints;
     }
+
+    /// <summary>Similar pending suggestions of the source (#560): same sender, any card, a different outcome.</summary>
+    private static async Task<Results<Ok<SimilarPendingDto>, NotFound>> GetSimilarAsync(Guid id, SimilarPendingQuery query, CancellationToken ct) =>
+        await query.GetAsync(id, ct) is { } similar ? TypedResults.Ok(similar) : TypedResults.NotFound();
 
     /// <summary>
     /// Senders with suggestions in <c>status</c> (default pending; <c>not_rejected</c>: pending, approved or applied),
