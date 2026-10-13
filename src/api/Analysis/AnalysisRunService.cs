@@ -66,7 +66,8 @@ public sealed partial class AnalysisRunService(
     /// <summary>
     /// Trims and turns <c>\r\n</c> and a lone <c>\r</c> into <c>\n</c> (empty or whitespace-only is null), then checks the
     /// length in code points and rejects control characters other than newline and tab, format (Cf) and invisible
-    /// characters and broken UTF-16. A raw comment over four times the limit is too long before any copy is made.
+    /// characters and broken UTF-16. ZWNJ, ZWJ (Persian, Indic scripts, emoji sequences) and the soft hyphen are ordinary
+    /// text and stay as they are (#568). A raw comment over four times the limit is too long before any copy is made.
     /// </summary>
     public static CompareRunResult CheckComment(string? comment, out string? normalised)
     {
@@ -96,7 +97,7 @@ public sealed partial class AnalysisRunService(
                 return CompareRunResult.CommentTooLong;
             }
 
-            if (rune.Value is not '\n' and not '\t'
+            if (rune.Value is not '\n' and not '\t' and not '\u200C' and not '\u200D' and not '\u00AD'
                 && (Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format
                     || (rune.IsBmp && BodyCleaner.IsInvisible((char)rune.Value))))
             {

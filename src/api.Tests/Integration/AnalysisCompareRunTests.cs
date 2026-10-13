@@ -412,7 +412,19 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
         "Synthetic\u007Fdel",
         "Synthetic\u202Eoverride",
         "Synthetic\u200Bzero width",
+        "Synthetic\uFEFFbom",
+        "Synthetic\u2067isolate",
     };
+
+    [Theory]
+    [InlineData("\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645")]
+    [InlineData("\U0001F468\u200D\U0001F4BB")]
+    [InlineData("co\u00ADoperate")]
+    public async Task Joiners_and_soft_hyphen_are_stored_unchanged(string comment)
+    {
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, comment))).OwnerComment.ShouldBe(comment);
+        AnalysisRunService.CheckComment($"{comment}\u202E", out _).ShouldBe(CompareRunResult.CommentInvalidCharacter);
+    }
 
     [Fact]
     public async Task Comment_length_counts_code_points_and_a_lone_carriage_return_is_a_line_break()
