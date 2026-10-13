@@ -1,11 +1,13 @@
 using GmailOrganiser.Data;
+using GmailOrganiser.Fetch;
 using Microsoft.EntityFrameworkCore;
 
 namespace GmailOrganiser.Analysis;
 
 /// <summary>
 /// A compare run's answer for one suggestion (<c>suggestion_alternatives</c>), stored next to it and never applied by
-/// the run; at most one per suggestion, from the latest-created compare run (#249). Removed with its suggestion; outlives its run.
+/// the run; at most one per suggestion, from the latest-created compare run (#249) or copy of another suggestion's outcome
+/// (#562). Removed with its suggestion; outlives its run and its copy source.
 /// Columns mean what they mean on <see cref="SuggestionRow"/>.
 /// </summary>
 public sealed class SuggestionAlternativeRow
@@ -35,6 +37,9 @@ public sealed class SuggestionAlternativeRow
     public string? Model { get; set; }
     public string? PromptVersion { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>The suggestion whose outcome was copied here (#562); null for a compare run's answer or once the source is gone.</summary>
+    public Guid? CopiedFromSuggestionId { get; set; }
 
     /// <summary>The replaced labels as (id, name), like <see cref="SuggestionRow.Replaced(IReadOnlyDictionary{string, string}?)"/>.</summary>
     public IReadOnlyList<(string Id, string Name)> Replaced(IReadOnlyDictionary<string, string>? names) =>
@@ -68,6 +73,42 @@ public sealed class SuggestionAlternativeRow
         CreatedAt = now,
     };
 
+    /// <summary>
+    /// A copy of <paramref name="source"/>'s current outcome for <paramref name="target"/> (#562), with only those of the
+    /// source's replaced labels (by id) that <paramref name="message"/>, the target's message, carries.
+    /// </summary>
+    public static SuggestionAlternativeRow CopyOf(SuggestionRow source, SuggestionRow target, MessageRow message, DateTimeOffset now)
+    {
+        var replaced = source.Replaced(null).Where(l => message.LabelIds.Contains(l.Id, StringComparer.Ordinal)).ToList();
+        return new()
+        {
+            Id = Guid.CreateVersion7(now),
+            SuggestionId = target.Id,
+            MessageId = target.MessageId,
+            RunId = source.RunId,
+            Source = source.Source,
+            GroupKey = target.GroupKey,
+            TopicLabel = source.TopicLabel,
+            IsNewLabel = source.IsNewLabel,
+            DocumentTypeLabel = source.DocumentTypeLabel,
+            DocumentTypeIsNew = source.DocumentTypeIsNew,
+            MailType = source.MailType,
+            ProposedNewLabel = source.ProposedNewLabel,
+            ReplaceLabelIds = [.. replaced.Select(l => l.Id)],
+            ReplaceLabels = [.. replaced.Select(l => l.Name)],
+            NeedsAction = source.NeedsAction,
+            ToBeDeleted = source.ToBeDeleted,
+            UnsubscribeSuggested = source.UnsubscribeSuggested,
+            Confidence = source.Confidence,
+            Reason = source.Reason,
+            FilterCriteria = source.FilterCriteria,
+            Model = source.Model,
+            PromptVersion = source.PromptVersion,
+            CreatedAt = now,
+            CopiedFromSuggestionId = source.Id,
+        };
+    }
+
     internal static void Configure(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<SuggestionAlternativeRow>(e =>
@@ -87,6 +128,8 @@ public sealed class SuggestionAlternativeRow
             e.HasOne<AnalysisRunRow>().WithMany().HasForeignKey(r => r.RunId).OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(r => r.SuggestionId).IsUnique();
             e.HasIndex(r => r.RunId);
+            e.HasOne<SuggestionRow>().WithMany().HasForeignKey(r => r.CopiedFromSuggestionId).OnDelete(DeleteBehavior.SetNull);
+            e.HasIndex(r => r.CopiedFromSuggestionId);
         });
     }
 }

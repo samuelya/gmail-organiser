@@ -110,6 +110,7 @@ public sealed record SuggestionDto(
 /// <param name="Mixed">Group only: the listed members' alternatives disagree; the fields show the most common one.</param>
 /// <param name="Count">Listed members with an alternative (1 for a suggestion).</param>
 /// <param name="Comment">The owner comment of the alternative's compare run (#559); null when the run is gone or had none.</param>
+/// <param name="Copied">Copied from another suggestion's outcome (#562), not a compare run's answer; group: the shown alternative is.</param>
 public sealed record SuggestionAlternativeDto(
     string TopicLabel,
     string? DocumentTypeLabel,
@@ -126,13 +127,20 @@ public sealed record SuggestionAlternativeDto(
     bool Mixed = false,
     int Count = 1,
     string? MailType = null,
-    string? Comment = null);
+    string? Comment = null,
+    bool Copied = false);
 
 /// <summary>Suggestions by id and every suggestion of the named groups (any status); at least one of the two.</summary>
 public sealed record AlternativeDecisionRequest(Guid[]? SuggestionIds, GroupRef[]? Groups);
 
 /// <param name="Skipped">Suggestions with an alternative left alone: part of an active apply batch.</param>
 public sealed record AlternativeDecisionResponse(int Accepted, int Discarded, int Skipped);
+
+/// <summary>Copy the source suggestion's current outcome to <paramref name="SuggestionIds"/> as alternatives (#562); both required.</summary>
+public sealed record AlternativeCopyRequest(Guid? SourceSuggestionId, Guid[]? SuggestionIds);
+
+/// <param name="Skipped">Named suggestions not copied to: not pending, another sender, the source itself, or the source went meanwhile.</param>
+public sealed record AlternativeCopyResponse(int Copied, int Skipped);
 
 public sealed record LabelDto(string Id, string Name, string Type);
 
