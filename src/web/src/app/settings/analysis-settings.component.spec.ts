@@ -343,4 +343,13 @@ describe('AnalysisSettingsSection', () => {
     const names = [...el.querySelectorAll('dt code')].map((c) => c.textContent);
     expect(names).toContain('{{emails}}');
   });
+
+  it('lists the {{ownerGuidance}} placeholder after {{memory}} with its help', async () => {
+    await render();
+    const names = [...el.querySelectorAll('dt code')].map((c) => c.textContent);
+    expect(names.indexOf('{{ownerGuidance}}')).toBe(names.indexOf('{{memory}}') + 1);
+    const help = el.querySelectorAll('dl[aria-label="Prompt placeholders"] dd')[names.indexOf('{{ownerGuidance}}')]?.textContent;
+    expect(help).toContain('re-analysis comment');
+    expect(help).toContain('inserted before the emails');
+  });
 });
