@@ -102,4 +102,12 @@ describe('ReviewService', () => {
       suggestionIds: ['a', 'b'],
     });
   });
+  it('looks up similar pending emails, and copies alternatives', () => {
+    service.similar('a/b').subscribe();
+    http.expectOne({ method: 'GET', url: '/api/review/suggestions/a%2Fb/similar' }).flush({});
+    service.copyAlternatives({ sourceSuggestionId: 'a', suggestionIds: ['b', 'c'] }).subscribe();
+    const copy = http.expectOne({ method: 'POST', url: '/api/review/alternatives/copy' });
+    expect(copy.request.body).toEqual({ sourceSuggestionId: 'a', suggestionIds: ['b', 'c'] });
+    copy.flush({ copied: 2, skipped: 0 });
+  });
 });

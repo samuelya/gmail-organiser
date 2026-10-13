@@ -13,6 +13,7 @@ import {
   noPattern,
   renderReviewPage as render,
   sender,
+  similar,
 } from './review-page.testing';
 import { ReviewSenderDto } from './review.models';
 
@@ -513,6 +514,29 @@ describe('ReviewPage', () => {
     expect(api.discardAlternatives).toHaveBeenCalledWith({
       groups: [{ senderAddress: 'news@example.com', groupKey: 'key-1', status: 'pending' }],
     });
+  });
+
+  it('Use new looks up similar pending emails of the member, or of the card first member, and offers them', async () => {
+    const { api, all, expand, settle } = await render(noPattern, 'off', [
+      group({
+        alternative: alternative({ count: 2 }),
+        members: [
+          member('a', { alternative: alternative() }),
+          member('b', { alternative: alternative() }),
+        ],
+      }),
+    ]);
+    await expand();
+    all('alternative-use')[2].click();
+    await settle();
+    expect(api.similar).toHaveBeenLastCalledWith('b');
+    expect(snackText()).toContain('Used the new result for 1 suggestion.');
+    api.similar.mockReturnValue(of(similar({ count: 2, suggestionIds: ['c', 'd'] })));
+    all('alternative-use')[0].click();
+    await settle();
+    expect(api.similar).toHaveBeenLastCalledWith('a');
+    expect(snackText()).toContain('Accepted. 2 similar pending emails.');
+    expect(snackText()).toContain('Apply to similar…');
   });
 
   it('Use new on a pending member adds no note', async () => {

@@ -22,6 +22,7 @@ import {
   ReviewSenderDetailDto,
   ReviewSenderDto,
   SenderPatternDto,
+  SimilarPendingDto,
   SuggestionDto,
 } from './review.models';
 import { ReviewService } from './review.service';
@@ -176,6 +177,15 @@ export class FakeJobs {
   }
 }
 
+export const similar = (over: Partial<SimilarPendingDto> = {}): SimilarPendingDto => ({
+  sourceId: 'a',
+  count: 0,
+  suggestionIds: [],
+  withAlternative: 0,
+  truncated: false,
+  ...over,
+});
+
 export async function renderReviewPage(
   pattern: SenderPatternDto = noPattern,
   claudeReviewerMode = 'off',
@@ -218,6 +228,8 @@ export async function renderReviewPage(
     job: vi.fn(() => of(job('completed', { version: 5 }))),
     acceptAlternatives: vi.fn(() => of({ accepted: 1, discarded: 0, skipped: 0 })),
     discardAlternatives: vi.fn(() => of({ accepted: 0, discarded: 2, skipped: 0 })),
+    similar: vi.fn((id: string) => of(similar({ sourceId: id }))),
+    copyAlternatives: vi.fn(() => of({ copied: 3, skipped: 0 })),
   };
   const analysis = {
     summary: vi.fn(() => of({ alternatives, approved })),

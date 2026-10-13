@@ -49,6 +49,17 @@ export interface AlternativeDecisionResponse {
 /** "Use new" accepts the alternative, "Keep current" discards it. */
 export type AlternativeDecision = 'accept' | 'discard';
 
+/** `POST /api/review/alternatives/copy`: the source's accepted outcome becomes the targets' alternative. */
+export interface AlternativeCopyRequest {
+  sourceSuggestionId: string;
+  suggestionIds: string[];
+}
+
+export interface AlternativeCopyResponse {
+  copied: number;
+  skipped: number;
+}
+
 /** What a "Use new" or "Keep current" names: one member, or a whole group card. */
 export type AlternativeTarget = { member: SuggestionDto } | { group: ReviewGroupDto };
 
@@ -143,7 +154,12 @@ export function alternativeMessage(
     decision === 'accept'
       ? `Used the new result for ${n} ${n === 1 ? 'suggestion' : 'suggestions'}.`
       : `Kept the current result for ${n} ${n === 1 ? 'suggestion' : 'suggestions'}.`;
-  return r.skipped ? `${done} ${r.skipped} skipped: part of an apply that is still running.` : done;
+  return r.skipped ? `${done} ${skippedNote(r.skipped)}` : done;
+}
+
+/** Suggestions a decision left alone because an apply holds them. */
+export function skippedNote(n: number): string {
+  return `${n} skipped: part of an apply that is still running.`;
 }
 
 /** The note after "Use new" on an approved or applied suggestion. */

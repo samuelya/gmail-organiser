@@ -90,6 +90,16 @@ export class CardReanalyse {
     this.start(ids, true, () => this.confirmed(ids, note));
   }
 
+  /** The similar pending emails of an accepted re-analysis, with its comment; "Apply to similar" was the confirm. */
+  similar(ids: string[], comment?: string): void {
+    // The lookup's cap and a run's are separate limits: take the newest a run allows.
+    const taken = ids.slice(0, MAX_COMPARE);
+    if (taken.length === 0) return;
+    this.start(taken, false, () =>
+      this.analysis.startCompareRun({ suggestionIds: taken, ...(comment ? { comment } : {}) }),
+    );
+  }
+
   private confirmed(ids: string[], note?: string): Observable<AnalysisRunDto> {
     return openCompareConfirm(this.dialog, ids.length, false, note).pipe(
       switchMap((result) => this.analysis.startCompareRun({ suggestionIds: ids, ...result })),

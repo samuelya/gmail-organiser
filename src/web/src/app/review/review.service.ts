@@ -5,7 +5,12 @@ import { AnalysisRunDto } from '../analyse/analysis.models';
 import { QUIET_STATUSES } from '../core/error.interceptor';
 import { JobDto } from '../core/jobs.models';
 import { PagedDto } from '../core/paging.models';
-import { AlternativeDecisionRequest, AlternativeDecisionResponse } from './alternative.models';
+import {
+  AlternativeCopyRequest,
+  AlternativeCopyResponse,
+  AlternativeDecisionRequest,
+  AlternativeDecisionResponse,
+} from './alternative.models';
 import { mailTypesParam } from './mail-type-filter';
 import {
   ActionBatchDto,
@@ -20,6 +25,7 @@ import {
   ReviewSenderDto,
   ReviewTab,
   SenderPatternDto,
+  SimilarPendingDto,
   SuggestionDto,
 } from './review.models';
 
@@ -125,6 +131,18 @@ export class ReviewService {
     request: AlternativeDecisionRequest,
   ): Observable<AlternativeDecisionResponse> {
     return this.http.post<AlternativeDecisionResponse>('/api/review/alternatives/discard', request);
+  }
+
+  /** The source's sender's other pending emails whose outcome differs, across its cards. */
+  similar(id: string): Observable<SimilarPendingDto> {
+    return this.http.get<SimilarPendingDto>(
+      `/api/review/suggestions/${encodeURIComponent(id)}/similar`,
+    );
+  }
+
+  /** Copies the source's accepted outcome to the targets as their re-analysis result; `409` while a run is active. */
+  copyAlternatives(request: AlternativeCopyRequest): Observable<AlternativeCopyResponse> {
+    return this.http.post<AlternativeCopyResponse>('/api/review/alternatives/copy', request);
   }
 
   /** `202` with the batch and its job; `409` when nothing matching is approved. */
