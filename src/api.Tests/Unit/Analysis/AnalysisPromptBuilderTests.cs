@@ -22,7 +22,7 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v7");
+        template.Version.ShouldBe("analysis-v8");
         template.AsksMailType.ShouldBeTrue();
         template.Text.ShouldContain("`proposedNewLabel` (string or null)");
         template.Text.ShouldContain("`topicLabel` is the processor's organisation label plus `/<Merchant>`");
@@ -31,7 +31,7 @@ public sealed class AnalysisPromptBuilderTests
         template.Text.ShouldContain("Follow the past decisions for the same sender (for processor receipts, only for the same merchant).");
         template.Text.ShouldNotContain("1 to 3");
         Regex.Matches(template.Text, @"\{\{([a-zA-Z]+)\}\}").Select(m => m.Groups[1].Value).Distinct().Order(StringComparer.Ordinal)
-            .ShouldBe(["actionLabel", "attachments", "blockedLabels", "deleteLabel", "documentTypes", "emails", "labelTree", "mailTypes", "memory"]);
+            .ShouldBe(["actionLabel", "attachments", "blockedLabels", "deleteLabel", "documentTypes", "emails", "labelTree", "mailTypes", "memory", "ownerGuidance"]);
         template.Text.IndexOf("{{documentTypes}}", StringComparison.Ordinal)
             .ShouldBeLessThan(template.Text.IndexOf("{{memory}}", StringComparison.Ordinal));
     }

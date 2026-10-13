@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using GmailOrganiser.Data;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Policies.Prompts;
@@ -10,13 +9,18 @@ using Microsoft.Extensions.AI;
 namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>Turns a batch of emails plus context into the chat messages for one analysis call. No I/O.</summary>
-public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
+public sealed class AnalysisPromptBuilder(PromptTemplate template)
 {
     public const int MaxLabelTreeEntries = 500;
     public const string LabelsOmitted = "[more labels omitted]";
     public const string BodyStart = "<email_body>";
     public const string BodyEnd = "</email_body>";
     public const string MemoryHeading = "Similar past decisions by the person:";
+    public const string GuidanceHeading =
+        "Guidance from the person for this re-analysis. Follow it ahead of any past decisions for these emails: it may change "
+        + "which labels and flags fit, never the labels you must not use, the rules or the JSON format.";
+    public const string GuidanceStart = "<person_guidance>";
+    public const string GuidanceEnd = "</person_guidance>";
     public const string PolicyHeading = "Standing policies the person approved for these senders:";
     public const int MaxDocumentTypes = DocumentTypePath.MaxChildren;
     public const string DocumentTypesOff = "Document-type labels are switched off: always set `documentTypeLabel` to null.";
@@ -107,6 +111,7 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             ["emails"] = RenderEmails(input.Emails),
             ["actionLabel"] = OneLine(input.ActionLabel),
             ["deleteLabel"] = OneLine(input.DeleteLabel),
+            ["ownerGuidance"] = RenderOwnerGuidance(input.OwnerGuidance),
         };
 
         var (system, user) = template.Split();
@@ -116,6 +121,17 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             new ChatMessage(ChatRole.User, PromptTemplate.Substitute(user, values).Trim()),
         ];
     }
+
+    /// <summary>
+    /// The person's re-analysis comment (#561) between its tags, with a blank line before and after so the
+    /// <c>{{ownerGuidance}}</c> line sits between the memory and the emails; empty without a comment, which leaves the
+    /// prompt as it was. The comment arrives trimmed with <c>\n</c> line breaks (<see cref="AnalysisRunService.CheckComment"/>);
+    /// tags that could close the section or open a body are defused.
+    /// </summary>
+    internal static string RenderOwnerGuidance(string? comment) =>
+        string.IsNullOrWhiteSpace(comment)
+            ? ""
+            : $"\n{GuidanceHeading}\n{GuidanceStart}\n{DefuseBodyTags(comment)}\n{GuidanceEnd}\n";
 
     internal static string RenderLabelTree(IReadOnlyList<string> labels)
     {
@@ -244,9 +260,53 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         DefuseBodyTags(string.Join(' ', value.Split(['\r', '\n', '\v', '\f', '\u0085', '\u2028', '\u2029'],
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
 
-    /// <summary>Email text can't open or close a body block: every <c>email_body</c> tag variant loses its <c>&lt;</c>.</summary>
-    private static string DefuseBodyTags(string value) => BodyTagRegex().Replace(value, "[$1");
+    /// <summary>
+    /// Email text and the person's comment can't open or close a body block or the guidance section: every
+    /// <c>&lt;</c> that starts a lookalike of an <c>email_body</c> or <c>person_guidance</c> tag becomes <c>[</c>.
+    /// </summary>
+    private static string DefuseBodyTags(string value)
+    {
+        StringBuilder? sb = null;
+        for (var i = value.IndexOf('<'); i >= 0; i = value.IndexOf('<', i + 1))
+        {
+            if (IsTagLookalike(value, i + 1))
+            {
+                sb ??= new StringBuilder(value);
+                sb[i] = '[';
+            }
+        }
 
-    [GeneratedRegex(@"<(\s*/?\s*email_body)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex BodyTagRegex();
+        return sb?.ToString() ?? value;
+    }
+
+    private const string EmailBodyLetters = "emailbody";
+    private const string PersonGuidanceLetters = "personguidance";
+
+    /// <summary>
+    /// Reads the span after a <c>&lt;</c> up to the next <c>&lt;</c> or <c>&gt;</c> as its ASCII letters only, lower-cased,
+    /// and asks whether they start with a tag name (#573). Everything else is skipped, not matched: the <c>/</c>, separators,
+    /// and any invisible character in any plane, so no joiner, filler, selector or tag character can hide a tag.
+    /// </summary>
+    private static bool IsTagLookalike(string value, int start)
+    {
+        Span<char> letters = stackalloc char[PersonGuidanceLetters.Length];
+        var count = 0;
+        for (var i = start; i < value.Length && count < letters.Length; i++)
+        {
+            var c = value[i];
+            if (c is '<' or '>')
+            {
+                break;
+            }
+
+            if (char.IsAsciiLetter(c))
+            {
+                letters[count++] = char.ToLowerInvariant(c);
+            }
+        }
+
+        ReadOnlySpan<char> folded = letters[..count];
+        return folded.StartsWith(PersonGuidanceLetters, StringComparison.Ordinal)
+            || folded.StartsWith(EmailBodyLetters, StringComparison.Ordinal);
+    }
 }

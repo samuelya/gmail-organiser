@@ -266,7 +266,8 @@ public sealed partial class AnalysisRunJob
         var expected = emails.Select(e => e.Id).ToHashSet(StringComparer.Ordinal);
         var input = new PromptInput(
             emails, context.LabelTree, hints, attachmentsSection, context.Settings.ActionLabelName, context.Settings.DeleteLabelName,
-            context.Run.DocumentTypeParent, policies, context.LabelSet.Blocked, context.LabelSet.Locked);
+            context.Run.DocumentTypeParent, policies, context.LabelSet.Blocked, context.LabelSet.Locked,
+            context.Run.OwnerComment);
         var messages = context.Builder.Build(input);
         var extras = context.Builder.AllowedExtraLabels(input);
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);

@@ -16,7 +16,7 @@ namespace GmailOrganiser.Tests.Integration;
 
 /// <summary>Compare runs (#248): the current prompt over earlier suggestions, results stored as alternatives.</summary>
 [Collection(PostgresCollection.Name)]
-public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
+public sealed partial class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture postgres) : IClassFixture<ApiFactory>, IAsyncLifetime
 {
     private const string HintOnlyForB00 = "Hint-For-B00";
     private const string OtherNewsHint = "Hint-For-Other-News";
