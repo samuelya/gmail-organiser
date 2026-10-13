@@ -1,5 +1,13 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  input,
+  linkedSignal,
+  output,
+} from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import {
   alternativeDiff,
   alternativeSource,
@@ -16,7 +24,7 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
  */
 @Component({
   selector: 'app-alternative-compare',
-  imports: [LabelChangeChip, MatButtonModule],
+  imports: [LabelChangeChip, MatButtonModule, MatTooltipModule],
   template: `
     @let a = alternative();
     @let c = current();
@@ -31,6 +39,14 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
         <span class="font-medium">{{ title() }}</span>
         @if (source(); as s) {
           <span class="muted" data-testid="alternative-source">{{ s }}</span>
+        }
+        @if (copied()) {
+          <span
+            class="badge"
+            matTooltip="Copied from an email you accepted; no LLM"
+            data-testid="alternative-copied"
+            >Copied<span class="sr-only">: from an email you accepted; no LLM</span></span
+          >
         }
       </div>
       @if (a.mixed) {
@@ -120,6 +136,18 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
         @if (a.reason) {
           <p class="muted m-0" data-testid="alternative-reason">{{ a.reason }}</p>
         }
+        @if (comment(); as text) {
+          <button
+            type="button"
+            class="comment muted"
+            [class.open]="commentOpen()"
+            [attr.aria-expanded]="commentOpen()"
+            (click)="commentOpen.set(!commentOpen())"
+            data-testid="alternative-comment"
+          >
+            Your comment: {{ text }}
+          </button>
+        }
       }
       <div class="flex flex-wrap gap-2">
         <button
@@ -167,6 +195,24 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
       --mat-chip-outline-color: var(--mat-sys-primary);
       --mat-chip-label-text-weight: 600;
     }
+    .comment {
+      display: block;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: none;
+      font: inherit;
+      text-align: start;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .comment.open {
+      white-space: pre-line;
+      overflow-wrap: anywhere;
+    }
     .diff-text {
       color: var(--mat-sys-primary);
       font-weight: 600;
@@ -193,4 +239,17 @@ export class AlternativeCompare {
   );
   readonly currentConfidence = computed(() => confidenceRange(this.current()));
   readonly newConfidence = computed(() => percent(this.alternative().confidence));
+  /**
+   * A mixed group shows none of its alternatives' own fields: the comment and the Copied chip belong to
+   * one shown result only.
+   */
+  readonly copied = computed(() => !this.alternative().mixed && !!this.alternative().copied);
+  readonly comment = computed(() =>
+    this.alternative().mixed ? null : this.alternative().comment || null,
+  );
+  /** The comment shows on one line until opened; opened, it keeps its line breaks. */
+  readonly commentOpen = linkedSignal(() => {
+    this.comment();
+    return false;
+  });
 }

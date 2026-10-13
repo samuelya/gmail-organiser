@@ -20,6 +20,10 @@ export interface SuggestionAlternativeDto {
   mixed: boolean;
   /** Listed members with an alternative (1 for a suggestion). */
   count: number;
+  /** The comment the person typed for the re-analysis that produced it; free text, shown as text only. */
+  comment?: string | null;
+  /** Copied from an email the person accepted, not an LLM answer. */
+  copied?: boolean;
 }
 
 /** A group in an alternative decision; `status` is the viewed tab's (pending when left out). */
