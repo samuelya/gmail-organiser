@@ -9,6 +9,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatRadioModule } from '@angular/material/radio';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { RUN_ACTIVE_TOOLTIP } from '../analyse/compare-run';
+import { plural } from '../clean-up/clean-up.models';
 import {
   checkComment,
   commentLength,
@@ -32,14 +33,12 @@ export type ApplySimilarResult = { mode: 'reanalyse'; comment?: string } | { mod
 
 /** What the dialog covers: the sender's pending emails, the results it replaces and the cap. */
 export function applySimilarSummary(s: SimilarPendingDto): string[] {
-  const noun = s.count === 1 ? 'pending email' : 'pending emails';
-  const lines = [`${s.count.toLocaleString()} ${noun} from this sender.`];
+  const lines = [`${plural(s.count, 'pending email')} from this sender.`];
   if (s.truncated)
     lines.push(`Only the newest ${s.suggestionIds.length.toLocaleString()} are taken.`);
   if (s.withAlternative > 0) {
-    const have = s.withAlternative === 1 ? 'already has' : 'already have';
     lines.push(
-      `${s.withAlternative.toLocaleString()} ${have} a re-analysis result that will be replaced.`,
+      `${plural(s.withAlternative, 'already has', 'already have')} a re-analysis result that will be replaced.`,
     );
   }
   return lines;

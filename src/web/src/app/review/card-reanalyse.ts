@@ -92,9 +92,11 @@ export class CardReanalyse {
 
   /** The similar pending emails of an accepted re-analysis, with its comment; "Apply to similar" was the confirm. */
   similar(ids: string[], comment?: string): void {
-    if (ids.length === 0) return;
-    this.start(ids, false, () =>
-      this.analysis.startCompareRun({ suggestionIds: ids, ...(comment ? { comment } : {}) }),
+    // The lookup's cap and a run's are separate limits: take the newest a run allows.
+    const taken = ids.slice(0, MAX_COMPARE);
+    if (taken.length === 0) return;
+    this.start(taken, false, () =>
+      this.analysis.startCompareRun({ suggestionIds: taken, ...(comment ? { comment } : {}) }),
     );
   }
 

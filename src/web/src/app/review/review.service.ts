@@ -8,7 +8,6 @@ import { PagedDto } from '../core/paging.models';
 import {
   AlternativeCopyRequest,
   AlternativeCopyResponse,
-  AlternativeDecision,
   AlternativeDecisionRequest,
   AlternativeDecisionResponse,
 } from './alternative.models';
@@ -132,16 +131,6 @@ export class ReviewService {
     request: AlternativeDecisionRequest,
   ): Observable<AlternativeDecisionResponse> {
     return this.http.post<AlternativeDecisionResponse>('/api/review/alternatives/discard', request);
-  }
-
-  /** "Use new" or "Keep current". */
-  decideAlternatives(
-    decision: AlternativeDecision,
-    request: AlternativeDecisionRequest,
-  ): Observable<AlternativeDecisionResponse> {
-    return decision === 'accept'
-      ? this.acceptAlternatives(request)
-      : this.discardAlternatives(request);
   }
 
   /** The source's sender's other pending emails whose outcome differs, across its cards. */

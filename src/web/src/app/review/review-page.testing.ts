@@ -6,7 +6,7 @@ import { MatTooltip } from '@angular/material/tooltip';
 import { By } from '@angular/platform-browser';
 import { provideLocationMocks } from '@angular/common/testing';
 import { provideRouter, Router } from '@angular/router';
-import { Observable, of, Subject } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { PoliciesService } from '../policies/policies.service';
 import { AnalysisService } from '../analyse/analysis.service';
 import { ExternalReviewDto } from '../core/claude.models';
@@ -14,11 +14,7 @@ import { ClaudeService } from '../core/claude.service';
 import { isActiveJob, JobDto, JobStatus } from '../core/jobs.models';
 import { JobsService } from '../core/jobs.service';
 import { SettingsService } from '../settings/settings.service';
-import {
-  AlternativeDecisionRequest,
-  AlternativeDecisionResponse,
-  SuggestionAlternativeDto,
-} from './alternative.models';
+import { SuggestionAlternativeDto } from './alternative.models';
 import { ReviewPage } from './review-page.component';
 import {
   REVIEW_EDIT_DIALOG,
@@ -181,8 +177,6 @@ export class FakeJobs {
   }
 }
 
-type Decide = (request: AlternativeDecisionRequest) => Observable<AlternativeDecisionResponse>;
-
 export const similar = (over: Partial<SimilarPendingDto> = {}): SimilarPendingDto => ({
   sourceId: 'a',
   count: 0,
@@ -232,11 +226,8 @@ export async function renderReviewPage(
       }),
     ),
     job: vi.fn(() => of(job('completed', { version: 5 }))),
-    acceptAlternatives: vi.fn<Decide>(() => of({ accepted: 1, discarded: 0, skipped: 0 })),
-    discardAlternatives: vi.fn<Decide>(() => of({ accepted: 0, discarded: 2, skipped: 0 })),
-    decideAlternatives: vi.fn((decision: string, request: AlternativeDecisionRequest) =>
-      decision === 'accept' ? api.acceptAlternatives(request) : api.discardAlternatives(request),
-    ),
+    acceptAlternatives: vi.fn(() => of({ accepted: 1, discarded: 0, skipped: 0 })),
+    discardAlternatives: vi.fn(() => of({ accepted: 0, discarded: 2, skipped: 0 })),
     similar: vi.fn((id: string) => of(similar({ sourceId: id }))),
     copyAlternatives: vi.fn(() => of({ copied: 3, skipped: 0 })),
   };
