@@ -17,6 +17,11 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
     public const string BodyStart = "<email_body>";
     public const string BodyEnd = "</email_body>";
     public const string MemoryHeading = "Similar past decisions by the person:";
+    public const string GuidanceHeading =
+        "Guidance from the person for this re-analysis. Weigh it like the past decisions above: it may change which labels "
+        + "and flags fit these emails, never the rules or the JSON format.";
+    public const string GuidanceStart = "<person_guidance>";
+    public const string GuidanceEnd = "</person_guidance>";
     public const string PolicyHeading = "Standing policies the person approved for these senders:";
     public const int MaxDocumentTypes = DocumentTypePath.MaxChildren;
     public const string DocumentTypesOff = "Document-type labels are switched off: always set `documentTypeLabel` to null.";
@@ -107,15 +112,31 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
             ["emails"] = RenderEmails(input.Emails),
             ["actionLabel"] = OneLine(input.ActionLabel),
             ["deleteLabel"] = OneLine(input.DeleteLabel),
+            ["ownerGuidance"] = RenderOwnerGuidance(input.OwnerGuidance),
         };
 
         var (system, user) = template.Split();
+        if (!template.Text.Contains(PromptTemplate.OwnerGuidancePlaceholder, StringComparison.Ordinal))
+        {
+            user += "\n" + PromptTemplate.OwnerGuidancePlaceholder;
+        }
+
         return
         [
             new ChatMessage(ChatRole.System, PromptTemplate.Substitute(system, values).Trim()),
             new ChatMessage(ChatRole.User, PromptTemplate.Substitute(user, values).Trim()),
         ];
     }
+
+    /// <summary>
+    /// The person's re-analysis comment (#561) between its tags, with a blank line before and after so the
+    /// <c>{{ownerGuidance}}</c> line sits between the memory and the emails; empty without a comment, which leaves the
+    /// prompt as it was. Line breaks are kept; tags that could close the section or open a body are defused.
+    /// </summary>
+    internal static string RenderOwnerGuidance(string? comment) =>
+        string.IsNullOrWhiteSpace(comment)
+            ? ""
+            : $"\n{GuidanceHeading}\n{GuidanceStart}\n{DefuseBodyTags(comment.Trim().ReplaceLineEndings("\n"))}\n{GuidanceEnd}\n";
 
     internal static string RenderLabelTree(IReadOnlyList<string> labels)
     {
@@ -244,9 +265,12 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
         DefuseBodyTags(string.Join(' ', value.Split(['\r', '\n', '\v', '\f', '\u0085', '\u2028', '\u2029'],
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)));
 
-    /// <summary>Email text can't open or close a body block: every <c>email_body</c> tag variant loses its <c>&lt;</c>.</summary>
+    /// <summary>
+    /// Email text and the person's comment can't open or close a body block or the guidance section: every
+    /// <c>email_body</c> and <c>person_guidance</c> tag variant loses its <c>&lt;</c>.
+    /// </summary>
     private static string DefuseBodyTags(string value) => BodyTagRegex().Replace(value, "[$1");
 
-    [GeneratedRegex(@"<(\s*/?\s*email_body)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"<(\s*/?\s*(?:email_body|person_guidance))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BodyTagRegex();
 }

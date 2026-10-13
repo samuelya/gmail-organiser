@@ -58,6 +58,7 @@ public sealed record SenderPolicyHint(string Scope, string ScopeKey, bool IsMixe
 
 /// <param name="DocumentTypeParent">The document-type parent label; null or blank tells the model the feature is off.</param>
 /// <param name="Policies">Approved policies of the emails' senders, lists or domains, rendered with the memory.</param>
+/// <param name="OwnerGuidance">The person's comment on a compare run (#561); null for analyse runs and runs without one.</param>
 public sealed record PromptInput(
     IReadOnlyList<EmailForPrompt> Emails,
     IReadOnlyList<string> LabelTree,
@@ -68,7 +69,8 @@ public sealed record PromptInput(
     string? DocumentTypeParent = null,
     IReadOnlyList<SenderPolicyHint>? Policies = null,
     IReadOnlyCollection<string>? BlockedLabels = null,
-    bool TaxonomyLocked = false);
+    bool TaxonomyLocked = false,
+    string? OwnerGuidance = null);
 
 /// <summary>A validated suggestion for one email; <see cref="Confidence"/> is always within [0, 1].</summary>
 /// <param name="DocumentTypeLabel">The second label under the document-type parent; null when none or the feature is off.</param>
