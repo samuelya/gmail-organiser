@@ -93,6 +93,26 @@ public sealed class ReviewSimilarPendingTests(ApiFactory factory, PostgresFixtur
     }
 
     [Fact]
+    public async Task Outcome_equality_includes_extras_and_mail_type_and_ignores_document_type_case()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId.StartsWith("a0")).ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.DocumentTypeLabel, "Invoice")
+                .SetProperty(x => x.ExtraLabels, new[] { "Extra" })
+                .SetProperty(x => x.MailType, MailType.Receipt), Ct);
+            await UpdateAsync(db, "a01", s => s.SetProperty(x => x.DocumentTypeLabel, " invoice"));
+            await UpdateAsync(db, "a02", s => s.SetProperty(x => x.ExtraLabels, new[] { "Extra", "More" }));
+            await UpdateAsync(db, "a03", s => s.SetProperty(x => x.MailType, MailType.Personal));
+            await UpdateAsync(db, "a04", s => s.SetProperty(x => x.ExtraLabels, Array.Empty<string>()));
+        }
+
+        var similar = await SimilarAsync((await IdsAsync("a00"))[0]);
+
+        similar.SuggestionIds.ShouldBe(await IdsAsync("a02", "a03", "a04"));
+    }
+
+    [Fact]
     public async Task Unknown_source_is_not_found()
     {
         (await h.GetAsync($"/api/review/suggestions/{Guid.CreateVersion7()}/similar")).StatusCode.ShouldBe(HttpStatusCode.NotFound);

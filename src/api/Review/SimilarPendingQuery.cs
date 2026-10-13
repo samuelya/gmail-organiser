@@ -19,26 +19,27 @@ public sealed record SimilarPendingDto(Guid SourceId, int Count, Guid[] Suggesti
 public sealed class SimilarPendingQuery(AppDbContext db)
 {
     /// <summary>The similar pending suggestions of <paramref name="id"/>, or null when it does not exist.</summary>
+    /// <remarks>
+    /// Outcome equality matches memory's (#522): topic and document type trimmed and case-insensitive, extras as arrays
+    /// (canonical, so array equality is outcome equality), mail type, needsAction and toBeDeleted. The source row is joined
+    /// in the same query so both sides are normalised by Postgres.
+    /// </remarks>
     public async Task<SimilarPendingDto?> GetAsync(Guid id, CancellationToken ct)
     {
-        var source = await db.Suggestions.AsNoTracking()
-            .Where(s => s.Id == id)
-            .Select(s => new { s.SenderAddress, s.TopicLabel, s.DocumentTypeLabel, s.NeedsAction, s.ToBeDeleted })
-            .SingleOrDefaultAsync(ct);
-        if (source is null)
-        {
-            return null;
-        }
-
-        var topic = source.TopicLabel.Trim().ToLower();
-        var documentType = source.DocumentTypeLabel;
-        var similar = db.Suggestions.AsNoTracking().Where(s => s.Status == SuggestionStatus.Pending
-            && s.SenderAddress == source.SenderAddress
-            && s.Id != id
-            && !(s.TopicLabel.Trim().ToLower() == topic
-                && s.DocumentTypeLabel == documentType
-                && s.NeedsAction == source.NeedsAction
-                && s.ToBeDeleted == source.ToBeDeleted));
+        var similar =
+            from src in db.Suggestions.AsNoTracking()
+            where src.Id == id
+            from s in db.Suggestions.AsNoTracking()
+            where s.Status == SuggestionStatus.Pending
+                && s.SenderAddress == src.SenderAddress
+                && s.Id != src.Id
+                && !(s.TopicLabel.Trim().ToLower() == src.TopicLabel.Trim().ToLower()
+                    && s.DocumentTypeLabel!.Trim().ToLower() == src.DocumentTypeLabel!.Trim().ToLower()
+                    && s.ExtraLabels == src.ExtraLabels
+                    && s.MailType == src.MailType
+                    && s.NeedsAction == src.NeedsAction
+                    && s.ToBeDeleted == src.ToBeDeleted)
+            select s;
         var max = SettingsValidation.MaxAnalysisDefaultCount;
         var rows = await similar
             .Join(db.Messages, s => s.MessageId, m => m.Id, (s, m) => new { s.Id, m.InternalDate })
@@ -51,6 +52,11 @@ public sealed class SimilarPendingQuery(AppDbContext db)
                 Total = similar.Count(),
             })
             .ToListAsync(ct);
+        if (rows.Count == 0 && !await db.Suggestions.AnyAsync(s => s.Id == id, ct))
+        {
+            return null;
+        }
+
         var count = rows.Count == 0 ? 0 : rows[0].Total;
         return new SimilarPendingDto(id, count, [.. rows.Select(r => r.Id)], rows.Count(r => r.HasAlternative), count > rows.Count);
     }
