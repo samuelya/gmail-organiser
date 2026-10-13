@@ -79,13 +79,13 @@ public static class RulesEndpoints
         }
     }
 
-    /// <summary>Deletes the filter in Gmail and marks its row; 404 unknown, 409 already deleted.</summary>
+    /// <summary>Deletes the filter, with its group's members (#557), in Gmail and marks their rows; 404 unknown, 409 already deleted.</summary>
     private static async Task<Results<NoContent, NotFound, ProblemHttpResult>> DeleteFilterAsync(
         string id, FilterService filters, CancellationToken ct)
     {
         try
         {
-            return await filters.DeleteAsync(id, ct) switch
+            return await filters.DeleteGroupAsync(id, ct) switch
             {
                 { Outcome: FilterOutcome.Ok } => TypedResults.NoContent(),
                 { Outcome: FilterOutcome.NotFound } => TypedResults.NotFound(),

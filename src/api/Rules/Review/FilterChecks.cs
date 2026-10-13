@@ -63,7 +63,7 @@ public static partial class FilterChecks
         }
 
         findings.AddRange(Mergeable(distinct, names));
-        findings.AddRange(PolicyFindings(distinct, policyProposals ?? [], labels, names));
+        findings.AddRange(PolicyFindings(Collapsed(distinct), policyProposals ?? [], labels, names));
         return findings;
     }
 
@@ -134,17 +134,76 @@ public static partial class FilterChecks
                 continue;
             }
 
-            // Gmail refuses a filter equal to an existing one, so a member that already has the union is kept.
-            var keeper = members.FirstOrDefault(f => f.ActionKey == ActionKey(union));
-            var text = $"{Quote(members)} have the same criteria and different actions; one filter can {Describe(union, names)}.";
+            // Gmail allows one user label per filter (#557): when every member already is one of the union's filters, they
+            // are a split group and there is nothing to merge.
+            if (SplitFix(FilterFixKind.MergeActions, members, members[0].Criteria, union) is not { } fix)
+            {
+                continue;
+            }
+
+            var one = union.UserLabelIds.Count > 1 ? "one filter per label" : "one filter";
             yield return new(
                 FilterFindingKind.Overlap,
                 [.. members.Select(f => f.Row.Id)],
-                text,
-                keeper is null
-                    ? new FilterFix(FilterFixKind.MergeActions, [.. members.Select(f => f.Row.Id)], new(members[0].Criteria, union))
-                    : new FilterFix(FilterFixKind.MergeActions, [.. members.Where(f => f != keeper).Select(f => f.Row.Id)]));
+                $"{Quote(members)} have the same criteria and different actions; {one} can {Describe(union, names)}.",
+                fix);
         }
+    }
+
+    /// <summary>
+    /// The fix that replaces <paramref name="members"/> by <paramref name="criteria"/> with <paramref name="action"/>, one
+    /// Gmail filter per user label (#557). A member that already is one of those filters is kept, as Gmail refuses a
+    /// filter equal to an existing one, and the rest of them is created; null when nothing would change.
+    /// </summary>
+    private static FilterFix? SplitFix(
+        FilterFixKind kind, IEnumerable<Parsed> members, GmailFilterCriteria criteria, GmailFilterAction action, Guid? policyId = null)
+    {
+        var rows = members.SelectMany(f => f.Members ?? [f]).ToList();
+        var key = Normalise(criteria);
+        var parts = action.SplitPerUserLabel().Select(p => (Action: p, Key: ActionKey(p))).ToList();
+        var keepers = rows.Where(f => f.Key == key && parts.Any(p => p.Key == f.ActionKey)).DistinctBy(f => f.ActionKey).ToList();
+        var create = parts.Where(p => !keepers.Any(k => k.ActionKey == p.Key)).Select(p => p.Action).ToList();
+        var deletes = rows.Except(keepers).ToList();
+        if (create.Count == 0 && deletes.Count == 0)
+        {
+            return null;
+        }
+
+        return new FilterFix(
+            kind,
+            [.. deletes.Select(f => f.Row.Id)],
+            create.Count == 0
+                ? null
+                : new(criteria, new([.. create.SelectMany(p => p.AddLabelIds).Distinct(StringComparer.Ordinal)], action.RemoveLabelIds)),
+            policyId);
+    }
+
+    /// <summary>
+    /// The filters with a split group's members (#557) as one: same criteria, no forward or missing label, and each one
+    /// of the filters their union splits into. The policy checks judge the group's union, as they would one filter.
+    /// </summary>
+    private static List<Parsed> Collapsed(List<Parsed> filters)
+    {
+        var result = new List<Parsed>();
+        foreach (var group in filters.GroupBy(f => f.Key))
+        {
+            var members = group.ToList();
+            var union = new GmailFilterAction(
+                [.. members.SelectMany(f => f.Action.AddLabelIds).Distinct(StringComparer.Ordinal)],
+                [.. members.SelectMany(f => f.Action.RemoveLabelIds).Distinct(StringComparer.Ordinal)]);
+            var parts = union.SplitPerUserLabel().Select(ActionKey).ToHashSet(StringComparer.Ordinal);
+            if (members.Count > 1 && members.All(f => !f.Forwards && f.Missing.Count == 0 && parts.Contains(f.ActionKey))
+                && members.Select(f => f.ActionKey).Distinct(StringComparer.Ordinal).Count() == parts.Count)
+            {
+                result.Add(members[0] with { Action = union, ActionKey = ActionKey(union), Members = members });
+            }
+            else
+            {
+                result.AddRange(members);
+            }
+        }
+
+        return result;
     }
 
     private static IEnumerable<FilterFindingDraft> Mergeable(List<Parsed> filters, Dictionary<string, string> names)
@@ -208,8 +267,11 @@ public static partial class FilterChecks
 
     private sealed record Parsed(
         FilterRow Row, GmailFilterCriteria Criteria, GmailFilterAction Action, GmailFilterCriteria Key, string ActionKey,
-        IReadOnlyList<string> Missing)
+        IReadOnlyList<string> Missing, IReadOnlyList<Parsed>? Members = null)
     {
+        /// <summary>The filter's id, or every member's of a split group (#557).</summary>
+        public IReadOnlyList<string> Ids => Members?.Select(m => m.Row.Id).ToList() ?? [Row.Id];
+
         public bool Forwards => !string.IsNullOrEmpty(Action.Forward);
 
         /// <summary>The action sends mail to Trash or Spam, which the mailbox fetch never stores.</summary>

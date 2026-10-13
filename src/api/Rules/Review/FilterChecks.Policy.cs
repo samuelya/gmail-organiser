@@ -47,10 +47,10 @@ public static partial class FilterChecks
                 var missing = own.Action.AddLabelIds.Except(f.Action.AddLabelIds, StringComparer.Ordinal).Select(id => names.GetValueOrDefault(id, id));
                 yield return new(
                     FilterFindingKind.PolicyConflict,
-                    [f.Row.Id],
+                    [.. f.Ids],
                     $"{Quote([f])} is the filter of the policy for '{own.Proposal.SenderAddress}' but doesn't add {string.Join(", ", missing)}, "
                     + $"which the policy adds now; replace it with the policy's filter.{own.MissingNote}",
-                    new FilterFix(FilterFixKind.Relabel, [f.Row.Id], new(own.Criteria, own.Action), own.Proposal.PolicyId));
+                    SplitFix(FilterFixKind.Relabel, [f], own.Criteria, own.Action, own.Proposal.PolicyId) ?? NoFix);
             }
         }
 
@@ -104,9 +104,9 @@ public static partial class FilterChecks
 
                 yield return new(
                     FilterFindingKind.PolicyConflict,
-                    [f.Row.Id],
+                    [.. f.Ids],
                     text,
-                    new FilterFix(FilterFixKind.Relabel, [f.Row.Id], new(target.Criteria, target.Action), target.Proposal.PolicyId));
+                    SplitFix(FilterFixKind.Relabel, [f], target.Criteria, target.Action, target.Proposal.PolicyId) ?? NoFix);
             }
         }
 
@@ -114,11 +114,11 @@ public static partial class FilterChecks
         {
             yield return new(
                 FilterFindingKind.OverlapsPolicy,
-                [.. members.Select(f => f.Row.Id)],
+                [.. members.SelectMany(f => f.Ids)],
                 $"{Quote(members)} {(members.Count == 1 ? "is" : "are")} within the filter the policy for '{target.Proposal.SenderAddress}' "
                 + $"proposes ('{target.Query}'), which would also {Describe(target.Action, names)}; that one filter can replace "
                 + $"{(members.Count == 1 ? "it" : "them")}.{target.MissingNote}",
-                new FilterFix(FilterFixKind.Merge, [.. members.Select(f => f.Row.Id)], new(target.Criteria, target.Action), target.Proposal.PolicyId));
+                SplitFix(FilterFixKind.Merge, members, target.Criteria, target.Action, target.Proposal.PolicyId) ?? NoFix);
         }
     }
 

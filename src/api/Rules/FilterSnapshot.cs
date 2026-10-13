@@ -97,13 +97,14 @@ public sealed class FilterSnapshot(
             .Where(s => s.Id == FetchStateRow.SingletonId)
             .Select(s => s.FiltersSyncedAt)
             .SingleOrDefaultAsync(ct);
+        // Gmail's limit counts every member of a group.
         var activeCount = await db.Filters.CountAsync(r => r.DeletedAt == null, ct);
         var shown = (await db.Filters.AsNoTracking().Where(r => includeDeleted || r.DeletedAt == null).ToListAsync(ct))
             .OrderBy(r => r.CriteriaSummary, StringComparer.OrdinalIgnoreCase)
             .ThenBy(r => r.Id, StringComparer.Ordinal)
             .ToList();
         var names = shown.Count == 0 ? new Dictionary<string, string>(StringComparer.Ordinal) : await LabelNamesAsync(ct);
-        return new FilterListDto(syncedAt, activeCount, GmailFilterLimit, [.. shown.Select(r => ToDto(r, names))]);
+        return new FilterListDto(syncedAt, activeCount, GmailFilterLimit, [.. Groups(shown).Select(g => ToDto(g, names))]);
     }
 
     /// <summary>
@@ -156,22 +157,39 @@ public sealed class FilterSnapshot(
     public static FilterDto ToDto(FilterRow row, IReadOnlyDictionary<string, string> labelNames)
     {
         ArgumentNullException.ThrowIfNull(row);
+        return ToDto([row], labelNames);
+    }
+
+    /// <summary>One entry for a group's members (#557), the first standing for all, with every member's labels.</summary>
+    public static FilterDto ToDto(IReadOnlyList<FilterRow> group, IReadOnlyDictionary<string, string> labelNames)
+    {
+        ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(labelNames);
+        var row = group[0];
         var c = row.ReadCriteria();
-        var a = row.ReadAction();
+        var actions = group.Select(r => r.ReadAction()).ToList();
+        var add = actions.SelectMany(a => a.AddLabelIds).Distinct(StringComparer.Ordinal).ToList();
+        var remove = actions.SelectMany(a => a.RemoveLabelIds).Distinct(StringComparer.Ordinal).ToList();
         var criteria = new FilterCriteriaDto(
             c.From, c.To, c.Subject, c.Query, c.NegatedQuery, c.HasAttachment, c.ExcludeChats, c.Size,
             c.SizeComparison?.ToGmailString());
         var action = new FilterActionDto(
-            [.. a.AddLabelIds.Select(id => new LabelRefDto(id, labelNames.GetValueOrDefault(id)))],
-            a.RemoveLabelIds,
-            a.RemoveLabelIds.Contains("INBOX", StringComparer.Ordinal),
-            a.RemoveLabelIds.Contains("UNREAD", StringComparer.Ordinal),
-            !string.IsNullOrEmpty(a.Forward));
+            [.. add.Select(id => new LabelRefDto(id, labelNames.GetValueOrDefault(id)))],
+            remove,
+            remove.Contains("INBOX", StringComparer.Ordinal),
+            remove.Contains("UNREAD", StringComparer.Ordinal),
+            actions.Any(a => !string.IsNullOrEmpty(a.Forward)));
         return new FilterDto(
-            row.Id, criteria, row.CriteriaSummary, action, row.CreatedByApp, row.FirstSeenAt, row.DeletedAt, row.DeletedByApp,
-            row.RestoredFrom);
+            row.Id, criteria, row.CriteriaSummary, action, row.CreatedByApp, group.Min(r => r.FirstSeenAt), row.DeletedAt,
+            row.DeletedByApp, row.RestoredFrom, [.. group.Select(r => r.Id)]);
     }
+
+    /// <summary>
+    /// Rows grouped as the list shows them: a group's members (#557) deleted together, or still active, are one entry,
+    /// in the order of their first member; any other row is its own.
+    /// </summary>
+    public static IEnumerable<IReadOnlyList<FilterRow>> Groups(IEnumerable<FilterRow> rows) =>
+        rows.GroupBy(r => (r.GroupId, r.GroupId is null ? r.Id : "", r.DeletedAt)).Select(g => (IReadOnlyList<FilterRow>)[.. g]);
 
     /// <summary>Label names by id; empty when Gmail cannot be reached.</summary>
     internal async Task<Dictionary<string, string>> LabelNamesAsync(CancellationToken ct) =>
