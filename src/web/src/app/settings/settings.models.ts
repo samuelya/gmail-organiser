@@ -101,7 +101,7 @@ export const PROMPT_PLACEHOLDERS: readonly { name: string; help: string }[] = [
   { name: '{{memory}}', help: 'Past decisions for similar senders.' },
   {
     name: '{{ownerGuidance}}',
-    help: 'Where your re-analysis comment goes. If omitted, it is inserted before the emails.',
+    help: 'Where your re-analysis comment goes. If omitted, it is inserted at the start of the {{emails}} line.',
   },
   { name: '{{attachments}}', help: 'Attachment names and types.' },
   { name: '{{actionLabel}}', help: 'The action label name from Settings.' },
