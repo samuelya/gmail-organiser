@@ -88,26 +88,38 @@ describe('AlternativeCompare', () => {
     expect(members).toHaveBeenCalled();
   });
 
-  it('shows the comment that produced the result as text, one truncated line with the full text in a tooltip', async () => {
-    const long = `<b>Synthetic</b> comment ${'word '.repeat(60)}end`;
+  it('shows the comment as text on one line and opens it, line breaks kept, on click', async () => {
+    const long = `<b>Synthetic</b> comment\nsecond line ${'word '.repeat(60)}end`;
     const { fixture, q } = await render(alternative({ comment: long }));
     const line = q('alternative-comment')!;
-    expect(line.textContent!.trim()).toBe(`Your comment: ${long.trim()}`);
+    expect(line.tagName).toBe('BUTTON');
+    expect(line.textContent).toContain('Your comment: <b>Synthetic</b> comment');
     expect(line.querySelector('b')).toBeNull();
-    expect(line.classList).toContain('truncate');
-    const tip = fixture.debugElement
-      .query((d) => d.attributes['data-testid'] === 'alternative-comment')
-      .injector.get(MatTooltip);
-    expect(tip.message).toBe(long);
+    expect(line.getAttribute('aria-expanded')).toBe('false');
+    expect(getComputedStyle(line).whiteSpace).toBe('nowrap');
+    expect(getComputedStyle(line).overflow).toBe('hidden');
+    expect(getComputedStyle(line).textOverflow).toBe('ellipsis');
+    line.click();
+    await fixture.whenStable();
+    expect(line.getAttribute('aria-expanded')).toBe('true');
+    expect(getComputedStyle(line).whiteSpace).toBe('pre-line');
   });
 
   it('shows a Copied chip with its tooltip when copied', async () => {
     const { fixture, q } = await render(alternative({ copied: true }));
-    expect(q('alternative-copied')!.textContent!.trim()).toBe('Copied');
+    expect(q('alternative-copied')!.textContent).toContain('Copied');
     const tip = fixture.debugElement
       .query((d) => d.attributes['data-testid'] === 'alternative-copied')
       .injector.get(MatTooltip);
     expect(tip.message).toBe('Copied from an email you accepted; no LLM');
+    expect(q('alternative-copied')!.hasAttribute('tabindex')).toBe(false);
+  });
+
+  it('a mixed group shows neither the comment nor the chip', async () => {
+    const { q } = await render(alternative({ copied: true, comment: 'x', mixed: true, count: 2 }));
+    expect(q('alternative-mixed')).not.toBeNull();
+    expect(q('alternative-comment')).toBeNull();
+    expect(q('alternative-copied')).toBeNull();
   });
 
   it('shows neither the comment nor the chip when neither is set', async () => {
