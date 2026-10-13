@@ -129,6 +129,81 @@ public sealed class FilterGroupTests(ApiFactory factory, PostgresFixture postgre
             (f.Kind == FilterFindingKind.Duplicate || f.Kind == FilterFindingKind.Overlap) && f.FilterIds.Intersect(filter.FilterIds).Any());
     }
 
+    [Fact]
+    public async Task Retargeting_a_member_onto_a_label_its_group_already_has_only_deletes_it()
+    {
+        var filter = await CreatedAsync(Topic, ExtraA);
+        var (topic, extraA) = (filter.Action.AddLabels[0].Id, filter.Action.AddLabels[1].Id);
+        var member = (await ShopFiltersAsync()).Single(f => f.Action.AddLabelIds.Contains(extraA));
+
+        var result = await WithFilterServiceAsync(s => s.RetargetAsync(member.Id, extraA, topic, Ct));
+
+        result.Outcome.ShouldBe(FilterOutcome.Ok);
+        (await ShopFiltersAsync()).ShouldHaveSingleItem().Action.AddLabelIds.ShouldBe([topic]);
+    }
+
+    [Fact]
+    public async Task Restoring_a_member_deleted_alone_rejoins_its_group()
+    {
+        var filter = await CreatedAsync(Topic, ExtraA);
+        var member = filter.FilterIds[1];
+        (await WithFilterServiceAsync(s => s.DeleteAsync(member, Ct))).Outcome.ShouldBe(FilterOutcome.Ok);
+
+        (await Client().PostAsync($"/api/rules/filters/{member}/restore", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        (await ListAsync()).Filters.Single(f => f.Criteria.From == Shop).FilterIds.Count.ShouldBe(2);
+        await using var db = postgres.CreateDbContext();
+        var group = (await db.Filters.SingleAsync(r => r.Id == filter.FilterIds[0], Ct)).GroupId;
+        (await db.Filters.SingleAsync(r => r.RestoredFrom == member, Ct)).GroupId.ShouldBe(group);
+    }
+
+    [Fact]
+    public async Task Applying_a_fix_whose_split_filters_already_exist_reuses_them_and_only_deletes()
+    {
+        var filter = await CreatedAsync(Topic, ExtraA);
+        var old = (await CreatedAsync(ExtraB)).Id;
+        var fix = new FilterFix(FilterFixKind.MergeActions, [old], new(
+            new GmailFilterCriteria(From: Shop),
+            new GmailFilterAction([.. filter.Action.AddLabels.Select(l => l.Id)], ["INBOX", "UNREAD"])));
+        var findingId = await AddFindingAsync(fix, [.. filter.FilterIds, old]);
+
+        var response = await Client().PostAsync($"/api/rules/filters/findings/{findingId}/apply", null, Ct);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await ShopFiltersAsync()).Select(f => f.Id).ShouldBe(filter.FilterIds, ignoreOrder: true);
+        await using var db = postgres.CreateDbContext();
+        (await db.FilterFindings.SingleAsync(f => f.Id == findingId, Ct)).Status.ShouldBe(FilterFindingStatus.Applied);
+    }
+
+    private async Task<FilterDto> CreatedAsync(params string[] labels) =>
+        (await (await CreateAsync(labels)).Content.ReadFromJsonAsync<FilterDto>(Ct)).ShouldNotBeNull();
+
+    private async Task<FilterResult> WithFilterServiceAsync(Func<FilterService, Task<FilterResult>> call)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        return await call(scope.ServiceProvider.GetRequiredService<FilterService>());
+    }
+
+    private async Task<Guid> AddFindingAsync(FilterFix fix, List<string> filterIds)
+    {
+        await using var db = postgres.CreateDbContext();
+        var review = new FilterReviewRow { Id = Guid.NewGuid(), CreatedAt = DateTimeOffset.UtcNow, FilterCount = filterIds.Count, FindingCount = 1 };
+        var finding = new FilterFindingRow
+        {
+            Id = Guid.NewGuid(),
+            ReviewId = review.Id,
+            Kind = FilterFindingKind.Overlap,
+            FilterIds = filterIds,
+            Description = "Synthetic finding",
+            Status = FilterFindingStatus.Open,
+        };
+        finding.WriteFix(fix);
+        db.FilterReviews.Add(review);
+        db.FilterFindings.Add(finding);
+        await db.SaveChangesAsync(Ct);
+        return finding.Id;
+    }
+
     private Task<HttpResponseMessage> CreateAsync(params string[] labels) =>
         Client().PostAsync("/api/rules/filters", JsonContent.Create(new CreateFilterRequest(
             new FilterCriteriaDto(Shop, null, null, null, null, null, null, null, null),
