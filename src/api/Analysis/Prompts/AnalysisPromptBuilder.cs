@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using GmailOrganiser.Data;
 using GmailOrganiser.Llm;
 using GmailOrganiser.Policies.Prompts;
@@ -10,7 +9,7 @@ using Microsoft.Extensions.AI;
 namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>Turns a batch of emails plus context into the chat messages for one analysis call. No I/O.</summary>
-public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
+public sealed class AnalysisPromptBuilder(PromptTemplate template)
 {
     public const int MaxLabelTreeEntries = 500;
     public const string LabelsOmitted = "[more labels omitted]";
@@ -263,19 +262,51 @@ public sealed partial class AnalysisPromptBuilder(PromptTemplate template)
 
     /// <summary>
     /// Email text and the person's comment can't open or close a body block or the guidance section: every
-    /// <c>email_body</c> and <c>person_guidance</c> tag variant loses its <c>&lt;</c>.
+    /// <c>&lt;</c> that starts a lookalike of an <c>email_body</c> or <c>person_guidance</c> tag becomes <c>[</c>.
     /// </summary>
-    private static string DefuseBodyTags(string value) => BodyTagRegex().Replace(value, "[$1");
+    private static string DefuseBodyTags(string value)
+    {
+        StringBuilder? sb = null;
+        for (var i = value.IndexOf('<'); i >= 0; i = value.IndexOf('<', i + 1))
+        {
+            if (IsTagLookalike(value, i + 1))
+            {
+                sb ??= new StringBuilder(value);
+                sb[i] = '[';
+            }
+        }
 
-    // Format characters (Unicode Cf: zero-width space and joiners, soft hyphen, bidi marks) are invisible, so the
-    // match ignores them anywhere in the tag; otherwise "person\u200Bguidance" would pass as a lookalike.
-    private const string Cf = @"\p{Cf}*";
-    private const string Gap = @"[\s\p{Cf}]*";
-    private const string Sep = @"[\s\p{Cf}_-]*";
-    private const string EmailBody = "e" + Cf + "m" + Cf + "a" + Cf + "i" + Cf + "l" + Sep + "b" + Cf + "o" + Cf + "d" + Cf + "y";
-    private const string PersonGuidance = "p" + Cf + "e" + Cf + "r" + Cf + "s" + Cf + "o" + Cf + "n" + Sep
-        + "g" + Cf + "u" + Cf + "i" + Cf + "d" + Cf + "a" + Cf + "n" + Cf + "c" + Cf + "e";
+        return sb?.ToString() ?? value;
+    }
 
-    [GeneratedRegex("<(" + Gap + "/?" + Gap + "(?:" + EmailBody + "|" + PersonGuidance + "))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex BodyTagRegex();
+    private const string EmailBodyLetters = "emailbody";
+    private const string PersonGuidanceLetters = "personguidance";
+
+    /// <summary>
+    /// Reads the span after a <c>&lt;</c> up to the next <c>&lt;</c> or <c>&gt;</c> as its ASCII letters only, lower-cased,
+    /// and asks whether they start with a tag name (#573). Everything else is skipped, not matched: the <c>/</c>, separators,
+    /// and any invisible character in any plane, so no joiner, filler, selector or tag character can hide a tag.
+    /// </summary>
+    private static bool IsTagLookalike(string value, int start)
+    {
+        Span<char> letters = stackalloc char[PersonGuidanceLetters.Length];
+        var count = 0;
+        for (var i = start; i < value.Length && count < letters.Length; i++)
+        {
+            var c = value[i];
+            if (c is '<' or '>')
+            {
+                break;
+            }
+
+            if (char.IsAsciiLetter(c))
+            {
+                letters[count++] = char.ToLowerInvariant(c);
+            }
+        }
+
+        ReadOnlySpan<char> folded = letters[..count];
+        return folded.StartsWith(PersonGuidanceLetters, StringComparison.Ordinal)
+            || folded.StartsWith(EmailBodyLetters, StringComparison.Ordinal);
+    }
 }
