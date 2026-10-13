@@ -238,7 +238,11 @@ public sealed class CountingGmailClient(FakeGmailClient inner) : IGmailClient
     public Task<GmailFilter> CreateFilterAsync(GmailFilterCriteria criteria, GmailFilterAction action, CancellationToken ct) =>
         inner.CreateFilterAsync(criteria, action, ct);
 
-    public Task DeleteFilterAsync(string id, CancellationToken ct) => inner.DeleteFilterAsync(id, ct);
+    /// <summary>Thrown by every filter delete when set, as a dropped connection would.</summary>
+    public Exception? DeleteFilterFailure { get; set; }
+
+    public Task DeleteFilterAsync(string id, CancellationToken ct) =>
+        DeleteFilterFailure is { } failure ? Task.FromException(failure) : inner.DeleteFilterAsync(id, ct);
 
     public async Task<IReadOnlyList<GmailMessageMetadata>> GetMessagesMetadataAsync(IReadOnlyList<string> ids, CancellationToken ct)
     {

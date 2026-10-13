@@ -71,7 +71,8 @@ public sealed partial class FilterChecksTests
         finding.Kind.ShouldBe(FilterFindingKind.Overlap);
         finding.Description.ShouldContain("one filter per label can add Synthetic/Shop, Synthetic/News and remove INBOX");
         finding.Fix.DeleteFilterIds.ShouldBe(["a"]);
-        finding.Fix.Create.ShouldNotBeNull().Action.AddLabelIds.ShouldBe(["Label_1"]);
+        // The create names the whole union; applying it creates only Label_1's filter, grouped with the kept one.
+        finding.Fix.Create.ShouldNotBeNull().Action.AddLabelIds.ShouldBe(["Label_1", "Label_2"]);
         finding.Fix.Create.Action.RemoveLabelIds.ShouldBe(["INBOX"]);
     }
 

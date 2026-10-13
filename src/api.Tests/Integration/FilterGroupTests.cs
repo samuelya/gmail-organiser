@@ -32,6 +32,8 @@ public sealed class FilterGroupTests(ApiFactory factory, PostgresFixture postgre
 
     private FakeGmailClient Gmail => host.Services.GetRequiredService<FakeGmailClient>();
 
+    private CountingGmailClient Counting => host.Services.GetRequiredService<CountingGmailClient>();
+
     public async ValueTask InitializeAsync()
     {
         await postgres.ResetFetchStateAsync();
@@ -49,7 +51,8 @@ public sealed class FilterGroupTests(ApiFactory factory, PostgresFixture postgre
         {
             var retry = new GmailRetryPolicy(Options.Create(new GmailOptions { MaxRetryAttempts = 1 }), TimeProvider.System);
             services.AddSingleton(sp => new FakeGmailClient(sp.GetRequiredService<FakeTokenStore>(), [], retry));
-            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<FakeGmailClient>());
+            services.AddSingleton(sp => new CountingGmailClient(sp.GetRequiredService<FakeGmailClient>()));
+            services.AddScoped<IGmailClient>(sp => sp.GetRequiredService<CountingGmailClient>());
         }));
     }
 
@@ -117,6 +120,60 @@ public sealed class FilterGroupTests(ApiFactory factory, PostgresFixture postgre
     }
 
     [Fact]
+    public async Task A_rollback_delete_lost_to_a_transport_error_keeps_the_row_and_surfaces_the_first_error()
+    {
+        (await CreateAsync(ExtraB)).StatusCode.ShouldBe(HttpStatusCode.Created);
+        var single = (await ShopFiltersAsync()).ShouldHaveSingleItem();
+        Counting.DeleteFilterFailure = new HttpRequestException("Synthetic connection reset");
+
+        var response = await CreateAsync(ExtraA, ExtraB);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await response.Content.ReadAsStringAsync(Ct)).ShouldContain("Filter already exists");
+        var left = (await ShopFiltersAsync()).Where(f => f.Id != single.Id).ShouldHaveSingleItem();
+        await using var db = postgres.CreateDbContext();
+        (await db.Filters.SingleAsync(r => r.Id == left.Id, Ct)).DeletedAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task An_overlap_fix_puts_the_kept_filter_and_the_new_part_in_one_group()
+    {
+        var kept = await CreatedAsync(Topic);
+        var extraA = (await CreatedAsync(ExtraA)).Action.AddLabels.Single().Id;
+        var other = (await ShopFiltersAsync()).Single(f => f.Id != kept.Id).Id;
+        (await WithFilterServiceAsync(s => s.DeleteAsync(other, Ct))).Outcome.ShouldBe(FilterOutcome.Ok);
+        var inboxOnly = await WithFilterServiceAsync(s => s.CreateFromIdsAsync(new(From: Shop), new([extraA], ["INBOX"]), 0, Ct));
+        var review = await ReviewAsync();
+        var overlap = review.Findings.Single(f => f.Kind == FilterFindingKind.Overlap && f.FilterIds.Contains(kept.Id));
+
+        (await Client().PostAsync($"/api/rules/filters/findings/{overlap.Id}/apply", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var shop = await ShopFiltersAsync();
+        shop.Count.ShouldBe(2);
+        shop.ShouldContain(f => f.Id == kept.Id);
+        shop.ShouldNotContain(f => f.Id == inboxOnly.Filter!.Id);
+        var listed = (await ListAsync()).Filters.Single(f => f.Criteria.From == Shop);
+        listed.FilterIds.ShouldBe(shop.Select(f => f.Id), ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task A_delete_fix_for_a_whole_group_deletes_it_as_one_and_restores_it_as_one()
+    {
+        var filter = await CreatedAsync(Topic, ExtraA);
+        var findingId = await AddFindingAsync(new FilterFix(FilterFixKind.Delete, [.. filter.FilterIds]), [.. filter.FilterIds]);
+
+        (await Client().PostAsync($"/api/rules/filters/findings/{findingId}/apply", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await ShopFiltersAsync()).ShouldBeEmpty();
+        var deleted = (await ListAsync(includeDeleted: true)).Filters.Where(f => f.Criteria.From == Shop).ShouldHaveSingleItem();
+        deleted.FilterIds.ShouldBe(filter.FilterIds, ignoreOrder: true);
+        var restored = await Client().PostAsync($"/api/rules/filters/{filter.FilterIds[0]}/restore", null, Ct);
+        restored.StatusCode.ShouldBe(HttpStatusCode.Created);
+        (await restored.Content.ReadFromJsonAsync<FilterDto>(Ct)).ShouldNotBeNull().FilterIds.Count.ShouldBe(2);
+        (await ListAsync()).Filters.Single(f => f.Criteria.From == Shop).FilterIds.Count.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task A_review_reports_no_duplicate_or_overlap_for_a_split_group()
     {
         var filter = (await (await CreateAsync(Topic, ExtraA)).Content.ReadFromJsonAsync<FilterDto>(Ct)).ShouldNotBeNull();
@@ -173,6 +230,13 @@ public sealed class FilterGroupTests(ApiFactory factory, PostgresFixture postgre
         (await ShopFiltersAsync()).Select(f => f.Id).ShouldBe(filter.FilterIds, ignoreOrder: true);
         await using var db = postgres.CreateDbContext();
         (await db.FilterFindings.SingleAsync(f => f.Id == findingId, Ct)).Status.ShouldBe(FilterFindingStatus.Applied);
+    }
+
+    private async Task<FilterReviewDto> ReviewAsync()
+    {
+        var response = await Client().PostAsync("/api/rules/filters/reviews", null, Ct);
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
+        return (await response.Content.ReadFromJsonAsync<FilterReviewDto>(Ct)).ShouldNotBeNull();
     }
 
     private async Task<FilterDto> CreatedAsync(params string[] labels) =>

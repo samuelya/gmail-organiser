@@ -63,6 +63,20 @@ public sealed partial class FilterChecksTests
     public void A_group_member_left_with_no_user_label_is_deleted_not_re_created()
     {
         var group = Guid.NewGuid();
+        var kept = Row("g1", new(From: "shop@example.com"), new(["Label_1"], ["INBOX", "UNREAD"]));
+        var gone = Row("g2", new(From: "shop@example.com"), new(["Label_gone"], ["INBOX"]));
+        kept.GroupId = gone.GroupId = group;
+
+        var finding = Run([kept, gone]).ShouldHaveSingleItem();
+
+        finding.Kind.ShouldBe(FilterFindingKind.DeletedLabel);
+        finding.Fix.ShouldBe(new FilterFix(FilterFixKind.Delete, ["g2"]), new FixComparer());
+    }
+
+    [Fact]
+    public void A_group_member_whose_other_actions_the_group_lacks_is_re_created_without_the_label()
+    {
+        var group = Guid.NewGuid();
         var kept = Row("g1", new(From: "shop@example.com"), new(["Label_1"], ["INBOX"]));
         var gone = Row("g2", new(From: "shop@example.com"), new(["Label_gone"], ["INBOX", "UNREAD"]));
         kept.GroupId = gone.GroupId = group;
@@ -70,6 +84,28 @@ public sealed partial class FilterChecksTests
         var finding = Run([kept, gone]).ShouldHaveSingleItem();
 
         finding.Kind.ShouldBe(FilterFindingKind.DeletedLabel);
-        finding.Fix.ShouldBe(new FilterFix(FilterFixKind.Delete, ["g2"]), new FixComparer());
+        finding.Fix.Kind.ShouldBe(FilterFixKind.DropLabel);
+        finding.Fix.DeleteFilterIds.ShouldBe(["g2"]);
+        var create = finding.Fix.Create.ShouldNotBeNull();
+        create.Action.AddLabelIds.ShouldBeEmpty();
+        create.Action.RemoveLabelIds.ShouldBe(["INBOX", "UNREAD"]);
+    }
+
+    [Fact]
+    public void An_overlap_fix_creates_the_whole_union_so_the_kept_filter_and_the_new_part_form_one_group()
+    {
+        FilterRow[] rows =
+        [
+            Row("a", new(From: "shop@example.com"), new(["Label_1"], ["INBOX", "UNREAD"])),
+            Row("b", new(From: "shop@example.com"), new(["Label_2"], ["INBOX"]), seenDaysLater: 1),
+        ];
+
+        var finding = Run(rows).ShouldHaveSingleItem();
+
+        finding.Kind.ShouldBe(FilterFindingKind.Overlap);
+        finding.Fix.DeleteFilterIds.ShouldBe(["b"]);
+        var create = finding.Fix.Create.ShouldNotBeNull();
+        create.Action.AddLabelIds.ShouldBe(["Label_1", "Label_2"]);
+        create.Action.RemoveLabelIds.ShouldBe(["INBOX", "UNREAD"]);
     }
 }
