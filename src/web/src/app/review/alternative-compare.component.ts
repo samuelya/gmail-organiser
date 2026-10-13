@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import {
   alternativeDiff,
   alternativeSource,
@@ -16,7 +17,7 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
  */
 @Component({
   selector: 'app-alternative-compare',
-  imports: [LabelChangeChip, MatButtonModule],
+  imports: [LabelChangeChip, MatButtonModule, MatTooltipModule],
   template: `
     @let a = alternative();
     @let c = current();
@@ -31,6 +32,15 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
         <span class="font-medium">{{ title() }}</span>
         @if (source(); as s) {
           <span class="muted" data-testid="alternative-source">{{ s }}</span>
+        }
+        @if (a.copied && !a.mixed) {
+          <span
+            class="badge"
+            tabindex="0"
+            [matTooltip]="copiedTooltip"
+            data-testid="alternative-copied"
+            >Copied</span
+          >
         }
       </div>
       @if (a.mixed) {
@@ -120,6 +130,16 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
         @if (a.reason) {
           <p class="muted m-0" data-testid="alternative-reason">{{ a.reason }}</p>
         }
+        @if (a.comment) {
+          <p
+            class="muted m-0 truncate"
+            tabindex="0"
+            [matTooltip]="a.comment"
+            data-testid="alternative-comment"
+          >
+            Your comment: {{ a.comment }}
+          </p>
+        }
       }
       <div class="flex flex-wrap gap-2">
         <button
@@ -193,4 +213,5 @@ export class AlternativeCompare {
   );
   readonly currentConfidence = computed(() => confidenceRange(this.current()));
   readonly newConfidence = computed(() => percent(this.alternative().confidence));
+  readonly copiedTooltip = 'Copied from an email you accepted; no LLM';
 }

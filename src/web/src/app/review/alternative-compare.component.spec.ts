@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { MatTooltip } from '@angular/material/tooltip';
 import { AlternativeCompare } from './alternative-compare.component';
 import { CompareValues, SuggestionAlternativeDto } from './alternative.models';
 
@@ -85,5 +86,34 @@ describe('AlternativeCompare', () => {
     expect(q('alternative-use')!.textContent).toContain('Use new (3)');
     q('alternative-members')!.click();
     expect(members).toHaveBeenCalled();
+  });
+
+  it('shows the comment that produced the result as text, one truncated line with the full text in a tooltip', async () => {
+    const long = `<b>Synthetic</b> comment ${'word '.repeat(60)}end`;
+    const { fixture, q } = await render(alternative({ comment: long }));
+    const line = q('alternative-comment')!;
+    expect(line.textContent!.trim()).toBe(`Your comment: ${long.trim()}`);
+    expect(line.querySelector('b')).toBeNull();
+    expect(line.classList).toContain('truncate');
+    const tip = fixture.debugElement
+      .query((d) => d.attributes['data-testid'] === 'alternative-comment')
+      .injector.get(MatTooltip);
+    expect(tip.message).toBe(long);
+  });
+
+  it('shows a Copied chip with its tooltip when copied', async () => {
+    const { fixture, q } = await render(alternative({ copied: true }));
+    expect(q('alternative-copied')!.textContent!.trim()).toBe('Copied');
+    const tip = fixture.debugElement
+      .query((d) => d.attributes['data-testid'] === 'alternative-copied')
+      .injector.get(MatTooltip);
+    expect(tip.message).toBe('Copied from an email you accepted; no LLM');
+  });
+
+  it('shows neither the comment nor the chip when neither is set', async () => {
+    const { q } = await render(alternative({ comment: null, copied: false }));
+    expect(q('alternative-comment')).toBeNull();
+    expect(q('alternative-copied')).toBeNull();
+    expect(q('alternative-reason')).not.toBeNull();
   });
 });
