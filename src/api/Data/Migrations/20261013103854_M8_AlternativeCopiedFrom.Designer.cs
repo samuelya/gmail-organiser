@@ -14,7 +14,7 @@ using Pgvector;
 namespace GmailOrganiser.Data.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20261013102910_M8_AlternativeCopiedFrom")]
+    [Migration("20261013103854_M8_AlternativeCopiedFrom")]
     partial class M8_AlternativeCopiedFrom
     {
         /// <inheritdoc />
@@ -241,6 +241,12 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("double precision")
                         .HasColumnName("confidence");
 
+                    b.Property<bool>("Copied")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("copied");
+
                     b.Property<Guid?>("CopiedFromSuggestionId")
                         .HasColumnType("uuid")
                         .HasColumnName("copied_from_suggestion_id");
@@ -256,6 +262,12 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("DocumentTypeLabel")
                         .HasColumnType("text")
                         .HasColumnName("document_type_label");
+
+                    b.Property<bool>("Edited")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("edited");
 
                     b.Property<string>("FilterCriteria")
                         .HasColumnType("jsonb")

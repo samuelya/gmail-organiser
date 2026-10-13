@@ -87,7 +87,7 @@ public sealed partial class ReviewQuery
             a.CreatedAt,
             MailType: a.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
             Comment: loaded.Comment,
-            Copied: a.CopiedFromSuggestionId is not null);
+            Copied: a.Copied);
     }
 
     /// <summary>

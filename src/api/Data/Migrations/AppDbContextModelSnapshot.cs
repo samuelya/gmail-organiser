@@ -238,6 +238,12 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("double precision")
                         .HasColumnName("confidence");
 
+                    b.Property<bool>("Copied")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("copied");
+
                     b.Property<Guid?>("CopiedFromSuggestionId")
                         .HasColumnType("uuid")
                         .HasColumnName("copied_from_suggestion_id");
@@ -253,6 +259,12 @@ namespace GmailOrganiser.Data.Migrations
                     b.Property<string>("DocumentTypeLabel")
                         .HasColumnType("text")
                         .HasColumnName("document_type_label");
+
+                    b.Property<bool>("Edited")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("edited");
 
                     b.Property<string>("FilterCriteria")
                         .HasColumnType("jsonb")

@@ -38,75 +38,71 @@ public sealed class SuggestionAlternativeRow
     public string? PromptVersion { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
-    /// <summary>The suggestion whose outcome was copied here (#562); null for a compare run's answer or once the source is gone.</summary>
+    /// <summary>The suggestion whose outcome was copied here (#562); provenance only, null once the source is gone.</summary>
     public Guid? CopiedFromSuggestionId { get; set; }
+
+    /// <summary>A copy of another suggestion's outcome (#562), not a compare run's answer; stays true once the source is gone.</summary>
+    public bool Copied { get; set; }
+
+    /// <summary>The copied outcome was edited by hand (<see cref="SuggestionRow.Edited"/>); accept carries it. False for a compare run's answer.</summary>
+    public bool Edited { get; set; }
 
     /// <summary>The replaced labels as (id, name), like <see cref="SuggestionRow.Replaced(IReadOnlyDictionary{string, string}?)"/>.</summary>
     public IReadOnlyList<(string Id, string Name)> Replaced(IReadOnlyDictionary<string, string>? names) =>
         SuggestionRow.Replaced(ReplaceLabelIds, ReplaceLabels, names);
 
     /// <summary>The alternative a compare run produced for <paramref name="suggestionId"/> from a row it built like a suggestion.</summary>
-    public static SuggestionAlternativeRow From(SuggestionRow row, Guid suggestionId, Guid runId, DateTimeOffset now) => new()
-    {
-        Id = Guid.CreateVersion7(now),
-        SuggestionId = suggestionId,
-        MessageId = row.MessageId,
-        RunId = runId,
-        Source = row.Source,
-        GroupKey = row.GroupKey,
-        TopicLabel = row.TopicLabel,
-        IsNewLabel = row.IsNewLabel,
-        DocumentTypeLabel = row.DocumentTypeLabel,
-        DocumentTypeIsNew = row.DocumentTypeIsNew,
-        MailType = row.MailType,
-        ProposedNewLabel = row.ProposedNewLabel,
-        ReplaceLabelIds = row.ReplaceLabelIds,
-        ReplaceLabels = row.ReplaceLabels,
-        NeedsAction = row.NeedsAction,
-        ToBeDeleted = row.ToBeDeleted,
-        UnsubscribeSuggested = row.UnsubscribeSuggested,
-        Confidence = row.Confidence,
-        Reason = row.Reason,
-        FilterCriteria = row.FilterCriteria,
-        Model = row.Model,
-        PromptVersion = row.PromptVersion,
-        CreatedAt = now,
-    };
+    public static SuggestionAlternativeRow From(SuggestionRow row, Guid suggestionId, Guid runId, DateTimeOffset now) =>
+        Build(row, suggestionId, row.MessageId, row.GroupKey, row.Replaced(null), now, alternative => alternative.RunId = runId);
 
     /// <summary>
     /// A copy of <paramref name="source"/>'s current outcome for <paramref name="target"/> (#562), with only those of the
-    /// source's replaced labels (by id) that <paramref name="message"/>, the target's message, carries.
+    /// source's replaced labels (by id) that the target's message carries (<paramref name="targetLabelIds"/>). It has no run,
+    /// so run-scoped compare and recovery never take it for the source run's answer, and that run's comment isn't shown on it.
     /// </summary>
-    public static SuggestionAlternativeRow CopyOf(SuggestionRow source, SuggestionRow target, MessageRow message, DateTimeOffset now)
+    public static SuggestionAlternativeRow CopyOf(
+        SuggestionRow source, SuggestionRow target, IReadOnlyCollection<string> targetLabelIds, DateTimeOffset now) =>
+        Build(source, target.Id, target.MessageId, target.GroupKey,
+            [.. source.Replaced(null).Where(l => targetLabelIds.Contains(l.Id, StringComparer.Ordinal))], now,
+            alternative =>
+            {
+                alternative.CopiedFromSuggestionId = source.Id;
+                alternative.Copied = true;
+                alternative.Edited = source.Edited;
+            });
+
+    /// <summary>The outcome of <paramref name="outcome"/> for one suggestion; the single list of outcome fields.</summary>
+    private static SuggestionAlternativeRow Build(
+        SuggestionRow outcome, Guid suggestionId, string messageId, string? groupKey, IReadOnlyList<(string Id, string Name)> replaced,
+        DateTimeOffset now, Action<SuggestionAlternativeRow> provenance)
     {
-        var replaced = source.Replaced(null).Where(l => message.LabelIds.Contains(l.Id, StringComparer.Ordinal)).ToList();
-        return new()
+        var alternative = new SuggestionAlternativeRow
         {
             Id = Guid.CreateVersion7(now),
-            SuggestionId = target.Id,
-            MessageId = target.MessageId,
-            RunId = source.RunId,
-            Source = source.Source,
-            GroupKey = target.GroupKey,
-            TopicLabel = source.TopicLabel,
-            IsNewLabel = source.IsNewLabel,
-            DocumentTypeLabel = source.DocumentTypeLabel,
-            DocumentTypeIsNew = source.DocumentTypeIsNew,
-            MailType = source.MailType,
-            ProposedNewLabel = source.ProposedNewLabel,
+            SuggestionId = suggestionId,
+            MessageId = messageId,
+            Source = outcome.Source,
+            GroupKey = groupKey,
+            TopicLabel = outcome.TopicLabel,
+            IsNewLabel = outcome.IsNewLabel,
+            DocumentTypeLabel = outcome.DocumentTypeLabel,
+            DocumentTypeIsNew = outcome.DocumentTypeIsNew,
+            MailType = outcome.MailType,
+            ProposedNewLabel = outcome.ProposedNewLabel,
             ReplaceLabelIds = [.. replaced.Select(l => l.Id)],
             ReplaceLabels = [.. replaced.Select(l => l.Name)],
-            NeedsAction = source.NeedsAction,
-            ToBeDeleted = source.ToBeDeleted,
-            UnsubscribeSuggested = source.UnsubscribeSuggested,
-            Confidence = source.Confidence,
-            Reason = source.Reason,
-            FilterCriteria = source.FilterCriteria,
-            Model = source.Model,
-            PromptVersion = source.PromptVersion,
+            NeedsAction = outcome.NeedsAction,
+            ToBeDeleted = outcome.ToBeDeleted,
+            UnsubscribeSuggested = outcome.UnsubscribeSuggested,
+            Confidence = outcome.Confidence,
+            Reason = outcome.Reason,
+            FilterCriteria = outcome.FilterCriteria,
+            Model = outcome.Model,
+            PromptVersion = outcome.PromptVersion,
             CreatedAt = now,
-            CopiedFromSuggestionId = source.Id,
         };
+        provenance(alternative);
+        return alternative;
     }
 
     internal static void Configure(ModelBuilder modelBuilder)
@@ -130,6 +126,8 @@ public sealed class SuggestionAlternativeRow
             e.HasIndex(r => r.RunId);
             e.HasOne<SuggestionRow>().WithMany().HasForeignKey(r => r.CopiedFromSuggestionId).OnDelete(DeleteBehavior.SetNull);
             e.HasIndex(r => r.CopiedFromSuggestionId);
+            e.Property(r => r.Copied).HasDefaultValue(false);
+            e.Property(r => r.Edited).HasDefaultValue(false);
         });
     }
 }

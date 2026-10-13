@@ -288,7 +288,7 @@ public sealed class AlternativeService(
         s.FilterCriteria = a.FilterCriteria;
         s.Model = a.Model;
         s.PromptVersion = a.PromptVersion;
-        s.Edited = false;
+        s.Edited = a.Edited;
         ExtraLabelList.Apply(s, ExtraLabelsChange.Unchanged, settings);
     }
 }

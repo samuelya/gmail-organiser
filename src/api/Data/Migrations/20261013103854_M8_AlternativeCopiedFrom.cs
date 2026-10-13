@@ -11,11 +11,25 @@ namespace GmailOrganiser.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.AddColumn<bool>(
+                name: "copied",
+                table: "suggestion_alternatives",
+                type: "boolean",
+                nullable: false,
+                defaultValue: false);
+
             migrationBuilder.AddColumn<Guid>(
                 name: "copied_from_suggestion_id",
                 table: "suggestion_alternatives",
                 type: "uuid",
                 nullable: true);
+
+            migrationBuilder.AddColumn<bool>(
+                name: "edited",
+                table: "suggestion_alternatives",
+                type: "boolean",
+                nullable: false,
+                defaultValue: false);
 
             migrationBuilder.CreateIndex(
                 name: "ix_suggestion_alternatives_copied_from_suggestion_id",
@@ -43,7 +57,15 @@ namespace GmailOrganiser.Data.Migrations
                 table: "suggestion_alternatives");
 
             migrationBuilder.DropColumn(
+                name: "copied",
+                table: "suggestion_alternatives");
+
+            migrationBuilder.DropColumn(
                 name: "copied_from_suggestion_id",
+                table: "suggestion_alternatives");
+
+            migrationBuilder.DropColumn(
+                name: "edited",
                 table: "suggestion_alternatives");
         }
     }

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using GmailOrganiser.Analysis;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
@@ -57,13 +58,15 @@ public sealed class AlternativeCopyTests(ApiFactory factory, PostgresFixture pos
         await using (var db = postgres.CreateDbContext())
         {
             await AnalysisRunHarness.DecideAsync(db, "a02", SuggestionStatus.Approved);
+            await db.Messages.Where(m => m.Id == "a04").ExecuteUpdateAsync(s => s.SetProperty(m => m.DeletedInGmail, true), Ct);
             decisions = await db.Decisions.CountAsync(Ct);
         }
 
         var source = (await IdsAsync("a00"))[0];
-        var targets = await IdsAsync("a00", "a01", "a02", "a03", "b00");
+        var targets = await IdsAsync("a00", "a01", "a02", "a03", "a04", "b00");
         var response = await CopyAsync(source, [.. targets, targets[1], Guid.NewGuid()]);
-        response.ShouldBe(new AlternativeCopyResponse(2, 4), "a01 and a03; the source, approved a02, b00 of another sender and an unknown id skipped");
+        response.ShouldBe(new AlternativeCopyResponse(2, 5),
+            "a01 and a03; the source, approved a02, a04 deleted in Gmail, b00 of another sender and an unknown id skipped");
 
         await using var check = postgres.CreateDbContext();
         var src = await check.Suggestions.AsNoTracking().SingleAsync(s => s.Id == source, Ct);
@@ -71,7 +74,7 @@ public sealed class AlternativeCopyTests(ApiFactory factory, PostgresFixture pos
             .OrderBy(a => a.MessageId).ToListAsync(Ct);
         copies.Select(a => a.MessageId).ShouldBe(["a01", "a03"]);
         copies.ShouldAllBe(a => a.TopicLabel == Copied && a.DocumentTypeLabel == "Receipt" && a.NeedsAction
-            && a.Reason == "Synthetic source reason" && a.RunId == src.RunId && a.Model == src.Model && a.MailType == src.MailType);
+            && a.Reason == "Synthetic source reason" && a.RunId == null && a.Copied && !a.Edited && a.Model == src.Model && a.MailType == src.MailType);
         copies[0].ReplaceLabelIds.ShouldBe([Kept]);
         copies[0].ReplaceLabels.ShouldBe(["Kept"]);
         copies[1].ReplaceLabelIds.ShouldBeEmpty();
@@ -103,7 +106,65 @@ public sealed class AlternativeCopyTests(ApiFactory factory, PostgresFixture pos
 
         await db.Suggestions.Where(s => s.Id == source).ExecuteDeleteAsync(Ct);
         var copy = await db.SuggestionAlternatives.AsNoTracking().SingleAsync(a => a.SuggestionId == targets[1], Ct);
-        (copy.CopiedFromSuggestionId, copy.TopicLabel).ShouldBe((null, Copied));
+        (copy.CopiedFromSuggestionId, copy.Copied, copy.TopicLabel).ShouldBe((null, true, Copied));
+        var shown = (await (await h.GetAsync($"/api/review/senders/{AnalysisRunHarness.Shop}")).Content
+                .ReadFromJsonAsync<ReviewSenderDetailDto>(Ct)).ShouldNotBeNull()
+            .Groups.SelectMany(g => g.Members).Single(m => m.MessageId == "a03").Alternative.ShouldNotBeNull();
+        (shown.Copied, shown.Comment).ShouldBe((true, null), "still a copy, without a run's comment");
+    }
+
+    [Fact]
+    public async Task A_hand_edited_stage0_source_stays_edited_on_the_target_and_its_approval_is_recorded()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await AnalysisRunHarness.DecideAsync(db, "a00", SuggestionStatus.Pending, s =>
+            {
+                s.Source = SuggestionSource.Stage0;
+                s.Edited = true;
+            });
+        }
+
+        var source = (await IdsAsync("a00"))[0];
+        var target = (await IdsAsync("a03"))[0];
+        (await CopyAsync(source, [target])).ShouldBe(new AlternativeCopyResponse(1, 0));
+        (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([target], null))).IsSuccessStatusCode.ShouldBeTrue();
+
+        await using var check = postgres.CreateDbContext();
+        var accepted = await check.Suggestions.AsNoTracking().SingleAsync(s => s.Id == target, Ct);
+        (accepted.Source, accepted.Edited, accepted.TopicLabel).ShouldBe((SuggestionSource.Stage0, true, Copied));
+        (await h.PostWithoutBodyAsync($"/api/review/suggestions/{target}/approve")).IsSuccessStatusCode.ShouldBeTrue();
+        var decision = await check.Decisions.AsNoTracking().SingleAsync(d => d.MessageId == "a03", Ct);
+        (decision.Source, decision.Edited, decision.TopicLabel).ShouldBe((SuggestionSource.Stage0, true, Copied));
+    }
+
+    [Fact]
+    public async Task Copies_of_an_outcome_accepted_from_a_compare_run_are_not_that_runs_answers()
+    {
+        var ids = await IdsAsync("a00", "a01", "a03");
+        var compare = await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(ids, null));
+        var run = (await compare.Content.ReadFromJsonAsync<AnalysisRunDto>(Ct)).ShouldNotBeNull();
+        await h.RunNextAsync();
+        (await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([ids[0]], null))).IsSuccessStatusCode.ShouldBeTrue();
+        (await CopyAsync(ids[0], [ids[1], ids[2]])).ShouldBe(new AlternativeCopyResponse(2, 0), "replacing the run's own answers");
+
+        // Compare run R again: only the suggestion R wrote, not the ones that hold copies of it.
+        var again = await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, run.Id));
+        var rerun = (await again.Content.ReadFromJsonAsync<AnalysisRunDto>(Ct)).ShouldNotBeNull();
+        rerun.RequestedCount.ShouldBe(1);
+
+        // R failed and its job is gone: the rebuilt cursor does not count the copies as R's answers.
+        await using var db = postgres.CreateDbContext();
+        await db.AnalysisRuns.Where(r => r.Id == rerun.Id).ExecuteDeleteAsync(Ct);
+        await db.Jobs.Where(j => j.Id == rerun.JobId).ExecuteDeleteAsync(Ct);
+        await db.AnalysisRuns.Where(r => r.Id == run.Id).ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, AnalysisRunStatus.Failed), Ct);
+        await db.Jobs.Where(j => j.Id == run.JobId).ExecuteDeleteAsync(Ct);
+        (await h.PostWithoutBodyAsync($"/api/analysis/runs/{run.Id}/resume")).IsSuccessStatusCode.ShouldBeTrue();
+        var jobId = await db.AnalysisRuns.Where(r => r.Id == run.Id).Select(r => r.JobId).SingleAsync(Ct);
+        var cursor = await db.Jobs.Where(j => j.Id == jobId).Select(j => j.Cursor).SingleAsync(Ct);
+        var covered = JsonSerializer.Deserialize<AnalysisRunCursor>(cursor!, JsonSerializerOptions.Web)!.CoveredIds ?? [];
+        covered.ShouldNotContain("a01");
+        covered.ShouldNotContain("a03");
     }
 
     [Fact]
