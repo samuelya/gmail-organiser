@@ -111,6 +111,31 @@ public sealed class ReviewAlternativesTests(ApiFactory factory, PostgresFixture 
     }
 
     [Fact]
+    public async Task A_group_is_copied_only_when_every_member_alternative_is_and_mixed_when_copies_and_llm_results_mix()
+    {
+        var none = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem();
+        (none.Alternative.ShouldNotBeNull().Copied, none.Alternative.Mixed).ShouldBe((false, false));
+        var members = none.Members.Select(m => m.MessageId).ToArray();
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.SuggestionAlternatives.Where(a => members.Contains(a.MessageId)).ExecuteUpdateAsync(s => s.SetProperty(a => a.Copied, true), Ct);
+        }
+
+        var all = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem().Alternative.ShouldNotBeNull();
+        (all.Copied, all.Mixed).ShouldBe((true, false));
+
+        await using (var db = postgres.CreateDbContext())
+        {
+            var llm = members[1..];
+            await db.SuggestionAlternatives.Where(a => llm.Contains(a.MessageId)).ExecuteUpdateAsync(s => s.SetProperty(a => a.Copied, false), Ct);
+        }
+
+        var one = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.ShouldHaveSingleItem().Alternative.ShouldNotBeNull();
+        (one.Copied, one.Mixed).ShouldBe((false, true), "one copied alternative among LLM results");
+    }
+
+    [Fact]
     public async Task Filter_and_summary_count_only_suggestions_with_an_alternative()
     {
         var discard = await DecideAsync("discard", new AlternativeDecisionRequest(null, [new GroupRef(AnalysisRunHarness.Billing, await GroupKeyAsync("c00"))]));
