@@ -1,6 +1,6 @@
 import { computed, inject, Signal } from '@angular/core';
 import { MatDialog } from '@angular/material/dialog';
-import { filter, map, Observable, switchMap } from 'rxjs';
+import { filter, Observable, switchMap } from 'rxjs';
 import { JobsService } from '../core/jobs.service';
 import { ANALYSIS_LIMITS } from '../settings/settings.models';
 import { ANALYSIS_RUN_JOB, AnalysisRunDto, CompareRunRequest } from './analysis.models';
@@ -11,12 +11,12 @@ import {
   ReanalyseDialogResult,
 } from './reanalyse-dialog.component';
 
+export { MAX_REANALYSE_COMMENT } from './reanalyse-dialog.component';
+
 /** The API's `SettingsValidation.MaxAnalysisDefaultCount`: most emails one re-analysis takes. */
 export const MAX_COMPARE = ANALYSIS_LIMITS.analysisDefaultCount.max;
 /** Tooltip of every "Re-analyse" button while a run is queued or running. */
 export const RUN_ACTIVE_TOOLTIP = 'An analysis is running';
-/** The API's `AnalysisRunService.MaxCommentLength`: longest comment for the AI on a re-analysis. */
-export const MAX_REANALYSE_COMMENT = 500;
 
 /** True while any analysis run (normal or re-analysis) is queued, running or paused, from the jobs hub. */
 export function injectAnalysisRunActive(): Signal<boolean> {
@@ -43,7 +43,7 @@ export function compareConfirmMessage(count: number, upTo = false): string {
 
 /**
  * Asks before a re-analysis of `count` (or `upTo` count) emails, with an optional comment for the AI; emits
- * only when confirmed, with the trimmed comment when one was typed. `note`: one more sentence after the
+ * only when confirmed, with the dialog's trimmed comment when one was typed. `note`: one more sentence after the
  * standard text.
  */
 export function openCompareConfirm(
@@ -58,7 +58,6 @@ export function openCompareConfirm(
     message: note
       ? `${compareConfirmMessage(count, upTo)} ${note}`
       : compareConfirmMessage(count, upTo),
-    maxComment: MAX_REANALYSE_COMMENT,
   };
   return dialog
     .open<ReanalyseDialog, ReanalyseDialogData, ReanalyseDialogResult>(ReanalyseDialog, { data })
@@ -67,7 +66,6 @@ export function openCompareConfirm(
       filter(
         (result): result is ReanalyseDialogResult => typeof result === 'object' && result !== null,
       ),
-      map((result) => (result.comment?.trim() ? { comment: result.comment.trim() } : {})),
     );
 }
 
