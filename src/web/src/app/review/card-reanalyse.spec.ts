@@ -148,7 +148,7 @@ describe('Card and member Re-analyse', () => {
   const dialogButton = (testId: string) =>
     document.querySelector<HTMLButtonElement>(`mat-dialog-container [data-testid="${testId}"]`)!;
 
-  it('shows on every member whatever its status and re-analyses that one email without a confirm', async () => {
+  it('shows on every member whatever its status and re-analyses that one email after the dialog', async () => {
     const statuses: SuggestionStatus[] = ['pending', 'approved', 'rejected', 'applied'];
     const { all, analysis, settle, tooltip } = await render(
       group(statuses.map((s, i) => member(`id-${i}`, s))),
@@ -159,8 +159,40 @@ describe('Card and member Re-analyse', () => {
     expect(tooltip('member-reanalyse')).toBe('Re-analyse with the current prompt');
     buttons[3].click();
     await settle();
-    expect(dialogText()).toBe('');
+    expect(dialogText()).toContain('Re-analyse 1 email?');
+    expect(dialogText()).not.toContain('Only the newest');
+    expect(analysis.startCompareRun).not.toHaveBeenCalled();
+    dialogButton('confirm-ok').click();
+    await settle();
     expect(analysis.startCompareRun).toHaveBeenCalledWith({ suggestionIds: ['id-3'] });
+  });
+
+  it('sends the trimmed comment from the dialog with the member', async () => {
+    const { all, analysis, settle } = await render(group([member('a')]));
+    all('member-reanalyse')[0].click();
+    await settle();
+    const comment = document.querySelector<HTMLTextAreaElement>(
+      'mat-dialog-container [data-testid="reanalyse-comment"]',
+    )!;
+    comment.value = '  These are receipts  ';
+    comment.dispatchEvent(new Event('input'));
+    dialogButton('confirm-ok').click();
+    await settle();
+    expect(analysis.startCompareRun).toHaveBeenCalledWith({
+      suggestionIds: ['a'],
+      comment: 'These are receipts',
+    });
+  });
+
+  it('cancelling the member dialog starts nothing', async () => {
+    const { all, q, analysis, settle } = await render(group([member('a')]));
+    all('member-reanalyse')[0].click();
+    await settle();
+    dialogButton('confirm-cancel').click();
+    await settle();
+    expect(analysis.startCompareRun).not.toHaveBeenCalled();
+    expect(q('member-reanalysing')).toBeNull();
+    expect(all('member-reanalyse')[0].getAttribute('aria-disabled')).not.toBe('true');
   });
 
   it('spins on the originating member until its run ends, then reloads', async () => {
@@ -168,6 +200,8 @@ describe('Card and member Re-analyse', () => {
       group([member('a'), member('b', 'applied')]),
     );
     all('member-reanalyse')[1].click();
+    await settle();
+    dialogButton('confirm-ok').click();
     await settle();
     expect(all('member-reanalysing')).toHaveLength(1);
     expect(all('member-row')[1].querySelector('[data-testid="member-reanalysing"]')).not.toBeNull();
@@ -237,6 +271,8 @@ describe('Card and member Re-analyse', () => {
     const { q, all, ended, settle } = await render(group([member('a')]), () => failed);
     all('member-reanalyse')[0].click();
     await settle();
+    dialogButton('confirm-ok').click();
+    await settle();
     failed.error({ status: 409 });
     await settle();
     expect(q('member-reanalysing')).toBeNull();
@@ -247,6 +283,8 @@ describe('Card and member Re-analyse', () => {
   it('on reconnect before the hub reported the run, it keeps spinning while the API says it is active', async () => {
     const { all, q, jobs, review, ended, settle } = await render(group([member('a')]));
     all('member-reanalyse')[0].click();
+    await settle();
+    dialogButton('confirm-ok').click();
     await settle();
     jobs.reconnects.set(1);
     await settle();
@@ -264,6 +302,8 @@ describe('Card and member Re-analyse', () => {
     review.job.mockReturnValue(of(runJob('completed')));
     all('member-reanalyse')[0].click();
     await settle();
+    dialogButton('confirm-ok').click();
+    await settle();
     jobs.reconnects.set(1);
     await settle();
     expect(ended).toHaveBeenCalledTimes(1);
@@ -272,6 +312,8 @@ describe('Card and member Re-analyse', () => {
   it('on reconnect, a run the API reported active ends once the hub snapshot drops it', async () => {
     const { all, jobs, ended, settle } = await render(group([member('a')]));
     all('member-reanalyse')[0].click();
+    await settle();
+    dialogButton('confirm-ok').click();
     await settle();
     jobs.reconnects.set(1);
     await settle();
@@ -285,6 +327,8 @@ describe('Card and member Re-analyse', () => {
       throwError(() => ({ status: 400 })),
     );
     all('member-reanalyse')[0].click();
+    await settle();
+    dialogButton('confirm-ok').click();
     await settle();
     expect(q('member-reanalysing')).toBeNull();
   });

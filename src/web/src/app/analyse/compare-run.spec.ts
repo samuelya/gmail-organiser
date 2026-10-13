@@ -6,17 +6,17 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { of } from 'rxjs';
 import { errorInterceptor } from '../core/error.interceptor';
 import { AnalysisService } from './analysis.service';
-import { compareConfirmMessage, confirmCompareRun } from './compare-run';
+import { compareConfirmMessage, confirmCompareRun, MAX_REANALYSE_COMMENT } from './compare-run';
 
 describe('compare run', () => {
   let open: ReturnType<typeof vi.fn>;
-  let confirmed: boolean;
+  let closed: { comment?: string } | undefined;
   let dialogOpen: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     open = vi.fn();
-    confirmed = true;
-    dialogOpen = vi.fn(() => ({ afterClosed: () => of(confirmed) }));
+    closed = {};
+    dialogOpen = vi.fn(() => ({ afterClosed: () => of(closed) }));
     TestBed.configureTestingModule({
       providers: [
         provideHttpClient(withInterceptors([errorInterceptor])),
@@ -70,8 +70,26 @@ describe('compare run', () => {
     backend.verify();
   });
 
+  it('adds the trimmed comment, and leaves out one that is blank after trimming', () => {
+    const backend = TestBed.inject(HttpTestingController);
+    closed = { comment: '  Fits Topic/Alpha better \n' };
+    start({ suggestionIds: ['s-1'] }, 1);
+    expect(dialogOpen.mock.calls[0][1].data.maxComment).toBe(MAX_REANALYSE_COMMENT);
+    expect(backend.expectOne('/api/analysis/compare-runs').request.body).toEqual({
+      suggestionIds: ['s-1'],
+      comment: 'Fits Topic/Alpha better',
+    });
+
+    closed = { comment: '   ' };
+    start({ runId: 'run-1' }, 3);
+    expect(backend.expectOne('/api/analysis/compare-runs').request.body).toEqual({
+      runId: 'run-1',
+    });
+    backend.verify();
+  });
+
   it('posts nothing when the confirm is cancelled', () => {
-    confirmed = false;
+    closed = undefined;
     const { runs } = start({ runId: 'run-1' }, 5);
     TestBed.inject(HttpTestingController).verify();
     expect(runs).toEqual([]);

@@ -77,6 +77,8 @@ export interface AnalysisRunDto {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  /** The owner's comment for the AI on a re-analysis; null when none was given. */
+  ownerComment: string | null;
   promptTokens: number;
   completionTokens: number;
   llmSeconds: number;
@@ -155,8 +157,10 @@ export interface AnalysisSummaryDto {
   packRetries: number;
 }
 
-/** `CompareRunRequest`: exactly one of the two. */
-export type CompareRunRequest = { suggestionIds: string[] } | { runId: string };
+/** `CompareRunRequest`: exactly one of the two, with the owner's optional comment for the AI. */
+export type CompareRunRequest = ({ suggestionIds: string[] } | { runId: string }) & {
+  comment?: string;
+};
 
 /** `analysis_run`, the job type a run enqueues. */
 export const ANALYSIS_RUN_JOB = 'analysis_run';
