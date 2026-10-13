@@ -8,6 +8,7 @@ using GmailOrganiser.Memory;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
 using GmailOrganiser.Tests.Fakes;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -373,8 +374,71 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
         (await check.AnalysisRuns.CountAsync(r => r.Kind == AnalysisRunKind.Compare, Ct)).ShouldBe(0);
     }
 
+    [Fact]
+    public async Task Comment_is_normalised_stored_on_the_run_and_survives_a_restart()
+    {
+        first.OwnerComment.ShouldBeNull();
+        var (run, _) = await CrashAfterFirstGroupAsync("  First line\r\nSecond\tline \n ");
+        run.OwnerComment.ShouldBe("First line\nSecond\tline");
+
+        await h.RunNextAsync();
+
+        var done = await h.GetRunAsync(run.Id);
+        (done.Status, done.OwnerComment).ShouldBe(("completed", "First line\nSecond\tline"));
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, " \r\n\t "))).OwnerComment.ShouldBeNull();
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, $" {new string('x', AnalysisRunService.MaxCommentLength)} ")))
+            .OwnerComment.ShouldBe(new string('x', AnalysisRunService.MaxCommentLength));
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidComments))]
+    public async Task Too_long_or_invisible_character_comments_are_400_on_comment(string comment)
+    {
+        var response = await h.PostAsync("/api/analysis/compare-runs", new CompareRunRequest(null, first.Id, comment));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await response.Content.ReadFromJsonAsync<HttpValidationProblemDetails>(Ct)).ShouldNotBeNull().Errors.ShouldContainKey("comment");
+        await using var check = postgres.CreateDbContext();
+        (await check.AnalysisRuns.CountAsync(r => r.Kind == AnalysisRunKind.Compare, Ct)).ShouldBe(0);
+    }
+
+    public static TheoryData<string> InvalidComments() => new()
+    {
+        new string('x', AnalysisRunService.MaxCommentLength + 1),
+        string.Concat(Enumerable.Repeat("\U0001F600", AnalysisRunService.MaxCommentLength + 1)),
+        new string(' ', 4 * AnalysisRunService.MaxCommentLength + 1),
+        "Synthetic\u0007bell",
+        "Synthetic\0nul",
+        "Synthetic\u007Fdel",
+        "Synthetic\u202Eoverride",
+        "Synthetic\u200Bzero width",
+        "Synthetic\uFEFFbom",
+        "Synthetic\u2067isolate",
+    };
+
+    [Theory]
+    [InlineData("\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645")]
+    [InlineData("\U0001F468\u200D\U0001F4BB")]
+    [InlineData("co\u00ADoperate")]
+    public async Task Joiners_and_soft_hyphen_are_stored_unchanged(string comment)
+    {
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, comment))).OwnerComment.ShouldBe(comment);
+        AnalysisRunService.CheckComment($"{comment}\u202E", out _).ShouldBe(CompareRunResult.CommentInvalidCharacter);
+    }
+
+    [Fact]
+    public async Task Comment_length_counts_code_points_and_a_lone_carriage_return_is_a_line_break()
+    {
+        var emoji = string.Concat(Enumerable.Repeat("\U0001F600", AnalysisRunService.MaxCommentLength));
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, emoji))).OwnerComment.ShouldBe(emoji);
+        (await StartCompareAsync(new CompareRunRequest(null, first.Id, "Old\rline\r\nends"))).OwnerComment.ShouldBe("Old\nline\nends");
+
+        // JSON turns a lone surrogate into U+FFFD, so only a direct caller can pass one.
+        AnalysisRunService.CheckComment("Synthetic\uD800lone surrogate", out _).ShouldBe(CompareRunResult.CommentInvalidCharacter);
+    }
+
     /// <summary>A compare run over the first run that stops during its second model call; returns the stored messages.</summary>
-    private async Task<(AnalysisRunDto Run, string[] Stored)> CrashAfterFirstGroupAsync()
+    private async Task<(AnalysisRunDto Run, string[] Stored)> CrashAfterFirstGroupAsync(string? comment = null)
     {
         using var stop = new CancellationTokenSource();
         var calls = h.Chat.Calls;
@@ -388,7 +452,7 @@ public sealed class AnalysisCompareRunTests(ApiFactory factory, PostgresFixture 
 
             return Task.FromResult(AnalysisRunHarness.Agree(ids));
         };
-        var run = await StartCompareAsync(new CompareRunRequest(null, first.Id));
+        var run = await StartCompareAsync(new CompareRunRequest(null, first.Id, comment));
         await h.RunNextAsync(stop.Token);
         (await h.Runner.RecoverAsync(Ct)).ShouldBe(1);
         h.Chat.Respond = (ids, _, _, _) => Task.FromResult(AnalysisRunHarness.Agree(ids));

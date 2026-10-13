@@ -51,18 +51,26 @@ public sealed partial class ReviewQuery
             .ToListAsync(ct))
         .ToDictionary(g => (g.Key, g.Status), g => g.Count);
 
-    private async Task<Dictionary<Guid, SuggestionAlternativeRow>> AlternativesAsync(IEnumerable<Guid> suggestionIds, CancellationToken ct)
+    /// <summary>An alternative with the owner comment of the compare run that wrote it (#559).</summary>
+    public sealed record LoadedAlternative(SuggestionAlternativeRow Row, string? Comment);
+
+    /// <summary>The alternatives with their run's comment, in one query (left join: the run may be gone).</summary>
+    private async Task<Dictionary<Guid, LoadedAlternative>> AlternativesAsync(IEnumerable<Guid> suggestionIds, CancellationToken ct)
     {
         var ids = suggestionIds.ToArray();
-        return await db.SuggestionAlternatives.AsNoTracking()
-            .Where(a => ids.Contains(a.SuggestionId))
-            .ToDictionaryAsync(a => a.SuggestionId, ct);
+        return await (
+                from a in db.SuggestionAlternatives.AsNoTracking()
+                where ids.Contains(a.SuggestionId)
+                from r in db.AnalysisRuns.Where(r => r.Id == a.RunId).DefaultIfEmpty()
+                select new LoadedAlternative(a, r == null ? null : r.OwnerComment))
+            .ToDictionaryAsync(x => x.Row.SuggestionId, ct);
     }
 
     /// <param name="current">The message's personal label names (<see cref="SuggestionDto.CurrentLabels"/>).</param>
     private static SuggestionAlternativeDto ToDto(
-        SuggestionAlternativeRow a, MessageRow m, IReadOnlyList<string> current, IReadOnlyDictionary<string, string>? labelNames)
+        LoadedAlternative loaded, MessageRow m, IReadOnlyList<string> current, IReadOnlyDictionary<string, string>? labelNames)
     {
+        var a = loaded.Row;
         var replaced = Replaced(a.Replaced(labelNames), a.TopicLabel, m, labelNames);
         return new SuggestionAlternativeDto(
             a.TopicLabel,
@@ -77,12 +85,13 @@ public sealed partial class ReviewQuery
             a.PromptVersion,
             a.Model,
             a.CreatedAt,
-            MailType: a.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null);
+            MailType: a.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
+            Comment: loaded.Comment);
     }
 
     /// <summary>
-    /// The listed members' alternative: the newest member's of the most common outcome (label, flags, type), with
-    /// the union of the replaced labels; <see cref="SuggestionAlternativeDto.Mixed"/> when members disagree.
+    /// The listed members' alternative: the newest member's of the most common outcome (label, flags, type; its comment), with
+    /// the union of the replaced labels; <see cref="SuggestionAlternativeDto.Mixed"/> when members disagree on the outcome or the comment.
     /// <see cref="SuggestionAlternativeDto.Count"/> is <paramref name="count"/>, every member in the status with one.
     /// </summary>
     private static SuggestionAlternativeDto? GroupAlternative(IReadOnlyList<SuggestionDto> members, int count)
@@ -102,7 +111,7 @@ public sealed partial class ReviewQuery
         {
             ReplaceLabels = [.. alternatives.SelectMany(a => a.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
             LabelChange = Combined(alternatives.Select(a => a.LabelChange)),
-            Mixed = outcomes.Count > 1,
+            Mixed = outcomes.Count > 1 || alternatives.Select(a => a.Comment).Distinct(StringComparer.Ordinal).Skip(1).Any(),
             Count = Math.Max(count, alternatives.Count),
         };
     }

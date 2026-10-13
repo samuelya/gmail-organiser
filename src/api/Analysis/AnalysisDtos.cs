@@ -46,9 +46,10 @@ public sealed record ReanalyseResponse(int Reset);
 
 /// <summary>
 /// Exactly one of <c>suggestionIds</c> (suggestions of any status) or <c>runId</c> (the suggestions an earlier run wrote,
-/// or those a compare run wrote alternatives for); at most the analysis max count messages.
+/// or those a compare run wrote alternatives for); at most the analysis max count messages. <c>comment</c>: optional
+/// note for the model (#559), trimmed, at most 500 characters, no control characters but newline and tab.
 /// </summary>
-public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId);
+public sealed record CompareRunRequest(Guid[]? SuggestionIds, Guid? RunId, string? Comment = null);
 
 /// <summary>
 /// One run. <c>kind</c> is <c>analyse</c> or <c>compare</c> (results stored as alternatives, #248). <c>status</c> stays <c>running</c> while its job is paused (the run has no paused status; the job shows
@@ -102,7 +103,8 @@ public sealed record AnalysisRunDto(
     int NewLabelsProposed,
     int PackedMessages,
     int PackRetries,
-    bool EmbeddingFallback);
+    bool EmbeddingFallback,
+    string? OwnerComment);
 
 /// <summary>
 /// Message counts by analysis status, applied action/delete counts, the cumulative LLM savings and the not-analysed

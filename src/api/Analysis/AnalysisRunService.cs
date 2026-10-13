@@ -1,4 +1,8 @@
+using System.Buffers;
+using System.Globalization;
+using System.Text;
 using GmailOrganiser.Analysis.Grouping;
+using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Data;
 using GmailOrganiser.Fetch;
 using GmailOrganiser.Jobs;
@@ -29,6 +33,12 @@ public enum CompareRunResult
 
     /// <summary>More than <see cref="SettingsValidation.MaxAnalysisDefaultCount"/> suggestions.</summary>
     TooMany,
+
+    /// <summary>The normalised comment has more than <see cref="AnalysisRunService.MaxCommentLength"/> code points.</summary>
+    CommentTooLong,
+
+    /// <summary>The comment holds a control, format or invisible character other than newline and tab, or broken UTF-16.</summary>
+    CommentInvalidCharacter,
 }
 
 /// <summary>
@@ -46,6 +56,58 @@ public sealed partial class AnalysisRunService(
     ILogger<AnalysisRunService> logger) : IJobStartupRecovery
 {
     public const int MaxListLimit = 200;
+
+    /// <summary>
+    /// Longest compare-run comment after <see cref="CheckComment"/> (#559), in code points like the <c>char_length</c>
+    /// check constraint; the web mirrors it.
+    /// </summary>
+    public const int MaxCommentLength = 500;
+
+    /// <summary>
+    /// Trims and turns <c>\r\n</c> and a lone <c>\r</c> into <c>\n</c> (empty or whitespace-only is null), then checks the
+    /// length in code points and rejects control characters other than newline and tab, format (Cf) and invisible
+    /// characters and broken UTF-16. ZWNJ, ZWJ (Persian, Indic scripts, emoji sequences) and the soft hyphen are ordinary
+    /// text and stay as they are (#568). A raw comment over four times the limit is too long before any copy is made.
+    /// </summary>
+    public static CompareRunResult CheckComment(string? comment, out string? normalised)
+    {
+        normalised = null;
+        if (comment is { Length: > 4 * MaxCommentLength })
+        {
+            return CompareRunResult.CommentTooLong;
+        }
+
+        var text = comment?.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            return CompareRunResult.Ok;
+        }
+
+        var count = 0;
+        Rune rune;
+        for (var i = 0; i < text.Length; i += rune.Utf16SequenceLength)
+        {
+            if (Rune.DecodeFromUtf16(text.AsSpan(i), out rune, out _) != OperationStatus.Done)
+            {
+                return CompareRunResult.CommentInvalidCharacter;
+            }
+
+            if (++count > MaxCommentLength)
+            {
+                return CompareRunResult.CommentTooLong;
+            }
+
+            if (rune.Value is not '\n' and not '\t' and not '\u200C' and not '\u200D' and not '\u00AD'
+                && (Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or UnicodeCategory.Format
+                    || (rune.IsBmp && BodyCleaner.IsInvisible((char)rune.Value))))
+            {
+                return CompareRunResult.CommentInvalidCharacter;
+            }
+        }
+
+        normalised = text;
+        return CompareRunResult.Ok;
+    }
 
     /// <summary>
     /// Freezes the run's candidates, then stores a queued run and enqueues its job (one per run; the analysis queue
@@ -105,11 +167,17 @@ public sealed partial class AnalysisRunService(
     /// Starts a compare run (#248) over suggestions of any status: <paramref name="suggestionIds"/>, or every suggestion
     /// <paramref name="runId"/> wrote (or wrote an alternative for). Freezes each message's suggestion; messages deleted
     /// in Gmail and unknown ids count as skipped. Queued like any run, so it never overlaps another analysis run.
+    /// <paramref name="comment"/> is checked by <see cref="CheckComment"/> and stored normalised on the run, so a resumed job keeps it.
     /// </summary>
     /// <exception cref="LlmNotConfiguredException">No chat model is selected, or no usable Claude API key is set.</exception>
     public async Task<(CompareRunResult Result, AnalysisRunDto? Run)> StartCompareAsync(
-        Guid[]? suggestionIds, Guid? runId, CancellationToken ct)
+        Guid[]? suggestionIds, Guid? runId, string? comment, CancellationToken ct)
     {
+        if (CheckComment(comment, out var ownerComment) is not CompareRunResult.Ok and var invalid)
+        {
+            return (invalid, null);
+        }
+
         var settings = await RequireChatModelAsync(ct);
 
         var max = SettingsValidation.MaxAnalysisDefaultCount;
@@ -168,6 +236,7 @@ public sealed partial class AnalysisRunService(
             GroupingMode = settings.AnalysisGroupingMode,
             Status = AnalysisRunStatus.Queued,
             SkippedMessages = requested - candidates.Count,
+            OwnerComment = ownerComment,
             CreatedAt = now,
         };
 
@@ -419,5 +488,6 @@ public sealed partial class AnalysisRunService(
         newLabels,
         run.PackedMessages,
         run.PackRetries,
-        run.EmbeddingFallback);
+        run.EmbeddingFallback,
+        run.OwnerComment);
 }

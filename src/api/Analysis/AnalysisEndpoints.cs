@@ -73,7 +73,8 @@ public static class AnalysisEndpoints
 
     /// <summary>
     /// 202 with the queued compare run; 400 unless exactly one of <c>suggestionIds</c> or <c>runId</c> names 1 to the max
-    /// count suggestions; 409 when no chat model is selected.
+    /// count suggestions, or when the service rejects the <c>comment</c> (<see cref="AnalysisRunService.CheckComment"/>);
+    /// 409 when no chat model is selected.
     /// </summary>
     private static async Task<Results<Accepted<AnalysisRunDto>, ValidationProblem>> StartCompareAsync(
         CompareRunRequest request, AnalysisRunService runs, CancellationToken ct)
@@ -89,12 +90,15 @@ public static class AnalysisEndpoints
             return Invalid("suggestionIds", $"1 to {max} suggestion ids.");
         }
 
-        var (result, run) = await runs.StartCompareAsync(request.SuggestionIds, request.RunId, ct);
+        var (result, run) = await runs.StartCompareAsync(request.SuggestionIds, request.RunId, request.Comment, ct);
         return result switch
         {
             CompareRunResult.Ok => TypedResults.Accepted($"/api/analysis/runs/{run!.Id}", run),
             CompareRunResult.RunNotFound => Invalid("runId", "No such run."),
             CompareRunResult.TooMany => Invalid("runId", $"The run has more than {max} suggestions; select at most {max}."),
+            CompareRunResult.CommentTooLong => Invalid("comment", $"At most {AnalysisRunService.MaxCommentLength} characters."),
+            CompareRunResult.CommentInvalidCharacter => Invalid(
+                "comment", "No control, format or invisible characters other than newline and tab."),
             _ => Invalid(request.RunId is null ? "suggestionIds" : "runId", "No suggestions to compare."),
         };
 

@@ -146,7 +146,7 @@ public static class BodyCleaner
         return quote is null ? -1 : html.IndexOf('>', from);
     }
 
-    private static bool IsInvisible(char c) => c is '\u200B' or '\u200C' or '\u200D' or '\u2060' or '\uFEFF' or '\u00AD' or '\u034F';
+    internal static bool IsInvisible(char c) => c is '\u200B' or '\u200C' or '\u200D' or '\u2060' or '\uFEFF' or '\u00AD' or '\u034F';
 
     /// <summary>
     /// Drops zero-width characters, collapses blanks to single spaces and blank lines to single newlines; stops once

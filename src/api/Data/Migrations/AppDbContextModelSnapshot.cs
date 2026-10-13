@@ -132,6 +132,10 @@ namespace GmailOrganiser.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("near_context_limit");
 
+                    b.Property<string>("OwnerComment")
+                        .HasColumnType("text")
+                        .HasColumnName("owner_comment");
+
                     b.Property<int>("PackRetries")
                         .HasColumnType("integer")
                         .HasColumnName("pack_retries");
@@ -188,7 +192,10 @@ namespace GmailOrganiser.Data.Migrations
                     b.HasIndex("Status", "CreatedAt")
                         .HasDatabaseName("ix_analysis_runs_status_created_at");
 
-                    b.ToTable("analysis_runs", (string)null);
+                    b.ToTable("analysis_runs", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_analysis_runs_owner_comment_length", "char_length(owner_comment) <= 500");
+                        });
                 });
 
             modelBuilder.Entity("GmailOrganiser.Analysis.Grouping.MessageEmbeddingRow", b =>
