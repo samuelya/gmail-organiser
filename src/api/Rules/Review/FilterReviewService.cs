@@ -214,14 +214,20 @@ public sealed class FilterReviewService(
         {
             // Each filter the create splits into (#557) that exists (from an earlier attempt, or by hand) is used, never
             // deleted; only the others are created, as members of its group. A fix never deletes what it made or reused.
-            var existing = fix.Create is { } made ? await ExistingPartsAsync(made, ct) : [];
+            var existing = fix.Create is { } made ? await ExistingPartsAsync(made, fix.DeleteFilterIds, ct) : [];
             var keep = existing.Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
-            if (fix.Create is { } create && finding.CreatedFilterId is null)
+            if (fix.Create is { } create)
             {
                 var missing = create.Action.SplitPerUserLabel()
                     .Where(p => !existing.Any(r => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, p)))
                     .ToList();
-                if (missing.Count > 0)
+                if (missing.Count == 0)
+                {
+                    // Every part exists (#581): they become one group, also on a re-apply of an earlier attempt.
+                    await filters.JoinGroupAsync([.. keep], ct);
+                    finding.CreatedFilterId ??= existing[0].Id;
+                }
+                else if (finding.CreatedFilterId is null)
                 {
                     var action = new GmailFilterAction(
                         [.. missing.SelectMany(p => p.AddLabelIds).Distinct(StringComparer.Ordinal)], create.Action.RemoveLabelIds);
@@ -236,13 +242,14 @@ public sealed class FilterReviewService(
                     finding.CreatedFilterId = filter.Id;
                     keep.UnionWith(filter.FilterIds);
                 }
-                else
-                {
-                    finding.CreatedFilterId = existing[0].Id;
-                    await JoinGroupAsync([.. keep], ct);
-                }
 
                 await db.SaveChangesAsync(CancellationToken.None);
+            }
+            else if (fix.Kind != FilterFixKind.Delete)
+            {
+                // A split fix without a create (#581): the finding's members it keeps already are every part, maybe
+                // hand-made and ungrouped, and become one group before the extras go.
+                await filters.JoinGroupAsync([.. finding.FilterIds.Except(fix.DeleteFilterIds)], ct);
             }
 
             await DeleteFixFiltersAsync(
@@ -284,29 +291,18 @@ public sealed class FilterReviewService(
         }
     }
 
-    /// <summary>The active filters equal to one of the filters <paramref name="create"/> splits into (#557).</summary>
-    private async Task<List<FilterRow>> ExistingPartsAsync(FilterFixCreate create, CancellationToken ct)
+    /// <summary>
+    /// One active filter for each of the filters <paramref name="create"/> splits into (#557) that exists, preferring one
+    /// the fix does not delete; an exact copy of a part (#581) is left to the fix's deletes, never joined to the group.
+    /// </summary>
+    private async Task<List<FilterRow>> ExistingPartsAsync(FilterFixCreate create, IReadOnlyList<string> deletes, CancellationToken ct)
     {
-        var parts = create.Action.SplitPerUserLabel();
         var active = await db.Filters.AsNoTracking()
             .Where(r => r.DeletedAt == null).OrderBy(r => r.FirstSeenAt).ThenBy(r => r.Id).ToListAsync(ct);
-        return [.. active.Where(r => parts.Any(p => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, p)))];
-    }
-
-    /// <summary>
-    /// Makes the existing filters a fix keeps (hand-made per-label parts, #581) one group, reusing a group among them,
-    /// so the list shows them as one filter. Saved with the finding's <c>CreatedFilterId</c>, before any delete.
-    /// </summary>
-    private async Task JoinGroupAsync(List<string> ids, CancellationToken ct)
-    {
-        var members = await db.Filters.Where(r => ids.Contains(r.Id) && r.DeletedAt == null).ToListAsync(ct);
-        if (members.Count < 2)
-        {
-            return;
-        }
-
-        var group = members.Select(r => r.GroupId).FirstOrDefault(g => g is not null) ?? Guid.CreateVersion7(time.GetUtcNow());
-        members.ForEach(r => r.GroupId = group);
+        return [.. create.Action.SplitPerUserLabel()
+            .Select(p => active.Where(r => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, p))
+                .OrderBy(r => deletes.Contains(r.Id)).FirstOrDefault())
+            .OfType<FilterRow>()];
     }
 
     private async Task RecordErrorAsync(FilterFindingRow finding, string error)
