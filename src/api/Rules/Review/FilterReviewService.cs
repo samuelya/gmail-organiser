@@ -239,6 +239,7 @@ public sealed class FilterReviewService(
                 else
                 {
                     finding.CreatedFilterId = existing[0].Id;
+                    await JoinGroupAsync([.. keep], ct);
                 }
 
                 await db.SaveChangesAsync(CancellationToken.None);
@@ -290,6 +291,22 @@ public sealed class FilterReviewService(
         var active = await db.Filters.AsNoTracking()
             .Where(r => r.DeletedAt == null).OrderBy(r => r.FirstSeenAt).ThenBy(r => r.Id).ToListAsync(ct);
         return [.. active.Where(r => parts.Any(p => FilterChecks.SameFilter(r.ReadCriteria(), r.ReadAction(), create.Criteria, p)))];
+    }
+
+    /// <summary>
+    /// Makes the existing filters a fix keeps (hand-made per-label parts, #581) one group, reusing a group among them,
+    /// so the list shows them as one filter. Saved with the finding's <c>CreatedFilterId</c>, before any delete.
+    /// </summary>
+    private async Task JoinGroupAsync(List<string> ids, CancellationToken ct)
+    {
+        var members = await db.Filters.Where(r => ids.Contains(r.Id) && r.DeletedAt == null).ToListAsync(ct);
+        if (members.Count < 2)
+        {
+            return;
+        }
+
+        var group = members.Select(r => r.GroupId).FirstOrDefault(g => g is not null) ?? Guid.CreateVersion7(time.GetUtcNow());
+        members.ForEach(r => r.GroupId = group);
     }
 
     private async Task RecordErrorAsync(FilterFindingRow finding, string error)

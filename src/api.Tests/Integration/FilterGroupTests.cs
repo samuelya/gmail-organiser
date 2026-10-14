@@ -232,6 +232,26 @@ public sealed class FilterGroupTests(ApiFactory factory, PostgresFixture postgre
         (await db.FilterFindings.SingleAsync(f => f.Id == findingId, Ct)).Status.ShouldBe(FilterFindingStatus.Applied);
     }
 
+    [Fact]
+    public async Task A_fix_whose_parts_exist_as_ungrouped_filters_makes_them_one_group()
+    {
+        var topic = await CreatedAsync(Topic);
+        var extraA = await CreatedAsync(ExtraA);
+        var old = (await CreatedAsync(ExtraB)).Id;
+        var fix = new FilterFix(FilterFixKind.MergeActions, [old], new(
+            new GmailFilterCriteria(From: Shop),
+            new GmailFilterAction([topic.Action.AddLabels.Single().Id, extraA.Action.AddLabels.Single().Id], ["INBOX", "UNREAD"])));
+        var findingId = await AddFindingAsync(fix, [topic.Id, extraA.Id, old]);
+
+        (await Client().PostAsync($"/api/rules/filters/findings/{findingId}/apply", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await ShopFiltersAsync()).Select(f => f.Id).ShouldBe([topic.Id, extraA.Id], ignoreOrder: true);
+        await using var db = postgres.CreateDbContext();
+        var groups = await db.Filters.Where(r => r.Id == topic.Id || r.Id == extraA.Id).Select(r => r.GroupId).ToListAsync(Ct);
+        groups.ShouldAllBe(g => g != null && g == groups[0]);
+        (await ListAsync()).Filters.Single(f => f.Criteria.From == Shop).FilterIds.ShouldBe([topic.Id, extraA.Id], ignoreOrder: true);
+    }
+
     private async Task<FilterReviewDto> ReviewAsync()
     {
         var response = await Client().PostAsync("/api/rules/filters/reviews", null, Ct);
