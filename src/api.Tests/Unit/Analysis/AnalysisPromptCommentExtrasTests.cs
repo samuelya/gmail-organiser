@@ -75,6 +75,8 @@ public sealed class AnalysisPromptCommentExtrasTests
     [InlineData("short", new[] { "Short" })]
     [InlineData("(Short) and topic.", new[] { "Topic", "Short" })]
     [InlineData("Sub/Topic/Subway", new string[0])]
+    [InlineData("pre-short, short_old, short.v2 and Short-2023", new string[0])]
+    [InlineData("Not short. Topic - and short_.", new[] { "Short", "Topic" })]
     public void Only_whole_names_count(string comment, string[] named)
     {
         ExtraLabelsOutput.NamedIn(comment, Tree).ShouldBe(named, ignoreOrder: true);
@@ -111,5 +113,14 @@ public sealed class AnalysisPromptCommentExtrasTests
 
         builder.Build(Input("Use Archive/Kept."))[1].Text.ShouldContain(AnalysisPromptBuilder.GuidedExtraLabelsInstruction);
         builder.AllowedExtraLabels(Input("Use Archive/Kept.")).Values.ShouldBe(["Archive/Kept"]);
+    }
+
+    [Fact]
+    public void Only_labels_the_prompt_shows_can_be_named()
+    {
+        var tree = Enumerable.Range(0, AnalysisPromptBuilder.MaxLabelTreeEntries + 1).Select(i => $"Synthetic {i:000}").ToList();
+
+        AnalysisPromptBuilder.CommentNamedLabels("Use Synthetic 499 and Synthetic 500.", tree).ShouldBe(["Synthetic 499"]);
+        AnalysisPromptBuilder.CommentNamedLabels(" ", tree).ShouldBeEmpty();
     }
 }

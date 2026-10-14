@@ -27,8 +27,11 @@ public static class ExtraLabelsOutput
 
     /// <summary>
     /// The labels of <paramref name="labelTree"/> whose whole name (trimmed) appears in <paramref name="comment"/>,
-    /// case-insensitive, not inside a longer word or label path: a comment asking for <c>Topic/Sub</c> names neither
-    /// <c>Topic</c> nor <c>Sub</c>. Only existing labels, so a comment never invents one.
+    /// case-insensitive, not inside a longer word, label path or name (<c>-</c>, <c>_</c>, <c>.</c> and <c>/</c> between
+    /// letters or digits join a name): a comment asking for <c>Topic/Sub</c> names neither <c>Topic</c> nor <c>Sub</c>,
+    /// and <c>Archive-2023</c> does not name <c>Archive</c>. Only existing labels, so a comment never invents one. The
+    /// list is what the comment mentions, not what it asks for: a label named in a negative sense ("not Archive") is
+    /// allowed too, and leaving it out is the model's reading of the comment.
     /// </summary>
     public static IEnumerable<string> NamedIn(string comment, IEnumerable<string> labelTree) =>
         labelTree.Where(l => l.Trim().Length > 0 && Names(comment, l.Trim()));
@@ -39,7 +42,7 @@ public static class ExtraLabelsOutput
              at = comment.IndexOf(label, at + 1, StringComparison.OrdinalIgnoreCase))
         {
             var end = at + label.Length;
-            if ((at == 0 || !InName(comment[at - 1])) && (end == comment.Length || !InName(comment[end])))
+            if (!Joined(comment, at - 1, -1) && !Joined(comment, end, 1))
             {
                 return true;
             }
@@ -48,7 +51,15 @@ public static class ExtraLabelsOutput
         return false;
     }
 
-    private static bool InName(char c) => char.IsLetterOrDigit(c) || c == '/';
+    /// <summary>
+    /// Whether <paramref name="text"/>[<paramref name="at"/>] continues the name: a letter or digit, or a joiner
+    /// (<c>/</c>, <c>-</c>, <c>_</c>, <c>.</c>) followed (in <paramref name="step"/>'s direction) by one, so a sentence's
+    /// full stop or a dash between words still ends a name.
+    /// </summary>
+    private static bool Joined(string text, int at, int step) =>
+        at >= 0 && at < text.Length
+        && (char.IsLetterOrDigit(text[at])
+            || (text[at] is '/' or '-' or '_' or '.' && at + step >= 0 && at + step < text.Length && char.IsLetterOrDigit(text[at + step])));
 
     /// <summary>
     /// The allow-list for <paramref name="labels"/>: shown form (case-insensitive, first spelling wins) to the stored
@@ -70,6 +81,16 @@ public static class ExtraLabelsOutput
     }
 
     /// <summary>
+    /// The string entries of <paramref name="item"/>'s <c>extraLabels</c>, trimmed and without surrounding backticks;
+    /// blanks, non-strings and a missing or non-array value give none.
+    /// </summary>
+    public static string[] Answered(JsonElement item) =>
+        item.TryGetProperty(ExtraLabelList.Field, out var element) && element.ValueKind == JsonValueKind.Array
+            ? [.. element.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String)
+                .Select(e => e.GetString()!.Trim().Trim('`').Trim()).Where(l => l.Length > 0)]
+            : [];
+
+    /// <summary>
     /// The kept extras: each string entry (trimmed, surrounding backticks removed) equal (case-insensitive) to an allowed
     /// extra, in the stored spelling, then <see cref="ExtraLabelList.Clean"/>ed against the topic, document type and
     /// configured labels. Missing, null or not an array is <c>[]</c>; non-string and blank entries are ignored; a string
@@ -78,21 +99,10 @@ public static class ExtraLabelsOutput
     public static string[] Read(
         string id, JsonElement item, string topic, string? documentType, SuggestionParseContext context, List<string> dropped)
     {
-        if (!item.TryGetProperty(ExtraLabelList.Field, out var element) || element.ValueKind != JsonValueKind.Array)
-        {
-            return [];
-        }
-
         var kept = new List<string>();
         var skipped = 0;
-        foreach (var entry in element.EnumerateArray().Where(e => e.ValueKind == JsonValueKind.String))
+        foreach (var label in Answered(item))
         {
-            var label = entry.GetString()!.Trim().Trim('`').Trim();
-            if (label.Length == 0)
-            {
-                continue;
-            }
-
             if (context.AllowedExtraLabels.TryGetValue(label, out var allowed))
             {
                 kept.Add(allowed);

@@ -220,15 +220,20 @@ public sealed class ReviewExtraLabelsTests(ApiFactory factory, PostgresFixture p
         var shown = members.Single(m => m.MessageId == "a01").Alternative.ShouldNotBeNull();
         shown.ExtraLabels.ShouldBe([Existing, "Synthetic Z", "synthetic a"]);
         shown.ExtraLabelsNew.ShouldBe(["Synthetic Z", "synthetic a"]);
+        shown.ExtraLabelsAccepted.ShouldBe(["Synthetic A", "Synthetic B", "Synthetic C", "Synthetic D", Existing]);
+        shown.ExtraLabelsNotAdded.ShouldBe(["Synthetic Z"]);
         members.Single(m => m.MessageId == "a02").Alternative.ShouldNotBeNull().ExtraLabels.ShouldBeEmpty();
+        (await DetailAsync(AnalysisRunHarness.Shop)).Groups.Single(g => g.Members.Any(m => m.MessageId == "a01") && g.Members.Any(m => m.MessageId == "a02"))
+            .Alternative.ShouldNotBeNull().Mixed.ShouldBeTrue("a01's and a02's alternatives differ in extras");
 
         var response = await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([await IdAsync("a01"), await IdAsync("a02")], null));
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
         await using var check = postgres.CreateDbContext();
         // The cap keeps every current extra; the first added one in canonical order fills the last slot.
-        (await check.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a01", Ct)).ExtraLabels
-            .ShouldBe(["Synthetic A", "Synthetic B", "Synthetic C", "Synthetic D", Existing]);
+        var a01 = await check.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a01", Ct);
+        a01.ExtraLabels.ShouldBe(["Synthetic A", "Synthetic B", "Synthetic C", "Synthetic D", Existing]);
+        a01.Reason.ShouldEndWith($" {ExtraLabelList.NotAddedNote} Synthetic Z.");
         (await check.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a02", Ct)).ExtraLabels.ShouldBe(current);
     }
 

@@ -90,4 +90,26 @@ public sealed class ExtraLabelListTests
         ExtraLabelList.SameList(["a"], ["a", "b"]).ShouldBeFalse();
         ExtraLabelList.SameList([], []).ShouldBeTrue();
     }
+
+    [Fact]
+    public void Merge_keeps_the_current_ones_and_reports_the_added_ones_the_cap_leaves_out()
+    {
+        var (labels, capped) = ExtraLabelList.Merge(
+            ["Extra/A", "Extra/B", "Extra/C", "Extra/D"], ["extra/a", "Topic", "Extra/F", "Extra/E"], "Topic", null, []);
+
+        labels.ShouldBe(["Extra/A", "Extra/B", "Extra/C", "Extra/D", "Extra/E"]);
+        capped.ShouldBe(["Extra/F"]);
+        var (unchanged, none) = ExtraLabelList.Merge(["Extra/A"], [], null, null, []);
+        (unchanged.Single(), none.Length).ShouldBe(("Extra/A", 0));
+    }
+
+    [Fact]
+    public void WithNotAdded_names_the_labels_before_a_trailing_cap_note()
+    {
+        ExtraLabelList.WithNotAdded("Reason.", []).ShouldBe("Reason.");
+        ExtraLabelList.WithNotAdded("Reason.", ["Extra/B", "extra/b", "Extra/A"])
+            .ShouldBe($"Reason. {ExtraLabelList.NotAddedNote} Extra/B, Extra/A.");
+        ExtraLabelList.WithNotAdded("Reason." + ApprovedLabelSet.CapNote, ["Extra/A"])
+            .ShouldBe($"Reason. {ExtraLabelList.NotAddedNote} Extra/A.{ApprovedLabelSet.CapNote}");
+    }
 }

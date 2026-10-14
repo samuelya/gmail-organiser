@@ -210,6 +210,7 @@ public sealed partial class AnalysisRunJob
         {
             ReplaceLabels = agreed.ReplaceLabels,
             ExtraLabels = agreed.ExtraLabels,
+            AnsweredExtraLabels = [.. outputs.Values.SelectMany(o => o.AnsweredExtraLabels)],
         };
         foreach (var m in others)
         {
@@ -269,7 +270,7 @@ public sealed partial class AnalysisRunJob
             context.Run.DocumentTypeParent, policies, context.LabelSet.Blocked, context.LabelSet.Locked,
             context.Run.OwnerComment);
         var messages = context.Builder.Build(input);
-        var extras = context.Builder.AllowedExtraLabels(input);
+        var extras = context.Builder.AllowedExtraLabels(input, context.CommentNamed);
         var current = emails.ToDictionary(e => e.Id, e => e.Labels, StringComparer.Ordinal);
         if (context.Triage is not { } triage)
         {
@@ -416,7 +417,8 @@ public sealed partial class AnalysisRunJob
     /// document-type label takes the spelling of the run's label tree entry it matches (for a new one, of its longest
     /// existing ancestor) and is new when there is none, so a derived row agrees with its representatives. Additional
     /// labels are respelled the same way and cleaned before <see cref="ApprovedLabelSet.Admit"/> drops blocked ones and
-    /// counts those outside the tree as new (#529).
+    /// counts those outside the tree as new (#529). With a comment (#582), an extra the model answered that the
+    /// suggestion did not keep (allow-list, cleaning, blocked, or a group's members disagreeing) is named in the reason.
     /// </summary>
     private static SuggestionRow Row(
         RunContext context, MessageRow message, SuggestionSource source, SuggestionOutput output, string? groupKey, string? filterJson,
@@ -428,6 +430,16 @@ public sealed partial class AnalysisRunJob
             ExtraLabels = ExtraLabelList.Clean(
                 output.ExtraLabels.Select(context.LabelIndex.Respell), output.TopicLabel, type, ExtraLabelList.Reserved(context.Settings)),
         }, context.LabelIndex);
+        if (!string.IsNullOrWhiteSpace(context.Run.OwnerComment))
+        {
+            var kept = output.ExtraLabels;
+            output = output with
+            {
+                Reason = ExtraLabelList.WithNotAdded(
+                    output.Reason, output.AnsweredExtraLabels.Where(a => !kept.Contains(a.Trim(), StringComparer.OrdinalIgnoreCase))),
+            };
+        }
+
         var row = new SuggestionRow
         {
             Id = Guid.CreateVersion7(),

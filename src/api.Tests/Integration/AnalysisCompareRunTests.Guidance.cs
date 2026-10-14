@@ -62,6 +62,7 @@ public sealed partial class AnalysisCompareRunTests
             var alternatives = await db.SuggestionAlternatives.AsNoTracking().Where(a => a.RunId == run.Id && a.Source == SuggestionSource.Llm).ToListAsync(Ct);
             alternatives.ShouldNotBeEmpty();
             alternatives.ShouldAllBe(a => a.ExtraLabels.SequenceEqual(new[] { archive }));
+            alternatives.ShouldAllBe(a => a.Reason.EndsWith($" {ExtraLabelList.NotAddedNote} Synthetic Missing."), "the dropped extra is named on the card");
             id = alternatives[0].SuggestionId;
             await db.Suggestions.Where(s => s.Id == id).ExecuteUpdateAsync(u => u.SetProperty(s => s.ExtraLabels, new[] { "Synthetic Kept" }), Ct);
         }

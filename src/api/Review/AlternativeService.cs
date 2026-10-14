@@ -267,7 +267,7 @@ public sealed class AlternativeService(
 
     /// <summary>
     /// The alternative's outcome and provenance (a copy's source run, so the decision is decided like the source's); the suggestion keeps its id, message, sender and group, and its
-    /// additional labels plus the alternative's (#582: never removes one), re-cleaned against the new topic and document type (<see cref="ExtraLabelList.Add"/>).
+    /// additional labels plus the alternative's (#582: never removes one), re-cleaned against the new topic and document type (<see cref="ExtraLabelList.Add"/>); the reason names the alternative's extras the cap left out.
     /// </summary>
     private static void Copy(SuggestionAlternativeRow a, SuggestionRow s, AppSettings settings)
     {
@@ -289,6 +289,6 @@ public sealed class AlternativeService(
         s.Model = a.Model;
         s.PromptVersion = a.PromptVersion;
         s.Edited = a.Edited;
-        ExtraLabelList.Add(s, a.ExtraLabels, settings);
+        s.Reason = ExtraLabelList.WithNotAdded(s.Reason, ExtraLabelList.Add(s, a.ExtraLabels, settings));
     }
 }

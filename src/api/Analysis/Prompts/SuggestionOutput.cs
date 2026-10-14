@@ -95,6 +95,12 @@ public sealed record SuggestionOutput(
 
     /// <summary>Additional labels next to the topic (#527); cleaned and respelled when the suggestion is stored.</summary>
     public IReadOnlyList<string> ExtraLabels { get; init; } = [];
+
+    /// <summary>
+    /// Every additional label the model answered, before the allow-list and cleaning (#582), so a run with a comment can
+    /// name the ones the suggestion did not keep (<see cref="ExtraLabelList.WithNotAdded"/>).
+    /// </summary>
+    public IReadOnlyList<string> AnsweredExtraLabels { get; init; } = [];
 }
 
 /// <summary>A sender-level Gmail filter suggestion; at least one field is set.</summary>

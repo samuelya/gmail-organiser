@@ -163,7 +163,8 @@ public sealed partial class AnalysisRunJob(
         var context = new RunContext(
             run, settings, builder, ActiveChat(chat, chatConfig), triage is null ? null : OllamaChat(triage, settings), labelTree,
             index, labels, work.Allowlisted, await attachmentPolicy.GetAsync(ct),
-            compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies, ApprovedLabelSet.From(settings, admitted));
+            compare ? [.. cursor.SuggestionIds!.Keys] : [], work.Policies, ApprovedLabelSet.From(settings, admitted),
+            AnalysisPromptBuilder.CommentNamedLabels(run.OwnerComment, labelTree));
 
         var prepared = new Dictionary<MessageGroup, PreparedGroup>(ReferenceEqualityComparer.Instance);
         // One-off senders share snippet-only prompts (#376); a compare run measures the prompt on full bodies.
@@ -461,7 +462,8 @@ public sealed partial class AnalysisRunJob(
         AttachmentPolicySnapshot Attachments,
         IReadOnlyCollection<string> HintExclusions,
         PolicyLookup Policies,
-        ApprovedLabelSet LabelSet);
+        ApprovedLabelSet LabelSet,
+        IReadOnlyList<string> CommentNamed);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Analysis output for {Count} email(s) stayed invalid after a retry: {Errors}")]
     private static partial void LogInvalidOutput(ILogger logger, int count, string errors);

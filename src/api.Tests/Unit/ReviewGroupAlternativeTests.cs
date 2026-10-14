@@ -2,16 +2,19 @@ using GmailOrganiser.Review;
 
 namespace GmailOrganiser.Tests.Unit;
 
-/// <summary>A group's alternative is copied only when every member's is; copies mixed with LLM answers are mixed (#578).</summary>
+/// <summary>
+/// A group's alternative is copied only when every member's is; copies mixed with LLM answers are mixed (#578), and so are
+/// members whose alternatives' extras differ (#582).
+/// </summary>
 public sealed class ReviewGroupAlternativeTests
 {
     private static readonly DateTimeOffset At = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    private static SuggestionDto Member(bool copied, string topic = "Topic/One") => new(
+    private static SuggestionDto Member(bool copied, string topic = "Topic/One", string[]? extras = null) => new(
         Guid.NewGuid(), "m1", "Order shipped", At, null, "llm", "Topic/One", false, false, false, false, 0.9, "synthetic",
         "Pending", false, false, [], [], LabelChange.Add,
         Alternative: new SuggestionAlternativeDto(
-            topic, null, [], LabelChange.Add, false, false, false, 0.8, "synthetic", null, null, At, Copied: copied));
+            topic, null, [], LabelChange.Add, false, false, false, 0.8, "synthetic", null, null, At, Copied: copied, ExtraLabels: extras));
 
     private static SuggestionAlternativeDto Group(params SuggestionDto[] members) =>
         ReviewQuery.GroupAlternative(members, members.Length).ShouldNotBeNull();
@@ -47,5 +50,16 @@ public sealed class ReviewGroupAlternativeTests
 
         (group.Copied, group.Mixed).ShouldBe((true, true));
         group.TopicLabel.ShouldBe("Topic/One");
+    }
+
+    [Fact]
+    public void Members_whose_extras_differ_are_mixed_and_the_union_is_capped()
+    {
+        string[] many = ["Extra/A", "Extra/B", "Extra/C", "Extra/D"];
+        var group = Group(Member(false, extras: many), Member(false, extras: ["extra/a", "Extra/E", "Extra/F"]));
+
+        group.Mixed.ShouldBeTrue();
+        group.ExtraLabels.ShouldBe(["Extra/A", "Extra/B", "Extra/C", "Extra/D", "Extra/E"]);
+        Group(Member(false, extras: many), Member(false, extras: many)).Mixed.ShouldBeFalse();
     }
 }

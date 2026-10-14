@@ -218,17 +218,27 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
     /// <summary>
     /// The extras the model may answer for <paramref name="input"/>'s prompt, from the same hints <see cref="Build"/>
     /// renders (<see cref="ExtraLabelsOutput.Allowed"/>): the approved hints' extras when the template has <c>{{memory}}</c>
-    /// to show them, then, when the prompt shows a comment (#582), the label tree's labels it names
-    /// (<see cref="ExtraLabelsOutput.NamedIn"/>). Empty when neither gives any.
+    /// to show them, then, when the prompt shows a comment (#582), the shown label tree's labels it names
+    /// (<paramref name="commentNamed"/>, <see cref="CommentNamedLabels"/> of the run; computed when null). Empty when
+    /// neither gives any.
     /// </summary>
-    public IReadOnlyDictionary<string, string> AllowedExtraLabels(PromptInput input)
+    public IReadOnlyDictionary<string, string> AllowedExtraLabels(PromptInput input, IReadOnlyList<string>? commentNamed = null)
     {
         ArgumentNullException.ThrowIfNull(input);
         var hints = template.Text.Contains(PromptTemplate.MemoryPlaceholder, StringComparison.Ordinal)
             ? input.Memory.SelectMany(ExtraLabelsOutput.Shown)
             : [];
-        return ExtraLabelsOutput.Allowed(Guided(input) ? hints.Concat(ExtraLabelsOutput.NamedIn(input.OwnerGuidance!, input.LabelTree)) : hints);
+        return ExtraLabelsOutput.Allowed(
+            Guided(input) ? hints.Concat(commentNamed ?? CommentNamedLabels(input.OwnerGuidance, input.LabelTree)) : hints);
     }
+
+    /// <summary>
+    /// The labels of the label tree the prompt shows (its first <see cref="MaxLabelTreeEntries"/>) that
+    /// <paramref name="comment"/> names (<see cref="ExtraLabelsOutput.NamedIn"/>); empty without a comment. A run's
+    /// comment and tree don't change, so it computes this once.
+    /// </summary>
+    public static IReadOnlyList<string> CommentNamedLabels(string? comment, IReadOnlyList<string> labelTree) =>
+        string.IsNullOrWhiteSpace(comment) ? [] : [.. ExtraLabelsOutput.NamedIn(comment, labelTree.Take(MaxLabelTreeEntries))];
 
     /// <summary>
     /// One hint line per approved policy of the emails' senders (#360), after the memory: covered mail never reaches the
