@@ -9,6 +9,7 @@ import {
 import { MatButtonModule } from '@angular/material/button';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import {
+  acceptedExtras,
   alternativeDiff,
   alternativeSource,
   CompareValues,
@@ -72,6 +73,14 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
             @if (c.documentTypeLabel) {
               <span class="badge">{{ c.documentTypeLabel }}</span>
             }
+            @for (extra of c.extraLabels ?? []; track extra) {
+              <span class="badge" data-testid="current-extra-label"
+                >{{ extra }}
+                @if (c.extraLabelsNew?.includes(extra)) {
+                  <span class="new">new</span>
+                }
+              </span>
+            }
             @if (c.needsAction) {
               <span class="badge">{{ labels().action }}</span>
             }
@@ -98,6 +107,17 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
               </span>
             } @else if (d.documentType) {
               <span class="badge diff" data-testid="alt-document-type">No document type</span>
+            }
+            @for (extra of newExtras(); track extra.label) {
+              <span class="badge" [class.diff]="extra.added" data-testid="alt-extra-label"
+                >{{ extra.label }}
+                @if (extra.isNew) {
+                  <span class="new" data-testid="alt-extra-label-new">new</span>
+                }
+                @if (extra.added) {
+                  <span class="sr-only"> (added)</span>
+                }
+              </span>
             }
             @if (a.needsAction) {
               <span class="badge" [class.diff]="d.needsAction" data-testid="alt-action"
@@ -185,6 +205,11 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
       padding: 0 0.375rem;
       overflow-wrap: anywhere;
     }
+    .new {
+      margin-left: 0.25rem;
+      font-weight: 600;
+      color: var(--mat-sys-primary);
+    }
     .diff {
       border-color: var(--mat-sys-primary);
       background: var(--mat-sys-primary-container);
@@ -231,6 +256,10 @@ export class AlternativeCompare {
   readonly showMembers = output<void>();
 
   readonly diff = computed(() => alternativeDiff(this.current(), this.alternative()));
+  /** The additional labels "Use new" leaves: the current ones plus the alternative's, which are highlighted. */
+  readonly newExtras = computed(() =>
+    acceptedExtras(this.current(), this.alternative(), this.labels()),
+  );
   readonly source = computed(() => alternativeSource(this.alternative()));
   readonly title = computed(() =>
     this.alternative().count > 1

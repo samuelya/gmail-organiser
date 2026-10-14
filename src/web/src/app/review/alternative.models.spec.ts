@@ -1,4 +1,5 @@
 import {
+  acceptedExtras,
   alternativeDiff,
   alternativeMessage,
   alternativeRequest,
@@ -128,5 +129,52 @@ describe('alternative models', () => {
     expect(alternativeMessage('discard', { accepted: 0, discarded: 3, skipped: 2 })).toBe(
       'Kept the current result for 3 suggestions. 2 skipped: part of an apply that is still running.',
     );
+  });
+
+  describe('acceptedExtras', () => {
+    const flags = { action: 'Act', delete: 'Bin' };
+    const labels = (xs: { label: string }[]) => xs.map((x) => x.label);
+
+    it("keeps the current extras and adds the alternative's, case-insensitive and sorted", () => {
+      const extras = acceptedExtras(
+        { ...current, extraLabels: ['Zeta', 'Beta'], extraLabelsNew: ['Beta'] },
+        alternative({ extraLabels: ['beta', 'Archive'], extraLabelsNew: ['Archive'] }),
+        flags,
+      );
+      expect(extras).toEqual([
+        { label: 'Archive', isNew: true, added: true },
+        { label: 'Beta', isNew: true, added: false },
+        { label: 'Zeta', isNew: false, added: false },
+      ]);
+    });
+
+    it('drops extras equal to the new topic, document type or a flag label', () => {
+      const extras = acceptedExtras(
+        { ...current, extraLabels: ['Topic/Beta', 'Keep'] },
+        alternative({
+          topicLabel: 'Topic/Beta',
+          documentTypeLabel: 'Type/Receipt',
+          extraLabels: ['type/receipt', 'bin', 'Added'],
+        }),
+        flags,
+      );
+      expect(labels(extras)).toEqual(['Added', 'Keep']);
+    });
+
+    it('adds only up to the cap and never removes a current one', () => {
+      const extras = acceptedExtras(
+        { ...current, extraLabels: ['A', 'B', 'C', 'D'] },
+        alternative({ extraLabels: ['E', 'F'] }),
+        flags,
+      );
+      expect(labels(extras)).toEqual(['A', 'B', 'C', 'D', 'E']);
+    });
+
+    it('is the current extras when the alternative has none', () => {
+      expect(
+        labels(acceptedExtras({ ...current, extraLabels: ['A'] }, alternative(), flags)),
+      ).toEqual(['A']);
+      expect(acceptedExtras(current, alternative(), flags)).toEqual([]);
+    });
   });
 });

@@ -1,4 +1,10 @@
-import type { LabelChange, ReviewGroupDto, ReviewStatus, SuggestionDto } from './review.models';
+import type {
+  FlagLabels,
+  LabelChange,
+  ReviewGroupDto,
+  ReviewStatus,
+  SuggestionDto,
+} from './review.models';
 import { labelChangeText, percent } from './review.models';
 
 /** A re-analysis result stored next to a suggestion (or, on a group, its listed members'); nothing changes until accepted. */
@@ -24,6 +30,12 @@ export interface SuggestionAlternativeDto {
   comment?: string | null;
   /** Copied from an email the person accepted, not an LLM answer. */
   copied?: boolean;
+  /**
+   * Additional labels "Use new" adds to the suggestion's (group: the union over the listed members), and those
+   * Gmail does not have yet; missing is none.
+   */
+  extraLabels?: string[];
+  extraLabelsNew?: string[];
 }
 
 /** A group in an alternative decision; `status` is the viewed tab's (pending when left out). */
@@ -73,7 +85,19 @@ export interface CompareValues {
   toBeDeleted: boolean;
   confidenceMin: number;
   confidenceMax: number;
+  extraLabels?: string[];
+  extraLabelsNew?: string[];
 }
+
+/** An additional label of the "Use new" result: `added` when the alternative brings it. */
+export interface CompareExtra {
+  label: string;
+  isNew: boolean;
+  added: boolean;
+}
+
+/** The most additional labels a suggestion keeps, as the API caps them. */
+export const MAX_EXTRA_LABELS = 5;
 
 /** Which compared fields differ between the current outcome and the alternative. */
 export interface AlternativeDiff {
@@ -105,6 +129,42 @@ export function alternativeDiff(
     confidence:
       confidence < rounded(current.confidenceMin) || confidence > rounded(current.confidenceMax),
   };
+}
+
+/**
+ * The additional labels after "Use new", as the API applies them: the current ones are kept and the
+ * alternative's added up to the cap, neither equal to the new topic, document type or a flag label;
+ * case-insensitive, sorted.
+ */
+export function acceptedExtras(
+  current: CompareValues,
+  alternative: SuggestionAlternativeDto,
+  flags: FlagLabels,
+): CompareExtra[] {
+  const key = (l: string) => l.trim().toLowerCase();
+  const taken = new Set(
+    [alternative.topicLabel, alternative.documentTypeLabel ?? '', flags.action, flags.delete].map(
+      key,
+    ),
+  );
+  const clean = (labels: string[] | undefined, isNew: string[] | undefined, added: boolean) => {
+    const fresh = new Set((isNew ?? []).map(key));
+    const kept: CompareExtra[] = [];
+    for (const raw of labels ?? []) {
+      const label = raw.trim();
+      if (!label || taken.has(key(label))) continue;
+      taken.add(key(label));
+      kept.push({ label, isNew: fresh.has(key(label)), added });
+    }
+    return kept;
+  };
+  const kept = clean(current.extraLabels, current.extraLabelsNew, false).slice(0, MAX_EXTRA_LABELS);
+  const added = clean(alternative.extraLabels, alternative.extraLabelsNew, true);
+  return [...kept, ...added.slice(0, MAX_EXTRA_LABELS - kept.length)].sort((a, b) => {
+    const x = a.label.toUpperCase();
+    const y = b.label.toUpperCase();
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
 }
 
 /** "Prompt v4 · model-x" for the alternative's header; empty when neither is known. */
