@@ -1,10 +1,4 @@
-import type {
-  FlagLabels,
-  LabelChange,
-  ReviewGroupDto,
-  ReviewStatus,
-  SuggestionDto,
-} from './review.models';
+import type { LabelChange, ReviewGroupDto, ReviewStatus, SuggestionDto } from './review.models';
 import { labelChangeText, percent } from './review.models';
 
 /** A re-analysis result stored next to a suggestion (or, on a group, its listed members'); nothing changes until accepted. */
@@ -36,6 +30,10 @@ export interface SuggestionAlternativeDto {
    */
   extraLabels?: string[];
   extraLabelsNew?: string[];
+  /** The suggestion's additional labels after "Use new", as the API applies them; group: the shown member's. */
+  extraLabelsAccepted?: string[];
+  /** The alternative's additional labels "Use new" leaves out because of the cap; group: any listed member's. */
+  extraLabelsNotAdded?: string[];
 }
 
 /** A group in an alternative decision; `status` is the viewed tab's (pending when left out). */
@@ -96,9 +94,6 @@ export interface CompareExtra {
   added: boolean;
 }
 
-/** The most additional labels a suggestion keeps, as the API caps them. */
-export const MAX_EXTRA_LABELS = 5;
-
 /** Which compared fields differ between the current outcome and the alternative. */
 export interface AlternativeDiff {
   topicLabel: boolean;
@@ -132,39 +127,23 @@ export function alternativeDiff(
 }
 
 /**
- * The additional labels after "Use new", as the API applies them: the current ones are kept and the
- * alternative's added up to the cap, neither equal to the new topic, document type or a flag label;
- * case-insensitive, sorted.
+ * The New row's additional labels: the API's post-accept list, `added` when the current outcome lacks it
+ * (case-insensitive) and `isNew` when Gmail lacks it on either side.
  */
 export function acceptedExtras(
   current: CompareValues,
   alternative: SuggestionAlternativeDto,
-  flags: FlagLabels,
 ): CompareExtra[] {
   const key = (l: string) => l.trim().toLowerCase();
-  const taken = new Set(
-    [alternative.topicLabel, alternative.documentTypeLabel ?? '', flags.action, flags.delete].map(
-      key,
-    ),
+  const had = new Set((current.extraLabels ?? []).map(key));
+  const fresh = new Set(
+    [...(current.extraLabelsNew ?? []), ...(alternative.extraLabelsNew ?? [])].map(key),
   );
-  const clean = (labels: string[] | undefined, isNew: string[] | undefined, added: boolean) => {
-    const fresh = new Set((isNew ?? []).map(key));
-    const kept: CompareExtra[] = [];
-    for (const raw of labels ?? []) {
-      const label = raw.trim();
-      if (!label || taken.has(key(label))) continue;
-      taken.add(key(label));
-      kept.push({ label, isNew: fresh.has(key(label)), added });
-    }
-    return kept;
-  };
-  const kept = clean(current.extraLabels, current.extraLabelsNew, false).slice(0, MAX_EXTRA_LABELS);
-  const added = clean(alternative.extraLabels, alternative.extraLabelsNew, true);
-  return [...kept, ...added.slice(0, MAX_EXTRA_LABELS - kept.length)].sort((a, b) => {
-    const x = a.label.toUpperCase();
-    const y = b.label.toUpperCase();
-    return x < y ? -1 : x > y ? 1 : 0;
-  });
+  return (alternative.extraLabelsAccepted ?? []).map((label) => ({
+    label,
+    isNew: fresh.has(key(label)),
+    added: !had.has(key(label)),
+  }));
 }
 
 /** "Prompt v4 · model-x" for the alternative's header; empty when neither is known. */

@@ -153,6 +153,11 @@ import { confidenceRange, FlagLabels, percent } from './review.models';
             </span>
           </div>
         </div>
+        @if (notAdded(); as names) {
+          <p class="muted m-0" data-testid="alternative-not-added">
+            Not added (additional label limit reached): {{ names }}
+          </p>
+        }
         @if (a.reason) {
           <p class="muted m-0" data-testid="alternative-reason">{{ a.reason }}</p>
         }
@@ -256,10 +261,9 @@ export class AlternativeCompare {
   readonly showMembers = output<void>();
 
   readonly diff = computed(() => alternativeDiff(this.current(), this.alternative()));
-  /** The additional labels "Use new" leaves: the current ones plus the alternative's, which are highlighted. */
-  readonly newExtras = computed(() =>
-    acceptedExtras(this.current(), this.alternative(), this.labels()),
-  );
+  /** The additional labels "Use new" leaves (from the API); those it adds are highlighted. */
+  readonly newExtras = computed(() => acceptedExtras(this.current(), this.alternative()));
+  readonly notAdded = computed(() => (this.alternative().extraLabelsNotAdded ?? []).join(', '));
   readonly source = computed(() => alternativeSource(this.alternative()));
   readonly title = computed(() =>
     this.alternative().count > 1

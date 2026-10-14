@@ -132,14 +132,14 @@ describe('alternative models', () => {
   });
 
   describe('acceptedExtras', () => {
-    const flags = { action: 'Act', delete: 'Bin' };
-    const labels = (xs: { label: string }[]) => xs.map((x) => x.label);
-
-    it("keeps the current extras and adds the alternative's, case-insensitive and sorted", () => {
+    it("renders the API's post-accept list, highlighting what the current outcome lacks", () => {
       const extras = acceptedExtras(
         { ...current, extraLabels: ['Zeta', 'Beta'], extraLabelsNew: ['Beta'] },
-        alternative({ extraLabels: ['beta', 'Archive'], extraLabelsNew: ['Archive'] }),
-        flags,
+        alternative({
+          extraLabels: ['beta', 'Archive'],
+          extraLabelsNew: ['Archive'],
+          extraLabelsAccepted: ['Archive', 'Beta', 'Zeta'],
+        }),
       );
       expect(extras).toEqual([
         { label: 'Archive', isNew: true, added: true },
@@ -148,33 +148,8 @@ describe('alternative models', () => {
       ]);
     });
 
-    it('drops extras equal to the new topic, document type or a flag label', () => {
-      const extras = acceptedExtras(
-        { ...current, extraLabels: ['Topic/Beta', 'Keep'] },
-        alternative({
-          topicLabel: 'Topic/Beta',
-          documentTypeLabel: 'Type/Receipt',
-          extraLabels: ['type/receipt', 'bin', 'Added'],
-        }),
-        flags,
-      );
-      expect(labels(extras)).toEqual(['Added', 'Keep']);
-    });
-
-    it('adds only up to the cap and never removes a current one', () => {
-      const extras = acceptedExtras(
-        { ...current, extraLabels: ['A', 'B', 'C', 'D'] },
-        alternative({ extraLabels: ['E', 'F'] }),
-        flags,
-      );
-      expect(labels(extras)).toEqual(['A', 'B', 'C', 'D', 'E']);
-    });
-
-    it('is the current extras when the alternative has none', () => {
-      expect(
-        labels(acceptedExtras({ ...current, extraLabels: ['A'] }, alternative(), flags)),
-      ).toEqual(['A']);
-      expect(acceptedExtras(current, alternative(), flags)).toEqual([]);
+    it('is empty when the API sends no accepted list', () => {
+      expect(acceptedExtras({ ...current, extraLabels: ['A'] }, alternative())).toEqual([]);
     });
   });
 });
