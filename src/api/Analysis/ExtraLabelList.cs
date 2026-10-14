@@ -1,3 +1,4 @@
+using GmailOrganiser.Analysis.Prompts;
 using GmailOrganiser.Gmail;
 using GmailOrganiser.Review;
 using GmailOrganiser.Settings;
@@ -21,6 +22,9 @@ public static class ExtraLabelList
 {
     public const int Max = 5;
     public const string Field = "extraLabels";
+
+    /// <summary>The start of <see cref="WithNotAdded"/>'s note.</summary>
+    public const string NotAddedNote = "Additional labels not added:";
 
     /// <summary>
     /// The canonical list, silently: trims; drops blanks, paths Gmail refuses (<see cref="LabelResolver.IsValid"/>) and
@@ -134,6 +138,50 @@ public static class ExtraLabelList
     /// </summary>
     public static void Apply(SuggestionRow s, ExtraLabelsChange change, AppSettings settings) =>
         s.ExtraLabels = Canonical(change.IsSet ? change.Labels : s.ExtraLabels, null, s.TopicLabel, s.DocumentTypeLabel, settings);
+
+    /// <summary>
+    /// Adds <paramref name="labels"/> to the suggestion's additional labels (#582), both canonical against its topic and
+    /// document type as they are now (<see cref="Merge"/>); returns the ones the cap left out.
+    /// </summary>
+    public static string[] Add(SuggestionRow s, IEnumerable<string> labels, AppSettings settings)
+    {
+        var (merged, capped) = Merge(s.ExtraLabels, labels, s.TopicLabel, s.DocumentTypeLabel, Reserved(settings));
+        s.ExtraLabels = merged;
+        return capped;
+    }
+
+    /// <summary>
+    /// <paramref name="current"/> plus <paramref name="labels"/>, both <see cref="Clean"/>ed against
+    /// <paramref name="topic"/> and <paramref name="documentType"/>: the current ones are kept and the added ones fill
+    /// only up to <see cref="Max"/>; <c>Capped</c> are those that did not fit. Pure, so review shows what accept leaves.
+    /// </summary>
+    public static (string[] Labels, string[] Capped) Merge(
+        IEnumerable<string> current, IEnumerable<string> labels, string? topic, string? documentType, IReadOnlyCollection<string> reserved)
+    {
+        var kept = Clean(current, topic, documentType, reserved);
+        var added = Clean(labels, topic, documentType, reserved).Where(l => !kept.Any(c => Same(l, c))).ToList();
+        var fit = Math.Max(0, Max - kept.Length);
+        return (Clean([.. kept, .. added.Take(fit)], topic, documentType, reserved), [.. added.Skip(fit)]);
+    }
+
+    /// <summary>
+    /// <paramref name="reason"/> with a note naming <paramref name="notAdded"/> (#582: the card never silently lacks an
+    /// extra its reason may mention), before a trailing <see cref="ApprovedLabelSet.CapNote"/> so the run's cap still
+    /// finds it; unchanged when there are none.
+    /// </summary>
+    public static string WithNotAdded(string reason, IEnumerable<string> notAdded)
+    {
+        var names = notAdded.Select(ExtraLabelsOutput.ShownForm).Where(l => l.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (names.Count == 0)
+        {
+            return reason;
+        }
+
+        var note = $" {NotAddedNote} {string.Join(", ", names.Take(Max))}{(names.Count > Max ? ", …" : "")}.";
+        return reason.EndsWith(ApprovedLabelSet.CapNote, StringComparison.Ordinal)
+            ? reason[..^ApprovedLabelSet.CapNote.Length] + note + ApprovedLabelSet.CapNote
+            : reason + note;
+    }
 
     /// <summary>The trimmed Gmail label names (case-insensitive) for <see cref="New"/>, built once per request; null when unknown.</summary>
     public static IReadOnlySet<string>? Existing(IReadOnlyDictionary<string, string>? labelNames) =>

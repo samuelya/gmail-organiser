@@ -24,6 +24,16 @@ export interface SuggestionAlternativeDto {
   comment?: string | null;
   /** Copied from an email the person accepted, not an LLM answer. */
   copied?: boolean;
+  /**
+   * Additional labels "Use new" adds to the suggestion's (group: the union over the listed members), and those
+   * Gmail does not have yet; missing is none.
+   */
+  extraLabels?: string[];
+  extraLabelsNew?: string[];
+  /** The suggestion's additional labels after "Use new", as the API applies them; group: the shown member's. */
+  extraLabelsAccepted?: string[];
+  /** The alternative's additional labels "Use new" leaves out because of the cap; group: any listed member's. */
+  extraLabelsNotAdded?: string[];
 }
 
 /** A group in an alternative decision; `status` is the viewed tab's (pending when left out). */
@@ -73,6 +83,15 @@ export interface CompareValues {
   toBeDeleted: boolean;
   confidenceMin: number;
   confidenceMax: number;
+  extraLabels?: string[];
+  extraLabelsNew?: string[];
+}
+
+/** An additional label of the "Use new" result: `added` when the alternative brings it. */
+export interface CompareExtra {
+  label: string;
+  isNew: boolean;
+  added: boolean;
 }
 
 /** Which compared fields differ between the current outcome and the alternative. */
@@ -105,6 +124,26 @@ export function alternativeDiff(
     confidence:
       confidence < rounded(current.confidenceMin) || confidence > rounded(current.confidenceMax),
   };
+}
+
+/**
+ * The New row's additional labels: the API's post-accept list, `added` when the current outcome lacks it
+ * (case-insensitive) and `isNew` when Gmail lacks it on either side.
+ */
+export function acceptedExtras(
+  current: CompareValues,
+  alternative: SuggestionAlternativeDto,
+): CompareExtra[] {
+  const key = (l: string) => l.trim().toLowerCase();
+  const had = new Set((current.extraLabels ?? []).map(key));
+  const fresh = new Set(
+    [...(current.extraLabelsNew ?? []), ...(alternative.extraLabelsNew ?? [])].map(key),
+  );
+  return (alternative.extraLabelsAccepted ?? []).map((label) => ({
+    label,
+    isNew: fresh.has(key(label)),
+    added: !had.has(key(label)),
+  }));
 }
 
 /** "Prompt v4 · model-x" for the alternative's header; empty when neither is known. */

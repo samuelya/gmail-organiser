@@ -113,6 +113,13 @@ public sealed record SuggestionDto(
 /// <param name="Comment">The owner comment of the alternative's compare run (#559); null when the run is gone or had none.</param>
 /// <param name="Copied">Copied from another suggestion's outcome (#562), not a compare run's answer; group: every listed member's
 /// alternative is (#578; the web hides the copied chip on a mixed group, PR #576).</param>
+/// <param name="ExtraLabels">The alternative's additional labels (#582), which accept adds to the suggestion's; group: the
+/// union over the listed members' alternatives, capped (<see cref="Analysis.ExtraLabelList.Clean"/>).</param>
+/// <param name="ExtraLabelsNew">Those Gmail lacks (<see cref="Analysis.ExtraLabelList.New"/>).</param>
+/// <param name="ExtraLabelsAccepted">The suggestion's additional labels after accept (<see cref="Analysis.ExtraLabelList.Merge"/>:
+/// its own kept, the alternative's added up to the cap); group: the shown member's.</param>
+/// <param name="ExtraLabelsNotAdded">The alternative's additional labels accept leaves out because the suggestion already has
+/// the most; group: those of any listed member.</param>
 public sealed record SuggestionAlternativeDto(
     string TopicLabel,
     string? DocumentTypeLabel,
@@ -130,7 +137,17 @@ public sealed record SuggestionAlternativeDto(
     int Count = 1,
     string? MailType = null,
     string? Comment = null,
-    bool Copied = false);
+    bool Copied = false,
+    string[]? ExtraLabels = null,
+    string[]? ExtraLabelsNew = null,
+    string[]? ExtraLabelsAccepted = null,
+    string[]? ExtraLabelsNotAdded = null)
+{
+    public string[] ExtraLabels { get; init; } = ExtraLabels ?? [];
+    public string[] ExtraLabelsNew { get; init; } = ExtraLabelsNew ?? [];
+    public string[] ExtraLabelsAccepted { get; init; } = ExtraLabelsAccepted ?? [];
+    public string[] ExtraLabelsNotAdded { get; init; } = ExtraLabelsNotAdded ?? [];
+}
 
 /// <summary>Suggestions by id and every suggestion of the named groups (any status); at least one of the two.</summary>
 public sealed record AlternativeDecisionRequest(Guid[]? SuggestionIds, GroupRef[]? Groups);

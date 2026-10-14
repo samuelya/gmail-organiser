@@ -33,9 +33,9 @@ const alternative = (over: Partial<SuggestionAlternativeDto> = {}): SuggestionAl
 });
 
 describe('AlternativeCompare', () => {
-  async function render(alt = alternative()) {
+  async function render(alt = alternative(), now: CompareValues = current) {
     const fixture = TestBed.createComponent(AlternativeCompare);
-    fixture.componentRef.setInput('current', current);
+    fixture.componentRef.setInput('current', now);
     fixture.componentRef.setInput('alternative', alt);
     fixture.componentRef.setInput('labels', { action: 'Act', delete: 'Bin' });
     await fixture.whenStable();
@@ -127,5 +127,53 @@ describe('AlternativeCompare', () => {
     expect(q('alternative-comment')).toBeNull();
     expect(q('alternative-copied')).toBeNull();
     expect(q('alternative-reason')).not.toBeNull();
+  });
+
+  it("shows the current extras and, on New, the union with the alternative's highlighted", async () => {
+    const { el, q } = await render(
+      alternative({
+        extraLabels: ['Archive', 'Kept'],
+        extraLabelsNew: ['Archive'],
+        extraLabelsAccepted: ['Archive', 'Kept'],
+      }),
+      { ...current, extraLabels: ['Kept'] },
+    );
+    const now = [...el.querySelectorAll('[data-testid="current-extra-label"]')];
+    expect(now.map((e) => e.textContent!.trim())).toEqual(['Kept']);
+    const next = [...el.querySelectorAll<HTMLElement>('[data-testid="alt-extra-label"]')];
+    expect(next.map((e) => e.firstChild!.textContent!.trim())).toEqual(['Archive', 'Kept']);
+    expect(next[0].classList).toContain('diff');
+    expect(next[0].textContent).toContain('(added)');
+    expect(q('alt-extra-label-new')!.textContent).toBe('new');
+    expect(next[1].classList).not.toContain('diff');
+    expect(next[1].textContent).not.toContain('new');
+    expect(q('alternative-not-added')).toBeNull();
+  });
+
+  it('names the extras the cap leaves out', async () => {
+    const { q } = await render(
+      alternative({ extraLabels: ['F'], extraLabelsNotAdded: ['F', 'G'] }),
+      { ...current, extraLabels: ['A', 'B', 'C', 'D', 'E'] },
+    );
+    expect(q('alternative-not-added')!.textContent).toContain('F, G');
+  });
+
+  it('a mixed group shows neither the New extras nor the left-out ones', async () => {
+    const { q } = await render(
+      alternative({
+        mixed: true,
+        count: 2,
+        extraLabelsAccepted: ['A'],
+        extraLabelsNotAdded: ['B'],
+      }),
+    );
+    expect(q('alt-extra-label')).toBeNull();
+    expect(q('alternative-not-added')).toBeNull();
+  });
+
+  it('shows no extras when neither side has any', async () => {
+    const { q } = await render();
+    expect(q('current-extra-label')).toBeNull();
+    expect(q('alt-extra-label')).toBeNull();
   });
 });

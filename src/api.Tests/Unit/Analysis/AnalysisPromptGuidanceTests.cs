@@ -24,7 +24,7 @@ public sealed class AnalysisPromptGuidanceTests
     [Fact]
     public void V8_is_v7_with_the_blank_line_after_the_memory_holding_the_guidance()
     {
-        PromptTemplate.BuiltIn.Version.ShouldBe("analysis-v8");
+        PromptTemplate.BuiltIn.Version.ShouldBe("analysis-v9");
         PromptTemplate.BuiltIn.Text.ShouldContain("{{memory}}\n{{ownerGuidance}}\n{{emails}}");
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(V7.Text))).ShouldBe(V7Sha256);
         PromptTemplate.EmailDerivedPlaceholders.ShouldContain(PromptTemplate.OwnerGuidancePlaceholder);
@@ -54,8 +54,8 @@ public sealed class AnalysisPromptGuidanceTests
 
         user.ShouldStartWith(
             AnalysisPromptBuilder.MemoryHeading + " none\n\n"
-            + AnalysisPromptBuilder.GuidanceHeading + "\n<person_guidance>\nPrefer `Topic/Sub` for these.\nSecond line\n</person_guidance>\n\n"
-            + "Emails to classify (1):\n");
+            + AnalysisPromptBuilder.GuidanceHeading + "\n<person_guidance>\nPrefer `Topic/Sub` for these.\nSecond line\n</person_guidance>"
+            + "\n\n" + AnalysisPromptBuilder.GuidedExtraLabelsInstruction + "\n\nEmails to classify (1):\n");
     }
 
     [Theory]
@@ -180,7 +180,8 @@ public sealed class AnalysisPromptGuidanceTests
 
         messages[0].Text.ShouldBe("Classify.");
         messages[1].Text.ShouldStartWith(AnalysisPromptBuilder.MemoryHeading + " none\n\n" + AnalysisPromptBuilder.GuidanceHeading
-            + "\n<person_guidance>\nSynthetic comment\n</person_guidance>\nEmails: Emails to classify (1):");
+            + "\n<person_guidance>\nSynthetic comment\n</person_guidance>\n\n" + AnalysisPromptBuilder.GuidedExtraLabelsInstruction
+            + "\nEmails: Emails to classify (1):");
         messages[1].Text.ShouldEndWith("Attachments: none");
         builder.Build(Input())[1].Text.ShouldStartWith(AnalysisPromptBuilder.MemoryHeading + " none\nEmails: Emails to classify (1):");
     }
@@ -195,7 +196,7 @@ public sealed class AnalysisPromptGuidanceTests
         system.ShouldBe(text.Contains("{{", StringComparison.Ordinal) ? "Classify.\n" : "Classify.");
         user.ShouldEndWith("{{ownerGuidance}}{{emails}}");
         new AnalysisPromptBuilder(PromptTemplate.FromSettings(text)).Build(Input("Synthetic comment"))[1].Text
-            .ShouldContain("</person_guidance>\nEmails to classify (1):");
+            .ShouldContain($"</person_guidance>\n\n{AnalysisPromptBuilder.GuidedExtraLabelsInstruction}\nEmails to classify (1):");
     }
 
     [Fact]
@@ -206,6 +207,7 @@ public sealed class AnalysisPromptGuidanceTests
 
         messages[0].Text.ShouldBe("Rules.");
         messages[1].Text.ShouldStartWith(AnalysisPromptBuilder.GuidanceHeading);
-        messages[1].Text.ShouldContain("</person_guidance>\n\nRules Action/Test.\nEmails to classify (1):");
+        messages[1].Text.ShouldContain(
+            $"</person_guidance>\n\n{AnalysisPromptBuilder.GuidedExtraLabelsInstruction}\n\nRules Action/Test.\nEmails to classify (1):");
     }
 }

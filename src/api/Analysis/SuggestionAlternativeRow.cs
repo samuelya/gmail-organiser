@@ -30,6 +30,12 @@ public sealed class SuggestionAlternativeRow
     public bool ToBeDeleted { get; set; }
     public bool UnsubscribeSuggested { get; set; }
 
+    /// <summary>
+    /// The outcome's additional labels (#582), canonical like <see cref="SuggestionRow.ExtraLabels"/>; accept adds them to the
+    /// suggestion's own. Empty for alternatives stored before the column existed.
+    /// </summary>
+    public string[] ExtraLabels { get; set; } = [];
+
     /// <summary>0–1, checked like <see cref="SuggestionRow.Confidence"/>.</summary>
     public double Confidence { get; set; }
     public string Reason { get; set; } = "";
@@ -65,7 +71,8 @@ public sealed class SuggestionAlternativeRow
     /// A copy of <paramref name="source"/>'s current outcome for <paramref name="target"/> (#562), with only those of the
     /// source's replaced labels (by id) that the target's message carries (<paramref name="targetLabelIds"/>). It has no run,
     /// so run-scoped compare and recovery never take it for the source run's answer, and that run's comment isn't shown on it;
-    /// the source's run is kept as <see cref="OutcomeRunId"/>.
+    /// the source's run is kept as <see cref="OutcomeRunId"/>. It carries no additional labels: accepting a copy keeps the
+    /// target's own (#562/#565); only a compare run's answer adds extras (#582).
     /// </summary>
     public static SuggestionAlternativeRow CopyOf(
         SuggestionRow source, SuggestionRow target, IReadOnlyCollection<string> targetLabelIds, DateTimeOffset now) =>
@@ -77,6 +84,7 @@ public sealed class SuggestionAlternativeRow
                 alternative.Copied = true;
                 alternative.Edited = source.Edited;
                 alternative.OutcomeRunId = source.RunId;
+                alternative.ExtraLabels = [];
             });
 
     /// <summary>The outcome of <paramref name="outcome"/> for one suggestion; the single list of outcome fields.</summary>
@@ -102,6 +110,7 @@ public sealed class SuggestionAlternativeRow
             NeedsAction = outcome.NeedsAction,
             ToBeDeleted = outcome.ToBeDeleted,
             UnsubscribeSuggested = outcome.UnsubscribeSuggested,
+            ExtraLabels = [.. outcome.ExtraLabels],
             Confidence = outcome.Confidence,
             Reason = outcome.Reason,
             FilterCriteria = outcome.FilterCriteria,
@@ -127,6 +136,7 @@ public sealed class SuggestionAlternativeRow
             e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());
             e.Property(r => r.ReplaceLabelIds).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.ReplaceLabels).IsRequired().HasDefaultValueSql("'{}'");
+            e.Property(r => r.ExtraLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.FilterCriteria).HasColumnType("jsonb");
             e.HasOne<SuggestionRow>().WithMany().HasForeignKey(r => r.SuggestionId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<AnalysisRunRow>().WithMany().HasForeignKey(r => r.RunId).OnDelete(DeleteBehavior.SetNull);

@@ -248,6 +248,7 @@ public static class SuggestionOutputParser
             ReplaceLabels = replaceLabels,
             ProposedNewLabel = proposed,
             ExtraLabels = ExtraLabelsOutput.Read(id, item, label!, documentType, read.Context, dropped),
+            AnsweredExtraLabels = ExtraLabelsOutput.Answered(item),
         };
     }
 

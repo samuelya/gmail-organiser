@@ -1,4 +1,5 @@
 import {
+  acceptedExtras,
   alternativeDiff,
   alternativeMessage,
   alternativeRequest,
@@ -128,5 +129,27 @@ describe('alternative models', () => {
     expect(alternativeMessage('discard', { accepted: 0, discarded: 3, skipped: 2 })).toBe(
       'Kept the current result for 3 suggestions. 2 skipped: part of an apply that is still running.',
     );
+  });
+
+  describe('acceptedExtras', () => {
+    it("renders the API's post-accept list, highlighting what the current outcome lacks", () => {
+      const extras = acceptedExtras(
+        { ...current, extraLabels: ['Zeta', 'Beta'], extraLabelsNew: ['Beta'] },
+        alternative({
+          extraLabels: ['beta', 'Archive'],
+          extraLabelsNew: ['Archive'],
+          extraLabelsAccepted: ['Archive', 'Beta', 'Zeta'],
+        }),
+      );
+      expect(extras).toEqual([
+        { label: 'Archive', isNew: true, added: true },
+        { label: 'Beta', isNew: true, added: false },
+        { label: 'Zeta', isNew: false, added: false },
+      ]);
+    });
+
+    it('is empty when the API sends no accepted list', () => {
+      expect(acceptedExtras({ ...current, extraLabels: ['A'] }, alternative())).toEqual([]);
+    });
   });
 });

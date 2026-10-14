@@ -67,10 +67,15 @@ public sealed partial class ReviewQuery
     }
 
     /// <param name="current">The message's personal label names (<see cref="SuggestionDto.CurrentLabels"/>).</param>
+    /// <remarks>
+    /// What accept leaves is <see cref="ExtraLabelList.Merge"/> of the suggestion's extras and the alternative's; both are
+    /// stored clean of the app's labels, so none are passed.
+    /// </remarks>
     private static SuggestionAlternativeDto ToDto(
-        LoadedAlternative loaded, MessageRow m, IReadOnlyList<string> current, IReadOnlyDictionary<string, string>? labelNames)
+        LoadedAlternative loaded, SuggestionRow s, MessageRow m, IReadOnlyList<string> current, IReadOnlyDictionary<string, string>? labelNames)
     {
         var a = loaded.Row;
+        var (accepted, capped) = ExtraLabelList.Merge(s.ExtraLabels, a.ExtraLabels, a.TopicLabel, a.DocumentTypeLabel, []);
         var replaced = Replaced(a.Replaced(labelNames), a.TopicLabel, m, labelNames);
         return new SuggestionAlternativeDto(
             a.TopicLabel,
@@ -87,13 +92,18 @@ public sealed partial class ReviewQuery
             a.CreatedAt,
             MailType: a.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
             Comment: loaded.Comment,
-            Copied: a.Copied);
+            Copied: a.Copied,
+            ExtraLabels: a.ExtraLabels,
+            ExtraLabelsNew: ExtraLabelList.New(a.ExtraLabels, ExtraLabelList.Existing(labelNames)),
+            ExtraLabelsAccepted: accepted,
+            ExtraLabelsNotAdded: capped);
     }
 
     /// <summary>
     /// The listed members' alternative: the newest member's of the most common outcome (label, flags, type; its comment), with
-    /// the union of the replaced labels; <see cref="SuggestionAlternativeDto.Mixed"/> when members disagree on the outcome, the comment
-    /// or whether the alternative was copied (#578), and <see cref="SuggestionAlternativeDto.Copied"/> only when every member's was.
+    /// the union of the replaced labels and of the additional labels (<see cref="ExtraLabelList.Clean"/>, so capped);
+    /// <see cref="SuggestionAlternativeDto.Mixed"/> when members disagree on the outcome, the comment, whether the alternative
+    /// was copied (#578) or its additional labels (#582), and <see cref="SuggestionAlternativeDto.Copied"/> only when every member's was.
     /// <see cref="SuggestionAlternativeDto.Count"/> is <paramref name="count"/>, every member in the status with one.
     /// </summary>
     public static SuggestionAlternativeDto? GroupAlternative(IReadOnlyList<SuggestionDto> members, int count)
@@ -110,13 +120,19 @@ public sealed partial class ReviewQuery
             .ToList();
         var shown = outcomes[0].First();
         var copied = alternatives.Count(a => a.Copied);
+        var extras = ExtraLabelList.Clean(alternatives.SelectMany(a => a.ExtraLabels), null, null, []);
         return shown with
         {
             ReplaceLabels = [.. alternatives.SelectMany(a => a.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
             LabelChange = Combined(alternatives.Select(a => a.LabelChange)),
+            ExtraLabels = extras,
+            ExtraLabelsNew = [.. extras.Where(l => alternatives.Any(a => a.ExtraLabelsNew.Contains(l, StringComparer.OrdinalIgnoreCase)))],
+            ExtraLabelsNotAdded = [.. alternatives.SelectMany(a => a.ExtraLabelsNotAdded).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Order(StringComparer.OrdinalIgnoreCase)],
             Mixed = outcomes.Count > 1
                 || alternatives.Select(a => a.Comment).Distinct(StringComparer.Ordinal).Skip(1).Any()
-                || (copied > 0 && copied < alternatives.Count),
+                || (copied > 0 && copied < alternatives.Count)
+                || alternatives.Any(a => !ExtraLabelList.SameList(a.ExtraLabels, shown.ExtraLabels)),
             Copied = copied == alternatives.Count,
             Count = Math.Max(count, alternatives.Count),
         };

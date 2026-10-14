@@ -114,6 +114,33 @@ public sealed class AlternativeCopyTests(ApiFactory factory, PostgresFixture pos
     }
 
     [Fact]
+    public async Task A_copy_carries_no_extras_so_accept_keeps_the_targets_own()
+    {
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a00")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExtraLabels, new[] { "Synthetic Source Extra" }), Ct);
+            await db.Suggestions.Where(s => s.MessageId == "a03")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExtraLabels, new[] { "Synthetic Own" }), Ct);
+        }
+
+        var source = (await IdsAsync("a00"))[0];
+        var target = (await IdsAsync("a03"))[0];
+        (await CopyAsync(source, [target])).ShouldBe(new AlternativeCopyResponse(1, 0));
+        await using (var db = postgres.CreateDbContext())
+        {
+            (await db.SuggestionAlternatives.AsNoTracking().SingleAsync(a => a.SuggestionId == target, Ct)).ExtraLabels.ShouldBeEmpty();
+        }
+
+        var accept = await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([target], null));
+        (await accept.Content.ReadFromJsonAsync<AlternativeDecisionResponse>(Ct)).ShouldBe(new AlternativeDecisionResponse(1, 0, 0));
+
+        await using var check = postgres.CreateDbContext();
+        var accepted = await check.Suggestions.AsNoTracking().SingleAsync(s => s.Id == target, Ct);
+        (accepted.TopicLabel, accepted.ExtraLabels.Single()).ShouldBe((Copied, "Synthetic Own"));
+    }
+
+    [Fact]
     public async Task A_hand_edited_stage0_source_stays_edited_on_the_target_and_its_approval_is_recorded()
     {
         await using (var db = postgres.CreateDbContext())
