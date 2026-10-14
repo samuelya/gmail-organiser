@@ -1,4 +1,5 @@
 using GmailOrganiser.Gmail;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace GmailOrganiser.Rules;
@@ -8,6 +9,37 @@ public sealed partial class FilterService
 {
     /// <summary>A new group id for <paramref name="count"/> filters; null for one, which needs no group.</summary>
     private Guid? NewGroup(int count) => count > 1 ? Guid.CreateVersion7(time.GetUtcNow()) : null;
+
+    /// <summary>
+    /// Makes the active filters <paramref name="ids"/>, a split set's existing parts (#581), one group, as
+    /// <see cref="CreateGroupAsync"/> does with the parts it joins: a group among them is reused, and every row of any
+    /// other group among them moves to it, so no group is left behind without the part that left it. Nothing changes when
+    /// one of them is gone since, as the set is then no longer complete. No Gmail call.
+    /// </summary>
+    public async Task JoinGroupAsync(IReadOnlyList<string> ids, CancellationToken ct)
+    {
+        await using var tx = await LockAsync(ct);
+        var parts = await db.Filters.Where(r => ids.Contains(r.Id) && r.DeletedAt == null).ToListAsync(ct);
+        var groups = parts.Select(r => r.GroupId).Where(g => g is not null).Distinct().ToList();
+        if (parts.Count < 2 || parts.Count < ids.Distinct(StringComparer.Ordinal).Count()
+            || (groups.Count == 1 && parts.All(r => r.GroupId == groups[0])))
+        {
+            return;
+        }
+
+        var group = groups.Count > 0 ? groups[0] : NewGroup(parts.Count);
+        var others = groups.Skip(1).ToList();
+        var moved = await db.Filters.Where(r => others.Contains(r.GroupId)).ToListAsync(ct);
+        var now = time.GetUtcNow();
+        foreach (var row in parts.Concat(moved).Where(r => r.GroupId != group))
+        {
+            row.GroupId = group;
+            row.UpdatedAt = now;
+        }
+
+        await db.SaveChangesAsync(CancellationToken.None);
+        await tx.CommitAsync(CancellationToken.None);
+    }
 
     /// <summary>
     /// Creates <paramref name="parts"/> in Gmail, then their rows, members of <paramref name="group"/> (#557). When a part

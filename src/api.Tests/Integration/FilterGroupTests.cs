@@ -232,6 +232,52 @@ public sealed class FilterGroupTests(ApiFactory factory, PostgresFixture postgre
         (await db.FilterFindings.SingleAsync(f => f.Id == findingId, Ct)).Status.ShouldBe(FilterFindingStatus.Applied);
     }
 
+    [Fact]
+    public async Task A_reviewed_overlap_whose_parts_exist_as_ungrouped_filters_makes_them_one_group()
+    {
+        var topic = await CreatedAsync(Topic);
+        var extraA = await CreatedAsync(ExtraA);
+        var extra = await WithFilterServiceAsync(s => s.CreateFromIdsAsync(new(From: Shop), new([], ["INBOX"]), 0, Ct));
+        var overlap = (await ReviewAsync()).Findings.Single(f => f.Kind == FilterFindingKind.Overlap && f.FilterIds.Contains(topic.Id));
+
+        (await Client().PostAsync($"/api/rules/filters/findings/{overlap.Id}/apply", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // The kept rows are neither created nor deleted in Gmail; only the extra is deleted.
+        (await ShopFiltersAsync()).Select(f => f.Id).ShouldBe([topic.Id, extraA.Id], ignoreOrder: true);
+        await AssertOneGroupAsync(topic.Id, extraA.Id);
+        (await ListAsync()).Filters.Single(f => f.Criteria.From == Shop).FilterIds.ShouldBe([topic.Id, extraA.Id], ignoreOrder: true);
+        (await ListAsync(includeDeleted: true)).Filters.ShouldContain(f => f.FilterIds.Contains(extra.Filter!.Id) && f.DeletedAt != null);
+    }
+
+    [Fact]
+    public async Task A_reviewed_overlap_joins_an_existing_part_to_the_group_among_its_parts()
+    {
+        (await CreateAsync(Topic, ExtraA)).StatusCode.ShouldBe(HttpStatusCode.Created);
+        var pair = (await ShopFiltersAsync()).Select(f => f.Id).ToList();
+        pair.Count.ShouldBe(2);
+        await using var before = postgres.CreateDbContext();
+        var group = (await before.Filters.FirstAsync(r => r.Id == pair[0], Ct)).GroupId.ShouldNotBeNull();
+        var extraB = await CreatedAsync(ExtraB);
+        await WithFilterServiceAsync(s => s.CreateFromIdsAsync(new(From: Shop), new([], ["INBOX"]), 0, Ct));
+        var overlap = (await ReviewAsync()).Findings.Single(f => f.Kind == FilterFindingKind.Overlap && f.FilterIds.Contains(extraB.Id));
+
+        (await Client().PostAsync($"/api/rules/filters/findings/{overlap.Id}/apply", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        string[] kept = [.. pair, extraB.Id];
+        (await ShopFiltersAsync()).Select(f => f.Id).ShouldBe(kept, ignoreOrder: true);
+        (await AssertOneGroupAsync(kept)).ShouldBe(group);
+        (await ListAsync()).Filters.Single(f => f.Criteria.From == Shop).FilterIds.ShouldBe(kept, ignoreOrder: true);
+    }
+
+    private async Task<Guid> AssertOneGroupAsync(params string[] ids)
+    {
+        await using var db = postgres.CreateDbContext();
+        var groups = await db.Filters.Where(r => ids.Contains(r.Id)).Select(r => r.GroupId).ToListAsync(Ct);
+        groups.Count.ShouldBe(ids.Length);
+        groups.Distinct().ShouldHaveSingleItem().ShouldNotBeNull();
+        return groups[0]!.Value;
+    }
+
     private async Task<FilterReviewDto> ReviewAsync()
     {
         var response = await Client().PostAsync("/api/rules/filters/reviews", null, Ct);
