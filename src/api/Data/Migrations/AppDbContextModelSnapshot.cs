@@ -266,6 +266,13 @@ namespace GmailOrganiser.Data.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("edited");
 
+                    b.PrimitiveCollection<string[]>("ExtraLabels")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text[]")
+                        .HasColumnName("extra_labels")
+                        .HasDefaultValueSql("'{}'");
+
                     b.Property<string>("FilterCriteria")
                         .HasColumnType("jsonb")
                         .HasColumnName("filter_criteria");

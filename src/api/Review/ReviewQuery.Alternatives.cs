@@ -87,7 +87,9 @@ public sealed partial class ReviewQuery
             a.CreatedAt,
             MailType: a.MailType is { } t ? SnakeCaseEnumConverter<MailType>.ToDb(t) : null,
             Comment: loaded.Comment,
-            Copied: a.Copied);
+            Copied: a.Copied,
+            ExtraLabels: a.ExtraLabels,
+            ExtraLabelsNew: ExtraLabelList.New(a.ExtraLabels, ExtraLabelList.Existing(labelNames)));
     }
 
     /// <summary>
@@ -114,6 +116,8 @@ public sealed partial class ReviewQuery
         {
             ReplaceLabels = [.. alternatives.SelectMany(a => a.ReplaceLabels).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
             LabelChange = Combined(alternatives.Select(a => a.LabelChange)),
+            ExtraLabels = Union(alternatives.Select(a => a.ExtraLabels)),
+            ExtraLabelsNew = Union(alternatives.Select(a => a.ExtraLabelsNew)),
             Mixed = outcomes.Count > 1
                 || alternatives.Select(a => a.Comment).Distinct(StringComparer.Ordinal).Skip(1).Any()
                 || (copied > 0 && copied < alternatives.Count),
@@ -121,6 +125,10 @@ public sealed partial class ReviewQuery
             Count = Math.Max(count, alternatives.Count),
         };
     }
+
+    /// <summary>The distinct labels of <paramref name="lists"/>, first spelling kept, sorted like <see cref="ExtraLabelList.Clean"/>.</summary>
+    private static string[] Union(IEnumerable<string[]> lists) =>
+        [.. lists.SelectMany(l => l).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)];
 
     /// <summary>The members' label change when they agree; else relabel when any replaces a label, add otherwise.</summary>
     private static LabelChange Combined(IEnumerable<LabelChange> changes)

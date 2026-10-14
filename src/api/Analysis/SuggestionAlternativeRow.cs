@@ -30,6 +30,12 @@ public sealed class SuggestionAlternativeRow
     public bool ToBeDeleted { get; set; }
     public bool UnsubscribeSuggested { get; set; }
 
+    /// <summary>
+    /// The outcome's additional labels (#582), canonical like <see cref="SuggestionRow.ExtraLabels"/>; accept adds them to the
+    /// suggestion's own. Empty for alternatives stored before the column existed.
+    /// </summary>
+    public string[] ExtraLabels { get; set; } = [];
+
     /// <summary>0–1, checked like <see cref="SuggestionRow.Confidence"/>.</summary>
     public double Confidence { get; set; }
     public string Reason { get; set; } = "";
@@ -102,6 +108,7 @@ public sealed class SuggestionAlternativeRow
             NeedsAction = outcome.NeedsAction,
             ToBeDeleted = outcome.ToBeDeleted,
             UnsubscribeSuggested = outcome.UnsubscribeSuggested,
+            ExtraLabels = [.. outcome.ExtraLabels],
             Confidence = outcome.Confidence,
             Reason = outcome.Reason,
             FilterCriteria = outcome.FilterCriteria,
@@ -127,6 +134,7 @@ public sealed class SuggestionAlternativeRow
             e.Property(r => r.MailType).HasConversion(new SnakeCaseEnumConverter<MailType>());
             e.Property(r => r.ReplaceLabelIds).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.ReplaceLabels).IsRequired().HasDefaultValueSql("'{}'");
+            e.Property(r => r.ExtraLabels).IsRequired().HasDefaultValueSql("'{}'");
             e.Property(r => r.FilterCriteria).HasColumnType("jsonb");
             e.HasOne<SuggestionRow>().WithMany().HasForeignKey(r => r.SuggestionId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<AnalysisRunRow>().WithMany().HasForeignKey(r => r.RunId).OnDelete(DeleteBehavior.SetNull);

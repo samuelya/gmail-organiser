@@ -135,6 +135,19 @@ public static class ExtraLabelList
     public static void Apply(SuggestionRow s, ExtraLabelsChange change, AppSettings settings) =>
         s.ExtraLabels = Canonical(change.IsSet ? change.Labels : s.ExtraLabels, null, s.TopicLabel, s.DocumentTypeLabel, settings);
 
+    /// <summary>
+    /// Adds <paramref name="labels"/> to the suggestion's additional labels (#582), both canonical against its topic and
+    /// document type as they are now: its own are kept, and the added ones fill only up to <see cref="Max"/>.
+    /// </summary>
+    public static void Add(SuggestionRow s, IEnumerable<string> labels, AppSettings settings)
+    {
+        var current = Canonical(s.ExtraLabels, null, s.TopicLabel, s.DocumentTypeLabel, settings);
+        var added = Canonical(labels, null, s.TopicLabel, s.DocumentTypeLabel, settings)
+            .Where(l => !current.Any(c => Same(l, c)))
+            .Take(Max - current.Length);
+        s.ExtraLabels = Clean([.. current, .. added], s.TopicLabel, s.DocumentTypeLabel, Reserved(settings));
+    }
+
     /// <summary>The trimmed Gmail label names (case-insensitive) for <see cref="New"/>, built once per request; null when unknown.</summary>
     public static IReadOnlySet<string>? Existing(IReadOnlyDictionary<string, string>? labelNames) =>
         labelNames?.Values.Select(n => n.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
