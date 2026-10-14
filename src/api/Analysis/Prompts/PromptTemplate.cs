@@ -4,19 +4,19 @@ using System.Text.RegularExpressions;
 namespace GmailOrganiser.Analysis.Prompts;
 
 /// <summary>
-/// The analysis prompt template: the built-in embedded <c>analysis-v8.md</c> or the user's override from Settings.
+/// The analysis prompt template: the built-in embedded <c>analysis-v9.md</c> or the user's override from Settings.
 /// Placeholders are <c>{{name}}</c>; substitution is a single pass, so values (email text) never expand further.
 /// </summary>
 public sealed partial class PromptTemplate
 {
-    public const string BuiltInVersion = "analysis-v8";
+    public const string BuiltInVersion = "analysis-v9";
     public const string CustomVersion = "custom";
     public const string EmailsPlaceholder = "{{emails}}";
     public const string MailTypesPlaceholder = "{{mailTypes}}";
     public const string MemoryPlaceholder = "{{memory}}";
     public const string OwnerGuidancePlaceholder = "{{ownerGuidance}}";
 
-    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v8.md";
+    private const string ResourceName = "GmailOrganiser.Analysis.Prompts.analysis-v9.md";
 
     private PromptTemplate(string version, string text)
     {

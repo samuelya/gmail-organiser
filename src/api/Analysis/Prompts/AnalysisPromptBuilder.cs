@@ -39,6 +39,15 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
         + "Otherwise answer `extraLabels` as [].";
 
     /// <summary>
+    /// Closes the person's guidance (#582) instead of <see cref="ExtraLabelsInstruction"/>: a comment may ask for an
+    /// existing label besides the hints' extras, so the model hears of <c>extraLabels</c> even when no hint has any.
+    /// </summary>
+    public const string GuidedExtraLabelsInstruction =
+        "Additional labels: answer `extraLabels` (array of strings, at most 5) only with labels from the label tree above that "
+        + "the person's guidance asks for, or labels listed as `extraLabels` in the similar past decisions above when the email "
+        + "is the same kind as that decision, spelled exactly as there. Otherwise answer `extraLabels` as [].";
+
+    /// <summary>
     /// The answer shape: one object wrapping the per-email array, because Ollama's JSON mode only yields a top-level
     /// object. OllamaSharp sends the schema as Ollama's <c>format</c>, so the model is constrained to it.
     /// </summary>
@@ -100,13 +109,14 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
     public IList<ChatMessage> Build(PromptInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
+        var guided = Guided(input);
         var values = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["labelTree"] = RenderLabelTree(input.LabelTree),
             ["mailTypes"] = MailTypes.PromptList(),
             ["blockedLabels"] = RenderLabelSet(input.BlockedLabels ?? [], input.TaxonomyLocked),
             ["documentTypes"] = RenderDocumentTypes(input.DocumentTypeParent, input.LabelTree),
-            ["memory"] = RenderMemory(input.Memory, input.Policies ?? []),
+            ["memory"] = RenderMemory(input.Memory, input.Policies ?? [], guided),
             ["attachments"] = DefuseBodyTags(input.AttachmentsSection ?? string.Empty),
             ["emails"] = RenderEmails(input.Emails),
             ["actionLabel"] = OneLine(input.ActionLabel),
@@ -123,15 +133,18 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
     }
 
     /// <summary>
-    /// The person's re-analysis comment (#561) between its tags, with a blank line before and after so the
-    /// <c>{{ownerGuidance}}</c> line sits between the memory and the emails; empty without a comment, which leaves the
-    /// prompt as it was. The comment arrives trimmed with <c>\n</c> line breaks (<see cref="AnalysisRunService.CheckComment"/>);
-    /// tags that could close the section or open a body are defused.
+    /// The person's re-analysis comment (#561) between its tags, then <see cref="GuidedExtraLabelsInstruction"/> (#582),
+    /// with a blank line before and after so the <c>{{ownerGuidance}}</c> line sits between the memory and the emails;
+    /// empty without a comment, which leaves the prompt as it was. The comment arrives trimmed with <c>\n</c> line breaks
+    /// (<see cref="AnalysisRunService.CheckComment"/>); tags that could close the section or open a body are defused.
     /// </summary>
     internal static string RenderOwnerGuidance(string? comment) =>
         string.IsNullOrWhiteSpace(comment)
             ? ""
-            : $"\n{GuidanceHeading}\n{GuidanceStart}\n{DefuseBodyTags(comment)}\n{GuidanceEnd}\n";
+            : $"\n{GuidanceHeading}\n{GuidanceStart}\n{DefuseBodyTags(comment)}\n{GuidanceEnd}\n\n{GuidedExtraLabelsInstruction}\n";
+
+    /// <summary>The prompt shows a comment: every template does, <see cref="PromptTemplate.Split"/> adds the placeholder.</summary>
+    private static bool Guided(PromptInput input) => !string.IsNullOrWhiteSpace(input.OwnerGuidance);
 
     internal static string RenderLabelTree(IReadOnlyList<string> labels)
     {
@@ -181,9 +194,10 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
 
     /// <summary>
     /// The hints, then <see cref="ExtraLabelsInstruction"/> when one shows extras (<see cref="ExtraLabelsOutput.Shown"/>,
-    /// each between backticks as allowed), then the policies after a blank line.
+    /// each between backticks as allowed) and the prompt is not <paramref name="guided"/> (the guidance then closes with
+    /// its own instruction), then the policies after a blank line.
     /// </summary>
-    private static string RenderMemory(IReadOnlyList<MemoryHint> memory, IReadOnlyList<SenderPolicyHint> policies)
+    private static string RenderMemory(IReadOnlyList<MemoryHint> memory, IReadOnlyList<SenderPolicyHint> policies, bool guided)
     {
         if (memory.Count == 0)
         {
@@ -197,21 +211,23 @@ public sealed class AnalysisPromptBuilder(PromptTemplate template)
             + $" | needsAction: {YesNo(m.NeedsAction)} | toBeDeleted: {YesNo(m.ToBeDeleted)} | outcome: {OneLine(m.Outcome)}"
             + $" | similarity: {m.Similarity:0.00}")
             + (extras[i].Count == 0 ? "" : $" | extraLabels: {string.Join(", ", extras[i])}")))
-            + (extras.Any(e => e.Count > 0) ? "\n\n" + ExtraLabelsInstruction + (policies.Count == 0 ? "" : "\n") : "")
+            + (!guided && extras.Any(e => e.Count > 0) ? "\n\n" + ExtraLabelsInstruction + (policies.Count == 0 ? "" : "\n") : "")
             + RenderPolicies(policies);
     }
 
     /// <summary>
     /// The extras the model may answer for <paramref name="input"/>'s prompt, from the same hints <see cref="Build"/>
-    /// renders: the approved hints' extras (<see cref="ExtraLabelsOutput.Allowed"/>); empty when none has any, or the
-    /// template has no <c>{{memory}}</c> to show them.
+    /// renders (<see cref="ExtraLabelsOutput.Allowed"/>): the approved hints' extras when the template has <c>{{memory}}</c>
+    /// to show them, then, when the prompt shows a comment (#582), the label tree's labels it names
+    /// (<see cref="ExtraLabelsOutput.NamedIn"/>). Empty when neither gives any.
     /// </summary>
     public IReadOnlyDictionary<string, string> AllowedExtraLabels(PromptInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        return ExtraLabelsOutput.Allowed(template.Text.Contains(PromptTemplate.MemoryPlaceholder, StringComparison.Ordinal)
+        var hints = template.Text.Contains(PromptTemplate.MemoryPlaceholder, StringComparison.Ordinal)
             ? input.Memory.SelectMany(ExtraLabelsOutput.Shown)
-            : []);
+            : [];
+        return ExtraLabelsOutput.Allowed(Guided(input) ? hints.Concat(ExtraLabelsOutput.NamedIn(input.OwnerGuidance!, input.LabelTree)) : hints);
     }
 
     /// <summary>

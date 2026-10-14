@@ -117,8 +117,8 @@ public sealed record ParsedSuggestions(
 /// <param name="ConfiguredLabels">The app's action and delete label names; never a <c>proposedNewLabel</c>.</param>
 /// <param name="ReadMailType">False for a custom template that does not ask for a mail type: none is stored.</param>
 /// <param name="AllowedExtraLabels">
-/// The extras of the approved similar past decisions shown in this prompt (#528,
-/// <see cref="AnalysisPromptBuilder.AllowedExtraLabels"/>, built by <see cref="ExtraLabelsOutput.Allowed"/>): shown form
+/// The extras of the approved similar past decisions shown in this prompt (#528) and the existing labels its comment
+/// names (#582) (<see cref="AnalysisPromptBuilder.AllowedExtraLabels"/>, built by <see cref="ExtraLabelsOutput.Allowed"/>): shown form
 /// (case-insensitive) to stored spelling; the only <c>extraLabels</c> the parser keeps. Empty (default) keeps none.
 /// </param>
 public sealed record SuggestionParseContext(

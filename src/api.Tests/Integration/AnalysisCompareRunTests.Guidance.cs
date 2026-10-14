@@ -29,7 +29,8 @@ public sealed partial class AnalysisCompareRunTests
         prompts.ShouldNotBeEmpty();
         prompts.ShouldAllBe(r => !r[0].Text.Contains(AnalysisPromptBuilder.GuidanceStart) && !r[0].Text.Contains("Second line"));
         prompts.ShouldAllBe(r => r[1].Text.Contains(
-            $"{AnalysisPromptBuilder.GuidanceStart}\nUse `{blocked}` for these.\nSecond line\n{AnalysisPromptBuilder.GuidanceEnd}\n\nEmails to classify"));
+            $"{AnalysisPromptBuilder.GuidanceStart}\nUse `{blocked}` for these.\nSecond line\n{AnalysisPromptBuilder.GuidanceEnd}\n\n"
+            + $"{AnalysisPromptBuilder.GuidedExtraLabelsInstruction}\n\nEmails to classify"));
         h.Chat.Requests.Take(calls).ShouldAllBe(r => !r[1].Text.Contains(AnalysisPromptBuilder.GuidanceStart));
 
         await using var db = postgres.CreateDbContext();

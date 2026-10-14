@@ -40,7 +40,7 @@ public sealed class SuggestionOutputParserExtraLabelsTests
 
         result.Errors.ShouldBeEmpty();
         result.Valid.ShouldHaveSingleItem().ExtraLabels.ShouldBe(["Extra/A", "Extra/B"]);
-        result.Dropped.ShouldHaveSingleItem().ShouldBe("Email 'm1': 2 'extraLabels' entries not among the similar past decisions' extras; dropped.");
+        result.Dropped.ShouldHaveSingleItem().ShouldBe("Email 'm1': 2 'extraLabels' entries neither a similar past decision's extra nor an existing label the comment names; dropped.");
     }
 
     [Fact]

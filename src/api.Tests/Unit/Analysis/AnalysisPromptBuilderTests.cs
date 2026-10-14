@@ -22,7 +22,7 @@ public sealed class AnalysisPromptBuilderTests
     {
         var template = PromptTemplate.BuiltIn;
 
-        template.Version.ShouldBe("analysis-v8");
+        template.Version.ShouldBe("analysis-v9");
         template.AsksMailType.ShouldBeTrue();
         template.Text.ShouldContain("`proposedNewLabel` (string or null)");
         template.Text.ShouldContain("`topicLabel` is the processor's organisation label plus `/<Merchant>`");
