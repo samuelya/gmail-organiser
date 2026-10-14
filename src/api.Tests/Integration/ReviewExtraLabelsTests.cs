@@ -198,6 +198,40 @@ public sealed class ReviewExtraLabelsTests(ApiFactory factory, PostgresFixture p
         accepted.ExtraLabels.ShouldBe(["Extra"]);
     }
 
+    [Fact]
+    public async Task An_alternative_shows_its_extras_and_accept_adds_them_to_the_current_ones_up_to_the_cap()
+    {
+        string[] current = ["Synthetic A", "Synthetic B", "Synthetic C", "Synthetic D"];
+        await using (var db = postgres.CreateDbContext())
+        {
+            await db.Suggestions.Where(s => s.MessageId == "a01" || s.MessageId == "a02")
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExtraLabels, current), Ct);
+            foreach (var row in await db.Suggestions.AsNoTracking().Where(s => s.MessageId == "a01" || s.MessageId == "a02").ToListAsync(Ct))
+            {
+                var alternative = SuggestionAlternativeRow.From(row, row.Id, row.RunId!.Value, DateTimeOffset.UtcNow);
+                alternative.ExtraLabels = row.MessageId == "a01" ? [Existing, "Synthetic Z", "synthetic a"] : [];
+                db.SuggestionAlternatives.Add(alternative);
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var members = (await DetailAsync(AnalysisRunHarness.Shop)).Groups.SelectMany(g => g.Members).ToList();
+        var shown = members.Single(m => m.MessageId == "a01").Alternative.ShouldNotBeNull();
+        shown.ExtraLabels.ShouldBe([Existing, "Synthetic Z", "synthetic a"]);
+        shown.ExtraLabelsNew.ShouldBe(["Synthetic Z", "synthetic a"]);
+        members.Single(m => m.MessageId == "a02").Alternative.ShouldNotBeNull().ExtraLabels.ShouldBeEmpty();
+
+        var response = await h.PostAsync("/api/review/alternatives/accept", new AlternativeDecisionRequest([await IdAsync("a01"), await IdAsync("a02")], null));
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK, await response.Content.ReadAsStringAsync(Ct));
+        await using var check = postgres.CreateDbContext();
+        // The cap keeps every current extra; the first added one in canonical order fills the last slot.
+        (await check.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a01", Ct)).ExtraLabels
+            .ShouldBe(["Synthetic A", "Synthetic B", "Synthetic C", "Synthetic D", Existing]);
+        (await check.Suggestions.AsNoTracking().SingleAsync(s => s.MessageId == "a02", Ct)).ExtraLabels.ShouldBe(current);
+    }
+
     private static EditSuggestionRequest Edit(string[]? extras) => new("Shopping", false, false, ExtraLabels: extras);
 
     private async Task<GroupDecisionResponse> ApproveAsync(ReviewGroupDto group, string[]? extras)
